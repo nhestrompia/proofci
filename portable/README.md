@@ -148,3 +148,42 @@ Exit codes retain the CLI convention: 0 pass, 1 blocked, 2 execution or
 configuration error. A replacement baseline cannot be activated by this local
 command; an authorized migration and retirement workflow is separate and is not
 implemented here. No draft or model output activates itself.
+
+## Export and replay evidence
+
+Export a completed run with its original inputs and report:
+
+```sh
+python3 portable/replay.py export --envelope run.json --baseline protected/baseline.json \
+  --snapshot checkout --report report.json --output evidence.tar
+```
+
+Record the printed SHA-256 in a trusted channel separate from the archive. The
+archive contains a Git bundle with both commits, the protected baseline and
+contracts, the envelope, and the original report. The commit contains the
+candidate and proof evidence. Toolchain, dependencies, and policy are identified
+by the envelope and checked by the pinned verifier image. The bundle can contain
+repository history and should be handled accordingly.
+
+On a fresh Linux host with the pinned local image and Docker installed, run:
+
+```sh
+python3 portable/replay.py replay --bundle evidence.tar --sha256 <trusted-sha256> \
+  --output replay-report.json
+```
+
+Replay validates the archive before extraction, reconstructs a fresh checkout,
+and runs the same verifier without model calls or a proof-result cache. It
+compares the fresh obligation outcomes and evidence digests to the original
+report. Exit 0 means a passing result was reproduced, 1 means a blocking result
+was reproduced, and 2 means replay failed or did not reproduce the result.
+The report explicitly says that historical CI publication was not reproduced.
+A digest supplied alongside an untrusted archive does not authenticate its
+origin; protect the digest separately. Missing inputs or the pinned image cause
+a nonpassing result. Archive limits are 256 MiB total and 128 MiB per member. The expanded
+repository is limited to 256 MiB total, 128 MiB per file, and 100,000 files;
+export checks these limits before creating the bundle.
+
+On Linux, Git reconstruction runs with CPU, address-space, and file-size limits,
+plus wall-clock deadlines. macOS does not support the address-space limit;
+use a Linux host for the fully resource-bounded replay boundary.
