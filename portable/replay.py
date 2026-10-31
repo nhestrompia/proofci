@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
+import select
+import time
 import subprocess
 import sys
 import tarfile
@@ -138,15 +140,22 @@ def replay(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
         snapshot = root / 'snapshot'
-        subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
         if not isinstance(envelope.get('head'), str) or not re.fullmatch(r'[0-9a-f]{40}', envelope['head']):
             raise ValueError('invalid head commit')
         # Count every tree entry, including repeated blobs, before materializing files.
-        listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', envelope['head']], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', envelope['head']], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + 60
         total = count = 0
         pending = b''
         try:
-            while chunk := listing.stdout.read(65536):
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([listing.stdout], [], [], remaining)[0]:
+                    raise ValueError('repository inspection timed out')
+                chunk = os.read(listing.stdout.fileno(), 65536)
+                if not chunk:
+                    break
                 pending += chunk
                 while b'\0' in pending:
                     entry, pending = pending.split(b'\0', 1)
