@@ -102,6 +102,14 @@ class EvidenceBundleTests(unittest.TestCase):
         self.write_bundle(claimed_decision="violated", candidate_sha256="0" * 64)
         self.assertEqual(evidence.validate_bundle(self.bundle, self.candidate, self.contract)["reason"], "invalid_evidence")
 
+    def test_conditional_witness_requires_precondition_and_failure(self):
+        self.contract.write_text('{"rhs":"x", "precondition":{"lhs":"x", "op":"<", "rhs":"3"}}')
+        self.write_bundle(claimed_decision="violated", witness=2)
+        bundle = evidence.load_bundle(self.bundle, self.candidate, self.contract)
+        _, _, challenge, _ = evidence._sources(bundle)
+        self.assertIn("(x < 3) → target x = x", challenge)
+        self.assertIn("(x < 3) ∧ ¬ (target x = x)", challenge)
+
     def test_candidate_hash_mismatch_is_invalid_evidence(self):
         self.write_bundle(candidate_sha256="0" * 64)
         result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)

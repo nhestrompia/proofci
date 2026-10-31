@@ -43,6 +43,23 @@ class LinuxReplayTests(unittest.TestCase):
                                               Path(os.environ["PROOFCI_TEST_TOOLCHAIN"]))
             self.assertEqual((result["decision"], result["reason"]), ("unproven", "proof_failed"), result)
 
+    def test_conditional_witness_checks_precondition(self):
+        fixtures = Path(__file__).with_name("fixtures")
+        toolchain = Path(os.environ["PROOFCI_TEST_TOOLCHAIN"])
+        result = evidence.validate_bundle(fixtures / "conditional", fixtures / "candidate.lean",
+                                          fixtures / "conditional-contract.json", toolchain)
+        self.assertEqual(result["decision"], "violated", result)
+        result = evidence.validate_bundle(fixtures / "false-precondition", fixtures / "candidate.lean",
+                                          fixtures / "conditional-contract.json", toolchain)
+        self.assertEqual((result["decision"], result["reason"]), ("unproven", "proof_failed"), result)
+
+    def test_conditional_positive_proof_passes_both_checkers(self):
+        fixtures = Path(__file__).with_name("fixtures")
+        result = evidence.validate_bundle(fixtures / "conditional-verified", fixtures / "candidate.lean",
+                                          fixtures / "conditional-verified-contract.json",
+                                          Path(os.environ["PROOFCI_TEST_TOOLCHAIN"]))
+        self.assertEqual(result["decision"], "verified", result)
+
     def test_concrete_witness_passes_both_checkers(self):
         fixtures = Path(__file__).with_name("fixtures")
         result = evidence.validate_bundle(

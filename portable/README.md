@@ -94,3 +94,16 @@ passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 ```sh
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
 ```
+
+A conditional contract may add `"precondition": {"lhs": "x", "op": "<", "rhs": "3"}`.
+Each side uses the restricted natural-number expression language; operators are
+`=`, `<`, and `≤`. The property holds only where the precondition holds. A
+concrete witness must independently establish the precondition and failure.
+
+To report a completed external search without accepting it as proof, pass
+`--search-results search.json` to the launcher. Its version 1 format is
+`{"version": 1, "exhausted": ["obligation-id"]}`. Only unresolved obligations
+receive `search_exhausted`; accepted evidence still determines the result. The
+report includes the SHA-256 of this input. The result’s `search.status` records
+exhaustion; its nested validation retains the reason the evidence was unresolved.
+This option does not run a search.

@@ -73,8 +73,8 @@ Set `claimed_decision` to `violated` to submit a proof of the negation of
 from the same candidate and approved contract as a positive proof. A bundle
 may also include an integer `witness` from 0 to 1000000 in its manifest. In
 that case the reconstructed theorem additionally requires proof that the
-property fails at that exact value. The current contract language has no
-preconditions; conditional contracts and other witness forms are unsupported.
+property fails at that exact value. For conditional contracts the fixed theorem also requires the instantiated
+precondition. Other witness forms are unsupported.
 The solution and both exports must match this reconstructed theorem and pass
 both independent checkers. A claim or tactic failure alone cannot establish a
 violation. No witness search is performed.

@@ -201,10 +201,16 @@ def load_bundle(bundle_path, candidate_path, contract_path):
 def _sources(bundle):
     _, _, identity, statement, challenge = binding.build_sources(bundle.candidate, bundle.contract)
     if bundle.claimed_decision == "violated":
-        rhs, _ = binding.load_contract(bundle.contract)
-        proposition = f"¬ (∀ x : Nat, target x = {rhs})"
+        (rhs, _), precondition = binding.load_contract(bundle.contract)
+        property_body = f"target x = {rhs}"
+        if precondition:
+            property_body = f"({precondition}) → {property_body}"
+        proposition = f"¬ (∀ x : Nat, {property_body})"
         if bundle.witness is not None:
-            proposition += f" ∧ (let x : Nat := {bundle.witness}; ¬ (target x = {rhs}))"
+            failure = f"¬ (target x = {rhs})"
+            if precondition:
+                failure = f"({precondition}) ∧ {failure}"
+            proposition += f" ∧ (let x : Nat := {bundle.witness}; {failure})"
         statement = f"theorem contract : {proposition} := by "
         challenge = "import CandidateCheck\n" + statement + "sorry\n"
     solution = bundle.solution.decode("utf-8")

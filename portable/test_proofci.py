@@ -121,6 +121,19 @@ class CLITest(unittest.TestCase):
         self.assertEqual(report["results"][0]["reason"], "contradictory_evidence")
         self.assertEqual([e["evidence"] for e in report["results"][0]["submissions"]], ["missing", "refutation"])
 
+    def test_search_exhaustion_is_a_nonpassing_unproven_reason(self):
+        search = self.root / "search.json"
+        search.write_text(json.dumps({"version": 1, "exhausted": ["one"]}))
+        args = [str(CLI), "--envelope", str(self.root / "envelope.json"), "--baseline", str(self.root / "baseline.json"),
+                "--snapshot", str(self.snapshot), "--toolchain", str(self.root / "toolchain"),
+                "--report", str(self.root / "report.json"), "--search-results", str(search)]
+        with patch.object(sys, "argv", args):
+            self.assertEqual(proofci.main(), 1)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(report["results"][0]["reason"], "search_exhausted")
+        self.assertEqual(report["results"][0]["decision"], "unproven")
+        self.assertEqual(report["results"][1]["reason"], "missing_evidence")
+
     def test_modified_baseline_is_configuration_error(self):
         (self.root / "baseline.json").write_text('{"version":1,"candidate":"x","obligations":[]}')
         status, report = self.run_cli()

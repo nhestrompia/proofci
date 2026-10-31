@@ -245,6 +245,7 @@ def main():
     for name in ("envelope", "baseline", "snapshot", "toolchain", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--bwrap", type=Path)
+    parser.add_argument("--search-results", type=Path)
     args = parser.parse_args()
     start_monotonic = time.monotonic()
     report = {"version": 1, "status": "error", "results": [], "started_at": time.time()}
@@ -278,6 +279,19 @@ def main():
         if envelope["trust_policy"] != policy_digest():
             raise ValueError("trust policy identity mismatch")
         verify_snapshot(snapshot, envelope, baseline, deadline)
+        exhausted = set()
+        if args.search_results:
+            search_bytes = bounded_read(args.search_results, 1024 * 1024)
+            search = parse_json(search_bytes)
+            fields(search, ("version", "exhausted"))
+            ids = {item["id"] for item in baseline["obligations"]}
+            if (type(search["version"]) is not int or search["version"] != 1
+                    or not isinstance(search["exhausted"], list)
+                    or any(not isinstance(name, str) or name not in ids for name in search["exhausted"])
+                    or len(set(search["exhausted"])) != len(search["exhausted"])):
+                raise ValueError("invalid search results")
+            exhausted = set(search["exhausted"])
+            report["search_results_sha256"] = hashlib.sha256(search_bytes).hexdigest()
         for item in baseline["obligations"]:
             result = {"id": item["id"], "policy": item["policy"], "evidence": item["evidence"]}
             submissions = []
@@ -318,6 +332,9 @@ def main():
                 selected = error_entry or (accepted[0] if accepted else next((entry for entry in submissions if entry["validation"]["reason"] != "missing_evidence"), submissions[0]))
                 result.update(evidence=selected["evidence"], decision=selected["validation"]["decision"], reason=selected["validation"]["reason"],
                               validation=selected["validation"], evidence_sha256=selected["evidence_sha256"])
+            if result["decision"] == "unproven" and result["reason"] in ("missing_evidence", "proof_failed", "unproven") and item["id"] in exhausted:
+                result["reason"] = "search_exhausted"
+                result["search"] = {"status": "exhausted"}
             if len(submissions) > 1:
                 result["submissions"] = submissions
             report["results"].append(result)

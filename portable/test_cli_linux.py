@@ -61,6 +61,8 @@ class LinuxCLITests(unittest.TestCase):
                     "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
                     "--snapshot", str(snapshot), "--report", str(root / "report.json"),
                     "--image", os.environ.get("PROOFCI_TEST_IMAGE", "proofci-validator-local")]
+                if (root / "search.json").exists():
+                    command.extend(["--search-results", str(root / "search.json")])
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)
@@ -76,10 +78,17 @@ class LinuxCLITests(unittest.TestCase):
                 output.mkdir(parents=True, exist_ok=True)
                 (output / "passing.json").write_text(json.dumps({"envelope": envelope, "baseline": baseline, "report": report}, indent=2) + "\n")
             self.assertEqual([x["decision"] for x in report["results"]], ["verified", "unproven"])
+            (root / "search.json").write_text(json.dumps({"version": 1, "exhausted": ["increment", "advice"]}))
+            status, searched_report = run()
+            self.assertEqual(status, 0, searched_report)
+            self.assertEqual(searched_report["results"][0]["decision"], "verified")
+            self.assertEqual(searched_report["results"][1]["reason"], "search_exhausted")
+            self.assertEqual(searched_report["results"][1]["search"]["status"], "exhausted")
+            (root / "search.json").unlink()
             self.assertIn("manifest.json", report["results"][0]["evidence_sha256"])
             # Check a submitted witness through the public snapshot and report boundary.
-            shutil.copy(FIXTURES / "violated-contract.json", root / "contract.json")
-            shutil.copytree(FIXTURES / "violated", snapshot / "refutation")
+            shutil.copy(FIXTURES / "conditional-contract.json", root / "contract.json")
+            shutil.copytree(FIXTURES / "conditional", snapshot / "refutation")
             baseline["obligations"][0]["contract_sha256"] = sha(root / "contract.json")
             baseline["obligations"][0]["refutation"] = "refutation"
             baseline["obligations"][1]["contract_sha256"] = sha(root / "contract.json")
@@ -96,10 +105,18 @@ class LinuxCLITests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text())
             manifest["witness"] = 1
             manifest_path.write_text(json.dumps(manifest))
+            envelope["head"] = commit("tamper with witness")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["reason"], "invalid_evidence")
+            # A matching challenge with a false precondition cannot prove a violation.
+            shutil.rmtree(snapshot / "refutation")
+            shutil.copytree(FIXTURES / "false-precondition", snapshot / "refutation")
             envelope["head"] = commit("wrong witness")
             status, report = run()
             self.assertEqual(status, 1, report)
             self.assertEqual(report["results"][0]["decision"], "unproven")
+            self.assertEqual(report["results"][0]["reason"], "proof_failed")
             # Restore the positive proof for the obsolete-proof and timeout tests.
             shutil.rmtree(snapshot / "refutation")
             shutil.copytree(FIXTURES / "verified", snapshot / "evidence")
