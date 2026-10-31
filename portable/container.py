@@ -12,7 +12,7 @@ import tempfile
 import time
 import uuid
 
-IMAGE_ID = "sha256:ac3afc9c6af4bd70c5833105931561745d7e42701c2bfce246bc69d7f4076ea1"
+IMAGE_ID = "sha256:83fc8d3f7b4936f7410c70cee37de6d99177757f38e843ea96195a3fcc82ff39"
 
 
 def main():

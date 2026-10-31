@@ -54,11 +54,10 @@ extracted bubblewrap package from the
 
 ```sh
 docker buildx build --provenance=false --build-arg SOURCE_DATE_EPOCH=0 \
-  --output type=docker,dest=proofci-validator.tar,rewrite-timestamp=true --platform linux/arm64 \
+  --load --platform linux/arm64 \
   --build-context lean=/path/to/lean-4.35.0-linux_aarch64 \
   --build-context bubblewrap=/path/to/extracted-bubblewrap \
   -f portable/Dockerfile -t proofci-validator-local .
-docker load -i proofci-validator.tar
 ```
 
 The build checks the tool digests. The launcher rejects an image whose ID does
@@ -90,3 +89,26 @@ passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 ```sh
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
 ```
+
+## Scope and change diagnostics
+
+The report's `support` section names the fixed adapter policy version and
+validator digest, trusted tools, assumptions, exclusions and source-level
+boundary. The protected verifier determines this policy; files in the candidate
+checkout cannot extend it. Each result states the admitted `target` and its
+approved equation. A required candidate rejected by the adapter is `unproven`
+with `unsupported_semantics`, even when evidence is missing or obsolete.
+
+`coverage.changes` lists the complete base-to-head Git tree diff, including
+object IDs, modes and paths. Git filenames and file contents are untrusted data.
+`unsupported_changed_code` and `uncovered_supported_symbols` are separate from
+`property_counts`. Other files are outside the admitted scope; their presence
+alone does not block the gate. Every registered obligation is still checked.
+Proof evidence files are identified separately from target code. The adapter
+accepts only the single declaration described in the validator README, so an
+independently admitted `target` in another changed Lean file is uncovered.
+
+A passing gate establishes only the listed approved properties of that admitted
+source definition, under the reported assumptions. It does not verify the whole
+repository, compiled binaries, deployment, or foreign-language code. Rust and
+Aeneas are deferred experimental work and are not supported frontends.

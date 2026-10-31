@@ -57,6 +57,40 @@ class CLITest(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual([r["reason"] for r in report["results"]], ["missing_evidence"] * 2)
 
+    def commit_changes(self):
+        subprocess.run(["git", "-C", str(self.snapshot), "add", "--all"], check=True)
+        subprocess.run(["git", "-C", str(self.snapshot), "commit", "-qm", "changes"], check=True)
+        head = subprocess.check_output(["git", "-C", str(self.snapshot), "rev-parse", "HEAD"], text=True).strip()
+        envelope_path = self.root / "envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["head"] = head
+        envelope["candidate_sha256"] = hashlib.sha256((self.snapshot / "candidate.lean").read_bytes()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope))
+
+    def test_complete_diff_and_admission_diagnostics(self):
+        for i in range(310):
+            (self.snapshot / f"file-{i}.txt").write_text("untrusted")
+        (self.snapshot / "uncovered\nname.lean").write_text("def target (x : Nat) : Nat := x + 2")
+        (self.snapshot / "unsupported.lean").write_text("import Evil\ndef target (x : Nat) : Nat := x")
+        self.commit_changes()
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual(len(report["coverage"]["changes"]), 312)
+        self.assertEqual(report["coverage"]["uncovered_supported_symbols"],
+                         [{"path": "uncovered\nname.lean", "symbol": "target"}])
+        self.assertTrue(any(x["path"] == "unsupported.lean" for x in report["coverage"]["unsupported_changed_code"]))
+        self.assertEqual([r["reason"] for r in report["results"]], ["missing_evidence"] * 2)
+        self.assertEqual(report["support"]["policy_version"], "lean-target-v1")
+
+    def test_unsupported_required_dependency_blocks_without_evidence(self):
+        (self.snapshot / "candidate.lean").write_text("import Evil\ndef target (x : Nat) : Nat := x")
+        self.commit_changes()
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual([r["reason"] for r in report["results"]], ["unsupported_semantics"] * 2)
+        self.assertIn("candidate must", report["support"]["unsupported_dependency"]["reason"])
+        self.assertEqual(report["results"][0]["property"], "target x = x + 1")
+
     def test_modified_baseline_is_configuration_error(self):
         (self.root / "baseline.json").write_text('{"version":1,"candidate":"x","obligations":[]}')
         status, report = self.run_cli()
