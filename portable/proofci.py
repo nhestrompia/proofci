@@ -102,7 +102,7 @@ def main():
             if not proof.exists():
                 result.update(decision="unproven", reason="missing_evidence")
             else:
-                raise ValueError("validator process-tree limits are not yet implemented")
+                result.update(decision="unproven", reason="validation_unavailable")
             report["results"].append(result)
         failures = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence"}
         if any(r["reason"] in failures for r in report["results"]):

@@ -9,13 +9,16 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
+import time
 
 from dataclasses import dataclass
 
@@ -260,7 +263,7 @@ def _sandbox_prefix(toolchain, workspace, policy_path, read_only_sources,
         "--ro-bind", str(toolchain), "/lean",
         *runtime_mounts,
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-        "--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/run", "--tmpfs", "/var",
+        "--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/run", "--dir", "/run/user", "--tmpfs", "/var",
         "--bind", str(workspace), "/workspace", "--chdir", "/workspace",
         "--tmpfs", "/workspace/.lake",
         "--ro-bind", str(policy_path), "/workspace/comparator.json",
@@ -293,19 +296,26 @@ def _run(toolchain, workspace, policy_path, args, timeout=120, allow_failure=Fal
     overflow = threading.Event()
     streams = {"stdout": bytearray(), "stderr": bytearray()}
 
+    def kill_group():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
     def drain(name, stream):
-        while True:
-            chunk = stream.read(64 * 1024)
-            if not chunk:
-                return
-            with captured_lock:
-                captured["total"] += len(chunk)
-                exceeded = captured["total"] > MAX_PROCESS_OUTPUT
-            if exceeded:
-                overflow.set()
-                process.kill()
-                return
-            streams[name].extend(chunk)
+        with stream:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                with captured_lock:
+                    captured["total"] += len(chunk)
+                    exceeded = captured["total"] > MAX_PROCESS_OUTPUT
+                if exceeded:
+                    overflow.set()
+                    kill_group()
+                    return
+                streams[name].extend(chunk)
 
     readers = [
         threading.Thread(target=drain, args=(name, stream), daemon=True)
@@ -313,16 +323,28 @@ def _run(toolchain, workspace, policy_path, args, timeout=120, allow_failure=Fal
     ]
     for reader in readers:
         reader.start()
+    deadline = time.monotonic() + timeout
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired as error:
-        process.kill()
+        kill_group()
         process.wait()
         for reader in readers:
-            reader.join()
+            reader.join(1)
         raise ValidationUnavailable(f"validator command timed out: {error}") from error
+    except BaseException:
+        kill_group()
+        process.wait()
+        for reader in readers:
+            reader.join(1)
+        raise
     for reader in readers:
-        reader.join()
+        reader.join(max(0, deadline - time.monotonic()))
+    if any(reader.is_alive() for reader in readers):
+        kill_group()
+        for reader in readers:
+            reader.join(1)
+        raise ValidationUnavailable("validator output did not close before timeout")
     if overflow.is_set():
         raise BuildFailure(f"{' '.join(args)} exceeded output limit")
     stdout = bytes(streams["stdout"])

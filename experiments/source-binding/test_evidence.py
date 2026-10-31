@@ -2,6 +2,8 @@ import hashlib
 import base64
 import io
 import json
+import sys
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -194,6 +196,25 @@ class EvidenceBundleTests(unittest.TestCase):
             )
         self.assertEqual(status, 1)
         self.assertEqual(output, "��")
+
+    def test_timeout_terminates_descendants_holding_output_open(self):
+        program = ("import subprocess,sys,time; "
+                   "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                   "time.sleep(30)")
+        with patch.object(evidence, "_sandbox_prefix", return_value=[sys.executable, "-c", program]):
+            start = time.monotonic()
+            with self.assertRaises(evidence.ValidationUnavailable):
+                evidence._run(Path("/unused"), Path("/unused"), Path("/unused"), (), timeout=0.2)
+        self.assertLess(time.monotonic() - start, 5)
+
+    def test_timeout_applies_after_parent_exits_with_output_open(self):
+        program = ("import subprocess,sys; "
+                   "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])")
+        with patch.object(evidence, "_sandbox_prefix", return_value=[sys.executable, "-c", program]):
+            start = time.monotonic()
+            with self.assertRaises(evidence.ValidationUnavailable):
+                evidence._run(Path("/unused"), Path("/unused"), Path("/unused"), (), timeout=0.2)
+        self.assertLess(time.monotonic() - start, 5)
 
     def test_fixed_replay_output_preserves_exports(self):
         challenge = b'{"meta":1}\n\xff\n'

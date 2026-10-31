@@ -61,3 +61,7 @@ combined independent acceptance path returns `verified`.
 On this macOS development host the pinned Linux arm64 validator is expected to
 return `validation_unavailable`; the real positive-path replay is run in the
 pinned Linux environment from ticket 01.
+
+`test_linux_replay.py` checks the saved valid bundle against both checkers. Run
+it inside the pinned Linux arm64 environment with `PROOFCI_TEST_TOOLCHAIN` set
+to the extracted, pinned Lean distribution. It skips when that variable is absent.

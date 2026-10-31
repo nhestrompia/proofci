@@ -48,6 +48,13 @@ class CLITest(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertEqual(report["status"], "error")
 
+    def test_unavailable_validator_accounts_for_remaining_obligations(self):
+        (self.root / "missing").mkdir()
+        status, report = self.run_cli()
+        self.assertEqual(status, 2)
+        self.assertEqual([r["reason"] for r in report["results"]],
+                         ["validation_unavailable", "missing_evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()
