@@ -125,11 +125,12 @@ def export(args):
             subprocess.run(['git', '--git-dir', str(repo), 'update-ref', 'refs/heads/proofci-' + ref, commit], check=True)
         subprocess.run(['git', '--git-dir', str(repo), 'bundle', 'create', str(bundle), 'refs/heads/proofci-head', 'refs/heads/proofci-base'], check=True)
         files['repository.bundle'] = read_file(bundle)
-        if len(files) > MAX_FILES or sum(map(len, files.values())) > MAX_ARCHIVE:
+        if len(files) + 1 > MAX_FILES or sum(map(len, files.values())) > MAX_ARCHIVE:
             raise ValueError('bundle exceeds size limit')
         manifest = {'version': 1, 'files': {name: sha(data) for name, data in sorted(files.items())}}
         files['manifest.json'] = (json.dumps(manifest, sort_keys=True, separators=(',', ':')) + '\n').encode()
-        with tarfile.open(args.output, 'w') as archive:
+        archive_path = Path(tmp) / 'evidence.tar'
+        with tarfile.open(archive_path, 'w') as archive:
             for name, data in sorted(files.items()):
                 safe_name(name)
                 info = tarfile.TarInfo(name)
@@ -137,6 +138,7 @@ def export(args):
                 info.mode = 0o600
                 info.mtime = 0
                 archive.addfile(info, io.BytesIO(data))
+        args.output.write_bytes(read_file(archive_path, MAX_ARCHIVE))
     print('sha256:' + proofci.digest(args.output))
 
 
