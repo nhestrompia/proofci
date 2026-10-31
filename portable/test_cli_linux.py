@@ -44,11 +44,12 @@ class LinuxCLITests(unittest.TestCase):
             git("worktree", "add", "-qb", "fixture-worktree", str(checkout))
             snapshot = checkout
             sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            (root / "unproven-contract.json").write_text('{"rhs":"x + 2"}')
             baseline = {"version": 1, "candidate": "candidate.lean", "obligations": [
                 {"id": "increment", "policy": "required", "contract": "contract.json",
                  "contract_sha256": sha(root / "contract.json"), "evidence": "evidence"},
-                {"id": "advice", "policy": "advisory", "contract": "contract.json",
-                 "contract_sha256": sha(root / "contract.json"), "evidence": "missing"}]}
+                {"id": "advice", "policy": "advisory", "contract": "unproven-contract.json",
+                 "contract_sha256": sha(root / "unproven-contract.json"), "evidence": "missing"}]}
             (root / "baseline.json").write_text(json.dumps(baseline))
             envelope = {"version": 1, "repository": "https://example.invalid/fixture.git", "head": head, "base": head,
                 "candidate_sha256": sha(snapshot / "candidate.lean"), "baseline_sha256": sha(root / "baseline.json"),
@@ -128,6 +129,7 @@ class LinuxCLITests(unittest.TestCase):
             shutil.copytree(FIXTURES / "conditional", snapshot / "refutation")
             baseline["obligations"][0]["contract_sha256"] = sha(root / "contract.json")
             baseline["obligations"][0]["refutation"] = "refutation"
+            baseline["obligations"][1]["contract"] = "contract.json"
             baseline["obligations"][1]["contract_sha256"] = sha(root / "contract.json")
             shutil.rmtree(snapshot / "evidence")
             envelope["head"] = commit("submit witness")

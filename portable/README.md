@@ -1,7 +1,7 @@
 # Portable verification
 
 The CLI checks every required and advisory obligation in a protected baseline.
-It uses the fixed source-binding validator and does not call a model. The
+It uses the fixed source-binding validator. Model assistance is optional. The
 supported Lean language and trust assumptions are documented in
 [the validator README](../experiments/source-binding/README.md). The baseline,
 the verifier checkout, the Docker host and the supplied toolchain must be
@@ -10,7 +10,7 @@ licensed for public distribution; a maintainer license decision is still needed.
 
 The input is a clean Git checkout at the exact full commit named by `head`.
 The origin URL must equal `repository`; `base` must be a full commit ID present
-in the repository. Candidate and evidence files must be committed, and their
+in the repository. Candidate and submitted evidence files must be committed, and their
 bytes must match the commit. Keep the baseline outside the candidate checkout.
 The baseline digest in the envelope identifies the exact approved baseline.
 Approval and protected delivery of that digest are the caller's responsibility.
@@ -86,13 +86,73 @@ blocking result; exit 2 means configuration, timeout, cancellation or execution
 failure. Advisory failures are reported but do not block a completed gate.
 A JSON report is written on nonzero results when its destination is writable.
 It records the envelope, per-obligation results, evidence digests, timestamps,
-and zero model calls.
+and model usage.
+
+## Optional proof repair
+
+Run the control-process launcher to retain generated proof artifacts:
+
+```sh
+python3 portable/assist.py --envelope run.json --baseline protected/baseline.json \
+  --snapshot checkout --report report.json --artifacts /path/to/artifacts
+```
+
+The artifact directory must be outside the snapshot and baseline directory.
+The launcher checks committed evidence and tries a fixed deterministic tactic.
+Without `--model-config`, it does not make model requests. Each generated
+bundle must pass the same independent validator as committed evidence.
+
+To enable the OpenAI adapter, store the following JSON outside the snapshot
+and pass its path as `--model-config`. Replace the placeholder identities and
+set the limits for the selected model. `head` and `baseline_sha256` must match
+the run envelope. Use a new `run_id` for each run.
+
+```json
+{
+  "repository": "https://example.invalid/project.git",
+  "run_id": "unique-run-id",
+  "head": "full-commit-id",
+  "baseline_sha256": "approved-baseline-digest",
+  "authorized": true,
+  "private": true,
+  "private_source_consent": true,
+  "model": "gpt-4o-mini",
+  "limits": {
+    "context_bytes": 32768,
+    "input_tokens": 100000,
+    "output_tokens": 5000,
+    "cost_micros": 1000000,
+    "input_micros_per_million": 10000000,
+    "output_micros_per_million": 30000000,
+    "max_output_per_call": 1000
+  }
+}
+```
+
+Set `PROOFCI_OPENAI_API_KEY` in the control process. The proof container does
+not receive the key or network access. Private source consent defaults to false.
+The built-in adapter accepts `gpt-4o-mini`, `gpt-4o`, `gpt-4.1-mini`, and
+`gpt-4.1`; it does not expose model tools.
+The config must be protected from candidate changes. The configured token rates
+must be upper bounds for the selected model and service tier. The broker reserves
+the worst-case token cost before each call and retains that reservation when a
+provider response is unavailable. It limits each obligation to five requests
+and 120 seconds, and the run to 15 minutes. Lower resource limits still apply.
+
+The report contains request IDs, reservation and settlement transitions, usage,
+and paths relative to the artifact directory. The broker writes each transition
+to an append-only journal before continuing. A failed request with unknown
+usage remains marked `uncertain`. A reserved request without a later transition
+also has an unknown outcome. The journal does not guarantee exactly-once
+provider charging after a crash.
+The launcher does not commit artifacts or publish comments.
 
 Run unit checks with `python3 -m unittest discover -s portable`. The real
 passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 
 ```sh
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
+PROOFCI_TEST_PACKAGED=1 python3 portable/test_assist_linux.py
 ```
 
 A conditional contract may add `"precondition": {"lhs": "x", "op": "<", "rhs": "3"}`.
@@ -216,8 +276,10 @@ python3 portable/replay.py replay --bundle evidence.tar --sha256 <trusted-sha256
 ```
 
 Replay validates the archive before extraction, reconstructs a fresh checkout,
-and runs the same verifier without model calls or a proof-result cache. It
-compares the fresh obligation outcomes and evidence digests to the original
+and runs the same verifier without model calls or a proof-result cache. For a
+generated proof, it reconstructs the recorded suggestion and validates it
+against the archived candidate and contract. Replay compares fresh obligation
+outcomes and evidence digests to the original
 report. Exit 0 means a passing result was reproduced, 1 means a blocking result
 was reproduced, and 2 means replay failed or did not reproduce the result.
 The report explicitly says that historical CI publication was not reproduced.

@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 
 import proofci
+from assist import _run
 from container import IMAGE_ID
 
 MAX_ARCHIVE = 256 * 1024 * 1024
@@ -211,8 +212,50 @@ def replay(args):
             command.extend(['--search-results', str(root / 'search-results.json')])
         elif original.get('search_results_sha256') is not None:
             raise ValueError('bundle is missing search results')
-        status = subprocess.run(command).returncode
+        limits = envelope['resource_policy']
+        deadline = time.monotonic() + min(900, limits['timeout_seconds'], limits['cpu_seconds'])
+        status = _run(command, deadline)
         fresh = proofci.parse_json(read_file(result, 8 * 1024 * 1024))
+        if status in (0, 1) and isinstance(original.get('results'), list) and isinstance(fresh.get('results'), list):
+            # A generated proof body is untrusted input. Reconstruct and validate
+            # it against the archived candidate and contract before replaying it.
+            current = {item['id']: item for item in fresh['results']}
+            if len(current) != len(fresh['results']):
+                raise ValueError('duplicate replay obligation')
+            for index, item in enumerate(original['results']):
+                if (not isinstance(item, dict) or item.get('decision') != 'verified'
+                        or not isinstance(item.get('proof_suggestion'), str)):
+                    continue
+                prior = current.get(item.get('id'))
+                if prior is None or prior.get('decision') == 'violated':
+                    continue
+                if (prior.get('decision'), prior.get('reason'), prior.get('evidence_sha256')) == (
+                        item.get('decision'), item.get('reason'), item.get('evidence_sha256')):
+                    continue
+                body = item['proof_suggestion'].encode()
+                if len(body) > 65536:
+                    raise ValueError('proof suggestion exceeds size limit')
+                body_path = root / ('proof-' + str(index))
+                body_path.write_bytes(body)
+                attempt_path = root / ('attempt-' + str(index) + '.json')
+                attempt = [sys.executable, str(Path(__file__).with_name('container.py')),
+                    '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'),
+                    '--snapshot', str(snapshot), '--report', str(attempt_path), '--image', IMAGE_ID,
+                    '--repair-id', item['id'], '--proof-body', str(body_path)]
+                attempt_status = _run(attempt, deadline)
+                checked = proofci.parse_json(read_file(attempt_path, 8 * 1024 * 1024))
+                results = checked.get('results')
+                if (attempt_status == 1 and checked.get('status') == 'attempt' and isinstance(results, list)
+                        and checked.get('envelope') == envelope and checked.get('execution') == fresh.get('execution')
+                        and len(results) == 1 and isinstance(results[0], dict) and results[0].get('id') == item['id']
+                        and results[0].get('decision') == 'verified'):
+                    current[item['id']] = results[0]
+            fresh['results'] = [current[item['id']] for item in fresh['results']]
+            fresh['property_counts'] = {decision: sum(item['decision'] == decision for item in fresh['results'])
+                                        for decision in ('verified', 'violated', 'unproven')}
+            passed = all(item['decision'] == 'verified' for item in fresh['results'] if item['policy'] == 'required')
+            fresh['status'] = 'passed' if passed else 'blocked'
+            status = 0 if passed else 1
         def outcomes(report):
             return [(r['id'], r['policy'], r['decision'], r['reason'], r.get('evidence_sha256')) for r in report['results']]
         reproduced = status in (0, 1) and original.get('envelope') == envelope and original.get('status') == fresh.get('status') and original.get('execution') == fresh.get('execution') and isinstance(original.get('execution'), dict) and outcomes(original) == outcomes(fresh)

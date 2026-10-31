@@ -124,6 +124,16 @@ class CLITest(unittest.TestCase):
         self.assertEqual(report["results"][0]["reason"], "contradictory_evidence")
         self.assertEqual([e["evidence"] for e in report["results"][0]["submissions"]], ["missing", "refutation"])
 
+        def refutation_timeout(proof, *args):
+            if proof.name == "refutation":
+                raise subprocess.TimeoutExpired("refutation", 120)
+            return {"decision": "verified", "reason": "accepted"}, {"manifest.json": proofci.digest(proof / "manifest.json")}
+        with patch.object(sys, "argv", args), patch.object(proofci, "run_validator", side_effect=refutation_timeout):
+            self.assertEqual(proofci.main(), 1)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(report["results"][0]["decision"], "unproven")
+        self.assertEqual(report["results"][0]["reason"], "obligation_budget_exhausted")
+
     def test_search_exhaustion_is_a_nonpassing_unproven_reason(self):
         search = self.root / "search.json"
         search.write_text(json.dumps({"version": 1, "exhausted": ["one"]}))

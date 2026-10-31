@@ -248,6 +248,10 @@ def main():
     for name in ("envelope", "baseline", "snapshot", "toolchain", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--bwrap", type=Path)
+    parser.add_argument("--repair-id")
+    parser.add_argument("--proof-body", type=Path)
+    parser.add_argument("--artifacts", type=Path)
+    parser.add_argument("--attempt-only", action="store_true")
     parser.add_argument("--search-results", type=Path)
     args = parser.parse_args()
     start_monotonic = time.monotonic()
@@ -267,7 +271,7 @@ def main():
             raise ValueError("resource limits must be positive integers")
         if os.environ.get("PROOFCI_CONTAINER") == "1":
             check_container_limits(limits)
-        deadline = time.monotonic() + min(limits["timeout_seconds"], limits["cpu_seconds"])
+        deadline = time.monotonic() + min(900, limits["timeout_seconds"], limits["cpu_seconds"])
         signal.signal(signal.SIGALRM, timeout_signal)
         signal.setitimer(signal.ITIMER_REAL, max(0.000001, deadline - time.monotonic()))
         if hashlib.sha256(baseline_bytes).hexdigest() != envelope["baseline_sha256"]:
@@ -320,7 +324,17 @@ def main():
             if any(change["path"] == baseline["candidate"] for change in report["coverage"]["changes"]):
                 report["coverage"]["unsupported_changed_code"].append(
                     {"path": baseline["candidate"], "reason": candidate_reason, "required_dependency": True})
-        for item in baseline["obligations"]:
+        obligations = baseline["obligations"]
+        if args.attempt_only:
+            if args.repair_id is None or args.proof_body is None:
+                raise ValueError("an attempt requires an obligation and proof body")
+            obligations = [item for item in obligations if item["id"] == args.repair_id]
+            if not obligations:
+                raise ValueError("unknown repair obligation")
+        for item in obligations:
+            obligation_started = time.monotonic()
+            obligation_started_at = time.time()
+            obligation_deadline = min(deadline, obligation_started + 120)
             result = {"id": item["id"], "policy": item["policy"], "evidence": item["evidence"]}
             (contract, _), precondition = scope.binding.load_contract(bounded_read(path_in(baseline_root, item["contract"]), 16384))
             result["symbol"] = "target"
@@ -330,7 +344,7 @@ def main():
                 report["results"].append(result)
                 continue
             submissions = []
-            for name in (item["evidence"], item.get("refutation")):
+            for name in (() if args.attempt_only else (item["evidence"], item.get("refutation"))):
                 if name is None:
                     continue
                 proof = path_in(snapshot, name)
@@ -347,19 +361,25 @@ def main():
                             expected_evidence = {p.name: committed[str(p.relative_to(snapshot))] for p in proof.iterdir()}
                             checked, evidence_hashes = run_validator(proof, candidate, path_in(baseline_root, item["contract"]),
                                                     args.toolchain.resolve(strict=True), args.bwrap.resolve(strict=True),
-                                                    envelope["resource_policy"], deadline, envelope["candidate_sha256"], item["contract_sha256"], expected_evidence)
-                            verify_snapshot(snapshot, envelope, baseline, deadline)
-                            if time.monotonic() >= deadline:
+                                                    envelope["resource_policy"], obligation_deadline, envelope["candidate_sha256"], item["contract_sha256"], expected_evidence)
+                            verify_snapshot(snapshot, envelope, baseline, obligation_deadline)
+                            if time.monotonic() >= obligation_deadline:
                                 raise subprocess.TimeoutExpired("verification", envelope["resource_policy"]["timeout_seconds"])
                             if evidence_hashes != {p.name: digest(p) for p in sorted(proof.iterdir())}:
                                 raise ValueError("evidence changed during validation")
-                        except (subprocess.TimeoutExpired, RunTimeout):
-                            checked = {"decision": "unproven", "reason": "timeout"}
+                        except RunTimeout:
+                            raise
+                        except subprocess.TimeoutExpired:
+                            if time.monotonic() >= deadline:
+                                raise RunTimeout
+                            checked = {"decision": "unproven", "reason": "obligation_budget_exhausted"}
                         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
                             checked = {"decision": "unproven", "reason": "validation_unavailable", "detail": str(error)}
                 submissions.append({"evidence": name, "validation": checked, "evidence_sha256": evidence_hashes})
+            if not submissions:
+                submissions.append({"evidence": item["evidence"], "validation": {"decision": "unproven", "reason": "missing_evidence"}, "evidence_sha256": {}})
             accepted = [entry for entry in submissions if entry["validation"]["decision"] in ("verified", "violated")]
-            execution_errors = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence", "timeout"}
+            execution_errors = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence", "timeout", "obligation_budget_exhausted"}
             error_entry = next((entry for entry in submissions if entry["validation"]["reason"] in execution_errors), None)
             if len({entry["validation"]["decision"] for entry in accepted}) > 1:
                 result.update(decision="unproven", reason="contradictory_evidence")
@@ -367,6 +387,60 @@ def main():
                 selected = error_entry or (accepted[0] if accepted else next((entry for entry in submissions if entry["validation"]["reason"] != "missing_evidence"), submissions[0]))
                 result.update(evidence=selected["evidence"], decision=selected["validation"]["decision"], reason=selected["validation"]["reason"],
                               validation=selected["validation"], evidence_sha256=selected["evidence_sha256"])
+            if (result.get("decision") == "unproven" and args.bwrap is not None
+                    and os.environ.get("PROOFCI_CONTAINER") == "1"
+                    and result.get("reason") in ("missing_evidence", "invalid_evidence", "proof_failed", "unproven")):
+                import construct
+                import evidence
+                contract = path_in(baseline_root, item["contract"])
+                bodies = [] if args.attempt_only else ["rfl", "simp [target] <;> omega"]
+                if args.repair_id == item["id"] and args.proof_body is not None:
+                    bodies.append(bounded_read(args.proof_body, 65536).decode("utf-8"))
+                for body in bodies:
+                    try:
+                        with tempfile.TemporaryDirectory(prefix="proofci-generated-") as temp:
+                            generated = Path(temp) / "evidence"
+                            try:
+                                construct.construct(bounded_read(candidate, 16384), bounded_read(contract, 16384),
+                                                    body, args.toolchain.resolve(strict=True), generated, obligation_deadline)
+                            except (evidence.EvidenceError, evidence.BuildFailure, ValueError):
+                                continue
+                            hashes = {p.name: digest(p) for p in generated.iterdir()}
+                            checked, hashes = run_validator(generated, candidate, contract,
+                                args.toolchain.resolve(strict=True), args.bwrap.resolve(strict=True),
+                                limits, obligation_deadline, envelope["candidate_sha256"], item["contract_sha256"], hashes)
+                            verify_snapshot(snapshot, envelope, baseline, obligation_deadline)
+                            if time.monotonic() >= obligation_deadline:
+                                raise TimeoutError("obligation timed out")
+                            if checked["reason"] in ("validation_unavailable", "build_failure",
+                                                      "checker_disagreement", "contradictory_evidence"):
+                                result.update(decision="unproven", reason=checked["reason"], validation=checked)
+                                break
+                            if checked["decision"] == "verified":
+                                result.update(evidence=item["evidence"], decision="verified", reason=checked["reason"], validation=checked,
+                                              evidence_sha256=hashes, proof_suggestion=body)
+                                if args.artifacts is not None:
+                                    destination = Path(tempfile.mkdtemp(prefix="proof-", dir=args.artifacts))
+                                    for path in generated.iterdir():
+                                        (destination / path.name).write_bytes(path.read_bytes())
+                                    result["generated_artifact"] = destination.name
+                                break
+                    except evidence.ValidationUnavailable as error:
+                        if time.monotonic() >= deadline:
+                            raise RunTimeout
+                        reason = "obligation_budget_exhausted" if time.monotonic() >= obligation_deadline else "validation_unavailable"
+                        result.update(decision="unproven", reason=reason, detail=str(error))
+                        break
+                    except (TimeoutError, subprocess.TimeoutExpired):
+                        if time.monotonic() >= deadline:
+                            raise RunTimeout
+                        result.update(decision="unproven", reason="obligation_budget_exhausted")
+                        break
+                    except (OSError, RuntimeError) as error:
+                        result.update(decision="unproven", reason="validation_unavailable", detail=str(error))
+                        break
+            result["started_at"] = obligation_started_at
+            result["elapsed_seconds"] = time.monotonic() - obligation_started
             if result["decision"] == "unproven" and result["reason"] in ("missing_evidence", "proof_failed", "unproven") and item["id"] in exhausted:
                 result["reason"] = "search_exhausted"
                 result["search"] = {"status": "exhausted"}
@@ -382,9 +456,13 @@ def main():
             raise ValueError("validator execution failed")
         if time.monotonic() >= deadline:
             raise ValueError("verification timeout")
-        passed = all(r["decision"] == "verified" for r in report["results"] if r["policy"] == "required")
-        report["status"] = "passed" if passed else "blocked"
-        status = 0 if passed else 1
+        if args.attempt_only:
+            report["status"] = "attempt"
+            status = 1
+        else:
+            passed = all(r["decision"] == "verified" for r in report["results"] if r["policy"] == "required")
+            report["status"] = "passed" if passed else "blocked"
+            status = 0 if passed else 1
     except KeyboardInterrupt:
         report["reason"] = "cancelled"
         finish_unchecked(report, baseline, "cancelled")

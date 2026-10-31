@@ -12,20 +12,25 @@ import tempfile
 import time
 import uuid
 
-IMAGE_ID = "sha256:69f6b2a73ddd245bcaea963d01c4e00bafd2e9843d6c284109e792d97354ecc9"
+IMAGE_ID = "sha256:ee6ec3f4b5fd15350d929639a318787050b24e9aeeb6fff33540169a203574ad"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("envelope", "baseline", "snapshot", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
-    parser.add_argument("--image", default="proofci-validator-local")
+    parser.add_argument("--image", default=IMAGE_ID)
+    parser.add_argument("--repair-id")
+    parser.add_argument("--proof-body", type=Path)
+    parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--search-results", type=Path)
     args = parser.parse_args()
     report = args.report.resolve()
     try:
         if os.getuid() == 0:
             raise ValueError("run the launcher as an unprivileged user")
+        if (args.repair_id is None) != (args.proof_body is None):
+            raise ValueError("repair identity and proof body must be supplied together")
         with args.envelope.open("rb") as source:
             raw = source.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
@@ -35,7 +40,7 @@ def main():
         expected = {"timeout_seconds", "cpu_seconds", "memory_bytes", "file_bytes", "processes"}
         if set(limits) != expected or any(type(v) is not int or v <= 0 for v in limits.values()):
             raise ValueError("invalid resource policy")
-        deadline = time.monotonic() + min(limits["timeout_seconds"], limits["cpu_seconds"])
+        deadline = time.monotonic() + min(900, limits["timeout_seconds"], limits["cpu_seconds"])
         snapshot = args.snapshot.resolve(strict=True)
         baseline = args.baseline.resolve(strict=True)
         if not snapshot.is_dir() or not baseline.is_file():
@@ -77,6 +82,23 @@ def main():
                 "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/" + baseline.name,
                 "--snapshot", "/snapshot", "--toolchain", "/lean", "--bwrap", "/usr/bin/bwrap",
                 "--report", "/result/report.json"]
+            if args.artifacts is not None:
+                artifacts = args.artifacts.resolve(strict=True)
+                if not artifacts.is_dir():
+                    raise ValueError("artifact destination must be a directory")
+                command[command.index("-e"):command.index("-e")] = [
+                    "--mount", f"type=bind,src={artifacts},dst=/artifacts"]
+                command.extend(["--artifacts", "/artifacts"])
+            if args.proof_body is not None:
+                body = args.proof_body.read_bytes()
+                if len(body) > 65536:
+                    raise ValueError("proof body exceeds size limit")
+                body_path = temp / "body"
+                body_path.write_bytes(body)
+                os.chmod(body_path, 0o644)
+                command[command.index("-e"):command.index("-e")] = [
+                    "--mount", f"type=bind,src={body_path},dst=/runinput/body,readonly"]
+                command.extend(["--repair-id", args.repair_id, "--proof-body", "/runinput/body", "--attempt-only"])
             if args.search_results:
                 with args.search_results.open("rb") as source:
                     search_bytes = source.read(1024 * 1024 + 1)
