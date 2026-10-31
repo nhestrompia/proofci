@@ -84,8 +84,45 @@ class LinuxCLITests(unittest.TestCase):
             self.assertEqual(searched_report["results"][0]["decision"], "verified")
             self.assertEqual(searched_report["results"][1]["reason"], "search_exhausted")
             self.assertEqual(searched_report["results"][1]["search"]["status"], "exhausted")
+            search_archive = root / "search-evidence.tar"
+            exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
+                "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                "--search-results", str(root / "search.json"), "--output", str(search_archive)], capture_output=True, text=True)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            replay_report = root / "search-replay.json"
+            replayed = subprocess.run([sys.executable, str(HERE / "replay.py"), "replay", "--bundle", str(search_archive),
+                "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
+            self.assertEqual(replayed.returncode, 0, replayed.stderr + replay_report.read_text())
+            self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
             (root / "search.json").unlink()
+            status, report = run()
+            self.assertEqual(status, 0, report)
             self.assertIn("manifest.json", report["results"][0]["evidence_sha256"])
+            archive = root / "evidence.tar"
+            exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
+                "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                "--output", str(archive)], capture_output=True, text=True)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            replay_report = root / "replay.json"
+            replayed = subprocess.run([sys.executable, str(HERE / "replay.py"), "replay", "--bundle", str(archive),
+                "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
+            self.assertEqual(replayed.returncode, 0, replayed.stderr + replay_report.read_text())
+            self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
+            (snapshot / "unrelated.txt").write_text("unrelated change")
+            envelope["head"] = commit("unrelated change")
+            status, report = run()
+            self.assertEqual(status, 0, report)
+            self.assertEqual(report["results"][0]["decision"], "verified")
+            self.assertTrue(any(c["path"] == "unrelated.txt" for c in report["coverage"]["changes"]))
+            (snapshot / "candidate.lean").write_text("import Std\ndef target (x : Nat) : Nat := x + 1\n")
+            envelope["head"] = commit("unsupported")
+            envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["reason"], "unsupported_semantics")
+            shutil.copy(FIXTURES / "candidate.lean", snapshot / "candidate.lean")
+            envelope["head"] = commit("restore supported candidate")
+            envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")
             # Check a submitted witness through the public snapshot and report boundary.
             shutil.copy(FIXTURES / "conditional-contract.json", root / "contract.json")
             shutil.copytree(FIXTURES / "conditional", snapshot / "refutation")
@@ -100,6 +137,16 @@ class LinuxCLITests(unittest.TestCase):
             self.assertEqual(status, 1, report)
             self.assertEqual(report["results"][0]["decision"], "violated")
             self.assertEqual(report["results"][0]["validation"]["witness"], 0)
+            violated_archive = root / "violated-evidence.tar"
+            exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
+                "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                "--output", str(violated_archive)], capture_output=True, text=True)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            replay_report = root / "violated-replay.json"
+            replayed = subprocess.run([sys.executable, str(HERE / "replay.py"), "replay", "--bundle", str(violated_archive),
+                "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
+            self.assertEqual(replayed.returncode, 1, replayed.stderr + replay_report.read_text())
+            self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
             # A claimed different witness cannot reuse the checked exports.
             manifest_path = snapshot / "refutation" / "manifest.json"
             manifest = json.loads(manifest_path.read_text())

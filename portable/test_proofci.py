@@ -86,6 +86,9 @@ class CLITest(unittest.TestCase):
         report = json.loads((self.root / "report.json").read_text())
         self.assertEqual(report["results"][0]["decision"], "violated")
         self.assertEqual(report["results"][0]["evidence"], "refutation")
+        self.assertEqual(report["property_counts"]["violated"], 1)
+        self.assertTrue(any(c["path"].startswith("refutation/") and c["scope"] == "proof_evidence"
+                            for c in report["coverage"]["changes"]))
         self.assertEqual(report["status"], "blocked")
         # The same checked violation is visible but does not block an advisory obligation.
         baseline["obligations"][0]["policy"] = "advisory"
@@ -133,6 +136,78 @@ class CLITest(unittest.TestCase):
         self.assertEqual(report["results"][0]["reason"], "search_exhausted")
         self.assertEqual(report["results"][0]["decision"], "unproven")
         self.assertEqual(report["results"][1]["reason"], "missing_evidence")
+    def commit_changes(self):
+        subprocess.run(["git", "-C", str(self.snapshot), "add", "--all"], check=True)
+        subprocess.run(["git", "-C", str(self.snapshot), "commit", "-qm", "changes"], check=True)
+        head = subprocess.check_output(["git", "-C", str(self.snapshot), "rev-parse", "HEAD"], text=True).strip()
+        envelope_path = self.root / "envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["head"] = head
+        envelope["candidate_sha256"] = hashlib.sha256((self.snapshot / "candidate.lean").read_bytes()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope))
+
+    def test_complete_diff_and_admission_diagnostics(self):
+        for i in range(310):
+            (self.snapshot / f"file-{i}.txt").write_text("untrusted")
+        (self.snapshot / "uncovered\nname.lean").write_text("def target (x : Nat) : Nat := x + 2")
+        (self.snapshot / "unsupported.lean").write_text("import Evil\ndef target (x : Nat) : Nat := x")
+        self.commit_changes()
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual(len(report["coverage"]["changes"]), 312)
+        self.assertEqual(report["coverage"]["uncovered_supported_symbols"],
+                         [{"path": "uncovered\nname.lean", "symbol": "target"}])
+        self.assertTrue(any(x["path"] == "unsupported.lean" for x in report["coverage"]["unsupported_changed_code"]))
+        self.assertEqual([r["reason"] for r in report["results"]], ["missing_evidence"] * 2)
+        self.assertEqual(report["support"]["policy_version"], "lean-target-v1")
+
+    def test_unsupported_required_dependency_blocks_without_evidence(self):
+        (self.snapshot / "candidate.lean").write_text("import Evil\ndef target (x : Nat) : Nat := x")
+        self.commit_changes()
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual([r["reason"] for r in report["results"]], ["unsupported_semantics"] * 2)
+        self.assertIn("candidate must", report["support"]["unsupported_dependency"]["reason"])
+        self.assertEqual(report["results"][0]["property"], "target x = x + 1")
+
+    def test_diff_does_not_execute_external_diff_or_hooks(self):
+        (self.snapshot / "change.txt").write_text("change")
+        self.commit_changes()
+        marker = self.root / "executed"
+        script = self.root / "trap"
+        script.write_text("#!/bin/sh\ntouch '" + str(marker) + "'\n")
+        script.chmod(0o755)
+        subprocess.run(["git", "-C", str(self.snapshot), "config", "diff.external", str(script)], check=True)
+        hooks = self.root / "hooks"
+        hooks.mkdir()
+        (hooks / "post-checkout").symlink_to(script)
+        subprocess.run(["git", "-C", str(self.snapshot), "config", "core.hooksPath", str(hooks)], check=True)
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual(len(report["coverage"]["changes"]), 1)
+        self.assertFalse(marker.exists())
+
+    def test_oversized_candidate_is_unproven(self):
+        (self.snapshot / "candidate.lean").write_text("x" * 17000)
+        self.commit_changes()
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual(report["results"][0]["reason"], "unsupported_semantics")
+        self.assertIn("input limit", report["results"][0]["detail"])
+
+    def test_deleted_unsupported_code_and_docs_are_distinguished(self):
+        (self.snapshot / "old.lean").write_text("import Std")
+        self.commit_changes()
+        (self.snapshot / "old.lean").unlink()
+        (self.snapshot / "README.md").write_text("documentation")
+        self.commit_changes()
+        envelope_path = self.root / "envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["base"] = subprocess.check_output(["git", "-C", str(self.snapshot), "rev-parse", "HEAD^"], text=True).strip()
+        envelope_path.write_text(json.dumps(envelope))
+        status, report = self.run_cli()
+        self.assertEqual(status, 1)
+        self.assertEqual([x["path"] for x in report["coverage"]["unsupported_changed_code"]], ["old.lean"])
 
     def test_modified_baseline_is_configuration_error(self):
         (self.root / "baseline.json").write_text('{"version":1,"candidate":"x","obligations":[]}')
