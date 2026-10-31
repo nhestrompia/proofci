@@ -3,17 +3,39 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
+import tempfile
 import time
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+VALIDATOR = ROOT / "experiments/source-binding"
+IMAGE = "python@sha256:6a9220edda062e9223ea0784740a535987299420b96fbfd520b89bbd3e772485"
+BWRAP_SHA256 = "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976"
+TOOLCHAIN_SHA256 = "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00"
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    h = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def read_json(path):
+def bounded_read(path, limit):
+    with path.open("rb") as source:
+        data = source.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"{path.name} exceeds {limit} bytes")
+    return data
+
+
+def parse_json(data):
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -21,7 +43,7 @@ def read_json(path):
                 raise ValueError("duplicate field: " + key)
             result[key] = value
         return result
-    return json.loads(path.read_bytes(), object_pairs_hook=unique)
+    return json.loads(data, object_pairs_hook=unique)
 
 
 def fields(value, expected):
@@ -32,10 +54,74 @@ def fields(value, expected):
 def path_in(root, name):
     if not isinstance(name, str) or not name or Path(name).is_absolute():
         raise ValueError("expected relative path")
+    current = root
+    for part in Path(name).parts:
+        if part in (".", ".."):
+            raise ValueError("invalid path component")
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("symbolic links are not allowed in input paths")
     path = (root / name).resolve()
     if not path.is_relative_to(root):
         raise ValueError("path outside input root")
     return path
+
+
+def verify_snapshot(snapshot, envelope, baseline, deadline):
+    def git(*args):
+        return subprocess.check_output(["git", "-c", "core.fsmonitor=false", "-C", str(snapshot), *args],
+                                       stderr=subprocess.PIPE, text=True, timeout=max(0, deadline - time.monotonic())).strip()
+    if git("rev-parse", "--show-toplevel") != str(snapshot):
+        raise ValueError("snapshot must be the repository root")
+    if git("rev-parse", "HEAD") != envelope["head"]:
+        raise ValueError("snapshot head mismatch")
+    if git("rev-parse", "--verify", envelope["base"] + "^{commit}") != envelope["base"]:
+        raise ValueError("invalid base commit")
+    if git("remote", "get-url", "origin") != envelope["repository"]:
+        raise ValueError("repository identity mismatch")
+    if git("status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("snapshot has uncommitted changes")
+    paths = [baseline["candidate"]]
+    for item in baseline["obligations"]:
+        evidence = path_in(snapshot, item["evidence"])
+        if evidence.is_dir():
+            entries = list(evidence.iterdir())
+            if len(entries) > 4:
+                raise ValueError("evidence contains too many files")
+            if sum(entry.stat().st_size for entry in entries if entry.is_file()) > envelope["resource_policy"]["file_bytes"]:
+                raise ValueError("evidence exceeds file resource limit")
+            for item_path in entries:
+                if not item_path.is_file() or item_path.is_symlink():
+                    raise ValueError("evidence must contain regular files")
+                if item_path.stat().st_size > 8 * 1024 * 1024:
+                    raise ValueError("evidence file exceeds size limit")
+                paths.append(str(item_path.relative_to(snapshot)))
+    hashes = {}
+    for name in paths:
+        if git("ls-files", "--error-unmatch", "--", name) != name:
+            raise ValueError("candidate and evidence must be committed")
+        committed = subprocess.check_output(["git", "-C", str(snapshot), "show", envelope["head"] + ":" + name],
+                                            stderr=subprocess.PIPE, timeout=max(0, deadline - time.monotonic()))
+        if (snapshot / name).read_bytes() != committed:
+            raise ValueError("snapshot bytes differ from committed content")
+        hashes[name] = hashlib.sha256(committed).hexdigest()
+    return hashes
+
+
+def policy_digest():
+    h = hashlib.sha256()
+    for name in ("evidence.py", "binding.py", "admission.py", "toolchain.py", "core-dependencies.json"):
+        h.update(name.encode() + b"\0" + (VALIDATOR / name).read_bytes())
+    return h.hexdigest()
+
+
+def finish_unchecked(report, baseline, reason):
+    if isinstance(baseline, dict) and isinstance(baseline.get("obligations"), list):
+        completed = {result["id"] for result in report["results"]}
+        for item in baseline["obligations"]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"] not in completed and all(k in item for k in ("policy", "evidence")):
+                report["results"].append({"id": item["id"], "policy": item["policy"], "evidence": item["evidence"],
+                                          "decision": "unproven", "reason": reason})
 
 
 def validate(envelope, baseline, snapshot, baseline_root):
@@ -57,7 +143,7 @@ def validate(envelope, baseline, snapshot, baseline_root):
     if type(baseline["version"]) is not int or baseline["version"] != 1:
         raise ValueError("unsupported baseline version")
     candidate = path_in(snapshot, baseline["candidate"])
-    if digest(candidate) != envelope["candidate_sha256"]:
+    if hashlib.sha256(bounded_read(candidate, 16384)).hexdigest() != envelope["candidate_sha256"]:
         raise ValueError("candidate digest mismatch")
     obligations = baseline["obligations"]
     if not isinstance(obligations, list) or not obligations:
@@ -72,7 +158,7 @@ def validate(envelope, baseline, snapshot, baseline_root):
         if item["policy"] not in ("required", "advisory"):
             raise ValueError("invalid policy")
         required |= item["policy"] == "required"
-        if digest(path_in(baseline_root, item["contract"])) != item["contract_sha256"]:
+        if hashlib.sha256(bounded_read(path_in(baseline_root, item["contract"]), 16384)).hexdigest() != item["contract_sha256"]:
             raise ValueError("contract digest mismatch")
         path_in(snapshot, item["evidence"])
     if not required:
@@ -80,44 +166,161 @@ def validate(envelope, baseline, snapshot, baseline_root):
     return candidate
 
 
+def run_validator(proof, candidate, contract, toolchain, bwrap, limits, deadline, candidate_hash, contract_hash, expected_evidence):
+    if digest(bwrap) != BWRAP_SHA256:
+        raise ValueError("bubblewrap digest mismatch")
+    name = "proofci-" + uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(prefix="proofci-input-") as temp:
+        root = Path(temp)
+        (root / "candidate").write_bytes(bounded_read(candidate, 16384))
+        (root / "contract").write_bytes(bounded_read(contract, 16384))
+        (root / "evidence").mkdir()
+        for filename in expected_evidence:
+            (root / "evidence" / filename).write_bytes(bounded_read(proof / filename, 8 * 1024 * 1024))
+        os.chmod(root / "evidence", 0o755)
+        for staged in (root / "candidate", root / "contract", *(root / "evidence" / filename for filename in expected_evidence)):
+            os.chmod(staged, 0o644)
+        if digest(root / "candidate") != candidate_hash or digest(root / "contract") != contract_hash:
+            raise ValueError("staged candidate or contract digest mismatch")
+        evidence_hashes = {p.name: digest(p) for p in sorted((root / "evidence").iterdir())}
+        if evidence_hashes != expected_evidence:
+            raise ValueError("staged evidence differs from committed content")
+        os.chmod(root, 0o755)
+        command = ["docker", "create", "--name", name, "--label", f"proofci.run={os.getpid()}", "--rm", "--network", "none",
+                   "--platform", "linux/arm64", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                   "--security-opt", "seccomp=unconfined", "--security-opt", "systempaths=unconfined",
+                   "--user", "65534:65534", "--read-only", "--memory", str(min(limits["memory_bytes"], limits["file_bytes"])),
+                   "--memory-swap", str(min(limits["memory_bytes"], limits["file_bytes"])),
+                   "--pids-limit", str(limits["processes"]), "--cpus", "1", "--log-driver", "none",
+                   "--tmpfs", f"/tmp:rw,size={limits['file_bytes']},mode=1777",
+                   "--tmpfs", "/run:rw,size=1m,mode=1777", "-e", "HOME=/tmp",
+                   "--mount", f"type=bind,src={root},dst=/input,readonly",
+                   "--mount", f"type=bind,src={VALIDATOR},dst=/probe,readonly",
+                   "--mount", f"type=bind,src={toolchain},dst=/lean,readonly",
+                   "--mount", f"type=bind,src={bwrap},dst=/usr/bin/bwrap,readonly",
+                   IMAGE, "python3", "/probe/evidence.py", "/input/evidence", "/input/candidate",
+                   "/input/contract", "--toolchain", "/lean"]
+        try:
+            subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+                           timeout=max(0, deadline - time.monotonic()))
+        except BaseException:
+            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=15, check=False)
+            raise
+        try:
+            process = subprocess.Popen(["docker", "start", "-a", name], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except BaseException:
+            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=15, check=False)
+            raise
+        try:
+            stdout, stderr = process.communicate(timeout=max(0, deadline - time.monotonic()))
+        except BaseException:
+            try:
+                subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=15, check=False)
+            finally:
+                try:
+                    process.kill()
+                    process.communicate(timeout=15)
+                finally:
+                    subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=15, check=False)
+                    inspection = subprocess.run(["docker", "inspect", name], stdout=subprocess.DEVNULL,
+                                                stderr=subprocess.PIPE, timeout=15, check=False)
+                    if inspection.returncode == 0 or b"no such object" not in inspection.stderr.lower():
+                        raise RuntimeError("container cleanup could not be confirmed")
+            raise
+        if process.returncode not in (0, 1):
+            raise RuntimeError("validator container failed: " + stderr.decode(errors="replace")[-1000:])
+        result = json.loads(stdout)
+        if result.get("decision") not in ("verified", "unproven") or (process.returncode == 0) != (result["decision"] == "verified"):
+            raise RuntimeError("validator output and exit status disagree")
+        return result, evidence_hashes
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("envelope", "baseline", "snapshot", "toolchain", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
+    parser.add_argument("--bwrap", type=Path)
     args = parser.parse_args()
+    start_monotonic = time.monotonic()
     report = {"version": 1, "status": "error", "results": [], "started_at": time.time()}
     status = 2
+    baseline = None
     try:
-        envelope = read_json(args.envelope)
-        baseline = read_json(args.baseline)
+        report["execution"] = {"image": IMAGE, "bubblewrap_sha256": BWRAP_SHA256,
+                               "validator_policy_sha256": policy_digest()}
+        envelope = parse_json(bounded_read(args.envelope, 1024 * 1024))
+        baseline_bytes = bounded_read(args.baseline, 1024 * 1024)
+        baseline = parse_json(baseline_bytes)
         report["envelope"] = envelope
-        if digest(args.baseline) != envelope["baseline_sha256"]:
+        limits = envelope["resource_policy"]
+        fields(limits, ("timeout_seconds", "cpu_seconds", "memory_bytes", "file_bytes", "processes"))
+        if any(type(value) is not int or value <= 0 for value in limits.values()):
+            raise ValueError("resource limits must be positive integers")
+        deadline = time.monotonic() + min(limits["timeout_seconds"], limits["cpu_seconds"])
+        if hashlib.sha256(baseline_bytes).hexdigest() != envelope["baseline_sha256"]:
             raise ValueError("baseline digest mismatch")
         snapshot = args.snapshot.resolve(strict=True)
         baseline_root = args.baseline.resolve(strict=True).parent
         candidate = validate(envelope, baseline, snapshot, baseline_root)
+        if envelope["toolchain"] != TOOLCHAIN_SHA256:
+            raise ValueError("toolchain identity mismatch")
+        if envelope["dependency"] != digest(VALIDATOR / "core-dependencies.json"):
+            raise ValueError("dependency identity mismatch")
+        if envelope["trust_policy"] != policy_digest():
+            raise ValueError("trust policy identity mismatch")
+        verify_snapshot(snapshot, envelope, baseline, deadline)
         for item in baseline["obligations"]:
             proof = path_in(snapshot, item["evidence"])
             result = {"id": item["id"], "policy": item["policy"], "evidence": item["evidence"]}
             if not proof.exists():
                 result.update(decision="unproven", reason="missing_evidence")
             else:
-                result.update(decision="unproven", reason="validation_unavailable")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    result.update(decision="unproven", reason="timeout")
+                elif args.bwrap is None:
+                    result.update(decision="unproven", reason="validation_unavailable")
+                else:
+                    try:
+                        committed = verify_snapshot(snapshot, envelope, baseline, deadline)
+                        expected_evidence = {p.name: committed[str(p.relative_to(snapshot))] for p in proof.iterdir()}
+                        checked, evidence_hashes = run_validator(proof, candidate, path_in(baseline_root, item["contract"]),
+                                                args.toolchain.resolve(strict=True), args.bwrap.resolve(strict=True),
+                                                envelope["resource_policy"], deadline, envelope["candidate_sha256"], item["contract_sha256"], expected_evidence)
+                        verify_snapshot(snapshot, envelope, baseline, deadline)
+                        if time.monotonic() >= deadline:
+                            raise subprocess.TimeoutExpired("verification", envelope["resource_policy"]["timeout_seconds"])
+                        if evidence_hashes != {p.name: digest(p) for p in sorted(proof.iterdir())}:
+                            raise ValueError("evidence changed during validation")
+                        result.update(decision=checked["decision"], reason=checked["reason"], validation=checked,
+                                      evidence_sha256=evidence_hashes)
+                    except subprocess.TimeoutExpired:
+                        result.update(decision="unproven", reason="timeout")
+                    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+                        result.update(decision="unproven", reason="validation_unavailable", detail=str(error))
             report["results"].append(result)
-        failures = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence"}
+        failures = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence", "timeout"}
         if any(r["reason"] in failures for r in report["results"]):
             raise ValueError("validator execution failed")
+        if time.monotonic() >= deadline:
+            raise ValueError("verification timeout")
         passed = all(r["decision"] == "verified" for r in report["results"] if r["policy"] == "required")
-        if passed:
-            raise ValueError("snapshot and policy identities are not yet independently verified")
-        report["status"] = "blocked"
-        status = 1
+        report["status"] = "passed" if passed else "blocked"
+        status = 0 if passed else 1
     except KeyboardInterrupt:
         report["reason"] = "cancelled"
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, UnicodeError) as error:
+        finish_unchecked(report, baseline, "cancelled")
+    except subprocess.TimeoutExpired:
+        report["reason"] = "timeout"
+        finish_unchecked(report, baseline, "timeout")
+    except (OSError, ValueError, KeyError, TypeError, RecursionError, UnicodeError, subprocess.CalledProcessError) as error:
         report["reason"] = str(error)
     report["finished_at"] = time.time()
-    report["usage"] = {"model_calls": 0}
+    report["usage"] = {"model_calls": 0, "elapsed_seconds": time.monotonic() - start_monotonic}
     try:
         args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     except OSError as error:
