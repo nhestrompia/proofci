@@ -60,7 +60,7 @@ class LinuxCLITests(unittest.TestCase):
                 command = [sys.executable, str(HERE / "container.py"),
                     "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
                     "--snapshot", str(snapshot), "--report", str(root / "report.json"),
-                    "--image", "sha256:ac3afc9c6af4bd70c5833105931561745d7e42701c2bfce246bc69d7f4076ea1"]
+                    "--image", "sha256:1dabadbf1992e8f45adb13d6ee8efa7a0aaa5bf7676855dd611c1d38c5ed6ccb"]
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)
@@ -87,6 +87,18 @@ class LinuxCLITests(unittest.TestCase):
                 "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
             self.assertEqual(replayed.returncode, 0, replayed.stderr + replay_report.read_text())
             self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
+            (snapshot / "unrelated.txt").write_text("unrelated change")
+            envelope["head"] = commit("unrelated change")
+            status, report = run()
+            self.assertEqual(status, 0, report)
+            self.assertEqual(report["results"][0]["decision"], "verified")
+            self.assertTrue(any(c["path"] == "unrelated.txt" for c in report["coverage"]["changes"]))
+            (snapshot / "candidate.lean").write_text("import Std\ndef target (x : Nat) : Nat := x + 1\n")
+            envelope["head"] = commit("unsupported")
+            envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["reason"], "unsupported_semantics")
             (snapshot / "candidate.lean").write_text("def target (x : Nat) : Nat := x + 2\n")
             envelope["head"] = commit("changed")
             envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")

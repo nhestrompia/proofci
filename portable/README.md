@@ -149,6 +149,31 @@ configuration error. A replacement baseline cannot be activated by this local
 command; an authorized migration and retirement workflow is separate and is not
 implemented here. No draft or model output activates itself.
 
+## Scope and change diagnostics
+
+The report's `support` section names the fixed adapter policy version and
+validator digest, trusted tools, assumptions, exclusions and source-level
+boundary. The protected verifier determines this policy; files in the candidate
+checkout cannot extend it. Each result states the admitted `target` and its
+approved equation. A required candidate rejected by the adapter is `unproven`
+with `unsupported_semantics`, even when evidence is missing or obsolete.
+
+`coverage.changes` lists the complete base-to-head Git tree diff, including
+object IDs, modes and paths. Git filenames and file contents are untrusted data.
+`unsupported_changed_code` and `uncovered_supported_symbols` are separate from
+`property_counts`. Foreign-language code with a recognized source suffix is listed as unsupported.
+Other paths remain visible as outside scope in the full diff; filenames alone
+cannot reliably identify all code. Their presence
+alone does not block the gate. Every registered obligation is still checked.
+Proof evidence files are identified separately from target code. The adapter
+accepts only the single declaration described in the validator README, so an
+independently admitted `target` in another changed Lean file is uncovered.
+
+A passing gate establishes only the listed approved properties of that admitted
+source definition, under the reported assumptions. It does not verify the whole
+repository, compiled binaries, deployment, or foreign-language code. Rust and
+Aeneas are deferred experimental work and are not supported frontends.
+
 ## Export and replay evidence
 
 Export a completed run with its original inputs and report:
