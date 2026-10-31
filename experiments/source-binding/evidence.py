@@ -62,8 +62,16 @@ class ValidationUnavailable(RuntimeError):
     """The pinned validator is not available in this environment."""
 
 
+class ValidationTimeout(ValidationUnavailable):
+    """The fixed validator exceeded its time budget."""
+
+
 class BuildFailure(RuntimeError):
     """A fixed validation command failed before the checker decision."""
+
+
+class ProofFailure(RuntimeError):
+    """Lean could not construct the submitted proof."""
 
 
 class CheckerDisagreement(RuntimeError):
@@ -83,6 +91,8 @@ class EvidenceBundle:
     solution_export: bytes
     candidate_sha256: str
     contract_sha256: str
+    claimed_decision: str
+    witness: int | None
     permitted_axioms: frozenset[str] = PERMITTED_AXIOMS
 
 
@@ -118,12 +128,14 @@ def _json(data, label):
 
 def _manifest(bundle):
     manifest = _json(_read(bundle / FILES["manifest"], 16 * 1024, "manifest"), "manifest")
-    if not isinstance(manifest, dict) or set(manifest) != MANIFEST_FIELDS:
+    if not isinstance(manifest, dict) or set(manifest) not in (MANIFEST_FIELDS, MANIFEST_FIELDS | {"witness"}):
         raise EvidenceError("manifest fields do not match the trusted bundle format")
     if manifest["version"] != BUNDLE_VERSION:
         raise EvidenceError("unsupported evidence bundle version")
-    if manifest["claimed_decision"] != "verified":
-        raise EvidenceError("only a claimed verified result can be submitted as proof evidence")
+    if manifest["claimed_decision"] not in ("verified", "violated"):
+        raise EvidenceError("unsupported evidence claim")
+    if "witness" in manifest and (manifest["claimed_decision"] != "violated" or type(manifest["witness"]) is not int or not 0 <= manifest["witness"] <= 1000000):
+        raise EvidenceError("unsupported witness")
     for field in MANIFEST_FIELDS - {"version", "claimed_decision"}:
         if (not isinstance(manifest[field], str)
                 or not re.fullmatch(r"[0-9a-f]{64}", manifest[field])):
@@ -182,11 +194,19 @@ def load_bundle(bundle_path, candidate_path, contract_path):
     except ValueError as error:
         raise EvidenceError(f"export policy rejected evidence: {error}") from error
     return EvidenceBundle(candidate, contract, solution, challenge_export, solution_export,
-                          manifest["candidate_sha256"], manifest["contract_sha256"])
+                          manifest["candidate_sha256"], manifest["contract_sha256"],
+                          manifest["claimed_decision"], manifest.get("witness"))
 
 
 def _sources(bundle):
     _, _, identity, statement, challenge = binding.build_sources(bundle.candidate, bundle.contract)
+    if bundle.claimed_decision == "violated":
+        rhs, _ = binding.load_contract(bundle.contract)
+        proposition = f"¬ (∀ x : Nat, target x = {rhs})"
+        if bundle.witness is not None:
+            proposition += f" ∧ (let x : Nat := {bundle.witness}; ¬ (target x = {rhs}))"
+        statement = f"theorem contract : {proposition} := by "
+        challenge = "import CandidateCheck\n" + statement + "sorry\n"
     solution = bundle.solution.decode("utf-8")
     return identity, statement, challenge, solution
 
@@ -218,7 +238,9 @@ def _write_workspace(root, bundle):
     root.joinpath(SOLUTION_SCRIPT).write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "/lean/bin/lake build Candidate CandidateCheck Solution >/dev/null\n"
+        "if ! /lean/bin/lake build Candidate CandidateCheck Solution > /tmp/proofci-build.log 2>&1; then\n"
+        "  /bin/cat /tmp/proofci-build.log >&2; exit 1\n"
+        "fi\n"
         "/lean/bin/lake env leanexport Solution -- contract > /tmp/proofci-solution.ndjson\n"
         "printf '%s\\n' 'PROOFCI_SOLUTION_BEGIN'\n"
         "/usr/bin/base64 -w0 /tmp/proofci-solution.ndjson\n"
@@ -331,7 +353,7 @@ def _run(toolchain, workspace, policy_path, args, timeout=120, allow_failure=Fal
         process.wait()
         for reader in readers:
             reader.join(1)
-        raise ValidationUnavailable(f"validator command timed out: {error}") from error
+        raise ValidationTimeout(f"validator command timed out: {error}") from error
     except BaseException:
         kill_group()
         process.wait()
@@ -344,7 +366,7 @@ def _run(toolchain, workspace, policy_path, args, timeout=120, allow_failure=Fal
         kill_group()
         for reader in readers:
             reader.join(1)
-        raise ValidationUnavailable("validator output did not close before timeout")
+        raise ValidationTimeout("validator output did not close before timeout")
     if overflow.is_set():
         raise BuildFailure(f"{' '.join(args)} exceeded output limit")
     stdout = bytes(streams["stdout"])
@@ -358,6 +380,16 @@ def _run(toolchain, workspace, policy_path, args, timeout=120, allow_failure=Fal
         return process.returncode, stdout
     output = _decode(stdout + stderr)
     return process.returncode, output[-64 * 1024:]
+
+
+def _run_solution(toolchain, workspace, policy_path, **options):
+    try:
+        return _run(toolchain, workspace, policy_path, (),
+                    entrypoint=("/bin/sh", f"/workspace/{SOLUTION_SCRIPT}"), **options)
+    except BuildFailure as error:
+        if "error: Solution.lean:" in str(error):
+            raise ProofFailure(str(error)) from error
+        raise
 
 
 def _extract_export(output, marker):
@@ -439,10 +471,7 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
                     entrypoint=("/bin/sh", f"/workspace/{CHALLENGE_SCRIPT}")
                 )
                 _extract_export(challenge_output, CHALLENGE_MARKER)
-                _, solution_output = _run(
-                    toolchain, construction, policy_path, (),
-                    entrypoint=("/bin/sh", f"/workspace/{SOLUTION_SCRIPT}")
-                )
+                _, solution_output = _run_solution(toolchain, construction, policy_path)
                 _extract_export(solution_output, SOLUTION_MARKER)
 
             with tempfile.TemporaryDirectory(prefix="proofci-validation-") as validation_dir:
@@ -454,10 +483,7 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
                     entrypoint=("/bin/sh", f"/workspace/{CHALLENGE_SCRIPT}"), **run_options
                 )
                 challenge_export = _extract_export(challenge_output, CHALLENGE_MARKER)
-                _, solution_output = _run(
-                    toolchain, validation, policy_path, (),
-                    entrypoint=("/bin/sh", f"/workspace/{SOLUTION_SCRIPT}"), **run_options
-                )
+                _, solution_output = _run_solution(toolchain, validation, policy_path, **run_options)
                 solution_export = _extract_export(solution_output, SOLUTION_MARKER)
                 if challenge_export != bundle.challenge_export:
                     raise EvidenceError("fresh challenge export differs from submitted evidence")
@@ -477,8 +503,12 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
         return _invalid("checker_disagreement", error)
     except ContradictoryEvidence as error:
         return _invalid("contradictory_evidence", error)
+    except ProofFailure as error:
+        return _invalid("proof_failed", error)
     except BuildFailure as error:
         return _invalid("build_failure", error)
+    except ValidationTimeout as error:
+        return _invalid("timeout", error)
     except ValidationUnavailable as error:
         return _invalid("validation_unavailable", error)
     except OSError as error:
@@ -495,13 +525,15 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
     if decision != "verified":
         return _invalid("unproven", "the fixed checker did not accept the proof")
     return {
-        "decision": "verified",
+        "decision": bundle.claimed_decision,
         "reason": "accepted by the reconstructed challenge and independent checkers",
+        "statement_sha256": sha(_sources(bundle)[1].encode()),
         "candidate_sha256": bundle.candidate_sha256,
         "contract_sha256": bundle.contract_sha256,
         "permitted_axioms": sorted(PERMITTED_AXIOMS),
         "checker": list(TRUSTED_CHECKER),
         "policy": "fixed source-binding validator",
+        **({"witness": bundle.witness} if bundle.witness is not None else {}),
     }
 
 
@@ -516,7 +548,7 @@ def main():
     args = parser.parse_args()
     result = validate_bundle(args.bundle, args.candidate, args.contract, args.toolchain)
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["decision"] == "verified" else 1
+    return 0 if result["decision"] in ("verified", "violated") else 1
 
 
 if __name__ == "__main__":

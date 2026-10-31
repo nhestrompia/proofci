@@ -59,7 +59,8 @@ class LinuxCLITests(unittest.TestCase):
                 (root / "envelope.json").write_text(json.dumps(envelope))
                 command = [sys.executable, str(HERE / "container.py"),
                     "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
-                    "--snapshot", str(snapshot), "--report", str(root / "report.json")]
+                    "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                    "--image", os.environ.get("PROOFCI_TEST_IMAGE", "proofci-validator-local")]
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)
@@ -76,6 +77,38 @@ class LinuxCLITests(unittest.TestCase):
                 (output / "passing.json").write_text(json.dumps({"envelope": envelope, "baseline": baseline, "report": report}, indent=2) + "\n")
             self.assertEqual([x["decision"] for x in report["results"]], ["verified", "unproven"])
             self.assertIn("manifest.json", report["results"][0]["evidence_sha256"])
+            # Check a submitted witness through the public snapshot and report boundary.
+            shutil.copy(FIXTURES / "violated-contract.json", root / "contract.json")
+            shutil.copytree(FIXTURES / "violated", snapshot / "refutation")
+            baseline["obligations"][0]["contract_sha256"] = sha(root / "contract.json")
+            baseline["obligations"][0]["refutation"] = "refutation"
+            baseline["obligations"][1]["contract_sha256"] = sha(root / "contract.json")
+            shutil.rmtree(snapshot / "evidence")
+            envelope["head"] = commit("submit witness")
+            (root / "baseline.json").write_text(json.dumps(baseline))
+            envelope["baseline_sha256"] = sha(root / "baseline.json")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["decision"], "violated")
+            self.assertEqual(report["results"][0]["validation"]["witness"], 0)
+            # A claimed different witness cannot reuse the checked exports.
+            manifest_path = snapshot / "refutation" / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["witness"] = 1
+            manifest_path.write_text(json.dumps(manifest))
+            envelope["head"] = commit("wrong witness")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["decision"], "unproven")
+            # Restore the positive proof for the obsolete-proof and timeout tests.
+            shutil.rmtree(snapshot / "refutation")
+            shutil.copytree(FIXTURES / "verified", snapshot / "evidence")
+            shutil.copy(FIXTURES / "contract.json", root / "contract.json")
+            del baseline["obligations"][0]["refutation"]
+            for item in baseline["obligations"]:
+                item["contract_sha256"] = sha(root / "contract.json")
+            (root / "baseline.json").write_text(json.dumps(baseline))
+            envelope["baseline_sha256"] = sha(root / "baseline.json")
             (snapshot / "candidate.lean").write_text("def target (x : Nat) : Nat := x + 2\n")
             envelope["head"] = commit("changed")
             envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")

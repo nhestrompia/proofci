@@ -27,7 +27,8 @@ A version 1 baseline has this shape:
       "policy": "required",
       "contract": "contracts/increment.json",
       "contract_sha256": "<sha256 of contract bytes>",
-      "evidence": "proofs/increment"
+      "evidence": "proofs/increment",
+      "refutation": "proofs/increment-refutation"
     }
   ]
 }
@@ -36,7 +37,10 @@ A version 1 baseline has this shape:
 Contract paths are relative to the baseline directory; candidate and evidence
 paths are relative to the checkout. Evidence uses the
 [bundle format](../experiments/source-binding/evidence-format.md). IDs must be
-unique and at least one obligation must be required.
+unique and at least one obligation must be required. The optional `refutation`
+path supplies a second independent evidence bundle. Both submissions are
+validated, and contradictory accepted evidence is an error with both references
+retained. Required violations block; advisory violations remain visible.
 
 A version 1 envelope contains `version`, `repository`, `head`, `base`,
 `candidate_sha256`, `baseline_sha256`, `dependency`, `toolchain`,

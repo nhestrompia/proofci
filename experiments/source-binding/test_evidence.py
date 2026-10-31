@@ -80,6 +80,28 @@ class EvidenceBundleTests(unittest.TestCase):
         self.assertEqual(loaded.candidate_sha256, digest(self.candidate.read_bytes()))
         self.assertEqual(loaded.permitted_axioms, evidence.PERMITTED_AXIOMS)
 
+    def test_refutation_challenge_is_the_negation_of_the_approved_proposition(self):
+        self.write_bundle(claimed_decision="violated")
+        bundle = evidence.load_bundle(self.bundle, self.candidate, self.contract)
+        _, _, challenge, _ = evidence._sources(bundle)
+        self.assertIn("¬ (∀ x : Nat, target x = x + 1)", challenge)
+
+    def test_witness_is_bound_to_a_concrete_failure(self):
+        self.write_bundle(claimed_decision="violated", witness=2)
+        bundle = evidence.load_bundle(self.bundle, self.candidate, self.contract)
+        _, _, challenge, _ = evidence._sources(bundle)
+        self.assertIn("let x : Nat := 2; ¬ (target x = x + 1)", challenge)
+
+    def test_witness_forms_are_strictly_admitted(self):
+        for witness in (-1, True, "0", 1000001):
+            with self.subTest(witness=witness):
+                self.write_bundle(claimed_decision="violated", witness=witness)
+                self.assertEqual(evidence.validate_bundle(self.bundle, self.candidate, self.contract)["reason"], "invalid_evidence")
+
+    def test_wrong_candidate_refutation_is_invalid(self):
+        self.write_bundle(claimed_decision="violated", candidate_sha256="0" * 64)
+        self.assertEqual(evidence.validate_bundle(self.bundle, self.candidate, self.contract)["reason"], "invalid_evidence")
+
     def test_candidate_hash_mismatch_is_invalid_evidence(self):
         self.write_bundle(candidate_sha256="0" * 64)
         result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)

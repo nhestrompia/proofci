@@ -36,7 +36,7 @@ HEADER = ["def", "target", "(", "x", ":", "Nat", ")", ":", "Nat", ":="]
 EXPORT_SHAPES = {
     frozenset(("in", key)) for key in ("str", "num")
 } | {
-    frozenset(("il", key)) for key in ("succ", "max", "param")
+    frozenset(("il", key)) for key in ("succ", "max", "imax", "param")
 } | {
     frozenset(("ie", key)) for key in
     ("app", "bvar", "const", "forallE", "lam", "letE", "natVal", "proj", "sort", "strVal")
