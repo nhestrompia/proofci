@@ -104,8 +104,8 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, dependency_manif
                                 envelope["resource_policy"]["cpu_seconds"])
         candidate = proofci.validate(envelope, baseline, snapshot, baseline_path.parent)
         _preflight(envelope, baseline, snapshot, baseline_path.parent, deadline)
-        if artifact_manifest is not None and artifacts is None:
-            raise ValueError("worker artifact directory is required with an artifact manifest")
+        if (artifact_manifest is None) != (artifacts is None):
+            raise ValueError("worker artifact directory and manifest must be supplied together")
         if artifacts is not None:
             artifact_input = Path(artifacts)
             if artifact_input.is_symlink():
