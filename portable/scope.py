@@ -41,23 +41,26 @@ def describe(snapshot, base, head, baseline, deadline):
         entry = {"path": name, "status": status, "old_mode": old_mode[1:],
                  "new_mode": new_mode, "old_object": old_oid, "new_object": new_oid}
         changes.append(entry)
-        if new_mode == "000000":
-            entry["scope"] = "deleted"
-        elif name == baseline["candidate"]:
+        deleted = new_mode == "000000"
+        mode = old_mode[1:] if deleted else new_mode
+        oid = old_oid if deleted else new_oid
+        if name == baseline["candidate"]:
             entry["scope"] = "bound_candidate"
         elif any(name == root or name.startswith(root + "/") for root in evidence_roots):
             entry["scope"] = "proof_evidence"
-        elif name.endswith(".lean") and new_mode in ("100644", "100755"):
-            size = int(git("cat-file", "-s", new_oid))
-            reason = "source exceeds adapter input limit" if size > 16384 else admission(git("cat-file", "blob", new_oid))
+        elif name.endswith(".lean") and mode in ("100644", "100755"):
+            size = int(git("cat-file", "-s", oid))
+            reason = "source exceeds adapter input limit" if size > 16384 else admission(git("cat-file", "blob", oid))
             if reason is None:
-                entry["scope"] = "uncovered_supported_symbol"
-                uncovered.append({"path": name, "symbol": "target"})
+                entry["scope"] = "deleted_supported_symbol" if deleted else "uncovered_supported_symbol"
+                if not deleted:
+                    uncovered.append({"path": name, "symbol": "target"})
             else:
                 entry["scope"] = "unsupported_code"
                 unsupported.append({"path": name, "reason": reason})
         else:
             entry["scope"] = "outside_supported_scope"
-            unsupported.append({"path": name, "reason": "outside the admitted Lean candidate scope"})
+            if Path(name).suffix.lower() in {".rs", ".c", ".h", ".cc", ".cpp", ".hpp", ".py", ".rb", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".sh"}:
+                unsupported.append({"path": name, "reason": "language outside the admitted Lean candidate scope"})
     return {"changes": changes, "unsupported_changed_code": unsupported,
             "uncovered_supported_symbols": uncovered}

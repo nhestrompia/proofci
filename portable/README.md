@@ -54,10 +54,11 @@ extracted bubblewrap package from the
 
 ```sh
 docker buildx build --provenance=false --build-arg SOURCE_DATE_EPOCH=0 \
-  --load --platform linux/arm64 \
+  --output type=docker,dest=proofci-validator.tar,rewrite-timestamp=true --platform linux/arm64 \
   --build-context lean=/path/to/lean-4.35.0-linux_aarch64 \
   --build-context bubblewrap=/path/to/extracted-bubblewrap \
   -f portable/Dockerfile -t proofci-validator-local .
+docker load -i proofci-validator.tar
 ```
 
 The build checks the tool digests. The launcher rejects an image whose ID does
@@ -102,7 +103,9 @@ with `unsupported_semantics`, even when evidence is missing or obsolete.
 `coverage.changes` lists the complete base-to-head Git tree diff, including
 object IDs, modes and paths. Git filenames and file contents are untrusted data.
 `unsupported_changed_code` and `uncovered_supported_symbols` are separate from
-`property_counts`. Other files are outside the admitted scope; their presence
+`property_counts`. Foreign-language code with a recognized source suffix is listed as unsupported.
+Other paths remain visible as outside scope in the full diff; filenames alone
+cannot reliably identify all code. Their presence
 alone does not block the gate. Every registered obligation is still checked.
 Proof evidence files are identified separately from target code. The adapter
 accepts only the single declaration described in the validator README, so an

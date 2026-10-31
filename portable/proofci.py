@@ -171,7 +171,7 @@ def validate(envelope, baseline, snapshot, baseline_root):
     if type(baseline["version"]) is not int or baseline["version"] != 1:
         raise ValueError("unsupported baseline version")
     candidate = path_in(snapshot, baseline["candidate"])
-    if hashlib.sha256(bounded_read(candidate, 16384)).hexdigest() != envelope["candidate_sha256"]:
+    if hashlib.sha256(bounded_read(candidate, limits["file_bytes"])).hexdigest() != envelope["candidate_sha256"]:
         raise ValueError("candidate digest mismatch")
     obligations = baseline["obligations"]
     if not isinstance(obligations, list) or not obligations:
@@ -274,7 +274,9 @@ def main():
         if envelope["trust_policy"] != policy_digest():
             raise ValueError("trust policy identity mismatch")
         verify_snapshot(snapshot, envelope, baseline, deadline)
-        candidate_reason = scope.admission(bounded_read(candidate, 16384))
+        candidate_bytes = bounded_read(candidate, limits["file_bytes"])
+        candidate_reason = ("source exceeds adapter input limit" if len(candidate_bytes) > 16384
+                            else scope.admission(candidate_bytes))
         report["support"] = {
             "policy_version": scope.SUPPORT_VERSION,
             "policy_sha256": policy_digest(),
@@ -287,6 +289,9 @@ def main():
                            "compiled binaries, deployment, foreign languages and all other repository code"],
             "guarantee": "Named approved properties of the admitted source-level target only",
             "trusted_tools": ["Lean kernel", "Lean exporter", "Nanoda", "Comparator", "source adapter"],
+            "lean_commit": scope.binding.LEAN_COMMIT,
+            "toolchain_sha256": TOOLCHAIN_SHA256,
+            "deferred_frontends": ["Rust/Aeneas"],
         }
         report["coverage"] = scope.describe(snapshot, envelope["base"], envelope["head"], baseline, deadline)
         if candidate_reason is not None:
