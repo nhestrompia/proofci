@@ -1,0 +1,700 @@
+{
+  "feature": "ProofCI MVP",
+  "state": "proposed-awaiting-approval",
+  "tracker": "https://github.com/nhestrompia/proofci",
+  "publicationLabel": "ready-for-agent",
+  "source": "docs/specs/proofci-mvp.md",
+  "deferred": [
+    "Supported Rust/Aeneas frontend",
+    "Native GitLab service",
+    "Selective obligation skipping",
+    "Cross-run proof-result caching",
+    "Dashboard and billing",
+    "Automatic commits and PR comments",
+    "General multi-tenant scale guarantees"
+  ],
+  "tickets": [
+    {
+      "id": 1,
+      "slug": "source-bound-trust-spike",
+      "title": "Demonstrate proof binding to the changed Lean implementation",
+      "lane": "Verification",
+      "blockedBy": [],
+      "delivers": "A maintainer submits an approved contract and actual Lean candidate to an executable spike and gets evidence showing whether the theorem concerns that candidate, including a defective change that rejects the old proof.",
+      "acceptance": [
+        "A pure, total function and reviewed contract produce reproducible binding evidence through real Lean tooling. The spike records candidate, contract, definition, dependency, and toolchain identities.",
+        "A valid proof about the base implementation cannot establish the contract after the candidate changes to violate it. A separately shadowed implementation is also rejected.",
+        "The admitted syntax, core types, imports, and declaration restrictions are executable and documented. Unsupported macros, instances, runtime replacements, and source substitutions fail closed.",
+        "Trusted challenge construction fixes specification helpers and resolves implementation references to the admitted candidate definitions. The spike explains why source hashes or Comparator success alone do not establish this link.",
+        "At least ten reviewed contracts and bounded mutation variants exercise correct changes, defective changes, and misleading statement dependencies. Record observed go/no-go findings rather than assumed feasibility.",
+        "A fresh Linux environment reproduces the spike with pinned tools. Acceptance as complete requires an affirmative recorded binding go decision. A no-go finding keeps this prerequisite unresolved and requires a narrower spec before downstream verification claims proceed."
+      ],
+      "ownership": "Own the trusted source/challenge adapter and admitted-definition identity. Later tickets consume this adapter rather than reconstruct source bindings.",
+      "stories": [
+        6,
+        15,
+        20,
+        21,
+        43
+      ]
+    },
+    {
+      "id": 2,
+      "slug": "hostile-worker-probe",
+      "title": "Run a hostile probe in a disposable Linux worker",
+      "lane": "Execution",
+      "blockedBy": [],
+      "delivers": "An operator launches an adversarial probe in an ephemeral Linux VM and receives a report of denied access, resource limits, and complete cleanup before real repository verification is connected.",
+      "acceptance": [
+        "A documented launcher boots an actual disposable VM or microVM and returns the probe result without requiring a verifier, GitHub installation, or model provider.",
+        "Probe attempts to read host home, credential sentinels, another workspace, a container-management socket, or arbitrary network endpoints are denied. No real credentials are used as probe data.",
+        "CPU, memory, disk, process-count, log-size, and time-limit probes terminate predictably and identify the exceeded limit.",
+        "Cancellation terminates the entire guest job and its descendants. A subsequent job cannot read the previous job's temporary state.",
+        "The report records the tested Linux host and isolation configuration. Unsupported virtualization or sandbox combinations fail with an explicit prerequisite error.",
+        "The launcher exposes a narrow job input and artifact handoff interface. It does not label probe success as formal verification or accept hosted public PR jobs yet."
+      ],
+      "ownership": "Own the VM launcher, guest resource limits, cancellation, and access probes. The later hosted-run ticket connects the real verifier.",
+      "stories": [
+        31,
+        33,
+        35,
+        37
+      ]
+    },
+    {
+      "id": 3,
+      "slug": "github-installation",
+      "title": "Enroll a GitHub installation and authorize repository access",
+      "lane": "GitHub",
+      "blockedBy": [],
+      "delivers": "A maintainer installs ProofCI, selects a repository, and sees its authorized access and enforcement configuration without exposing installation credentials.",
+      "acceptance": [
+        "A real test installation uses contents read, pull requests read, checks write, and metadata access. Any optional administration-read permission has an explicit policy-inspection purpose.",
+        "Installation and selected repository IDs control authorization. An arbitrary repository name, removed repository, suspended installation, or uninstall cannot authorize new work.",
+        "Repository-restricted installation credentials renew safely and remain in the control service. Responses and logs contain no private keys or access tokens.",
+        "A trusted maintainer operation verifies the actor's current repository authority rather than accepting a caller-supplied actor name. This identity check is reusable by later rerun, fork, and migration operations.",
+        "Onboarding reports enforcement as confirmed, misconfigured, or unconfirmed using actual available evidence. It explains the expected-App required check and fresh-merge policy.",
+        "Enrollment alone never claims that contracts are activated or that verification protects merges. Missing external setup is reported as a concrete prerequisite."
+      ],
+      "ownership": "Own installation records, GitHub authentication, repository authorization, and trusted maintainer identity. Do not own baseline activation or event scheduling.",
+      "stories": [
+        1,
+        22,
+        24,
+        37
+      ]
+    },
+    {
+      "id": 4,
+      "slug": "independent-proof-validation",
+      "title": "Accept proof evidence under an independent fixed trust policy",
+      "lane": "Verification",
+      "blockedBy": [
+        1
+      ],
+      "delivers": "A submitted proof bundle receives an authoritative decision against the trusted, source-bound challenge in a clean validation environment.",
+      "acceptance": [
+        "Valid evidence passes challenge comparison, export-format validation, fresh kernel replay, and a configured external checker using pinned core tooling.",
+        "Direct and transitive sorry, custom axioms, native-evaluation trust, and unvalidated declarations cannot produce acceptance. Record the explicit permitted foundational axioms.",
+        "Candidate checker commands, toolchains, policy files, or proof placeholders cannot override the trusted validation policy.",
+        "Forged exports, malformed bundles, changed declarations, weakened statements, altered helpers, and wrong-candidate evidence receive blocking invalid-evidence decisions.",
+        "Checker disagreement, contradictory evidence, build failure, or unavailable validation returns a distinct nonpassing reason. There is no weaker fallback acceptance path.",
+        "The adversarial trust corpus has zero false acceptances. Untrusted proof construction cannot mutate the challenge or privileged validation environment.",
+        "Establish and test protected proof construction and final validation in this ticket. Reconstruct the challenge from authoritative immutable inputs, prevent construction artifacts from replacing it, and keep untrusted elaboration and binary artifacts out of the privileged checker process. Do not defer this boundary to hosted dispatch."
+      ],
+      "ownership": "Own evidence validation and normalized decisions, including checker invocation. Reuse source admission from ticket 01. External callers cannot supply trusted executable commands.",
+      "stories": [
+        15,
+        17,
+        18,
+        21,
+        31,
+        43
+      ]
+    },
+    {
+      "id": 5,
+      "slug": "deterministic-cli",
+      "title": "Verify every approved obligation through a portable CLI",
+      "lane": "Verification",
+      "blockedBy": [
+        4
+      ],
+      "delivers": "A maintainer supplies an exact snapshot and protected baseline, runs deterministic verification without a model, and receives a complete report, evidence references, and public exit status.",
+      "acceptance": [
+        "Every registered required and advisory obligation is checked through the real adapter and validator. A diff or relevance suggestion cannot remove an obligation.",
+        "Valid committed proofs produce verified results without model calls. Missing or obsolete proofs produce unproven results with specific reasons.",
+        "The versioned run envelope and report carry repository, head, base, candidate, baseline, dependency, toolchain, trust-policy, resource-policy, evidence, timing, and usage identities.",
+        "A valid policy with at least one required property passes only when all required obligations are verified. Empty baselines, missing fields, unknown versions, deleted obligations, and invalid configuration cannot pass.",
+        "Exit 0 means a passing gate, exit 1 means completed blocking results, and exit 2 means configuration or execution failure. A report is written on failure when the destination remains available.",
+        "Build representative passing and failing input/report fixtures and a pinned Linux distribution. Later agents can consume these public interfaces without importing Lean internals. Obtain an explicit maintainer license decision before any public distribution; a local-only image may precede that decision.",
+        "Enforce supplied deterministic resource and time limits. Timeout and cancellation terminate the entire construction/checking process tree and produce a specific nonpassing report and exit status when possible."
+      ],
+      "ownership": "Own the public CLI, versioned input/report contracts, deterministic orchestration, and aggregate gate. This ticket establishes the shared boundary for parallel feature work.",
+      "stories": [
+        2,
+        10,
+        11,
+        12,
+        17,
+        18,
+        20,
+        21,
+        33,
+        39,
+        40,
+        41
+      ]
+    },
+    {
+      "id": 6,
+      "slug": "approved-baselines",
+      "title": "Activate and preserve reviewed contract baselines",
+      "lane": "Contracts",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "A maintainer reviews formal contracts, activates a validated immutable baseline, and checks future candidates against the same promised guarantees.",
+      "acceptance": [
+        "A contract retains a stable ID, explanation, owner, formal statement, assumptions, specification closure, implementation bindings, and required or advisory policy.",
+        "Activation verifies every required property on the initial implementation through the CLI boundary. Invalid activation leaves the prior baseline authoritative.",
+        "Approval records identify the exact reviewed baseline and trusted approving identity. Draft or AI-suggested requirements never become active automatically.",
+        "Candidate deletion, ID rename, changed helper, stronger precondition, altered import, or required-to-advisory change appears as a proposed guarantee change and cannot silently replace the active baseline.",
+        "Existing obligations still apply to the changed implementation. Removing required symbols or omitting registered obligations blocks the gate.",
+        "A local initialization-and-follow-up-change demonstration records protected-source requirements and exposes immutable lookup for hosted adapters."
+      ],
+      "ownership": "Own baseline activation, immutable contract storage/lookup, and guarantee-change records. Use the existing run interface and validator without changing acceptance rules.",
+      "stories": [
+        3,
+        4,
+        5,
+        7,
+        8,
+        9,
+        41,
+        42
+      ]
+    },
+    {
+      "id": 7,
+      "slug": "checked-violations",
+      "title": "Distinguish checked violations from unresolved proofs",
+      "lane": "Verification",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "A maintainer submits a refutation or supported counterexample and receives violated only when independent validation establishes failure of the approved property.",
+      "acceptance": [
+        "A proof of the exact proposition's negation produces violated with bound evidence. A supported concrete witness also checks the instantiated failure and its preconditions.",
+        "Wrong-candidate witnesses, false preconditions, malformed submissions, unsupported witness forms, and confident text without proof cannot produce violated.",
+        "Tactic failure, missing proof, search exhaustion, and timeouts remain unproven with specific reasons.",
+        "Refutations use the same source binding, statement identity, and trust policy as successful proofs.",
+        "Required violated and unproven outcomes block the gate. Advisory outcomes remain visible without blocking.",
+        "Contradictory accepted evidence becomes an explicit validation error and retains both evidence references. Do not add automatic counterexample search."
+      ],
+      "ownership": "Own refutation/witness admission and result classification through the existing validation boundary. Do not own AI search or general theorem acceptance.",
+      "stories": [
+        16,
+        17,
+        40
+      ]
+    },
+    {
+      "id": 8,
+      "slug": "evidence-replay",
+      "title": "Export evidence and reproduce verification in a fresh environment",
+      "lane": "Evidence",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "A maintainer exports a run's evidence and reproduces validation without trusting the original worker's claimed result or contacting a model.",
+      "acceptance": [
+        "An immutable bundle contains or identifies the exact baseline, candidate, dependencies, toolchain, policy, proofs, report, and their digests.",
+        "A fresh Linux environment reconstructs recorded supported inputs and independently validates the evidence through the same verifier.",
+        "Changed source, helpers, contracts, tools, policy, or evidence cannot appear as reproduction of the original run. A forged report cannot substitute for its underlying proof.",
+        "Missing inputs, unavailable remote artifacts, and unsupported bundle versions produce actionable nonpassing results.",
+        "Oversized artifacts, archive traversal, hostile names, and invalid extraction paths are rejected before entering trusted state.",
+        "Replay explicitly distinguishes a reproduced proof result from historical CI publication and does not reuse cross-run proof-result caches."
+      ],
+      "ownership": "Own bundle packaging, safe ingestion, and replay. Hosted storage uses this format rather than inventing a second archive or verifier.",
+      "stories": [
+        2,
+        14,
+        20,
+        21,
+        35,
+        39,
+        40
+      ]
+    },
+    {
+      "id": 9,
+      "slug": "scope-and-coverage",
+      "title": "Explain supported scope and uncovered changes",
+      "lane": "Verification",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "A reviewer sees exactly which definitions and properties the run covers, which changes lack coverage, and why unsupported behavior blocks a required guarantee.",
+      "acceptance": [
+        "A complete Git object diff explains changed code without executing hooks or trusting an API file-list cap. Filenames and repository text remain untrusted data.",
+        "Required dependencies containing excluded semantics produce unproven with a support reason and block the gate.",
+        "Unsupported changed code and uncovered supported symbols are listed separately from property counts. Existing obligations are still rechecked for unrelated changes.",
+        "Reports identify the support-policy version, assumptions, exclusions, and source-level guarantee boundary. Candidate support policy cannot expand the admitted subset.",
+        "Legitimate trusted proof tooling is distinguished from excluded target-program behavior. This ticket consumes admission facts instead of introducing another parser.",
+        "The report and contributor guidance never imply whole-repository, binary, deployment, or foreign-language verification. Rust/Aeneas is described only as deferred experimental work."
+      ],
+      "ownership": "Own diff summaries and public support/coverage diagnostics. The source adapter remains the sole admission authority.",
+      "stories": [
+        10,
+        11,
+        19,
+        21,
+        43,
+        44
+      ]
+    },
+    {
+      "id": 10,
+      "slug": "bounded-ai-repair",
+      "title": "Repair proofs within consent and spending limits",
+      "lane": "AI assistance",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "An unresolved property can receive an optional proof-body repair through a credential-holding broker, with independent acceptance and visible total usage.",
+      "acceptance": [
+        "A real Lean fixture with a correct implementation and obsolete proof becomes verified only after a valid proposed repair passes the existing independent validator.",
+        "Committed proofs and deterministic tactics run first. Model-disabled and deterministic-success runs make zero model requests.",
+        "Enforce five attempts, 120 seconds per obligation, 15 minutes per run, and configured context, token, and monetary ceilings. Exhaustion or provider failure leaves unresolved properties unproven.",
+        "Private-source transmission defaults to disabled. Repository-scoped consent and request authorization are checked before source leaves the deployment.",
+        "Candidate output and repository instructions cannot change statements, bindings, assumptions, required status, budgets, dependencies, or checker commands. Agents can edit only their proof workspace. Broker requests for arbitrary network access, publishing, unauthorized repository context, or workspace escape are denied. Provider keys stay outside proof execution.",
+        "The report includes usage for successful and failed attempts and retains generated proof artifacts or patch suggestions. No automatic commits or comments occur.",
+        "Persist or expose stable request identities and accounting transitions for later recovery integration. Do not claim exactly-once charging from an in-memory retry loop."
+      ],
+      "ownership": "Own proof assistance, broker operations, consent, budgets, and request-accounting interfaces. Keep the validator and public report schema with their existing owners.",
+      "stories": [
+        12,
+        13,
+        14,
+        17,
+        25,
+        33,
+        34,
+        36
+      ]
+    },
+    {
+      "id": 11,
+      "slug": "isolated-verification-dispatch",
+      "title": "Complete a real verification run through isolated dispatch",
+      "lane": "Execution",
+      "blockedBy": [
+        2,
+        5
+      ],
+      "delivers": "A trusted caller dispatches an immutable snapshot to an isolated worker and receives an authoritative result derived from independently validated evidence.",
+      "acceptance": [
+        "The same snapshot and baseline produce equivalent normalized local and dispatched outcomes through real Lean checking.",
+        "A restricted fetcher stages approved dependencies by immutable identity. Candidate hooks, submodule destinations, toolchain substitutions, and arbitrary dependency URLs cannot override policy.",
+        "Candidate build and proof search receive no publishing or provider credentials, host home, arbitrary network, shared writable trusted cache, or container-management socket.",
+        "Final validation runs separately from proof construction. A forged worker JSON report cannot establish a verified property.",
+        "Bound raw worker artifacts by identity, size, count, path, and allowed file type; reject symlink escapes and cache-poisoning attempts. This handoff does not parse evidence archives. Archive packaging and ingestion use the separate evidence interface when integrated. Resource exhaustion or cancellation terminates the whole execution tree and yields a specific nonpassing report.",
+        "Run inputs and result artifacts use the public CLI contracts. Dispatch is exercisable through a trusted operator command without waiting for GitHub publication."
+      ],
+      "ownership": "Own snapshot/dependency staging and worker-to-validator dispatch integration. Reuse the VM launcher and authoritative verifier, with no GitHub-specific logic.",
+      "stories": [
+        18,
+        20,
+        31,
+        32,
+        33,
+        35,
+        40
+      ]
+    },
+    {
+      "id": 12,
+      "slug": "durable-github-admission",
+      "title": "Turn signed GitHub events into durable verification runs",
+      "lane": "GitHub",
+      "blockedBy": [
+        3,
+        6,
+        11
+      ],
+      "delivers": "A signed event for an enrolled repository and active baseline becomes one durable isolated head-snapshot verification run, with explicitly nonenforcing scope, surviving duplicate deliveries and worker interruption.",
+      "acceptance": [
+        "Validate the raw-body webhook signature and installation/repository scope before scheduling. Invalid, unauthorized, or revoked inputs create no work.",
+        "Persist accepted events before acknowledgment and respond within the platform deadline. Delivery retries converge on one logical run generation.",
+        "Resolve the immutable branch head and protected baseline for a nonenforcing head-snapshot run. Provide generic admission for already resolved immutable candidates so the check publisher can later submit actual GitHub test-merge commits without creating a circular dependency. Identical notifications cannot duplicate logical work.",
+        "Leases and monotonic generations recover accepted work after service or worker restart. Late workers cannot replace a newer authoritative completion.",
+        "Cancellation and supersession persist across restart and prevent dispatch of obsolete jobs. Run inspection exposes completed reports and clear terminal failures. Record queue, execution, and recovery timings through the shared report interface.",
+        "A real signed pilot delivery runs the actual isolated verifier. Reconciliation recovers missed applicable deliveries without reviving obsolete candidates. Provider-charge recovery is completed separately before hosted AI is enabled."
+      ],
+      "ownership": "Own delivery persistence, generic run lifecycle, leases, scheduling, and durable cancellation. Platform-specific candidate policies and publication use these operations.",
+      "stories": [
+        1,
+        28,
+        29,
+        30,
+        31,
+        40
+      ]
+    },
+    {
+      "id": 13,
+      "slug": "authoritative-github-check",
+      "title": "Publish an authoritative check on the actual PR merge candidate",
+      "lane": "GitHub",
+      "blockedBy": [
+        8,
+        12
+      ],
+      "delivers": "A real pull request receives one stable ProofCI check on GitHub's actual test-merge commit, with validated outcomes, evidence, and recoverable publication.",
+      "acceptance": [
+        "Resolve the actual GitHub test-merge commit, head, base, and baseline. A local commit with the same tree is not substituted. Missing, conflicting, or unresolved candidates produce a clear blocking result.",
+        "The check reports the exact candidate, approved scope, assumptions, exclusions, and property outcomes. Provide a basic authenticated run-detail endpoint with the full report, immutable evidence digests, and retrieval of the persisted evidence bundle after worker cleanup. The later hosted-evidence ticket extends this boundary with object storage and retention.",
+        "Only the authoritative validated report can yield success. Required unresolved properties, invalid policy, execution failures, cancellations, and timeouts cannot satisfy the enforcing gate.",
+        "A publication outbox retries transient API errors without rerunning successful proof work or creating duplicate logical checks. Record publication latency through the shared timing contract. Installation publishing credentials never enter workers.",
+        "More than 50 annotations publish in valid batches and preserve the aggregate outcome. Truncated summaries retain access to the full report.",
+        "Before successful publication, recheck head, base, baseline, and run generation. A live pilot demonstrates correct check association and expected-App configuration."
+      ],
+      "ownership": "Own test-merge resolution, Checks API publication, annotations, and the publication outbox. Use durable run generations and evidence interfaces instead of duplicating them.",
+      "stories": [
+        20,
+        22,
+        23,
+        26,
+        30,
+        40
+      ]
+    },
+    {
+      "id": 14,
+      "slug": "pr-freshness-and-reruns",
+      "title": "Keep PR checks fresh through updates, reruns, and cancellation",
+      "lane": "GitHub",
+      "blockedBy": [
+        13
+      ],
+      "delivers": "Contributors can update, retarget, close, and rerun a PR while obsolete proof work cannot satisfy the current merge gate.",
+      "acceptance": [
+        "Creation, synchronization, reopening, readiness, retargeting, and closure follow documented run behavior through the existing scheduler.",
+        "Force-pushes and target-branch advances resolve fresh candidates and baselines. Late old completions cannot overwrite or authorize newer inputs.",
+        "Rerun requests verify the actor's current repository authority and create an attempt for current immutable inputs. Unauthorized and cross-repository requests are denied.",
+        "Obsolete work is durably cancelled or superseded. Cancellation prevents later dispatch and terminates active execution through the worker boundary.",
+        "A protected pilot PR demonstrates that an old result does not satisfy a changed candidate, including a base advance during proof search.",
+        "Document the required fresh-branch or merge-queue policy and administrator bypass limitations. An unconfirmed repository policy is not described as enforced."
+      ],
+      "ownership": "Own PR-specific lifecycle coordination. Reuse generic generations, cancellation, candidate resolution, and publication without changing their internals.",
+      "stories": [
+        22,
+        26,
+        28,
+        29,
+        30
+      ]
+    },
+    {
+      "id": 15,
+      "slug": "merge-queue-checks",
+      "title": "Verify merge-group candidates independently",
+      "lane": "GitHub",
+      "blockedBy": [
+        13
+      ],
+      "delivers": "A GitHub merge queue receives a fresh check for its exact merge-group commit, even when that candidate differs from individually verified PRs.",
+      "acceptance": [
+        "Merge-group events resolve the actual group commit and trusted baseline and create an independently identified run generation.",
+        "Successful PR evidence cannot substitute for a different merge-group candidate. Reports distinguish test-merge and merge-group scope.",
+        "Replacement, cancellation, and outdated groups cannot let late completions satisfy the current group. Missing candidates produce explicit nonpassing results.",
+        "A real pilot merge queue demonstrates correct required-check association, a passing group, and a blocked defective group.",
+        "If the account lacks the required queue feature, record the external prerequisite and leave acceptance incomplete. Protocol mocks do not establish queue enforcement."
+      ],
+      "ownership": "Own merge-group event handling and queue-specific freshness. Share resolver and generation interfaces with the PR lane; do not depend on its full lifecycle feature.",
+      "stories": [
+        26,
+        27,
+        28
+      ]
+    },
+    {
+      "id": 16,
+      "slug": "fork-admission-and-cost-control",
+      "title": "Admit fork verification with explicit cost authorization",
+      "lane": "GitHub",
+      "blockedBy": [
+        10,
+        12
+      ],
+      "delivers": "External contributors receive deterministic verification without secrets, while costly proof assistance requires maintainer approval and repository quota.",
+      "acceptance": [
+        "Resolve fork source and destination identities explicitly. Returned check-to-PR associations alone cannot authorize work.",
+        "A real fork candidate completes deterministic isolated verification without provider, installation, signing, or other repository credentials entering candidate execution.",
+        "Costly assistance is denied or deferred without an authorized maintainer decision, source-transmission consent, and available repository quota.",
+        "Approval binds exact inputs and loses validity after a relevant push, baseline change, revocation, or changed resource policy. Candidate code and agent output cannot approve themselves.",
+        "Closing access or cancelling a run prevents subsequent dispatch and broker requests. Existing in-flight calls follow an explicit documented revocation boundary.",
+        "A malicious fork attempts credential, host, network, and cross-repository cache access and receives denied access with trusted diagnostics. Keep paid hosted requests disabled until durable request recovery passes; final release acceptance must demonstrate an authorized fork repair after that gate opens."
+      ],
+      "ownership": "Own fork admission and approval policy. Reuse installation authorization, isolated dispatch, and broker accounting rather than adding alternate execution paths.",
+      "stories": [
+        24,
+        25,
+        28,
+        31,
+        33,
+        34,
+        35
+      ]
+    },
+    {
+      "id": 17,
+      "slug": "github-actions-wrapper",
+      "title": "Run the verifier in an unprivileged GitHub Actions job",
+      "lane": "Portable CI",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "A repository runs the pinned CLI in Actions and retains its report, evidence, and blocking exit result without creating a second verification engine.",
+      "acceptance": [
+        "A real Actions job runs the pinned Linux distribution on passing, unproven, and execution-failure fixtures and preserves their normalized reports and exit codes.",
+        "Available reports and evidence upload even when the verifier exits nonzero. The wrapper never converts a failed verifier into a successful required gate.",
+        "Fork deterministic checking requires no model or publishing credentials and executes candidate code in an unprivileged PR context.",
+        "The example never obtains secrets by executing candidate code in a privileged pull_request_target workflow. It records whether it checks a head or actual merge result.",
+        "The guide uses a protected baseline and explains that an editable candidate workflow alone is not an authoritative gate. Queue-enabled examples include the appropriate merge-group trigger.",
+        "Keep the wrapper thin. Later property-result additions flow through the public CLI interface without wrapper-specific verification rules."
+      ],
+      "ownership": "Own Actions packaging, examples, and platform-specific acceptance. Do not modify CLI semantics or depend on the native App.",
+      "stories": [
+        2,
+        24,
+        37,
+        39,
+        40
+      ]
+    },
+    {
+      "id": 18,
+      "slug": "gitlab-portability",
+      "title": "Reproduce portable verification in GitLab merge request CI",
+      "lane": "Portable CI",
+      "blockedBy": [
+        5
+      ],
+      "delivers": "A GitLab project runs the same CLI in a merge request pipeline and receives equivalent normalized outcomes without a native GitLab service.",
+      "acceptance": [
+        "A real merge request pipeline runs representative passing, unproven, and execution-failure snapshots through the same pinned distribution and baselines as local acceptance.",
+        "Equivalent immutable inputs yield equivalent normalized property outcomes, gate results, and exit codes. Platform metadata differences remain explicit.",
+        "Reports and available evidence remain accessible after nonzero verification results.",
+        "Source-branch pipelines state their head-only scope. Merged-result claims require an actually exercised corresponding pipeline mode.",
+        "Baseline retrieval uses protected CI configuration and documents credential and fork limitations.",
+        "The example requires neither GitLab Ultimate external status checks nor native adapter support. It remains independent of the Actions wrapper."
+      ],
+      "ownership": "Own GitLab examples, identity mapping, and live portability acceptance. Use the shared CLI and image unchanged.",
+      "stories": [
+        2,
+        24,
+        38,
+        39,
+        40
+      ]
+    },
+    {
+      "id": 19,
+      "slug": "authorized-contract-migration",
+      "title": "Migrate contracts with exact maintainer authorization",
+      "lane": "Contracts",
+      "blockedBy": [
+        3,
+        6,
+        11
+      ],
+      "delivers": "An authenticated maintainer deliberately replaces an active baseline while recording changed and retired guarantees and preserving the old baseline until validation succeeds.",
+      "acceptance": [
+        "A dedicated trusted migration operation binds the previous baseline, exact replacement, candidate, and currently authorized maintainer identity.",
+        "Ordinary review approval, caller-supplied actor names, candidate code, or agent output cannot authorize migration.",
+        "A changed candidate, replacement, baseline, or revoked authority invalidates the authorization. Concurrent migrations cannot overwrite a newer baseline.",
+        "The replacement activates atomically only after all its required obligations pass deterministic verification. Failed or interrupted migration leaves the previous baseline authoritative.",
+        "A successful record names retired guarantees and states that policy changed. It never reports preservation of removed contracts.",
+        "Ordinary implementation runs enforce the prior baseline until activation. A live repository demonstration exercises authorized replacement and rejected stale approval."
+      ],
+      "ownership": "Own durable migration authorization records and atomic baseline transitions. Use the existing baseline store, trusted identity check, and isolated dispatch. No webhook scheduling dependency is needed.",
+      "stories": [
+        7,
+        8,
+        9,
+        28,
+        42
+      ]
+    },
+    {
+      "id": 20,
+      "slug": "hosted-evidence-lifecycle",
+      "title": "Retrieve and expire repository-scoped hosted evidence",
+      "lane": "Evidence",
+      "blockedBy": [
+        3,
+        8,
+        11
+      ],
+      "delivers": "An authorized maintainer downloads evidence from an operator-dispatched hosted run, replays it locally, and receives an explicit expiration result after the retention period, independently of GitHub webhook scheduling.",
+      "acceptance": [
+        "Completed runs store immutable evidence references and digests consistent with their authoritative reports using the shared bundle format.",
+        "Every upload and download enforces installation, repository, run, and actor scope. Cross-repository identifiers disclose neither existence nor contents.",
+        "A downloaded bundle replays successfully in a fresh environment without model or platform calls. A forged or altered bundle cannot reproduce the historical result.",
+        "Artifact sizes, names, archive paths, and content types are checked before ingestion. Candidate uploads cannot replace trusted configuration or security diagnostics.",
+        "A configurable 30-day default expires promised hosted artifacts. Evidence links explain expiration without rewriting historical property outcomes.",
+        "A retention/access demonstration covers revoked access, cross-repository requests, download, replay, and expiration against actual persisted artifacts."
+      ],
+      "ownership": "Own hosted artifact storage, scoped delivery, and retention. Reuse local bundle/replay and installation authorization; do not invent another evidence format.",
+      "stories": [
+        14,
+        20,
+        21,
+        31,
+        35,
+        37,
+        40
+      ]
+    },
+    {
+      "id": 21,
+      "slug": "durable-ai-attempt-recovery",
+      "title": "Recover model attempts without blind duplicate spending",
+      "lane": "AI assistance",
+      "blockedBy": [
+        10,
+        12
+      ],
+      "delivers": "A hosted assisted run survives interruption while preserving its budget, request history, and uncertainty about provider calls whose responses were lost.",
+      "acceptance": [
+        "Persist reservations, request IDs, usage, completion, and cancellation across service restart. Recovered attempts cannot reset repository or run budgets.",
+        "Duplicate dispatch of a logical attempt converges on the same durable record. Use provider idempotency only where its actual semantics support safe retries.",
+        "A crash after a provider accepts a request but before a response is recorded produces reconciliation or an explicit uncertain attempt. It does not automatically resubmit an unsafe duplicate call.",
+        "Reports account for failed and uncertain attempts without inventing exact usage. Stop or reserve further spending conservatively when the configured ceiling cannot be justified.",
+        "Cancellation, supersession, consent revocation, and removed access survive restart and block new provider calls. Late results cannot replace a newer run generation.",
+        "Fault injection covers reservation, send, response persistence, validation, and publication handoff. Hosted paid AI is not enabled until these recovery cases pass."
+      ],
+      "ownership": "Own durable broker accounting and uncertain-call reconciliation. Reuse generic run recovery and the broker interface; do not duplicate GitHub publication state.",
+      "stories": [
+        25,
+        28,
+        29,
+        30,
+        33,
+        34,
+        36
+      ]
+    },
+    {
+      "id": 22,
+      "slug": "reproducible-corpus-evaluation",
+      "title": "Evaluate deterministic and assisted runs on a frozen corpus",
+      "lane": "Evaluation",
+      "blockedBy": [
+        6,
+        7,
+        9,
+        10
+      ],
+      "delivers": "Maintainers run a repeatable evaluation and inspect supported coverage, proof outcomes, latency, total cost, and the measured contribution of AI assistance.",
+      "acceptance": [
+        "Freeze at least 30 reviewed properties across three small Lean packages covering arithmetic, collections, and state transitions before measuring assistance.",
+        "Include correct changes, intentional violations, valid code with obsolete proofs, contract mutations, source substitutions, forbidden axioms, and forged evidence.",
+        "Every soundness and persistence scenario has zero false verified results. A false acceptance blocks release and cannot be hidden from the aggregate report.",
+        "The evaluation command reports deterministic and assisted outcomes separately, including unproven reasons, unsupported inputs, invalid submissions, timeouts, failed attempts, total usage, and cost.",
+        "Record hardware, toolchain, dependency identity, cache state, cold/warm behavior, median, and p95. Assess warm deterministic median below 60 seconds and p95 below five minutes without relaxing proof policy.",
+        "Emit reusable machine-readable and human-readable evaluation artifacts. Report model nondeterminism and unknown cost separately from deterministic acceptance, and require measured utility before default paid assistance."
+      ],
+      "ownership": "Own the corpus, scenario runner, evaluation aggregation, and outcome metrics. This is a runnable maintainer capability, not permission to change acceptance rules for a better score.",
+      "stories": [
+        13,
+        16,
+        17,
+        19,
+        33,
+        36,
+        43
+      ]
+    },
+    {
+      "id": 23,
+      "slug": "self-hosted-deployment",
+      "title": "Deploy, recover, and upgrade a self-hosted pilot",
+      "lane": "Operations",
+      "blockedBy": [
+        13,
+        20,
+        21
+      ],
+      "delivers": "An operator deploys pinned service artifacts, verifies a real PR, retrieves evidence, and exercises backup, restoration, credential rotation, and upgrade.",
+      "acceptance": [
+        "A clean documented Linux deployment provisions the control service, PostgreSQL, S3-compatible artifacts, credentials, and disposable workers and completes a real Lean-backed PR run.",
+        "Backup and restoration preserve active baselines, approval records, runs, evidence references, reservations, and pending publications consistently, without cross-repository access.",
+        "A restart/recovery exercise preserves accepted work and retries publication without repeating validated proof construction or blindly repeating provider calls.",
+        "Credential rotation restores webhook validation, App publishing, and optional model access while keeping credentials outside candidate execution.",
+        "A supported upgrade preserves baseline/report compatibility or fails with explicit migration instructions. Operator-visible diagnostics distinguish proof failure, infrastructure failure, and uncertain model attempts.",
+        "Document prerequisites, resource limits, retention, tested enforcement configuration, support limits, and release pinning. Confirm and include an explicit maintainer-approved open-source license before distribution."
+      ],
+      "ownership": "Own deployment packaging and operational exercises. Component implementations and their state contracts stay with their existing owners.",
+      "stories": [
+        1,
+        22,
+        24,
+        30,
+        31,
+        32,
+        33,
+        35,
+        36,
+        37,
+        40
+      ]
+    },
+    {
+      "id": 24,
+      "slug": "validated-mvp-release",
+      "title": "Demonstrate real merge enforcement and publish MVP release evidence",
+      "lane": "Release",
+      "blockedBy": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        22,
+        23
+      ],
+      "delivers": "Maintainers can inspect a complete, reproducible MVP release demonstration showing that the deployed service enforces approved guarantees on real PR and merge-queue candidates.",
+      "acceptance": [
+        "A dedicated real pilot repository exercises passing, violated, unproven, execution-failed, fork, retargeted, force-pushed, and base-advanced PRs with required checks restricted to the expected App.",
+        "A real merge queue verifies a changed group independently. Unsupported account features remain unmet release prerequisites rather than mocked acceptance.",
+        "Verify all three property outcomes through the App, Actions wrapper, and portable GitLab invocation with equivalent normalized input/output behavior where their candidate scope matches.",
+        "Exercise a baseline migration and stale-approval rejection, hosted evidence download/replay, and restart recovery. Demonstrate a real authorized fork proof repair after durable accounting is enabled, plus cancellation of an assisted run with no subsequent unauthorized requests.",
+        "Attach the trust/isolation corpus results, frozen evaluation, operational exercises, tested permissions and branch policy, immutable release manifest, license, and known exclusions.",
+        "Any false verification, stale merge acceptance, secret disclosure, forbidden trust dependence, or missing prerequisite blocks the release. Performance misses adjust scope or budgets, never the acceptance policy."
+      ],
+      "ownership": "Own cross-feature release demonstration and evidence collation. File defects with the responsible ticket owner instead of rewriting their modules during integration.",
+      "stories": [
+        1,
+        7,
+        13,
+        15,
+        16,
+        17,
+        22,
+        24,
+        26,
+        27,
+        28,
+        30,
+        37,
+        38,
+        39,
+        43
+      ]
+    }
+  ]
+}
