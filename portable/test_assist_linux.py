@@ -86,11 +86,23 @@ class AssistedLinuxTests(unittest.TestCase):
         self.assertTrue((self.artifacts / report["usage"]["requests"][-1]["artifact"]).is_file())
         journal = (self.artifacts / report["usage"]["journal"]).read_text().splitlines()
         self.assertEqual([json.loads(line)["state"] for line in journal], ["reserved", "settled"])
+        archive = self.root / "repair.tar"
+        exported = subprocess.run([sys.executable, str(Path(assist.__file__).with_name("replay.py")), "export",
+            "--envelope", str(self.root / "envelope.json"), "--baseline", str(self.baseline / "baseline.json"),
+            "--snapshot", str(self.snapshot), "--report", str(self.root / "report.json"), "--output", str(archive)],
+            capture_output=True, text=True)
+        self.assertEqual(exported.returncode, 0, exported.stderr)
+        replay_path = self.root / "replayed.json"
+        replayed = subprocess.run([sys.executable, str(Path(assist.__file__).with_name("replay.py")), "replay",
+            "--bundle", str(archive), "--sha256", exported.stdout.strip().removeprefix("sha256:"),
+            "--output", str(replay_path)], capture_output=True, text=True)
+        self.assertEqual(replayed.returncode, 0, replayed.stderr + replay_path.read_text())
+        self.assertEqual(json.loads(replay_path.read_text())["status"], "reproduced")
 
     def test_deterministic_proof_avoids_model_request(self):
         shutil.rmtree(self.snapshot / "evidence")
         (self.snapshot / "candidate.lean").write_text("def target (x : Nat) : Nat := x + 1\n")
-        (self.baseline / "contract.json").write_text('{"rhs":"x + 1"}')
+        shutil.copy(FIXTURES / "conditional-verified-contract.json", self.baseline / "contract.json")
         def git(*args):
             return subprocess.check_output(["git", "-C", str(self.snapshot), *args], text=True).strip()
         git("add", "-A")
@@ -154,6 +166,41 @@ class AssistedLinuxTests(unittest.TestCase):
         self.assertEqual(status, 1, report)
         self.assertEqual(report["usage"]["model_calls"], 0)
         self.assertEqual(report["results"][0]["repair_reason"], "not_authorized")
+
+    def test_checked_violation_is_not_replaced_by_repair(self):
+        shutil.rmtree(self.snapshot / "evidence")
+        shutil.copy(FIXTURES / "candidate.lean", self.snapshot / "candidate.lean")
+        shutil.copy(FIXTURES / "conditional-contract.json", self.baseline / "contract.json")
+        shutil.copytree(FIXTURES / "conditional", self.snapshot / "refutation")
+        def git(*args):
+            return subprocess.check_output(["git", "-C", str(self.snapshot), *args], text=True).strip()
+        git("add", "-A")
+        git("commit", "-qm", "checked violation")
+        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        baseline_path = self.baseline / "baseline.json"
+        baseline = json.loads(baseline_path.read_text())
+        baseline["obligations"] = baseline["obligations"][:1]
+        baseline["obligations"][0]["contract_sha256"] = sha(self.baseline / "contract.json")
+        baseline["obligations"][0]["refutation"] = "refutation"
+        baseline_path.write_text(json.dumps(baseline))
+        envelope_path = self.root / "envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["head"] = git("rev-parse", "HEAD")
+        envelope["candidate_sha256"] = sha(self.snapshot / "candidate.lean")
+        envelope["baseline_sha256"] = sha(baseline_path)
+        envelope_path.write_text(json.dumps(envelope))
+        broker = Broker(run_id="violation", repository=envelope["repository"], private=True,
+                        consent=lambda repository: True,
+                        authorize=lambda repository, run, obligation, candidate, contract, deadline: True,
+                        limits=Limits(32768, 100000, 1000, 100000, 1000000, 1000000, 100),
+                        provider=should_not_run, run_deadline=time.monotonic() + 180)
+        status = assist.run(envelope_path=envelope_path, baseline_path=baseline_path, snapshot=self.snapshot,
+                            report_path=self.root / "report.json", artifacts=self.artifacts, broker=broker)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(status, 1, report)
+        self.assertEqual(report["results"][0]["decision"], "violated")
+        self.assertEqual(report["property_counts"]["violated"], 1)
+        self.assertEqual(report["usage"]["model_calls"], 0)
 
 
 if __name__ == "__main__":

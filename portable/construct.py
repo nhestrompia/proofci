@@ -24,7 +24,7 @@ def construct(candidate, contract, body, toolchain, output, deadline):
     _, _, _, statement, _ = binding.build_sources(candidate, contract)
     solution = ("import CandidateCheck\nimport Std.Tactic\n" + statement + body + "\n").encode()
     bundle = evidence.EvidenceBundle(candidate, contract, solution, b"", b"",
-                                     evidence.sha(candidate), evidence.sha(contract))
+                                     evidence.sha(candidate), evidence.sha(contract), "verified", None)
     toolchain = evidence._verify_toolchain(toolchain)
     with tempfile.TemporaryDirectory(prefix="proofci-repair-") as temp:
         root = Path(temp)

@@ -75,16 +75,17 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, artifacts, broke
                         or any(not isinstance(item, dict) for item in results)
                         or [item.get("id") for item in results] != expected_ids
                         or any(item.get("policy") != policies[item["id"]]
-                               or item.get("decision") not in ("verified", "unproven")
+                               or item.get("decision") not in ("verified", "violated", "unproven")
                                or not isinstance(item.get("reason"), str) for item in results)):
                     raise ValueError("malformed verification report")
                 obligations_by_id = {item["id"]: item for item in baseline["obligations"]}
                 for item in results:
-                    if item.get("evidence") != obligations_by_id[item["id"]]["evidence"]:
+                    approved = obligations_by_id[item["id"]]
+                    if item.get("evidence") not in (approved["evidence"], approved.get("refutation")):
                         raise ValueError("verification evidence identity mismatch")
-                    if item["decision"] == "verified":
+                    if item["decision"] in ("verified", "violated"):
                         validation = item.get("validation")
-                        if (not isinstance(validation, dict) or validation.get("decision") != "verified"
+                        if (not isinstance(validation, dict) or validation.get("decision") != item["decision"]
                                 or validation.get("candidate_sha256") != envelope["candidate_sha256"]
                                 or validation.get("contract_sha256") != obligations_by_id[item["id"]]["contract_sha256"]):
                             raise ValueError("verified result lacks matching independent validation")
@@ -119,10 +120,12 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, artifacts, broke
         obligations = {item["id"]: item for item in baseline["obligations"]}
         execution_error = None
         for obligation, result in list(best.items()):
-            if result["decision"] == "verified":
+            if result["decision"] != "unproven":
                 continue
             if result.get("reason") == "obligation_budget_exhausted":
                 result["repair_reason"] = "timeout"
+                continue
+            if result.get("reason") not in ("missing_evidence", "invalid_evidence", "proof_failed", "unproven", "search_exhausted"):
                 continue
             elapsed = result.get("elapsed_seconds", 120)
             obligation_deadline = min(deadline, time.monotonic() + max(0, 120 - elapsed))
@@ -182,6 +185,8 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, artifacts, broke
             if execution_error is not None:
                 break
         report["results"] = [best[item["id"]] for item in baseline["obligations"]]
+        report["property_counts"] = {decision: sum(item["decision"] == decision for item in report["results"])
+                                     for decision in ("verified", "violated", "unproven")}
         try:
             if hashlib.sha256(proofci.bounded_read(baseline_path, 1024 * 1024)).hexdigest() != envelope["baseline_sha256"]:
                 raise ValueError("baseline changed during run")

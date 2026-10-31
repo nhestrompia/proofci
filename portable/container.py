@@ -12,7 +12,7 @@ import tempfile
 import time
 import uuid
 
-IMAGE_ID = "sha256:3e3d60a0d733bc92983a8003a634722d2ddddd1488dd2abc4d4c4bd2f50625f0"
+IMAGE_ID = "sha256:ee6ec3f4b5fd15350d929639a318787050b24e9aeeb6fff33540169a203574ad"
 
 
 def main():
@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--repair-id")
     parser.add_argument("--proof-body", type=Path)
     parser.add_argument("--artifacts", type=Path)
+    parser.add_argument("--search-results", type=Path)
     args = parser.parse_args()
     report = args.report.resolve()
     try:
@@ -98,6 +99,17 @@ def main():
                 command[command.index("-e"):command.index("-e")] = [
                     "--mount", f"type=bind,src={body_path},dst=/runinput/body,readonly"]
                 command.extend(["--repair-id", args.repair_id, "--proof-body", "/runinput/body", "--attempt-only"])
+            if args.search_results:
+                with args.search_results.open("rb") as source:
+                    search_bytes = source.read(1024 * 1024 + 1)
+                if len(search_bytes) > 1024 * 1024:
+                    raise ValueError("search results exceed size limit")
+                search_path = temp / "search.json"
+                search_path.write_bytes(search_bytes)
+                os.chmod(search_path, 0o644)
+                image_index = command.index(image_id)
+                command[image_index:image_index] = ["--mount", f"type=bind,src={search_path},dst=/runinput/search.json,readonly"]
+                command.extend(["--search-results", "/runinput/search.json"])
             try:
                 guard = subprocess.Popen([sys.executable, str(Path(__file__).with_name("create_guard.py")),
                                           name, json.dumps(command)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

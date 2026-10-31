@@ -65,3 +65,16 @@ pinned Linux environment from ticket 01.
 `test_linux_replay.py` checks the saved valid bundle against both checkers. Run
 it inside the pinned Linux arm64 environment with `PROOFCI_TEST_TOOLCHAIN` set
 to the extracted, pinned Lean distribution. It skips when that variable is absent.
+
+## Refutations and concrete witnesses
+
+Set `claimed_decision` to `violated` to submit a proof of the negation of
+`∀ x : Nat, target x = rhs`. The trusted adapter reconstructs that negation
+from the same candidate and approved contract as a positive proof. A bundle
+may also include an integer `witness` from 0 to 1000000 in its manifest. In
+that case the reconstructed theorem additionally requires proof that the
+property fails at that exact value. For conditional contracts the fixed theorem also requires the instantiated
+precondition. Other witness forms are unsupported.
+The solution and both exports must match this reconstructed theorem and pass
+both independent checkers. A claim or tactic failure alone cannot establish a
+violation. No witness search is performed.
