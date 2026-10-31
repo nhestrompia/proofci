@@ -1,0 +1,110 @@
+{
+  "envelope": {
+    "version": 1,
+    "repository": "https://example.invalid/fixture.git",
+    "head": "e0d913e38b4836629ac490beaae26fc2a69b9599",
+    "base": "e0d913e38b4836629ac490beaae26fc2a69b9599",
+    "candidate_sha256": "1f4ac79ec0f4970edf1e2d140d57fb6697f25fdf1e29851fada670e04ecdc900",
+    "baseline_sha256": "f030ea18e63729766fa1c0f4c5af91a3660e5412b24941d19fb131ea611d5425",
+    "dependency": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
+    "toolchain": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+    "trust_policy": "1d813eba3adb007e03f2bdb8f4448fe602a99fd512c72c81d54d788c7cac7819",
+    "resource_policy": {
+      "timeout_seconds": 180,
+      "cpu_seconds": 180,
+      "memory_bytes": 2147483648,
+      "file_bytes": 2147483648,
+      "processes": 256
+    }
+  },
+  "baseline": {
+    "version": 1,
+    "candidate": "candidate.lean",
+    "obligations": [
+      {
+        "id": "increment",
+        "policy": "required",
+        "contract": "contract.json",
+        "contract_sha256": "b31c1f6cfc0a1a7374051eeaf0496fa51503a9a74879ab76fe44d462dea8052c",
+        "evidence": "evidence"
+      },
+      {
+        "id": "advice",
+        "policy": "advisory",
+        "contract": "contract.json",
+        "contract_sha256": "b31c1f6cfc0a1a7374051eeaf0496fa51503a9a74879ab76fe44d462dea8052c",
+        "evidence": "missing"
+      }
+    ]
+  },
+  "report": {
+    "envelope": {
+      "base": "e0d913e38b4836629ac490beaae26fc2a69b9599",
+      "baseline_sha256": "f030ea18e63729766fa1c0f4c5af91a3660e5412b24941d19fb131ea611d5425",
+      "candidate_sha256": "1f4ac79ec0f4970edf1e2d140d57fb6697f25fdf1e29851fada670e04ecdc900",
+      "dependency": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
+      "head": "e0d913e38b4836629ac490beaae26fc2a69b9599",
+      "repository": "https://example.invalid/fixture.git",
+      "resource_policy": {
+        "cpu_seconds": 180,
+        "file_bytes": 2147483648,
+        "memory_bytes": 2147483648,
+        "processes": 256,
+        "timeout_seconds": 180
+      },
+      "toolchain": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+      "trust_policy": "1d813eba3adb007e03f2bdb8f4448fe602a99fd512c72c81d54d788c7cac7819",
+      "version": 1
+    },
+    "execution": {
+      "bubblewrap_sha256": "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976",
+      "image": "sha256:ac3afc9c6af4bd70c5833105931561745d7e42701c2bfce246bc69d7f4076ea1",
+      "validator_policy_sha256": "1d813eba3adb007e03f2bdb8f4448fe602a99fd512c72c81d54d788c7cac7819"
+    },
+    "finished_at": 1793480757.4163547,
+    "results": [
+      {
+        "decision": "verified",
+        "evidence": "evidence",
+        "evidence_sha256": {
+          "challenge.ndjson": "452605e709f040afa8db7d8a5609f19ba3a6fddaf5f0c3898ea7f8bc714c90c7",
+          "manifest.json": "c256890f70fff8af835d4fedbfd021788ee3af4fdf7827fc7601104c349af757",
+          "solution.lean": "941d7e81417330c256a8d3795b3d41c5440af1c10da6ace5a00834c6759aaef2",
+          "solution.ndjson": "b920b92a1f26811139417bc2104a40b7c2e3b141d92a378c6d37f058d85383c2"
+        },
+        "id": "increment",
+        "policy": "required",
+        "reason": "accepted by the reconstructed challenge and independent checkers",
+        "validation": {
+          "candidate_sha256": "1f4ac79ec0f4970edf1e2d140d57fb6697f25fdf1e29851fada670e04ecdc900",
+          "checker": [
+            "comparator"
+          ],
+          "contract_sha256": "b31c1f6cfc0a1a7374051eeaf0496fa51503a9a74879ab76fe44d462dea8052c",
+          "decision": "verified",
+          "permitted_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "policy": "fixed source-binding validator",
+          "reason": "accepted by the reconstructed challenge and independent checkers"
+        }
+      },
+      {
+        "decision": "unproven",
+        "evidence": "missing",
+        "id": "advice",
+        "policy": "advisory",
+        "reason": "missing_evidence"
+      }
+    ],
+    "started_at": 1793480748.4573584,
+    "status": "passed",
+    "usage": {
+      "elapsed_seconds": 8.958035504000009,
+      "model_calls": 0
+    },
+    "version": 1
+  }
+}
