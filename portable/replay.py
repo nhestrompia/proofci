@@ -74,6 +74,7 @@ def export(args):
         repo = Path(tmp) / 'repo.git'
         subprocess.run(['git', 'clone', '--bare', '--no-hardlinks', str(snapshot), str(repo)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         for ref, commit in (('head', head), ('base', base)):
+            subprocess.run(['git', '--git-dir', str(repo), 'fetch', '--no-tags', str(snapshot), commit], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             subprocess.run(['git', '--git-dir', str(repo), 'update-ref', 'refs/heads/proofci-' + ref, commit], check=True)
         subprocess.run(['git', '--git-dir', str(repo), 'bundle', 'create', str(bundle), 'refs/heads/proofci-head', 'refs/heads/proofci-base'], check=True)
         files['repository.bundle'] = read_file(bundle)
@@ -137,7 +138,34 @@ def replay(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
         snapshot = root / 'snapshot'
-        subprocess.run(['git', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if not isinstance(envelope.get('head'), str) or not re.fullmatch(r'[0-9a-f]{40}', envelope['head']):
+            raise ValueError('invalid head commit')
+        # Count every tree entry, including repeated blobs, before materializing files.
+        listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', envelope['head']], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        total = count = 0
+        pending = b''
+        try:
+            while chunk := listing.stdout.read(65536):
+                pending += chunk
+                while b'\0' in pending:
+                    entry, pending = pending.split(b'\0', 1)
+                    metadata = entry.split(b'\t', 1)[0].split()
+                    count += 1
+                    if len(metadata) != 4 or metadata[1] != b'blob' or not metadata[3].isdigit():
+                        raise ValueError('unsupported repository tree entry')
+                    size = int(metadata[3])
+                    total += size
+                    if size > MAX_FILE or total > MAX_ARCHIVE or count > 100000:
+                        raise ValueError('expanded repository exceeds size or file count limit')
+                if len(pending) > 65536:
+                    raise ValueError('repository path exceeds size limit')
+            if pending or listing.wait(timeout=30) != 0:
+                raise ValueError('cannot inspect repository tree')
+        finally:
+            if listing.poll() is None:
+                listing.kill()
+                listing.wait()
         subprocess.run(['git', '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         subprocess.run(['git', '-C', str(snapshot), 'remote', 'set-url', 'origin', envelope['repository']], check=True)
         result = root / 'replayed.json'
