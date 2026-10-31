@@ -123,3 +123,7 @@ The report explicitly says that historical CI publication was not reproduced.
 A digest supplied alongside an untrusted archive does not authenticate its
 origin; protect the digest separately. Missing inputs or the pinned image cause
 a nonpassing result. Archive limits are 256 MiB total and 128 MiB per member.
+
+On Linux, Git reconstruction runs with CPU, address-space, and file-size limits,
+plus wall-clock deadlines. macOS does not support the address-space limit;
+use a Linux host for the fully resource-bounded replay boundary.

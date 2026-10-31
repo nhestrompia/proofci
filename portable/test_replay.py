@@ -39,6 +39,23 @@ class ReplayTest(CLITest):
         self.assertEqual(result.returncode, 2)
         self.assertIn('digest mismatch', json.loads(output.read_text())['reason'])
 
+    def test_compressed_repository_expansion_is_rejected(self):
+        large = self.snapshot / 'large.bin'
+        with large.open('wb') as stream:
+            stream.truncate(129 * 1024 * 1024)
+        subprocess.run(['git', '-C', str(self.snapshot), 'add', 'large.bin'], check=True)
+        subprocess.run(['git', '-C', str(self.snapshot), 'commit', '-qm', 'large'], check=True)
+        head = subprocess.check_output(['git', '-C', str(self.snapshot), 'rev-parse', 'HEAD'], text=True).strip()
+        path = self.root / 'envelope.json'
+        envelope = json.loads(path.read_text())
+        envelope['head'] = head
+        path.write_text(json.dumps(envelope))
+        archive, digest = self.export_bundle()
+        output = self.root / 'replay.json'
+        result = self.invoke('replay', '--bundle', archive, '--sha256', digest, '--output', output)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('expanded repository exceeds', json.loads(output.read_text())['reason'])
+
     def test_traversal_rejected_before_extraction(self):
         archive = self.root / 'hostile.tar'
         with tarfile.open(archive, 'w') as tar:

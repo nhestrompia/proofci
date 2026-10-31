@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import resource
 import select
 import time
 import subprocess
@@ -19,6 +20,15 @@ import proofci
 MAX_ARCHIVE = 256 * 1024 * 1024
 MAX_FILE = 128 * 1024 * 1024
 MAX_FILES = 1024
+
+
+def limit_reconstruction():
+    # Git and all of its children inherit these limits before reading the bundle.
+    limits = [(resource.RLIMIT_CPU, 60), (resource.RLIMIT_FSIZE, MAX_ARCHIVE), (resource.RLIMIT_CORE, 0)]
+    if sys.platform.startswith('linux'):
+        limits.append((resource.RLIMIT_AS, 1024 * 1024 * 1024))
+    for kind, limit in limits:
+        resource.setrlimit(kind, (limit, limit))
 
 
 def sha(data):
@@ -140,11 +150,11 @@ def replay(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
         snapshot = root / 'snapshot'
-        subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
+        subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
         if not isinstance(envelope.get('head'), str) or not re.fullmatch(r'[0-9a-f]{40}', envelope['head']):
             raise ValueError('invalid head commit')
         # Count every tree entry, including repeated blobs, before materializing files.
-        listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', envelope['head']], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', envelope['head']], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, preexec_fn=limit_reconstruction)
         deadline = time.monotonic() + 60
         total = count = 0
         pending = b''
@@ -175,7 +185,7 @@ def replay(args):
             if listing.poll() is None:
                 listing.kill()
                 listing.wait()
-        subprocess.run(['git', '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        subprocess.run(['git', '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
         subprocess.run(['git', '-C', str(snapshot), 'remote', 'set-url', 'origin', envelope['repository']], check=True)
         result = root / 'replayed.json'
         status = subprocess.run([sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result)]).returncode
