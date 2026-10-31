@@ -90,3 +90,61 @@ passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 ```sh
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
 ```
+
+## Reviewed local baselines
+
+`baselines.py` is a local lifecycle adapter around the same pinned container
+CLI. Its SQLite store, the verifier, the operator identity, and the invocation
+must be protected from candidate changes. The `--approver` value is an assertion
+by the trusted caller; it is not authentication. A hosted adapter must obtain a
+maintainer identity from its own authentication and authorization boundary and
+must not accept it from repository content. An attacker who can invoke the
+command as the trusted caller or edit the store can replace policy. Protect the
+store, including its directory and SQLite sidecar files, and back it up.
+
+A committed manifest has the following shape (the only currently supported
+assumptions and specification closure are empty, and the only binding is
+`target`; see the validator README for the exact statement language):
+
+```json
+{"version":1,"candidate":"candidate.lean","contracts":[{"id":"increment","explanation":"Adds one","owner":"maintainer","formal_statement":"x + 1","assumptions":[],"specification_closure":[],"implementation_bindings":["target"],"policy":"required","evidence":"evidence"}]}
+```
+
+For a local initialization and follow-up demonstration, commit that manifest,
+`candidate.lean`, and the matching proof bundle in a clean checkout. Prepare the
+version 1 envelope described above for that exact commit and repository. The
+baseline digest in that input is replaced by the adapter with the digest of the
+protected baseline it constructs. The reviewer examines the committed manifest
+and explicitly supplies its SHA-256 and their authenticated identity:
+
+```sh
+sha256sum checkout/contracts.json
+python3 portable/baselines.py activate --store protected/baselines.db \
+  --snapshot checkout --envelope initial-envelope.json --report activation.json \
+  --manifest-path contracts.json --reviewed-sha256 REVIEWED_SHA256 --approver MAINTAINER_ID
+python3 portable/baselines.py lookup --store protected/baselines.db
+```
+
+The first command requiring verification is `activate`: it invokes the pinned
+container and changes the active pointer only when every required obligation
+passes. Keep the store outside the checkout. `lookup --digest DIGEST` returns a
+specific historical reviewed manifest and its approval and validation record;
+without a digest it returns the active one. The digest printed in lookup is the
+hash of the exact reviewed manifest bytes, distinct from the verifier's baseline
+digest. Both are recorded.
+
+Now commit a follow-up candidate, update the envelope's head and candidate hash,
+and run:
+
+```sh
+python3 portable/baselines.py run --store protected/baselines.db \
+  --snapshot checkout --envelope followup-envelope.json --report followup.json
+```
+
+The run checks the original obligations and reports proposed changes from the
+committed manifest. Deleted or malformed manifests and changed guarantees block
+the gate; changing candidate configuration cannot select a new baseline.
+Exit codes retain the CLI convention: 0 pass, 1 blocked, 2 execution or
+configuration error. A replacement baseline cannot be activated by this local
+command; an authorized migration and retirement workflow is separate and is not
+implemented here. No draft or model output activates itself.
