@@ -25,6 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lean", required=True)
     parser.add_argument("--lake", required=True)
+    parser.add_argument("--unsafe-no-sandbox", action="store_true")
     args = parser.parse_args()
     failed = False
     with tempfile.TemporaryDirectory(prefix="proofci-admission-") as tmp:
@@ -32,9 +33,11 @@ def main():
         contract = Path(tmp) / "contract.json"
         contract.write_text('{"rhs":"x + 1"}')
         def invoke():
-            return subprocess.run([sys.executable, str(Path(__file__).with_name("binding.py")),
-                                   str(candidate), str(contract), "--lean", args.lean,
-                                   "--lake", args.lake], capture_output=True, text=True)
+            command = [sys.executable, str(Path(__file__).with_name("binding.py")),
+                       str(candidate), str(contract), "--lean", args.lean, "--lake", args.lake]
+            if args.unsafe_no_sandbox:
+                command.append("--unsafe-no-sandbox")
+            return subprocess.run(command, capture_output=True, text=True)
 
         candidate.write_text(BASE)
         positive = invoke()

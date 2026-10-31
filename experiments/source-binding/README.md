@@ -1,75 +1,54 @@
-# Source-binding probe
+# Lean source-binding spike
 
-This is an initial experiment for [issue #1](https://github.com/nhestrompia/proofci/issues/1), not a verifier. It checks three small Lean files with Lean 4.35.0:
+This spike checks a deliberately narrow question from [issue #1](https://github.com/nhestrompia/proofci/issues/1): can a trusted challenge refer to the admitted Lean candidate rather than an old or shadow definition? It does not establish correctness of arbitrary Lean, a compiled program, or a hosted verification service.
 
-1. A contract proof for the original function succeeds.
-2. The same proof fails after the function changes from adding one to adding two.
-3. A theorem about a separately declared shadow function succeeds even though the candidate still adds two.
+The recorded [binding decision](decision.md) is **go for this narrow research
+subset**, subject to the trust assumptions below. It is not a production or
+hosted-enforcement approval.
 
-Run `LEAN=/path/to/lean python3 experiments/source-binding/probe.py`. The script exits successfully only if all three observed compiler results match these expectations. It emits hashes of the source and contract and Lean's version. The shadow case deliberately succeeds: rejecting it requires the trusted binding mechanism that this probe does not implement. The candidate source hashes identify input bytes but do not prove which definition a theorem refers to. Similarly, comparing a solution to a challenge would only help if the challenge were already bound to the candidate.
+## Run
 
-The current decision is **no-go** for source-verified claims. The adapter below is a further experiment; it does not establish a complete semantic dependency closure or the reviewed corpus required by the ticket. A passing experiment is not proof that the adapter is sound.
-
-## Experimental adapter
-
-`binding.py` accepts a candidate file and a separate trusted JSON contract. The candidate must contain exactly one declaration of this form:
+Provide a candidate and a contract from a trusted, approved baseline:
 
 ```lean
 def target (x : Nat) : Nat := x + 1
 ```
 
-The body and the contract's `rhs` field may contain only `x`, decimal natural literals of at most four digits, parentheses, `+`, and `*`. The tokenizer and recursive-descent parser consume the entire input; declarations, imports, comments, macros, instances, attributes, and references to any other name are rejected. The only type is Lean's `Nat` from the pinned toolchain's implicit `Init` import. This is intentionally much narrower than general Lean. The trusted contract statement is `target x = <rhs>` and has no user-provided helpers, assumptions, notation or proof. The adapter copies the exact admitted candidate bytes into `Candidate.lean`, imports it into both challenge and solution, and constructs the theorem and fixed proof itself.
-
-The script invokes Lean 4.35.0's Lake Comparator with the `propext`, `Quot.sound`, and `Classical.choice` axioms permitted and Nanoda as an external checker. It records input, generated statement and supplied executable hashes and the comparator output. It requires the supplied Lean and Lake executables to share a directory and checks the version resolved by `lake env lean`. The candidate hash identifies source bytes, not an elaborated definition. The version check does not independently establish which binary Lake used, and the script does **not** identify the full semantic dependency closure or verify that all toolchain files match their advertised version. The caller supplies the paths to the toolchain, so they must come from a trusted installation. Lake's own sandbox is disabled for this experiment. Run it only in a disposable isolated environment with no credentials or network. The adapter always reports `unproven` and exits 1, including when Comparator accepts; `comparator_exit` is an experimental observation, not an authoritative result.
-
-For example, in such an environment:
-
-```sh
-printf 'def target (x : Nat) : Nat := x + 1\n' > candidate.lean
-printf '{"rhs":"x + 1"}\n' > contract.json
-python3 experiments/source-binding/binding.py candidate.lean contract.json \
-  --lean /path/to/lean/bin/lean --lake /path/to/lean/bin/lake
+```json
+{"rhs":"x + 1"}
 ```
 
-`admission.py` probes several rejected candidate and contract inputs at the CLI boundary, with a valid positive control. `corpus.py` tries ten arithmetic statements against base, equivalent and defective variants. An independent review checked the equations and counterexamples, but they are not maintainer-approved contracts and do not satisfy the ticket's reviewed-corpus requirement. Each script accepts the same `--lean` and `--lake` arguments and exits 0 only when its observations match expectations. The corpus emits full Comparator reports as JSON lines.
-
-The remaining work includes an independently reviewed adapter and dependency closure, a broader reviewed mutation corpus including misleading specification dependencies, and a fully pinned and isolated Linux acceptance run. Comparator acceptance alone does not show that this adapter bound the intended source; the admission and construction logic must be audited and tested independently.
-
-## Observed Linux run
-
-On 2026-10-31, the probe returned exit status 0 in a fresh ARM64 container, with networking disabled. Lean accepted the base and shadow cases; the changed candidate failed with `error: unsolved goals`. This is a reproduction of this probe only, not the ticket's full acceptance run.
-
-- Python image: `python@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb`
-- Lean archive: `lean-4.35.0-linux_aarch64.tar.zst`, SHA-256 `c8f0f8a3920e839718b1343e6781fd80a3e9b1024fbcd7078eb30f54e806b028`
-- Lean reports commit `eb6cafb7290e8bd5f2937522d8d804f58f02bafc`.
-
-The separate adapter base case also ran on ARM64 Linux with the same Lean archive, an isolated container based on `python@sha256:6a9220edda062e9223ea0784740a535987299420b96fbfd520b89bbd3e772485`, and networking disabled. Comparator returned 0 and both Nanoda and Lean's kernel accepted the solution. This does not establish sandbox safety or complete ticket acceptance.
-
-The [Linux corpus report](evidence/linux-arm64-corpus.jsonl) records 30 observations from the same image and Lean archive: all 20 base and equivalent cases were accepted, and all 10 defective cases failed with the expected proof diagnostic. These results are observations about the restricted experiment, not a binding go decision.
-
-To reproduce the adapter corpus after downloading and extracting the Lean archive as described below, use the Git-enabled Python image:
+On a Docker host with Python 3, `curl`, `ar`, `tar`, and `zstd`, run:
 
 ```sh
-docker run --rm --network none --platform linux/arm64 --cap-drop ALL \
-  --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,size=2g \
-  -v "$PWD/lean-4.35.0-linux_aarch64:/lean:ro" \
-  -v "$REPO/experiments/source-binding:/probe:ro" \
-  python@sha256:6a9220edda062e9223ea0784740a535987299420b96fbfd520b89bbd3e772485 \
-  python3 /probe/corpus.py --lean /lean/bin/lean --lake /lean/bin/lake
+experiments/source-binding/linux.sh candidate.lean contract.json
 ```
 
-Replace `corpus.py` with `admission.py` to run the admission checks. The container restricts this experiment, but it is not the disposable VM or independent validation environment required for a production trust boundary.
+The runner downloads and checks the pinned Lean and bubblewrap archives, extracts a fresh toolchain, and starts the pinned ARM64 Linux image without networking. To reuse downloaded archives, set `PROOFCI_LEAN_ARCHIVE` and `PROOFCI_BWRAP_PACKAGE` to their paths. Their SHA-256 hashes are still checked. The image digest, package URLs and checksums, and container settings are fixed in `linux.sh`.
 
-On an ARM64 Linux host with Docker, Python and `zstd` installed, run from a temporary directory, substituting the absolute repository path for `REPO`:
+The JSON report identifies the input bytes, generated statements, candidate and challenge exports, dependency names, toolchain, checker and comparator result. A successful sandboxed check returns `verified` and exit status 0. Unsupported input, a failed proof, invalid evidence, or infrastructure failure returns `unproven` and a nonzero status; failure is not a proof of a violation. The report covers only this candidate and this contract. It does not establish that a human approved the contract. Protect the contract and the verifier from changes by the candidate being checked.
+
+## Supported language and binding
+
+The candidate is exactly one declaration `def target (x : Nat) : Nat := <expression>`. The body and contract `rhs` accept `x`, decimal natural literals of at most four digits, parentheses, `+`, and `*`. Multiplication binds more tightly than addition. The parser consumes the entire input and rejects imports, comments, other declarations, macros, instances, attributes, unknown names, and runtime replacements. The only type is Lean's `Nat` from the pinned `Init` distribution. The contract means `target x = <rhs>` for every `x : Nat`; it has no user-supplied helpers, assumptions, or proof.
+
+The trusted adapter copies the exact admitted candidate bytes into a fresh Lean module. It also independently constructs an explicit `Nat.add`/`Nat.mul` expression from the parsed syntax and asks Lean to prove by `rfl` that the elaborated target equals that expression. Challenge and solution import the same candidate and identity theorem. The trusted challenge fixes the contract; the generated solution may prove it but cannot supply a new statement. Comparator checks both theorem statements and the identity proof; Lean's kernel and Nanoda check the exported solution, with only `propext`, `Quot.sound`, and `Classical.choice` permitted. The challenge's `sorry` is a placeholder and is not permitted in the solution.
+
+The pinned exporter records the elaborated target and its dependencies. A second export starts at the contract alone, and must include the candidate definition. The adapter checks exported declaration names against `core-dependencies.json`, permits `sorryAx` only in the challenge, and rejects unexpected declaration and outer record shapes. This is a policy over the trusted exporter's output, not an independent parser or proof of the exporter's completeness. The full extracted Lean distribution is hashed and must match the pinned read-only distribution. Source hashes and Comparator acceptance by themselves would not establish the source-to-challenge link; the restricted parser, identity theorem, fixed challenge, and trusted toolchain are part of that argument.
+
+## Reproduce the checks
 
 ```sh
-curl -fL https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux_aarch64.tar.zst -o lean.tar.zst
-echo 'c8f0f8a3920e839718b1343e6781fd80a3e9b1024fbcd7078eb30f54e806b028  lean.tar.zst' | sha256sum -c -
-tar --zstd -xf lean.tar.zst
-docker run --rm --network none --platform linux/arm64 \
-  -v "$PWD/lean-4.35.0-linux_aarch64:/lean:ro" \
-  -v "$REPO/experiments/source-binding:/probe:ro" \
-  -e LEAN=/lean/bin/lean \
-  python@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb \
-  python3 /probe/probe.py
+experiments/source-binding/linux.sh --admission
+experiments/source-binding/linux.sh --adversarial > adversarial.jsonl
+experiments/source-binding/linux.sh --corpus > corpus.jsonl
+python3 -m unittest discover -s experiments/source-binding -p 'test_*.py' -v
 ```
+
+`admission.py` tests fail-closed candidate and contract parsing. `adversarial.py` attempts shadow implementations, a changed specification helper, a weaker theorem, a custom axiom, and `sorry`. `corpus.py` exercises the ten mathematically reviewed contracts in [contract-review.md](contract-review.md), each with correct, equivalent and defective candidates, plus precedence cases. The fixture review is not maintainer approval of an enforcing baseline.
+
+`probe.py` preserves an earlier demonstration that Lean alone accepts a theorem about a separate shadow function. The earlier [Linux corpus report](evidence/linux-arm64-corpus.jsonl) predates the pinned sandbox and identity checks and is retained as historical evidence only.
+
+## Trust boundary
+
+The caller must use a protected verifier and approved contract. The host, its kernel, Docker, the pinned image, archive verification, Lean exporter, Lean kernel, Nanoda, and the source adapter are trusted. The read-only bind mount assumes the host does not change its backing files while the run is active. Comparator's bubblewrap sandbox runs inside an unprivileged offline container; Docker's seccomp and system-path masks are relaxed to allow the nested user and mount namespaces. This experiment does not demonstrate the disposable-VM isolation required for hosted untrusted workloads. It also does not independently validate arbitrary reports or evidence bundles; a `verified` result comes from this run, not from importing a worker's self-reported JSON.

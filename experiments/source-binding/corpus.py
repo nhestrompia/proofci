@@ -27,6 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lean", required=True)
     parser.add_argument("--lake", required=True)
+    parser.add_argument("--unsafe-no-sandbox", action="store_true")
     args = parser.parse_args()
     results = []
     with tempfile.TemporaryDirectory(prefix="proofci-corpus-") as tmp:
@@ -44,9 +45,19 @@ def main():
                 candidate.write_text(f"def target (x : Nat) : Nat := {body}\n")
                 cases.append((n, label, expected, candidate, contract))
 
+        precedence_contract = root / "contract-precedence.json"
+        precedence_contract.write_text(json.dumps({"rhs": "x + 2"}))
+        for label, body, expected in (
+            ("precedence", "x + 1 * 2", 0),
+            ("defective", "(x + 1) * 2", 1),
+        ):
+            candidate = root / f"candidate-precedence-{label}.lean"
+            candidate.write_text(f"def target (x : Nat) : Nat := {body}\n")
+            cases.append(("precedence", label, expected, candidate, precedence_contract))
+
         def evaluate(case):
             n, label, expected, candidate, contract = case
-            result = binding.run(candidate, contract, args.lake, args.lean)
+            result = binding.run(candidate, contract, args.lake, args.lean, args.unsafe_no_sandbox)
             return {"contract": n, "mutation": label, "expected_exit": expected,
                     "observed_exit": result["comparator_exit"], "report": result,
                     "expected_proof_failure": label != "defective" or

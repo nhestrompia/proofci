@@ -1,0 +1,11 @@
+{"case": "positive_control", "comparator_accepted": true}
+{"case": "shadow", "rejected": true, "error": "unexpected token 'namespace'"}
+{"case": "import", "rejected": true, "error": "candidate must be exactly one target definition"}
+{"case": "macro", "rejected": true, "error": "unsupported character at offset 6"}
+{"case": "instance", "rejected": true, "error": "unsupported character at offset 28"}
+{"case": "runtime_replacement", "rejected": true, "error": "unsupported character at offset 0"}
+{"case": "source_substitution", "rejected": true, "error": "unsupported expression token 'replacement'"}
+{"case": "comment", "rejected": true, "error": "unsupported character at offset 36"}
+{"case": "contract_shadow", "rejected": true, "error": "unsupported expression token 'target'"}
+{"case": "contract_helper", "rejected": true, "error": "unsupported expression token 'helper'"}
+{"case": "contract_duplicate", "rejected": true, "error": "duplicate contract field 'rhs'"}
