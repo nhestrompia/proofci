@@ -49,6 +49,12 @@ python3 -m unittest discover -s experiments/source-binding -p 'test_*.py' -v
 
 `probe.py` preserves an earlier demonstration that Lean alone accepts a theorem about a separate shadow function. The earlier [Linux corpus report](evidence/linux-arm64-corpus.jsonl) predates the pinned sandbox and identity checks and is retained as historical evidence only.
 
+Ticket 04 adds [`evidence.py`](evidence.py), which validates an unpacked proof
+bundle against authoritative candidate and contract bytes. It reconstructs the
+challenge, rejects forbidden solution dependencies, and uses fixed checker and
+toolchain policy. See [`evidence-format.md`](evidence-format.md) for the bundle
+format, permitted axioms, normalized reasons, and construction/replay boundary.
+
 ## Trust boundary
 
 The caller must use a protected verifier and approved contract. The host, its kernel, Docker, the pinned image, archive verification, Lean exporter, Lean kernel, Nanoda, and the source adapter are trusted. The read-only bind mount assumes the host does not change its backing files while the run is active. Comparator's bubblewrap sandbox runs inside an unprivileged offline container; Docker's seccomp and system-path masks are relaxed to allow the nested user and mount namespaces. This experiment does not demonstrate the disposable-VM isolation required for hosted untrusted workloads. It also does not independently validate arbitrary reports or evidence bundles; a `verified` result comes from this run, not from importing a worker's self-reported JSON.

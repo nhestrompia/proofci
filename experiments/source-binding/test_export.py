@@ -28,6 +28,14 @@ class ExportAdmissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             binding.check_export(b"\n".join(records) + b"\n", False)
 
+    def test_expanded_name_budget_fails_closed(self):
+        records = self.export.splitlines()
+        records.append(json.dumps({
+            "in": 108, "str": {"pre": 0, "str": "x" * (binding.MAX_EXPANDED_NAME + 1)}
+        }).encode())
+        with self.assertRaises(ValueError):
+            binding.check_export(b"\n".join(records) + b"\n", False)
+
 
 if __name__ == "__main__":
     unittest.main()
