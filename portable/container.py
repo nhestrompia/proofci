@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the portable CLI inside its resource-limited Linux image."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import time
 import uuid
 
 import report as report_contract
+import proofci
 
 IMAGE_ID = "sha256:ee6ec3f4b5fd15350d929639a318787050b24e9aeeb6fff33540169a203574ad"
 
@@ -28,6 +30,7 @@ def main():
     parser.add_argument("--search-results", type=Path)
     parser.add_argument("--dependencies", type=Path)
     parser.add_argument("--phase", choices=("worker", "final-validation"), default="worker")
+    parser.add_argument("--validator-only", action="store_true")
     args = parser.parse_args()
     report = args.report.resolve()
     try:
@@ -89,6 +92,22 @@ def main():
             baseline_copy = protected / "baseline.json"
             baseline_copy.write_bytes(baseline_raw)
             os.chmod(baseline_copy, 0o444)
+            baseline_value = json.loads(baseline_raw)
+            if not isinstance(baseline_value, dict) or not isinstance(baseline_value.get("obligations"), list):
+                raise ValueError("baseline obligations are invalid")
+            for item in baseline_value["obligations"]:
+                if not isinstance(item, dict) or not isinstance(item.get("contract"), str):
+                    raise ValueError("baseline contract path is invalid")
+                contract = proofci.path_in(baseline.parent, item["contract"])
+                if not contract.is_file() or Path(item["contract"]) == Path("baseline.json"):
+                    raise ValueError("baseline contract cannot be staged")
+                contract_target = protected / item["contract"]
+                contract_target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+                contract_bytes = proofci.bounded_read(contract, 16384)
+                if hashlib.sha256(contract_bytes).hexdigest() != item.get("contract_sha256"):
+                    raise ValueError("protected contract digest mismatch")
+                contract_target.write_bytes(contract_bytes)
+                os.chmod(contract_target, 0o444)
             envelope_path = temp / "envelope.json"
             envelope_path.write_bytes(raw)
             os.chmod(envelope_path, 0o644)
@@ -112,9 +131,11 @@ def main():
                 "--mount", f"type=bind,src={protected},dst=/baseline,readonly",
                 "--mount", f"type=bind,src={envelope_path},dst=/runinput/envelope.json,readonly",
                 "--mount", f"type=bind,src={result_path},dst=/result/report.json",
-                "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/" + baseline.name,
+                "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/baseline.json",
                 "--snapshot", "/snapshot", "--toolchain", "/lean", "--bwrap", "/usr/bin/bwrap",
                 "--report", "/result/report.json"]
+            if args.validator_only:
+                command.append("--validator-only")
             if args.artifacts is not None:
                 if not artifacts.is_dir():
                     raise ValueError("artifact destination must be a directory")

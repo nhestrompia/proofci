@@ -127,10 +127,9 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, dependency_manif
                 command.extend(["--image", image])
             if staged is not None:
                 command.extend(["--dependencies", str(staged)])
-            worker_command = command + (["--artifacts", str(artifacts)] if artifacts is not None else [])
             worker_report_path = Path(temporary) / "worker-report.json"
             worker_status = (launcher or _run_process)(
-                worker_command + ["--report", str(worker_report_path), "--phase", "worker"], deadline)
+                command + ["--report", str(worker_report_path), "--phase", "worker"], deadline)
             worker_report = proofci.parse_json(proofci.bounded_read(worker_report_path, MAX_REPORT_BYTES))
             if worker_status in (0, 1):
                 report_contract.validate(worker_report, envelope, baseline)
@@ -142,7 +141,8 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, dependency_manif
                 raise ValueError("worker returned an invalid exit status")
             final_report_path = Path(temporary) / "final-report.json"
             final_status = (launcher or _run_process)(
-                command + ["--report", str(final_report_path), "--phase", "final-validation"], deadline)
+                command + ["--report", str(final_report_path), "--phase", "final-validation",
+                           "--validator-only"], deadline)
             final_report = proofci.parse_json(proofci.bounded_read(final_report_path, MAX_REPORT_BYTES))
             if final_status in (0, 1):
                 report_contract.validate(final_report, envelope, baseline)

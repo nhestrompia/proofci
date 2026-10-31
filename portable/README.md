@@ -100,12 +100,14 @@ toolchain, validator policy, network, credentials, and container socket are
 fixed by the protected launcher. The worker receives no host home directory or
 provider credentials.
 
-If a worker produces raw files, supply an operator-owned allowlist such as
+If a separate worker adapter produces raw files, supply its stopped output
+directory and an operator-owned allowlist such as
 `{"version":1,"files":{"solution.lean":"<digest>"}}` with
-`--artifacts WORKER_DIR --artifact-manifest artifacts.json`. The handoff
-accepts only named private regular files with matching digests and bounded
-size/count. It does not parse archives; archive export and replay remain the
-separate evidence interface below.
+`--artifacts WORKER_DIR --artifact-manifest artifacts.json`. The verifier does
+not mount this directory into the candidate container; after the worker has
+stopped, the handoff accepts only named private regular files with matching
+digests and bounded size/count. It does not parse archives; archive export and
+replay remain the separate evidence interface below.
 
 Docker runs the CLI and validator offline, unprivileged, with CPU, memory,
 process and temporary-storage limits. The tighter of memory and file limits

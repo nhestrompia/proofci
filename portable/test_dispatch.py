@@ -36,6 +36,8 @@ class DispatchTests(CLITest):
         def launcher(command, _deadline):
             phase = command[command.index("--phase") + 1]
             phases.append(phase)
+            if phase == "final-validation":
+                self.assertIn("--validator-only", command)
             report_path = Path(command[command.index("--report") + 1])
             value = self._forged_report(envelope) if phase == "worker" else self._blocked_report(envelope)
             report_path.write_text(json.dumps(value))
@@ -54,12 +56,15 @@ class DispatchTests(CLITest):
 
     def test_dependency_and_raw_artifact_handoff_are_allowlisted(self):
         envelope = json.loads((self.root / "envelope.json").read_text())
-        cache = self.root / "cache"
+        dependency_temporary = tempfile.TemporaryDirectory(prefix="proofci-dependency-metadata-")
+        self.addCleanup(dependency_temporary.cleanup)
+        metadata_root = Path(dependency_temporary.name)
+        cache = metadata_root / "cache"
         cache.mkdir()
         data = b"approved dependency"
         checksum = hashlib.sha256(data).hexdigest()
         (cache / checksum).write_bytes(data)
-        manifest = self.root / "dependencies.json"
+        manifest = metadata_root / "dependencies.json"
         manifest.write_text(json.dumps({"version": 1, "dependencies": [{"name": "core.bin",
             "sha256": checksum, "size_bytes": len(data)}]}))
         artifact_temporary = tempfile.TemporaryDirectory(prefix="proofci-worker-artifacts-")
@@ -67,7 +72,9 @@ class DispatchTests(CLITest):
         artifacts = Path(artifact_temporary.name)
         artifact = b"raw worker output"
         (artifacts / "solution.lean").write_bytes(artifact)
-        artifact_manifest = self.root / "artifact-manifest.json"
+        manifest_temporary = tempfile.TemporaryDirectory(prefix="proofci-artifact-manifest-")
+        self.addCleanup(manifest_temporary.cleanup)
+        artifact_manifest = Path(manifest_temporary.name) / "artifact-manifest.json"
         artifact_manifest.write_text(json.dumps({"version": 1, "files": {
             "solution.lean": hashlib.sha256(artifact).hexdigest()}}))
 

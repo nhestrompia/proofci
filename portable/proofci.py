@@ -284,6 +284,7 @@ def main():
     parser.add_argument("--proof-body", type=Path)
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--attempt-only", action="store_true")
+    parser.add_argument("--validator-only", action="store_true")
     parser.add_argument("--search-results", type=Path)
     parser.add_argument("--dependencies", type=Path)
     args = parser.parse_args()
@@ -422,7 +423,7 @@ def main():
                 selected = error_entry or (accepted[0] if accepted else next((entry for entry in submissions if entry["validation"]["reason"] != "missing_evidence"), submissions[0]))
                 result.update(evidence=selected["evidence"], decision=selected["validation"]["decision"], reason=selected["validation"]["reason"],
                               validation=selected["validation"], evidence_sha256=selected["evidence_sha256"])
-            if (result.get("decision") == "unproven" and args.bwrap is not None
+            if (not args.validator_only and result.get("decision") == "unproven" and args.bwrap is not None
                     and os.environ.get("PROOFCI_CONTAINER") == "1"
                     and result.get("reason") in ("missing_evidence", "invalid_evidence", "proof_failed", "unproven")):
                 import construct
