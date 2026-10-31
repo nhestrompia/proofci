@@ -23,10 +23,12 @@ def describe(snapshot, base, head, baseline, deadline):
     import time
     env = os.environ.copy()
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
-               GIT_NO_REPLACE_OBJECTS="1", GIT_OPTIONAL_LOCKS="0")
+               GIT_CONFIG_SYSTEM=os.devnull, GIT_NO_REPLACE_OBJECTS="1",
+               GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
     def git(*args):
         return subprocess.check_output(
             ["git", "-c", "safe.directory=*", "-c", "core.fsmonitor=false",
+             "-c", "core.hooksPath=/dev/null", "-c", "submodule.recurse=false",
              "-C", str(snapshot), *args], env=env, stderr=subprocess.PIPE,
             timeout=max(0, deadline - time.monotonic()))
     raw = git("diff-tree", "--no-commit-id", "--raw", "-r", "-z", "--no-abbrev",

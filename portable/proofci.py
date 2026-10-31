@@ -14,6 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scope
+import dependencies
 
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATOR = ROOT / "experiments/source-binding"
@@ -24,6 +25,20 @@ TOOLCHAIN_SHA256 = "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971
 
 class RunTimeout(BaseException):
     pass
+
+
+def git_environment():
+    """Run Git as a data reader, never as a candidate-controlled workflow."""
+    environment = os.environ.copy()
+    environment.update(
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_SYSTEM=os.devnull,
+        GIT_NO_REPLACE_OBJECTS="1",
+        GIT_OPTIONAL_LOCKS="0",
+        GIT_TERMINAL_PROMPT="0",
+    )
+    return environment
 
 
 def timeout_signal(_signal, _frame):
@@ -81,8 +96,11 @@ def path_in(root, name):
 
 def verify_snapshot(snapshot, envelope, baseline, deadline):
     def git(*args):
-        return subprocess.check_output(["git", "-c", "safe.directory=*", "-c", "core.fsmonitor=false", "-C", str(snapshot), *args],
-                                       stderr=subprocess.PIPE, text=True, timeout=max(0, deadline - time.monotonic())).strip()
+        return subprocess.check_output(
+            ["git", "-c", "safe.directory=*", "-c", "core.fsmonitor=false",
+             "-c", "core.hooksPath=/dev/null", "-c", "submodule.recurse=false",
+             "-C", str(snapshot), *args], env=git_environment(),
+            stderr=subprocess.PIPE, text=True, timeout=max(0, deadline - time.monotonic())).strip()
     if git("rev-parse", "--show-toplevel") != str(snapshot):
         raise ValueError("snapshot must be the repository root")
     if git("rev-parse", "HEAD") != envelope["head"]:
@@ -93,6 +111,18 @@ def verify_snapshot(snapshot, envelope, baseline, deadline):
         raise ValueError("repository identity mismatch")
     if git("status", "--porcelain", "--untracked-files=all"):
         raise ValueError("snapshot has uncommitted changes")
+    tree = subprocess.check_output(
+        ["git", "-c", "safe.directory=*", "-c", "core.fsmonitor=false", "-C", str(snapshot),
+         "ls-tree", "-r", "-z", "--full-tree", envelope["head"]],
+        env=git_environment(), stderr=subprocess.PIPE,
+        timeout=max(0, deadline - time.monotonic()))
+    for entry in tree.split(b"\0"):
+        if not entry:
+            continue
+        metadata, _ = entry.split(b"\t", 1)
+        mode, object_type, _object = metadata.split(b" ", 2)
+        if mode == b"160000" or object_type == b"commit":
+            raise ValueError("submodules are not supported in a verification snapshot")
     paths = [baseline["candidate"]]
     for item in baseline["obligations"]:
         for name in (item["evidence"], item.get("refutation")):
@@ -115,8 +145,10 @@ def verify_snapshot(snapshot, envelope, baseline, deadline):
     for name in paths:
         if git("ls-files", "--error-unmatch", "--", name) != name:
             raise ValueError("candidate and evidence must be committed")
-        committed = subprocess.check_output(["git", "-c", "safe.directory=*", "-C", str(snapshot), "show", envelope["head"] + ":" + name],
-                                            stderr=subprocess.PIPE, timeout=max(0, deadline - time.monotonic()))
+        committed = subprocess.check_output(
+            ["git", "-c", "safe.directory=*", "-c", "core.fsmonitor=false", "-C", str(snapshot),
+             "show", envelope["head"] + ":" + name], env=git_environment(),
+            stderr=subprocess.PIPE, timeout=max(0, deadline - time.monotonic()))
         if (snapshot / name).read_bytes() != committed:
             raise ValueError("snapshot bytes differ from committed content")
         hashes[name] = hashlib.sha256(committed).hexdigest()
@@ -253,6 +285,7 @@ def main():
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--attempt-only", action="store_true")
     parser.add_argument("--search-results", type=Path)
+    parser.add_argument("--dependencies", type=Path)
     args = parser.parse_args()
     start_monotonic = time.monotonic()
     report = {"version": 1, "status": "error", "results": [], "started_at": time.time()}
@@ -286,6 +319,8 @@ def main():
         if envelope["trust_policy"] != policy_digest():
             raise ValueError("trust policy identity mismatch")
         verify_snapshot(snapshot, envelope, baseline, deadline)
+        if args.dependencies is not None:
+            report["dependencies"] = dependencies.verify_staged(args.dependencies)
         exhausted = set()
         if args.search_results:
             search_bytes = bounded_read(args.search_results, 1024 * 1024)

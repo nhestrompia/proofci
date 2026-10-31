@@ -73,6 +73,40 @@ python3 portable/container.py --envelope run.json --baseline protected/baseline.
   --snapshot checkout --report report.json
 ```
 
+The trusted operator dispatch command adds the worker boundary and a separate
+final-validation pass. It never accepts the worker's claimed JSON as the
+result; the final pass rechecks the immutable snapshot and protected baseline:
+
+```sh
+python3 portable/dispatch.py --envelope run.json --baseline protected/baseline.json \
+  --snapshot checkout --report report.json
+```
+
+An optional dependency manifest stages only operator-approved content from a
+local content-addressed cache. Each cache file is named by its SHA-256 digest;
+the manifest has no URL, command, hook, or toolchain fields:
+
+```json
+{"version":1,"dependencies":[
+  {"name":"core/library.bin","sha256":"<digest>","size_bytes":1234}
+]}
+```
+
+Pass it with `--dependency-manifest manifest.json --dependency-cache cache/`.
+The staged directory is read-only in the worker and every file is checked by
+identity and size again inside the image. Submodules are rejected, Git hooks
+and external configuration are disabled for trusted Git reads, and the image,
+toolchain, validator policy, network, credentials, and container socket are
+fixed by the protected launcher. The worker receives no host home directory or
+provider credentials.
+
+If a worker produces raw files, supply an operator-owned allowlist such as
+`{"version":1,"files":{"solution.lean":"<digest>"}}` with
+`--artifacts WORKER_DIR --artifact-manifest artifacts.json`. The handoff
+accepts only named private regular files with matching digests and bounded
+size/count. It does not parse archives; archive export and replay remain the
+separate evidence interface below.
+
 Docker runs the CLI and validator offline, unprivileged, with CPU, memory,
 process and temporary-storage limits. The tighter of memory and file limits
 bounds container memory, including nested tmpfs. This conservative bound may
@@ -153,6 +187,7 @@ passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 ```sh
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_assist_linux.py
+PROOFCI_TEST_PACKAGED=1 python3 portable/test_dispatch_linux.py
 ```
 
 A conditional contract may add `"precondition": {"lhs": "x", "op": "<", "rhs": "3"}`.
