@@ -1,0 +1,172 @@
+import hashlib
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import evidence
+
+
+META = {
+    "meta": {
+        "exporter": {"name": "lean4export", "version": "3.1.0"},
+        "format": {"version": "3.1.0"},
+        "lean": {"githash": evidence.LEAN_COMMIT, "version": "4.35.0"},
+    }
+}
+
+
+def export(*, challenge=False, extra=None):
+    records = [META]
+    for number, name, kind in (
+        (1, "target", "def"),
+        (2, "contract", "thm"),
+    ):
+        records.extend(({"in": number, "str": {"pre": 0, "str": name}}, {kind: {"name": number}}))
+    if challenge:
+        records.extend(({"in": 3, "str": {"pre": 0, "str": "sorryAx"}}, {"axiom": {"name": 3}}))
+    if extra:
+        records.append(extra)
+    return "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records).encode()
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+class EvidenceBundleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.candidate = root / "candidate.lean"
+        self.contract = root / "contract.json"
+        self.bundle = root / "bundle"
+        self.bundle.mkdir()
+        self.candidate.write_text("def target (x : Nat) : Nat := x + 1\n")
+        self.contract.write_text('{"rhs":"x + 1"}\n')
+
+    def write_bundle(self, **overrides):
+        solution = overrides.pop("solution", b"import CandidateCheck\ntheorem contract := by rfl\n")
+        challenge_export = overrides.pop("challenge_export", export(challenge=True))
+        solution_export = overrides.pop("solution_export", export())
+        files = {
+            "solution.lean": solution,
+            "challenge.ndjson": challenge_export,
+            "solution.ndjson": solution_export,
+        }
+        for name, contents in files.items():
+            (self.bundle / name).write_bytes(contents)
+        manifest = {
+            "version": 1,
+            "candidate_sha256": digest(self.candidate.read_bytes()),
+            "contract_sha256": digest(self.contract.read_bytes()),
+            "solution_sha256": digest(solution),
+            "challenge_export_sha256": digest(challenge_export),
+            "solution_export_sha256": digest(solution_export),
+            "claimed_decision": "verified",
+        }
+        manifest.update(overrides)
+        (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+
+    def test_valid_bundle_is_admitted_before_toolchain_replay(self):
+        self.write_bundle()
+        loaded = evidence.load_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(loaded.candidate_sha256, digest(self.candidate.read_bytes()))
+        self.assertEqual(loaded.permitted_axioms, evidence.PERMITTED_AXIOMS)
+
+    def test_candidate_hash_mismatch_is_invalid_evidence(self):
+        self.write_bundle(candidate_sha256="0" * 64)
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+    def test_bundle_cannot_supply_validation_policy(self):
+        self.write_bundle(policy={"permitted_axioms": ["sorryAx"], "checker": ["evil"]})
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+    def test_solution_sorry_dependency_is_rejected(self):
+        solution_export = export(extra={"in": 4, "str": {"pre": 0, "str": "sorryAx"}})
+        solution_export += b'{"axiom":{"name":4}}\n'
+        self.write_bundle(solution_export=solution_export)
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+    def test_custom_axiom_is_rejected_transitively(self):
+        custom = export(extra={"in": 4, "str": {"pre": 0, "str": "cheat"}})
+        custom += b'{"axiom":{"name":4}}\n'
+        self.write_bundle(solution_export=custom)
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+    def test_unavailable_pinned_validator_is_not_a_verified_result(self):
+        self.write_bundle()
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "validation_unavailable")
+
+    def test_checker_disagreement_is_not_downgraded_to_unproven(self):
+        with self.assertRaises(evidence.CheckerDisagreement):
+            evidence.classify_checker(0, "nanoda kernel accepts the solution")
+
+    def test_checker_failure_is_distinct_from_checker_disagreement(self):
+        result = evidence.classify_checker(1, "the proof did not pass")
+        self.assertEqual(result, "unproven")
+
+    def test_checker_acceptance_with_failure_status_is_contradictory(self):
+        with self.assertRaises(evidence.ContradictoryEvidence):
+            evidence.classify_checker(
+                1,
+                "nanoda kernel accepts the solution\n"
+                "Lean default kernel accepts the solution\n",
+            )
+
+    def test_checker_infrastructure_failure_is_a_build_failure(self):
+        with self.assertRaises(evidence.BuildFailure):
+            evidence.classify_checker(2, "")
+
+    def test_final_sandbox_mounts_precede_the_lake_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            policy = Path(tmp) / "comparator.json"
+            policy.write_text("{}")
+            with (patch.object(evidence.platform, "system", return_value="Linux"),
+                  patch.object(evidence.platform, "machine", return_value="aarch64"),
+                  patch.object(evidence.shutil, "which", return_value="/usr/bin/bwrap")):
+                command = evidence._sandbox_prefix(
+                    Path(tmp), workspace, policy, read_only_sources=True
+                )
+        self.assertEqual(command[command.index("--setenv") + 1], "HOME")
+        separator = command.index("--")
+        self.assertEqual(command[separator + 1], "/lean/bin/lake")
+        self.assertTrue(all(command.index(f"/workspace/{name}") < separator for name in (
+            "Candidate.lean", "Challenge.lean", "Solution.lean"
+        )))
+
+    def test_malformed_export_is_normalized_to_invalid_evidence(self):
+        self.write_bundle()
+        malformed = b'{"meta":null}\n'
+        (self.bundle / "challenge.ndjson").write_bytes(malformed)
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        manifest["challenge_export_sha256"] = digest(malformed)
+        (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+    def test_changed_contract_cannot_reuse_bundle(self):
+        self.write_bundle()
+        self.contract.write_text('{"rhs":"x + 2"}\n')
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+
+if __name__ == "__main__":
+    unittest.main()

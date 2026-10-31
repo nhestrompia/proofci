@@ -22,6 +22,13 @@ from toolchain import tree_digest
 LEAN_COMMIT = "eb6cafb7290e8bd5f2937522d8d804f58f02bafc"
 LINUX_ARM64_TOOLCHAIN = "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00"
 BWRAP_SHA256 = "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976"
+PERMITTED_AXIOMS = frozenset(("propext", "Quot.sound", "Classical.choice"))
+COMPARATOR_CONFIG = {
+    "challenge_module": "Challenge", "solution_module": "Solution",
+    "theorem_names": ["contract", "definition_identity"], "definition_names": [],
+    "permitted_axioms": sorted(PERMITTED_AXIOMS),
+    "external_kernels": {"nanoda": ["nanoda_bin"]},
+}
 _verified_toolchains = {}
 _toolchain_lock = threading.Lock()
 TOKEN = re.compile(r"\s+|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|:=|[():+*]")
@@ -48,15 +55,24 @@ def read_input(path, limit):
     return data
 
 
-def check_export(export, challenge):
+def check_export(export, challenge, required=None, permitted_axioms=()):
     lines = export.splitlines()
     if not lines:
         raise ValueError("Lean produced an empty export")
-    records = [json.loads(line) for line in lines]
+    try:
+        records = [json.loads(line) for line in lines]
+    except json.JSONDecodeError as error:
+        raise ValueError(f"malformed Lean export: {error}") from error
+    if not all(isinstance(record, dict) for record in records):
+        raise ValueError("malformed Lean export record")
     if set(records[0]) != {"meta"}:
         raise ValueError("malformed Lean export metadata")
     meta = records[0].get("meta", {})
-    if meta.get("lean", {}).get("githash") != LEAN_COMMIT or meta.get("format", {}).get("version") != "3.1.0":
+    if (not isinstance(meta, dict)
+            or not isinstance(meta.get("lean"), dict)
+            or not isinstance(meta.get("format"), dict)
+            or meta.get("lean", {}).get("githash") != LEAN_COMMIT
+            or meta.get("format", {}).get("version") != "3.1.0"):
         raise ValueError("export was produced by a different Lean version")
     names = {0: ""}
     declarations = set()
@@ -76,12 +92,13 @@ def check_export(export, challenge):
                 for kind in ("ctors", "recs", "types"):
                     for entry in record["inductive"][kind]:
                         declarations.add(f"{kind} {names[entry['name']]}")
-    except (KeyError, TypeError) as error:
+    except (AttributeError, IndexError, KeyError, TypeError) as error:
         raise ValueError(f"malformed Lean export: {error}") from error
-    required = {"def target"}
+    required = {"def target"} if required is None else set(required)
     if challenge:
         required |= {"thm contract", "axiom sorryAx"}
-    allowed = set(json.loads(Path(__file__).with_name("core-dependencies.json").read_bytes())) | required
+    allowed = (set(json.loads(Path(__file__).with_name("core-dependencies.json").read_bytes()))
+               | {f"axiom {name}" for name in permitted_axioms} | required)
     if not required.issubset(declarations) or declarations - allowed:
         raise ValueError(f"unexpected export dependencies: {sorted(declarations - allowed)}; missing: {sorted(required - declarations)}")
     return sorted(declarations)
@@ -169,6 +186,17 @@ def load_contract(data):
     return expression(tokens(contract["rhs"]))
 
 
+def build_sources(candidate, contract):
+    """Build the fixed challenge sources shared by construction and replay."""
+    candidate_text = candidate.decode("utf-8")
+    body, canonical_body = candidate_body(candidate_text)
+    rhs, _ = load_contract(contract)
+    identity = f"theorem definition_identity : target = (fun (x : Nat) => {canonical_body}) := by rfl\n"
+    statement = f"theorem contract (x : Nat) : target x = {rhs} := by "
+    challenge = "import CandidateCheck\n" + statement + "sorry\n"
+    return body, canonical_body, identity, statement, challenge
+
+
 def verify_toolchain(lean, lake):
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise ValueError("the pinned validator supports Linux arm64 only")
@@ -194,8 +222,7 @@ def verify_toolchain(lean, lake):
 def run(candidate_path, contract_path, lake, lean, unsafe_no_sandbox=False, _test_solution=None):
     candidate = read_input(candidate_path, 16384)
     contract = read_input(contract_path, 16384)
-    body, canonical_body = candidate_body(candidate.decode("utf-8"))
-    rhs, _ = load_contract(contract)
+    body, canonical_body, identity, statement, challenge = build_sources(candidate, contract)
     distribution_sha = None if unsafe_no_sandbox else verify_toolchain(lean, lake)
     env = {"PATH": str(Path(lean).resolve().parent) + os.pathsep + "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C.UTF-8"}
     version = subprocess.run([lean, "--version"], env=env, check=True, capture_output=True, text=True).stdout.strip()
@@ -204,20 +231,12 @@ def run(candidate_path, contract_path, lake, lean, unsafe_no_sandbox=False, _tes
     if Path(lean).resolve().parent != Path(lake).resolve().parent:
         raise ValueError("Lean and Lake must be in the same toolchain directory")
 
-    statement = f"theorem contract (x : Nat) : target x = {rhs} := by "
-    config = {
-        "challenge_module": "Challenge", "solution_module": "Solution",
-        "theorem_names": ["contract", "definition_identity"], "definition_names": [],
-        "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
-        "external_kernels": {"nanoda": ["nanoda_bin"]},
-    }
+    config = dict(COMPARATOR_CONFIG)
     with tempfile.TemporaryDirectory(prefix="proofci-adapter-") as tmp:
         root = Path(tmp)
         (root / "lakefile.lean").write_text("import Lake\nopen Lake DSL\npackage spike\nlean_lib Candidate\nlean_lib CandidateCheck\nlean_lib Challenge\nlean_lib Solution\n")
         (root / "Candidate.lean").write_bytes(candidate)
-        identity = f"theorem definition_identity : target = (fun (x : Nat) => {canonical_body}) := by rfl\n"
         (root / "CandidateCheck.lean").write_text("import Candidate\n" + identity)
-        challenge = "import CandidateCheck\n" + statement + "sorry\n"
         (root / "Challenge.lean").write_text(challenge)
         solution = "import CandidateCheck\nimport Std.Tactic\n" + statement + "simp [target] <;> omega\n"
         if _test_solution is not None:
