@@ -145,7 +145,7 @@ def replay(args):
         fresh = proofci.parse_json(read_file(result, 8 * 1024 * 1024))
         def outcomes(report):
             return [(r['id'], r['policy'], r['decision'], r['reason'], r.get('evidence_sha256')) for r in report['results']]
-        reproduced = status in (0, 1) and original.get('envelope') == envelope and original.get('status') == fresh.get('status') and outcomes(original) == outcomes(fresh)
+        reproduced = status in (0, 1) and original.get('envelope') == envelope and original.get('status') == fresh.get('status') and original.get('execution') == fresh.get('execution') and isinstance(original.get('execution'), dict) and outcomes(original) == outcomes(fresh)
         output = {'version': 1, 'status': 'reproduced' if reproduced else 'not_reproduced', 'historical_ci_publication': 'not_reproduced', 'original_report': original, 'replay_report': fresh}
         args.output.write_text(json.dumps(output, indent=2, sort_keys=True) + '\n')
         return status if reproduced else 2
