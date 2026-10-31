@@ -4,7 +4,7 @@ import type { OAuthSessions } from './oauth.ts';
 import type { Enforcement } from './enforcement.ts';
 
 type Dependencies = {
-  store: { select(scope: RepositoryScope): Promise<void>; remove(scope: RepositoryScope): Promise<void>; isSelected(scope: RepositoryScope): Promise<boolean> };
+  store: { beginSelection(scope: RepositoryScope): Promise<string>; selectIfUnchanged(scope: RepositoryScope, revision: string): Promise<boolean>; remove(scope: RepositoryScope): Promise<void>; isSelected(scope: RepositoryScope): Promise<boolean> };
   sessions: Pick<OAuthSessions, 'checkMaintainer'>;
   github: Pick<GitHubApp, 'checkMaintainerAccess' | 'inspectEnforcement'>;
 };
@@ -21,9 +21,9 @@ export class EnrollmentService {
 
   async enroll(input: Request): Promise<boolean> {
     try {
+      const revision = await this.dependencies.store.beginSelection(input.scope);
       if (!await this.authorized(input)) return false;
-      await this.dependencies.store.select(input.scope);
-      return true;
+      return await this.dependencies.store.selectIfUnchanged(input.scope, revision);
     } catch { return false; }
   }
 

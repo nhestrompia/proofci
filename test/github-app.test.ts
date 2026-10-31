@@ -137,3 +137,20 @@ test('treats an ambiguous GitHub validation response as unavailable, not revoked
   };
   assert.equal(await new GitHubApp({ appId: 7, privateKey, request }).installationAccess({ installationId: 12, repositoryId: 34 }), 'unavailable');
 });
+
+test('uninstalled and removed repository scopes cannot authorize access', async () => {
+  for (const unavailable of ['installation', 'repository']) {
+    const paths: string[] = [];
+    const request: typeof fetch = async (input) => {
+      const path = new URL(String(input)).pathname;
+      paths.push(path);
+      if (path === '/app/installations/12' && unavailable === 'installation') return new Response('', { status: 404 });
+      if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+      if (path === '/app/installations/12/access_tokens') return new Response('', { status: 422 });
+      throw new Error('unexpected request');
+    };
+    const app = new GitHubApp({ appId: 7, privateKey, request });
+    assert.equal(await app.checkInstallationAccess({ installationId: 12, repositoryId: 34 }), false);
+    assert.deepEqual(paths, unavailable === 'installation' ? ['/app/installations/12'] : ['/app/installations/12', '/app/installations/12/access_tokens']);
+  }
+});

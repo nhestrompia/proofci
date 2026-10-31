@@ -39,7 +39,7 @@ test('enrollment requires a trusted maintainer session and rechecks authority', 
   const selected: string[] = [];
   let actor: number | null = null;
   const service = new EnrollmentService({
-    store: { select: async () => { selected.push('selected'); }, remove: async () => { selected.push('removed'); }, isSelected: async () => true },
+    store: { beginSelection: async () => 'v1', selectIfUnchanged: async () => { selected.push('selected'); return true; }, remove: async () => { selected.push('removed'); }, isSelected: async () => true },
     sessions: { checkMaintainer: async () => actor },
     github: { checkMaintainerAccess: async () => null, inspectEnforcement: async () => 'unconfirmed' },
   });
@@ -59,7 +59,7 @@ test('removal and policy inspection require current maintainer authority', async
   const { EnrollmentService } = await import('../src/enrollment-service.ts');
   let allowed = false, selected = true;
   const service = new EnrollmentService({
-    store: { select: async () => {}, remove: async () => { selected = false; }, isSelected: async () => selected },
+    store: { beginSelection: async () => 'v1', selectIfUnchanged: async () => true, remove: async () => { selected = false; }, isSelected: async () => selected },
     sessions: { checkMaintainer: async () => allowed ? 56 : null },
     github: { checkMaintainerAccess: async () => null, inspectEnforcement: async () => 'unconfirmed' },
   });
@@ -102,4 +102,32 @@ test('an old revocation result cannot delete a newer enrollment', async () => {
   const result = await authorizeNewWork({ scope: { installationId: 12, repositoryId: 34 }, selections, github: { installationAccess: async () => { version = 'new'; return 'revoked'; } } });
   assert.equal(result, false);
   assert.equal(version, 'new');
+});
+
+test('a revocation during maintainer verification prevents stale enrollment', async () => {
+  const { EnrollmentService } = await import('../src/enrollment-service.ts');
+  let revision = 'old', selected = false, revoke = false;
+  const service = new EnrollmentService({
+    store: { beginSelection: async () => revision, selectIfUnchanged: async (_scope, previous) => { if (previous !== revision) return false; selected = true; return true; }, remove: async () => {}, isSelected: async () => selected },
+    sessions: { checkMaintainer: async () => { if (revoke) revision = 'new'; return 56; } },
+    github: { checkMaintainerAccess: async () => null, inspectEnforcement: async () => 'unconfirmed' },
+  });
+  const input = { session: 's', scope: { installationId: 12, repositoryId: 34 } };
+  assert.equal(await service.enroll(input), true);
+  selected = false; revoke = true;
+  assert.equal(await service.enroll(input), false);
+  assert.equal(selected, false);
+});
+
+
+test('starting a selection does not create a revision record', { skip: !databaseUrl }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl });
+  const installationId = 940001;
+  try {
+    const store = new EnrollmentStore(pool);
+    await store.initialize();
+    await pool.query('DELETE FROM proofci_installation_revisions WHERE installation_id = $1', [installationId]);
+    assert.equal(await store.beginSelection({ installationId, repositoryId: 940002 }), '0');
+    assert.equal((await pool.query('SELECT 1 FROM proofci_installation_revisions WHERE installation_id = $1', [installationId])).rowCount, 0);
+  } finally { await pool.end(); }
 });

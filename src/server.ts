@@ -6,6 +6,7 @@ import { EnrollmentStore } from './enrollment-store.ts';
 import { EnrollmentService } from './enrollment-service.ts';
 import { GitHubApp } from './github-app.ts';
 import { OAuthSessions } from './oauth.ts';
+import { processInstallationEvent } from './installation-events.ts';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -44,6 +45,7 @@ async function form(request: IncomingMessage): Promise<URLSearchParams> {
 const page = `<!doctype html><title>ProofCI enrollment</title><h1>ProofCI enrollment</h1>
 <p>Enrollment requires App permissions: contents read, pull requests read, checks write, and metadata read. Optional administration read is only for policy inspection.</p>
 <p>Installing or enrolling a repository does not activate contracts or protect merges.</p>
+<p>Configure the GitHub installation and repository-selection webhooks to clear enrollments when access is removed.</p>
 <p>Before enforcement, require the ProofCI check from the expected App and require fresh merge results or a merge queue. Policy inspection may require administration read access and reports only observed branch settings.</p>
 <p><a href="/login">Sign in with GitHub</a></p>`;
 
@@ -71,6 +73,23 @@ const server = createServer(async (request, response) => {
       if (!session) return reply(response, 403, 'Sign-in failed.');
       setCookie(response, 'proofci_session', session, 1800);
       response.writeHead(303, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return response.end();
+    }
+    if (request.method === 'POST' && url.pathname === '/webhooks/github') {
+      const secret = process.env.GITHUB_WEBHOOK_SECRET;
+      if (!secret) return reply(response, 503, 'GitHub webhook is not configured.');
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of request) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += bytes.length;
+        if (size > 1024 * 1024) return reply(response, 413, 'Webhook body too large.');
+        chunks.push(bytes);
+      }
+      const signature = request.headers['x-hub-signature-256'];
+      const event = request.headers['x-github-event'];
+      const deliveryId = request.headers['x-github-delivery'];
+      if (typeof signature !== 'string' || typeof event !== 'string' || typeof deliveryId !== 'string' || !await processInstallationEvent({ body: Buffer.concat(chunks), signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
+      response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
     }
     if (request.method === 'POST' && url.pathname === '/logout') {
       if (request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');
