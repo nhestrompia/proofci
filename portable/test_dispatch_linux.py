@@ -60,7 +60,8 @@ class IsolatedDispatchLinuxTests(unittest.TestCase):
             local_report = root / "local.json"
             local = subprocess.run([sys.executable, str(HERE / "container.py"),
                 "--envelope", str(envelope), "--baseline", str(baseline),
-                "--snapshot", str(snapshot), "--report", str(local_report), "--image", image],
+                "--snapshot", str(snapshot), "--report", str(local_report), "--image", image,
+                "--validator-only"],
                 timeout=240)
             self.assertEqual(local.returncode, 0, local_report.read_text())
             dispatched_report = root / "dispatched.json"

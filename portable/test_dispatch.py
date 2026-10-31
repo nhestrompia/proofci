@@ -36,8 +36,7 @@ class DispatchTests(CLITest):
         def launcher(command, _deadline):
             phase = command[command.index("--phase") + 1]
             phases.append(phase)
-            if phase == "final-validation":
-                self.assertIn("--validator-only", command)
+            self.assertIn("--validator-only", command)
             report_path = Path(command[command.index("--report") + 1])
             value = self._forged_report(envelope) if phase == "worker" else self._blocked_report(envelope)
             report_path.write_text(json.dumps(value))

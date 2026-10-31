@@ -82,6 +82,12 @@ python3 portable/dispatch.py --envelope run.json --baseline protected/baseline.j
   --snapshot checkout --report report.json
 ```
 
+Dispatch is evidence-only: both the worker and final-validation phases use
+`--validator-only` and never turn uncommitted proof suggestions into accepted
+evidence. Use `assist.py` separately for bounded proof construction; its output
+must still be independently validated before it can be committed or used by a
+later run.
+
 An optional dependency manifest stages only operator-approved content from a
 local content-addressed cache. Each cache file is named by its SHA-256 digest;
 the manifest has no URL, command, hook, or toolchain fields:

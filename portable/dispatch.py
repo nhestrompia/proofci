@@ -129,7 +129,8 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, dependency_manif
                 command.extend(["--dependencies", str(staged)])
             worker_report_path = Path(temporary) / "worker-report.json"
             worker_status = (launcher or _run_process)(
-                command + ["--report", str(worker_report_path), "--phase", "worker"], deadline)
+                command + ["--report", str(worker_report_path), "--phase", "worker",
+                           "--validator-only"], deadline)
             worker_report = proofci.parse_json(proofci.bounded_read(worker_report_path, MAX_REPORT_BYTES))
             if worker_status in (0, 1):
                 report_contract.validate(worker_report, envelope, baseline)
