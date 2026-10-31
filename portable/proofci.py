@@ -19,6 +19,16 @@ IMAGE = "python@sha256:6a9220edda062e9223ea0784740a535987299420b96fbfd520b89bbd3
 BWRAP_SHA256 = "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976"
 TOOLCHAIN_SHA256 = "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00"
 
+
+class RunTimeout(BaseException):
+    pass
+
+
+def timeout_signal(_signal, _frame):
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    raise RunTimeout
+
+
 def digest(path):
     h = hashlib.sha256()
     with path.open("rb") as source:
@@ -261,6 +271,8 @@ def main():
         if any(type(value) is not int or value <= 0 for value in limits.values()):
             raise ValueError("resource limits must be positive integers")
         deadline = time.monotonic() + min(limits["timeout_seconds"], limits["cpu_seconds"])
+        signal.signal(signal.SIGALRM, timeout_signal)
+        signal.setitimer(signal.ITIMER_REAL, max(0.000001, deadline - time.monotonic()))
         if hashlib.sha256(baseline_bytes).hexdigest() != envelope["baseline_sha256"]:
             raise ValueError("baseline digest mismatch")
         snapshot = args.snapshot.resolve(strict=True)
@@ -298,7 +310,7 @@ def main():
                             raise ValueError("evidence changed during validation")
                         result.update(decision=checked["decision"], reason=checked["reason"], validation=checked,
                                       evidence_sha256=evidence_hashes)
-                    except subprocess.TimeoutExpired:
+                    except (subprocess.TimeoutExpired, RunTimeout):
                         result.update(decision="unproven", reason="timeout")
                     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
                         result.update(decision="unproven", reason="validation_unavailable", detail=str(error))
@@ -314,11 +326,12 @@ def main():
     except KeyboardInterrupt:
         report["reason"] = "cancelled"
         finish_unchecked(report, baseline, "cancelled")
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, RunTimeout):
         report["reason"] = "timeout"
         finish_unchecked(report, baseline, "timeout")
     except (OSError, ValueError, KeyError, TypeError, RecursionError, UnicodeError, subprocess.CalledProcessError) as error:
         report["reason"] = str(error)
+    signal.setitimer(signal.ITIMER_REAL, 0)
     report["finished_at"] = time.time()
     report["usage"] = {"model_calls": 0, "elapsed_seconds": time.monotonic() - start_monotonic}
     try:

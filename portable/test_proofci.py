@@ -94,6 +94,23 @@ class CLITest(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertIn("committed content", report["reason"])
 
+    def test_deadline_interrupts_host_side_snapshot_check(self):
+        envelope_path = self.root / "envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["resource_policy"]["timeout_seconds"] = 1
+        envelope_path.write_text(json.dumps(envelope))
+        args = [str(CLI), "--envelope", str(envelope_path), "--baseline", str(self.root / "baseline.json"),
+                "--snapshot", str(self.snapshot), "--toolchain", str(self.root / "toolchain"),
+                "--report", str(self.root / "report.json")]
+        started = time.monotonic()
+        with patch.object(sys, "argv", args), patch.object(proofci, "verify_snapshot", side_effect=lambda *args: time.sleep(10)):
+            status = proofci.main()
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(status, 2)
+        self.assertEqual(report["reason"], "timeout")
+        self.assertEqual(len(report["results"]), 2)
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_validator_container_name_is_not_an_evidence_filename(self):
         proof = self.root / "bundle"
         proof.mkdir()
@@ -118,6 +135,9 @@ class CLITest(unittest.TestCase):
         name = command[command.index("--name") + 1]
         self.assertTrue(name.startswith("proofci-"))
         self.assertEqual(popen.call_args.args[0], ["docker", "start", "-a", name])
+        for flag, expected in (("--network", "none"), ("--memory", "1000000000"),
+                               ("--memory-swap", "1000000000"), ("--pids-limit", "100"), ("--cpus", "1")):
+            self.assertEqual(command[command.index(flag) + 1], expected)
 
 
 if __name__ == "__main__":
