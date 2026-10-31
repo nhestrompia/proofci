@@ -12,19 +12,24 @@ import tempfile
 import time
 import uuid
 
-IMAGE_ID = "sha256:ac3afc9c6af4bd70c5833105931561745d7e42701c2bfce246bc69d7f4076ea1"
+IMAGE_ID = "sha256:3e3d60a0d733bc92983a8003a634722d2ddddd1488dd2abc4d4c4bd2f50625f0"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("envelope", "baseline", "snapshot", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
-    parser.add_argument("--image", default="proofci-validator-local")
+    parser.add_argument("--image", default=IMAGE_ID)
+    parser.add_argument("--repair-id")
+    parser.add_argument("--proof-body", type=Path)
+    parser.add_argument("--artifacts", type=Path)
     args = parser.parse_args()
     report = args.report.resolve()
     try:
         if os.getuid() == 0:
             raise ValueError("run the launcher as an unprivileged user")
+        if (args.repair_id is None) != (args.proof_body is None):
+            raise ValueError("repair identity and proof body must be supplied together")
         with args.envelope.open("rb") as source:
             raw = source.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
@@ -34,7 +39,7 @@ def main():
         expected = {"timeout_seconds", "cpu_seconds", "memory_bytes", "file_bytes", "processes"}
         if set(limits) != expected or any(type(v) is not int or v <= 0 for v in limits.values()):
             raise ValueError("invalid resource policy")
-        deadline = time.monotonic() + min(limits["timeout_seconds"], limits["cpu_seconds"])
+        deadline = time.monotonic() + min(900, limits["timeout_seconds"], limits["cpu_seconds"])
         snapshot = args.snapshot.resolve(strict=True)
         baseline = args.baseline.resolve(strict=True)
         if not snapshot.is_dir() or not baseline.is_file():
@@ -76,6 +81,23 @@ def main():
                 "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/" + baseline.name,
                 "--snapshot", "/snapshot", "--toolchain", "/lean", "--bwrap", "/usr/bin/bwrap",
                 "--report", "/result/report.json"]
+            if args.artifacts is not None:
+                artifacts = args.artifacts.resolve(strict=True)
+                if not artifacts.is_dir():
+                    raise ValueError("artifact destination must be a directory")
+                command[command.index("-e"):command.index("-e")] = [
+                    "--mount", f"type=bind,src={artifacts},dst=/artifacts"]
+                command.extend(["--artifacts", "/artifacts"])
+            if args.proof_body is not None:
+                body = args.proof_body.read_bytes()
+                if len(body) > 65536:
+                    raise ValueError("proof body exceeds size limit")
+                body_path = temp / "body"
+                body_path.write_bytes(body)
+                os.chmod(body_path, 0o644)
+                command[command.index("-e"):command.index("-e")] = [
+                    "--mount", f"type=bind,src={body_path},dst=/runinput/body,readonly"]
+                command.extend(["--repair-id", args.repair_id, "--proof-body", "/runinput/body", "--attempt-only"])
             try:
                 guard = subprocess.Popen([sys.executable, str(Path(__file__).with_name("create_guard.py")),
                                           name, json.dumps(command)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
