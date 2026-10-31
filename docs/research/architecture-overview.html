@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProofCI architecture and scope</title>
+<style>
+*{box-sizing:border-box}body{margin:0;color:var(--foreground,#1c2430);font:14px/1.5 var(--font-sans,system-ui,sans-serif)}
+p{margin:0 0 12px}h2{font-size:17px;line-height:1.3;margin:0 0 8px}h3{font-size:14px;margin:0 0 6px}
+.scope{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}.panel{padding:16px;border-radius:var(--radius,10px);background:var(--card,#f3f5f7);border:1px solid var(--border,#d9dfe6)}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted-foreground,#626c7b);margin-bottom:7px}
+.scope p,.step p{margin:0;color:var(--muted-foreground,#626c7b)}.flow{display:grid;grid-template-columns:1fr 28px 1fr;align-items:stretch;gap:0;margin-bottom:12px}.arrow{display:flex;align-items:center;justify-content:center;color:var(--muted-foreground,#626c7b);font-size:20px}
+.step{padding:16px;border:1px solid var(--border,#d9dfe6);border-radius:var(--radius,10px)}.untrusted{border-style:dashed;background:var(--warning-surface,#fff8ed)}.num{font-family:var(--font-mono,monospace);font-size:12px;color:var(--muted-foreground,#626c7b);margin-bottom:6px}
+.rule{font-size:13px;border-left:3px solid var(--primary,#5269c7);padding:0 0 0 12px;margin:16px 0 22px}.outcomes{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}button{border:1px solid var(--border,#d9dfe6);border-radius:7px;background:var(--card,#f3f5f7);color:inherit;padding:8px 13px;font:inherit;cursor:pointer}button[aria-pressed="true"]{background:var(--primary,#5269c7);color:var(--primary-foreground,#fff);border-color:var(--primary,#5269c7)}button:focus-visible{outline:2px solid var(--ring,#5269c7);outline-offset:3px}
+#detail{padding:16px;border:1px solid var(--border,#d9dfe6);border-radius:var(--radius,10px);min-height:106px}#detail p{margin:5px 0 0;color:var(--muted-foreground,#626c7b)}.foot{font-size:12px;color:var(--muted-foreground,#626c7b);margin:16px 0 0}.sources{font-size:12px;margin:8px 0 0}a{color:var(--primary,#5269c7)}
+@media(max-width:500px){.scope{grid-template-columns:1fr}.flow{grid-template-columns:1fr;gap:9px}.arrow{transform:rotate(90deg);height:15px}#detail{min-height:130px}}
+</style>
+</head>
+<body>
+<div class="scope">
+  <section class="panel"><div class="eyebrow">Feasible first release</div><h2>Named properties of Lean code</h2><p>Pure, total functions. Approved contracts. Exact revisions. A portable CLI and GitHub checks.</p></section>
+  <section class="panel"><div class="eyebrow">Separate research</div><h2>Other programming languages</h2><p>Rust through Aeneas merits a spike. An AI-written Lean model needs a justified connection to the original code.</p></section>
+</div>
+<div class="flow">
+  <section class="step"><div class="num">01 · Trusted inputs</div><h3>Approved contracts + candidate code</h3><p>Freeze requirements and bind their implementation references to the actual revision.</p></section>
+  <div class="arrow" aria-hidden="true">→</div>
+  <section class="step untrusted"><div class="num">02 · Untrusted execution</div><h3>Try proofs, then bounded AI repair</h3><p>Disposable workers. Fixed budgets. No publishing credentials. Agents propose evidence.</p></section>
+</div>
+<div class="flow">
+  <section class="step"><div class="num">03 · Independent validation</div><h3>Check meaning, binding, and proof</h3><p>Compare with the trusted challenge. Check permitted assumptions and replay proof evidence.</p></section>
+  <div class="arrow" aria-hidden="true">→</div>
+  <section class="step"><div class="num">04 · Trusted reporting</div><h3>Report and enforce the result</h3><p>Versioned JSON, evidence artifacts, and one GitHub gate bound to the current merge candidate.</p></section>
+</div>
+<p class="rule">The first go/no-go test: a valid proof about the old implementation must fail when the changed implementation violates the approved contract.</p>
+<h2>Three property outcomes</h2>
+<div class="outcomes" role="group" aria-label="Inspect property outcomes">
+<button type="button" data-result="verified" aria-pressed="true">Verified</button>
+<button type="button" data-result="violated" aria-pressed="false">Violated</button>
+<button type="button" data-result="unproven" aria-pressed="false">Unproven</button>
+</div>
+<div id="detail" aria-live="polite"><strong id="label">Accepted proof of the approved property</strong><p id="explanation">This property satisfies the gate. The run passes only if every required property is verified and policy checks pass.</p></div>
+<p class="foot">Research and proposed design, 31 October 2026. No verifier or performance experiment is implemented in this repository.</p>
+<p class="sources">Primary sources: <a href="https://lean-lang.org/doc/reference/latest/ValidatingProofs/">Lean proof validation</a> · <a href="https://docs.github.com/en/apps/creating-github-apps/writing-code-for-a-github-app/building-ci-checks-with-a-github-app">GitHub CI integration</a> · <a href="https://github.com/AeneasVerif/aeneas">Aeneas</a></p>
+<script>
+const outcomes={verified:['Accepted proof of the approved property','This property satisfies the gate. The run passes only if every required property is verified and policy checks pass.'],violated:['Checked evidence that the property fails','A validated refutation or witness establishes failure. A required violated property blocks the merge.'],unproven:['No accepted proof or refutation','A timeout, failed tactic, unsupported input, or invalid evidence does not establish a violation. A required unproven property blocks the merge.']};
+document.querySelectorAll('button[data-result]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('button[data-result]').forEach(other=>other.setAttribute('aria-pressed',String(other===button)));const [label,explanation]=outcomes[button.dataset.result];document.getElementById('label').textContent=label;document.getElementById('explanation').textContent=explanation;}));
+for(const key of Object.keys(outcomes)){document.querySelector(`[data-result="${key}"]`).click();if(document.getElementById('label').textContent!==outcomes[key][0])throw new Error('Outcome switch failed: '+key)}document.querySelector('[data-result="verified"]').click();console.log('Outcome interactions passed: 3 states');
+</script>
+</body>
+</html>
