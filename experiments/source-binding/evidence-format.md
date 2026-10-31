@@ -45,8 +45,10 @@ The validator reconstructs `CandidateCheck`, `Challenge`, and `Solution` from
 the authoritative candidate, contract, and submitted proof body. It writes a
 fixed comparator configuration and ignores any bundle configuration. It then
 performs construction in one temporary workspace and fresh replay in a second
-temporary workspace. Both workspaces run fixed Lake commands through the
-pinned read-only Lean distribution and an offline bubblewrap sandbox.
+temporary workspace. Each fixed replay/checker script gets a fresh ephemeral
+`.lake` mount; the scripts and final source/policy inputs are read-only in the
+validation sandbox. Both workspaces run through the pinned read-only Lean
+distribution and an offline bubblewrap sandbox.
 
 The final decision requires matching fresh challenge and solution exports,
 successful kernel replay, and agreement between the Lean kernel and Nanoda

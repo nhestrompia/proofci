@@ -41,6 +41,8 @@ EXPORT_SHAPES = {
     frozenset(("ie", key)) for key in
     ("app", "bvar", "const", "forallE", "lam", "letE", "natVal", "proj", "sort", "strVal")
 } | {frozenset((key,)) for key in ("def", "thm", "axiom", "opaque", "inductive")}
+MAX_EXPANDED_NAME = 4096
+MAX_EXPANDED_NAME_BYTES = 1024 * 1024
 
 
 def sha(data):
@@ -61,7 +63,7 @@ def check_export(export, challenge, required=None, permitted_axioms=()):
         raise ValueError("Lean produced an empty export")
     try:
         records = [json.loads(line) for line in lines]
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, RecursionError) as error:
         raise ValueError(f"malformed Lean export: {error}") from error
     if not all(isinstance(record, dict) for record in records):
         raise ValueError("malformed Lean export record")
@@ -76,6 +78,7 @@ def check_export(export, challenge, required=None, permitted_axioms=()):
         raise ValueError("export was produced by a different Lean version")
     names = {0: ""}
     declarations = set()
+    expanded_name_bytes = 0
     try:
         for record in records[1:]:
             if frozenset(record) not in EXPORT_SHAPES:
@@ -84,7 +87,13 @@ def check_export(export, challenge, required=None, permitted_axioms=()):
                 item = record.get("str") or record["num"]
                 part = str(item.get("str", item.get("i")))
                 parent = names[item["pre"]]
-                names[record["in"]] = f"{parent}.{part}" if parent else part
+                expanded = f"{parent}.{part}" if parent else part
+                if len(expanded) > MAX_EXPANDED_NAME:
+                    raise ValueError("expanded declaration name is too long")
+                expanded_name_bytes += len(expanded)
+                if expanded_name_bytes > MAX_EXPANDED_NAME_BYTES:
+                    raise ValueError("expanded declaration names exceed memory budget")
+                names[record["in"]] = expanded
             for kind in ("def", "thm", "axiom", "opaque"):
                 if kind in record:
                     declarations.add(f"{kind} {names[record[kind]['name']]}")
@@ -92,7 +101,7 @@ def check_export(export, challenge, required=None, permitted_axioms=()):
                 for kind in ("ctors", "recs", "types"):
                     for entry in record["inductive"][kind]:
                         declarations.add(f"{kind} {names[entry['name']]}")
-    except (AttributeError, IndexError, KeyError, TypeError) as error:
+    except (AttributeError, IndexError, KeyError, TypeError, RecursionError) as error:
         raise ValueError(f"malformed Lean export: {error}") from error
     required = {"def target"} if required is None else set(required)
     if challenge:

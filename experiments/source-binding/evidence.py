@@ -5,7 +5,8 @@ by the trusted caller, while all challenge construction, toolchain selection,
 checker commands, and acceptance policy live in this module.
 """
 
-from dataclasses import dataclass
+import base64
+import binascii
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+
+from dataclasses import dataclass
 
 import binding
 
@@ -35,6 +39,13 @@ FILES = {
     "challenge_export": "challenge.ndjson",
     "solution_export": "solution.ndjson",
 }
+CHALLENGE_SCRIPT = "proofci-challenge.sh"
+SOLUTION_SCRIPT = "proofci-solution.sh"
+CHECKER_SCRIPT = "proofci-check.sh"
+CHALLENGE_MARKER = b"PROOFCI_CHALLENGE_BEGIN\n"
+SOLUTION_MARKER = b"PROOFCI_SOLUTION_BEGIN\n"
+CHECKER_READY_MARKER = "PROOFCI_CHECKER_READY\n"
+MAX_PROCESS_OUTPUT = 16 * 1024 * 1024
 FORBIDDEN_SOLUTION = re.compile(
     r"\b(?:sorry|axiom|unsafe|native_decide|implemented_by|run_tac|elab|macro)\b"
 )
@@ -98,7 +109,7 @@ def _json(data, label):
 
     try:
         return json.loads(data, object_pairs_hook=unique_object)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise EvidenceError(f"malformed {label}") from error
 
 
@@ -178,6 +189,9 @@ def _sources(bundle):
 
 
 def _write_workspace(root, bundle):
+    # Each sandbox invocation gets a fresh private build directory.  The
+    # validator never consumes build artifacts produced by an earlier command.
+    root.joinpath(".lake").mkdir()
     root.joinpath("lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\npackage proofci\n"
         "lean_lib Candidate\nlean_lib CandidateCheck\nlean_lib Challenge\nlean_lib Solution\n"
@@ -190,50 +204,149 @@ def _write_workspace(root, bundle):
     root.joinpath("comparator.json").write_text(
         json.dumps(TRUSTED_COMPARATOR_CONFIG, sort_keys=True, separators=(",", ":"))
     )
+    root.joinpath(CHALLENGE_SCRIPT).write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "/lean/bin/lake build Candidate Challenge >/dev/null\n"
+        "/lean/bin/lake env leanexport Challenge -- contract > /tmp/proofci-challenge.ndjson\n"
+        "printf '%s\\n' 'PROOFCI_CHALLENGE_BEGIN'\n"
+        "/usr/bin/base64 -w0 /tmp/proofci-challenge.ndjson\n"
+    )
+    root.joinpath(SOLUTION_SCRIPT).write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "/lean/bin/lake build Candidate CandidateCheck Solution >/dev/null\n"
+        "/lean/bin/lake env leanexport Solution -- contract > /tmp/proofci-solution.ndjson\n"
+        "printf '%s\\n' 'PROOFCI_SOLUTION_BEGIN'\n"
+        "/usr/bin/base64 -w0 /tmp/proofci-solution.ndjson\n"
+    )
+    root.joinpath(CHECKER_SCRIPT).write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "printf '%s\\n' 'PROOFCI_CHECKER_READY'\n"
+        "exec /lean/bin/lake comparator\n"
+    )
 
 
-def _sandbox_prefix(toolchain, workspace, policy_path, read_only_sources):
+def _sandbox_prefix(toolchain, workspace, policy_path, read_only_sources,
+                    entrypoint=("/lean/bin/lake",)):
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise ValidationUnavailable("the pinned validator supports Linux arm64 only")
     bwrap = shutil.which("bwrap", path="/usr/bin:/bin")
     if not bwrap:
         raise ValidationUnavailable("pinned bubblewrap is unavailable")
-    source_mounts = []
+    runtime_mounts = [
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/bin", "/bin",
+        "--ro-bind", "/etc", "/etc",
+        "--ro-bind", "/lib", "/lib",
+    ]
+    if Path("/lib64").exists():
+        runtime_mounts.extend(("--ro-bind", "/lib64", "/lib64"))
+    source_mounts = [
+        "--ro-bind", str(workspace / CHALLENGE_SCRIPT), f"/workspace/{CHALLENGE_SCRIPT}",
+        "--ro-bind", str(workspace / SOLUTION_SCRIPT), f"/workspace/{SOLUTION_SCRIPT}",
+        "--ro-bind", str(workspace / CHECKER_SCRIPT), f"/workspace/{CHECKER_SCRIPT}",
+    ]
     if read_only_sources:
         for name in (
                 "lakefile.lean", "Candidate.lean", "CandidateCheck.lean",
                 "Challenge.lean", "Solution.lean"):
             source_mounts.extend((
-                "--ro-bind", f"/workspace/{name}", f"/workspace/{name}"
+                "--ro-bind", str(workspace / name), f"/workspace/{name}"
             ))
     return [
         bwrap, "--die-with-parent", "--unshare-all", "--unshare-net",
         "--ro-bind", str(toolchain), "/lean",
-        "--ro-bind", "/usr", "/usr", "--ro-bind", "/bin", "/bin",
+        *runtime_mounts,
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+        "--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/run", "--tmpfs", "/var",
         "--bind", str(workspace), "/workspace", "--chdir", "/workspace",
+        "--tmpfs", "/workspace/.lake",
         "--ro-bind", str(policy_path), "/workspace/comparator.json",
         *source_mounts,
         "--setenv", "HOME", "/tmp", "--setenv", "LC_ALL", "C.UTF-8",
         "--setenv", "PATH", "/lean/bin:/usr/bin:/bin", "--",
-        "/lean/bin/lake",
+        *entrypoint,
     ]
 
 
+def _decode(data):
+    return data.decode("utf-8", errors="replace")
+
+
 def _run(toolchain, workspace, policy_path, args, timeout=120, allow_failure=False,
-         combined=False, read_only_sources=False):
-    command = _sandbox_prefix(toolchain, workspace, policy_path, read_only_sources) + list(args)
+         combined=False, read_only_sources=False, entrypoint=("/lean/bin/lake",)):
+    command = _sandbox_prefix(
+        toolchain, workspace, policy_path, read_only_sources, entrypoint=entrypoint
+    ) + list(args)
     env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C.UTF-8"}
     try:
-        result = subprocess.run(command, env=env, capture_output=True, text=True,
-                                timeout=timeout, check=False, start_new_session=True)
-    except (OSError, subprocess.TimeoutExpired) as error:
+        process = subprocess.Popen(
+            command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True
+        )
+    except OSError as error:
         raise ValidationUnavailable(f"validator command unavailable: {error}") from error
-    if result.returncode and not allow_failure:
-        output = (result.stdout + result.stderr)[-64 * 1024:]
+    captured = {"total": 0}
+    captured_lock = threading.Lock()
+    overflow = threading.Event()
+    streams = {"stdout": bytearray(), "stderr": bytearray()}
+
+    def drain(name, stream):
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                return
+            with captured_lock:
+                captured["total"] += len(chunk)
+                exceeded = captured["total"] > MAX_PROCESS_OUTPUT
+            if exceeded:
+                overflow.set()
+                process.kill()
+                return
+            streams[name].extend(chunk)
+
+    readers = [
+        threading.Thread(target=drain, args=(name, stream), daemon=True)
+        for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))
+    ]
+    for reader in readers:
+        reader.start()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        process.kill()
+        process.wait()
+        for reader in readers:
+            reader.join()
+        raise ValidationUnavailable(f"validator command timed out: {error}") from error
+    for reader in readers:
+        reader.join()
+    if overflow.is_set():
+        raise BuildFailure(f"{' '.join(args)} exceeded output limit")
+    stdout = bytes(streams["stdout"])
+    stderr = bytes(streams["stderr"])
+    if process.returncode and not allow_failure:
+        output = _decode(stdout + stderr)[-64 * 1024:]
         raise BuildFailure(f"{' '.join(args)} failed: {output}")
-    output = result.stdout if not combined else result.stdout + result.stderr
-    return result.returncode, output if not combined else output[-64 * 1024:]
+    if not combined:
+        # Exports are compared byte-for-byte.  Do not decode untrusted output
+        # before that comparison, and do not let malformed bytes crash the API.
+        return process.returncode, stdout
+    output = _decode(stdout + stderr)
+    return process.returncode, output[-64 * 1024:]
+
+
+def _extract_export(output, marker):
+    """Decode one fixed script's byte-preserving export channel."""
+    try:
+        prefix, encoded = output.split(marker, 1)
+        if prefix:
+            raise ValueError("unexpected replay output before marker")
+        return base64.b64decode(b"".join(encoded.split()), validate=True)
+    except (ValueError, TypeError, binascii.Error) as error:
+        raise BuildFailure("fixed replay did not produce a valid export") from error
 
 
 def _verify_toolchain(toolchain):
@@ -262,11 +375,15 @@ def classify_checker(status, output):
         raise ContradictoryEvidence("checker output claims acceptance with a failing status")
     rejected = any(marker in output for marker in (
         "Lean default kernel rejects the solution",
+        "Lean default kernel rejected the solution",
         "nanoda kernel rejects the solution",
+        "nanoda kernel rejected the solution",
         "Your solution is not okay!",
     ))
     if rejected and lean_accepts and nanoda_accepts:
         raise ContradictoryEvidence("checker output contains both acceptance and rejection")
+    if status == 1 and not rejected:
+        raise BuildFailure("checker exited without a proof judgment")
     if status == 0 and lean_accepts and nanoda_accepts and "Your solution is okay!" in output:
         return "verified"
     if status == 0 or lean_accepts != nanoda_accepts:
@@ -278,7 +395,7 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
     """Return the only authoritative decision for a submitted proof bundle."""
     try:
         bundle = load_bundle(bundle_path, candidate_path, contract_path)
-    except (EvidenceError, OSError, ValueError) as error:
+    except (EvidenceError, OSError, ValueError, RecursionError) as error:
         return _invalid("invalid_evidence", error)
     if toolchain is None:
         return _invalid(
@@ -295,37 +412,43 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
             with tempfile.TemporaryDirectory(prefix="proofci-construction-") as construction_dir:
                 construction = Path(construction_dir)
                 _write_workspace(construction, bundle)
-                _run(toolchain, construction, policy_path, ("build", "Candidate"))
-                _run(toolchain, construction, policy_path, ("build", "Challenge"))
-                _run(toolchain, construction, policy_path, ("build", "Solution"))
-                _run(toolchain, construction, policy_path,
-                     ("env", "leanexport", "Challenge", "--", "contract"))
-                _run(toolchain, construction, policy_path,
-                     ("env", "leanexport", "Solution", "--", "contract"))
+                _, challenge_output = _run(
+                    toolchain, construction, policy_path, (),
+                    entrypoint=("/bin/sh", f"/workspace/{CHALLENGE_SCRIPT}")
+                )
+                _extract_export(challenge_output, CHALLENGE_MARKER)
+                _, solution_output = _run(
+                    toolchain, construction, policy_path, (),
+                    entrypoint=("/bin/sh", f"/workspace/{SOLUTION_SCRIPT}")
+                )
+                _extract_export(solution_output, SOLUTION_MARKER)
 
             with tempfile.TemporaryDirectory(prefix="proofci-validation-") as validation_dir:
                 validation = Path(validation_dir)
                 _write_workspace(validation, bundle)
                 run_options = {"read_only_sources": True}
-                _run(toolchain, validation, policy_path, ("build", "Candidate"), **run_options)
-                _run(toolchain, validation, policy_path, ("build", "Challenge"), **run_options)
-                _run(toolchain, validation, policy_path, ("build", "Solution"), **run_options)
-                _, challenge_export = _run(
-                    toolchain, validation, policy_path,
-                    ("env", "leanexport", "Challenge", "--", "contract"), **run_options
+                _, challenge_output = _run(
+                    toolchain, validation, policy_path, (),
+                    entrypoint=("/bin/sh", f"/workspace/{CHALLENGE_SCRIPT}"), **run_options
                 )
-                _, solution_export = _run(
-                    toolchain, validation, policy_path,
-                    ("env", "leanexport", "Solution", "--", "contract"), **run_options
+                challenge_export = _extract_export(challenge_output, CHALLENGE_MARKER)
+                _, solution_output = _run(
+                    toolchain, validation, policy_path, (),
+                    entrypoint=("/bin/sh", f"/workspace/{SOLUTION_SCRIPT}"), **run_options
                 )
-                if challenge_export.encode() != bundle.challenge_export:
+                solution_export = _extract_export(solution_output, SOLUTION_MARKER)
+                if challenge_export != bundle.challenge_export:
                     raise EvidenceError("fresh challenge export differs from submitted evidence")
-                if solution_export.encode() != bundle.solution_export:
+                if solution_export != bundle.solution_export:
                     raise EvidenceError("fresh solution export differs from submitted evidence")
                 checker_status, checker_output = _run(
-                    toolchain, validation, policy_path, TRUSTED_CHECKER,
+                    toolchain, validation, policy_path, (),
+                    entrypoint=("/bin/sh", f"/workspace/{CHECKER_SCRIPT}"),
                     allow_failure=True, combined=True, **run_options
                 )
+                if CHECKER_READY_MARKER not in checker_output:
+                    raise BuildFailure("fixed checker did not reach its comparison stage")
+                checker_output = checker_output.split(CHECKER_READY_MARKER, 1)[1]
     except EvidenceError as error:
         return _invalid("invalid_evidence", error)
     except CheckerDisagreement as error:
@@ -335,6 +458,8 @@ def validate_bundle(bundle_path, candidate_path, contract_path, toolchain=None):
     except BuildFailure as error:
         return _invalid("build_failure", error)
     except ValidationUnavailable as error:
+        return _invalid("validation_unavailable", error)
+    except OSError as error:
         return _invalid("validation_unavailable", error)
 
     try:

@@ -1,4 +1,6 @@
 import hashlib
+import base64
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -115,8 +117,29 @@ class EvidenceBundleTests(unittest.TestCase):
             evidence.classify_checker(0, "nanoda kernel accepts the solution")
 
     def test_checker_failure_is_distinct_from_checker_disagreement(self):
-        result = evidence.classify_checker(1, "the proof did not pass")
+        result = evidence.classify_checker(1, "Your solution is not okay!")
         self.assertEqual(result, "unproven")
+
+    def test_checker_infrastructure_failure_is_not_proof_rejection(self):
+        with self.assertRaises(evidence.BuildFailure):
+            evidence.classify_checker(1, "Child exited with 134")
+
+    def test_pinned_checker_rejection_is_unproven(self):
+        result = evidence.classify_checker(
+            1,
+            "Lean default kernel rejected the solution\n"
+            "nanoda kernel rejected the solution\n",
+        )
+        self.assertEqual(result, "unproven")
+
+    def test_acceptance_and_rejection_is_contradictory(self):
+        with self.assertRaises(evidence.ContradictoryEvidence):
+            evidence.classify_checker(
+                0,
+                "Lean default kernel accepts the solution\n"
+                "nanoda kernel accepts the solution\n"
+                "Lean default kernel rejected the solution\n",
+            )
 
     def test_checker_acceptance_with_failure_status_is_contradictory(self):
         with self.assertRaises(evidence.ContradictoryEvidence):
@@ -148,6 +171,52 @@ class EvidenceBundleTests(unittest.TestCase):
         self.assertTrue(all(command.index(f"/workspace/{name}") < separator for name in (
             "Candidate.lean", "Challenge.lean", "Solution.lean"
         )))
+        self.assertIn("--tmpfs", command)
+        self.assertLess(command.index("--tmpfs", command.index("/workspace")), separator)
+
+    def test_untrusted_non_utf8_checker_output_is_normalized(self):
+        class FakeProcess:
+            returncode = 1
+            stdout = io.BytesIO(b"\xff")
+            stderr = io.BytesIO(b"\xfe")
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def kill(self):
+                return None
+
+        with (patch.object(evidence, "_sandbox_prefix", return_value=["bwrap"]),
+              patch.object(evidence.subprocess, "Popen", return_value=FakeProcess())):
+            status, output = evidence._run(
+                Path("/toolchain"), Path("/workspace"), Path("/policy"),
+                ("comparator",), allow_failure=True, combined=True
+            )
+        self.assertEqual(status, 1)
+        self.assertEqual(output, "��")
+
+    def test_fixed_replay_output_preserves_exports(self):
+        challenge = b'{"meta":1}\n\xff\n'
+        solution = b'{"meta":2}\n'
+        challenge_output = evidence.CHALLENGE_MARKER + base64.b64encode(challenge)
+        solution_output = evidence.SOLUTION_MARKER + base64.b64encode(solution)
+        self.assertEqual(
+            evidence._extract_export(challenge_output, evidence.CHALLENGE_MARKER), challenge
+        )
+        self.assertEqual(
+            evidence._extract_export(solution_output, evidence.SOLUTION_MARKER), solution
+        )
+
+    def test_workspace_failure_is_normalized_to_validation_unavailable(self):
+        self.write_bundle()
+        with (patch.object(evidence, "_verify_toolchain", return_value=Path("/toolchain")),
+              patch.object(evidence.tempfile, "TemporaryDirectory",
+                           side_effect=OSError("temporary storage unavailable"))):
+            result = evidence.validate_bundle(
+                self.bundle, self.candidate, self.contract, toolchain="/toolchain"
+            )
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "validation_unavailable")
 
     def test_malformed_export_is_normalized_to_invalid_evidence(self):
         self.write_bundle()
@@ -156,6 +225,21 @@ class EvidenceBundleTests(unittest.TestCase):
         manifest = json.loads((self.bundle / "manifest.json").read_text())
         manifest["challenge_export_sha256"] = digest(malformed)
         (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+        result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
+        self.assertEqual(result["decision"], "unproven")
+        self.assertEqual(result["reason"], "invalid_evidence")
+
+    def test_deeply_nested_manifest_is_normalized_to_invalid_evidence(self):
+        self.write_bundle()
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        nested = "0"
+        for _ in range(2000):
+            nested = "[" + nested + "]"
+        fields = []
+        for key, value in manifest.items():
+            encoded = nested if key == "version" else json.dumps(value)
+            fields.append(json.dumps(key) + ":" + encoded)
+        (self.bundle / "manifest.json").write_text("{" + ",".join(fields) + "}")
         result = evidence.validate_bundle(self.bundle, self.candidate, self.contract)
         self.assertEqual(result["decision"], "unproven")
         self.assertEqual(result["reason"], "invalid_evidence")
