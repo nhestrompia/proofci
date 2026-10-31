@@ -57,6 +57,85 @@ class CLITest(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual([r["reason"] for r in report["results"]], ["missing_evidence"] * 2)
 
+    def test_report_classifies_accepted_refutation_and_preserves_contradictions(self):
+        baseline_path = self.root / "baseline.json"
+        baseline = json.loads(baseline_path.read_text())
+        baseline["obligations"][0]["refutation"] = "refutation"
+        baseline_path.write_text(json.dumps(baseline))
+        for name in ("missing", "refutation"):
+            directory = self.snapshot / name
+            directory.mkdir()
+            (directory / "manifest.json").write_text(name)
+        subprocess.run(["git", "-C", str(self.snapshot), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.snapshot), "commit", "-qm", "evidence"], check=True)
+        envelope_path = self.root / "envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["head"] = subprocess.check_output(["git", "-C", str(self.snapshot), "rev-parse", "HEAD"], text=True).strip()
+        envelope["baseline_sha256"] = hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope))
+        (self.root / "toolchain").mkdir()
+        (self.root / "bwrap").touch()
+        args = [str(CLI), "--envelope", str(envelope_path), "--baseline", str(baseline_path),
+                "--snapshot", str(self.snapshot), "--toolchain", str(self.root / "toolchain"),
+                "--bwrap", str(self.root / "bwrap"), "--report", str(self.root / "report.json")]
+        def validate(proof, *args):
+            decision = "violated" if proof.name == "refutation" else "unproven"
+            return {"decision": decision, "reason": "accepted" if decision == "violated" else "proof_failed"}, {"manifest.json": proofci.digest(proof / "manifest.json")}
+        with patch.object(sys, "argv", args), patch.object(proofci, "run_validator", side_effect=validate):
+            self.assertEqual(proofci.main(), 1)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(report["results"][0]["decision"], "violated")
+        self.assertEqual(report["results"][0]["evidence"], "refutation")
+        self.assertEqual(report["property_counts"]["violated"], 1)
+        self.assertTrue(any(c["path"].startswith("refutation/") and c["scope"] == "proof_evidence"
+                            for c in report["coverage"]["changes"]))
+        self.assertEqual(report["status"], "blocked")
+        # The same checked violation is visible but does not block an advisory obligation.
+        baseline["obligations"][0]["policy"] = "advisory"
+        baseline["obligations"][1]["policy"] = "required"
+        baseline["obligations"][1]["evidence"] = "missing"
+        baseline_path.write_text(json.dumps(baseline))
+        envelope["baseline_sha256"] = hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope))
+        def advisory(proof, *args):
+            decision = "violated" if proof.name == "refutation" else "verified"
+            return {"decision": decision, "reason": "accepted"}, {"manifest.json": proofci.digest(proof / "manifest.json")}
+        # Give the advisory obligation only the refutation; keep a separate required proof.
+        baseline["obligations"][0]["evidence"] = "absent"
+        baseline_path.write_text(json.dumps(baseline))
+        envelope["baseline_sha256"] = hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope))
+        with patch.object(sys, "argv", args), patch.object(proofci, "run_validator", side_effect=advisory):
+            self.assertEqual(proofci.main(), 0)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual([r["decision"] for r in report["results"]], ["violated", "verified"])
+        baseline["obligations"][0]["policy"] = "required"
+        baseline["obligations"][0]["evidence"] = "missing"
+        baseline["obligations"][1]["policy"] = "advisory"
+        baseline_path.write_text(json.dumps(baseline))
+        envelope["baseline_sha256"] = hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope))
+        def contradictory(proof, *args):
+            decision = "violated" if proof.name == "refutation" else "verified"
+            return {"decision": decision, "reason": "accepted"}, {"manifest.json": proofci.digest(proof / "manifest.json")}
+        with patch.object(sys, "argv", args), patch.object(proofci, "run_validator", side_effect=contradictory):
+            self.assertEqual(proofci.main(), 2)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(report["results"][0]["reason"], "contradictory_evidence")
+        self.assertEqual([e["evidence"] for e in report["results"][0]["submissions"]], ["missing", "refutation"])
+
+    def test_search_exhaustion_is_a_nonpassing_unproven_reason(self):
+        search = self.root / "search.json"
+        search.write_text(json.dumps({"version": 1, "exhausted": ["one"]}))
+        args = [str(CLI), "--envelope", str(self.root / "envelope.json"), "--baseline", str(self.root / "baseline.json"),
+                "--snapshot", str(self.snapshot), "--toolchain", str(self.root / "toolchain"),
+                "--report", str(self.root / "report.json"), "--search-results", str(search)]
+        with patch.object(sys, "argv", args):
+            self.assertEqual(proofci.main(), 1)
+        report = json.loads((self.root / "report.json").read_text())
+        self.assertEqual(report["results"][0]["reason"], "search_exhausted")
+        self.assertEqual(report["results"][0]["decision"], "unproven")
+        self.assertEqual(report["results"][1]["reason"], "missing_evidence")
     def commit_changes(self):
         subprocess.run(["git", "-C", str(self.snapshot), "add", "--all"], check=True)
         subprocess.run(["git", "-C", str(self.snapshot), "commit", "-qm", "changes"], check=True)

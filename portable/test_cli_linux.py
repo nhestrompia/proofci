@@ -60,7 +60,9 @@ class LinuxCLITests(unittest.TestCase):
                 command = [sys.executable, str(HERE / "container.py"),
                     "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
                     "--snapshot", str(snapshot), "--report", str(root / "report.json"),
-                    "--image", "sha256:1dabadbf1992e8f45adb13d6ee8efa7a0aaa5bf7676855dd611c1d38c5ed6ccb"]
+                    "--image", os.environ.get("PROOFCI_TEST_IMAGE", "proofci-validator-local")]
+                if (root / "search.json").exists():
+                    command.extend(["--search-results", str(root / "search.json")])
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)
@@ -76,6 +78,25 @@ class LinuxCLITests(unittest.TestCase):
                 output.mkdir(parents=True, exist_ok=True)
                 (output / "passing.json").write_text(json.dumps({"envelope": envelope, "baseline": baseline, "report": report}, indent=2) + "\n")
             self.assertEqual([x["decision"] for x in report["results"]], ["verified", "unproven"])
+            (root / "search.json").write_text(json.dumps({"version": 1, "exhausted": ["increment", "advice"]}))
+            status, searched_report = run()
+            self.assertEqual(status, 0, searched_report)
+            self.assertEqual(searched_report["results"][0]["decision"], "verified")
+            self.assertEqual(searched_report["results"][1]["reason"], "search_exhausted")
+            self.assertEqual(searched_report["results"][1]["search"]["status"], "exhausted")
+            search_archive = root / "search-evidence.tar"
+            exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
+                "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                "--search-results", str(root / "search.json"), "--output", str(search_archive)], capture_output=True, text=True)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            replay_report = root / "search-replay.json"
+            replayed = subprocess.run([sys.executable, str(HERE / "replay.py"), "replay", "--bundle", str(search_archive),
+                "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
+            self.assertEqual(replayed.returncode, 0, replayed.stderr + replay_report.read_text())
+            self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
+            (root / "search.json").unlink()
+            status, report = run()
+            self.assertEqual(status, 0, report)
             self.assertIn("manifest.json", report["results"][0]["evidence_sha256"])
             archive = root / "evidence.tar"
             exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
@@ -99,6 +120,59 @@ class LinuxCLITests(unittest.TestCase):
             status, report = run()
             self.assertEqual(status, 1, report)
             self.assertEqual(report["results"][0]["reason"], "unsupported_semantics")
+            shutil.copy(FIXTURES / "candidate.lean", snapshot / "candidate.lean")
+            envelope["head"] = commit("restore supported candidate")
+            envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")
+            # Check a submitted witness through the public snapshot and report boundary.
+            shutil.copy(FIXTURES / "conditional-contract.json", root / "contract.json")
+            shutil.copytree(FIXTURES / "conditional", snapshot / "refutation")
+            baseline["obligations"][0]["contract_sha256"] = sha(root / "contract.json")
+            baseline["obligations"][0]["refutation"] = "refutation"
+            baseline["obligations"][1]["contract_sha256"] = sha(root / "contract.json")
+            shutil.rmtree(snapshot / "evidence")
+            envelope["head"] = commit("submit witness")
+            (root / "baseline.json").write_text(json.dumps(baseline))
+            envelope["baseline_sha256"] = sha(root / "baseline.json")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["decision"], "violated")
+            self.assertEqual(report["results"][0]["validation"]["witness"], 0)
+            violated_archive = root / "violated-evidence.tar"
+            exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
+                "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                "--output", str(violated_archive)], capture_output=True, text=True)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            replay_report = root / "violated-replay.json"
+            replayed = subprocess.run([sys.executable, str(HERE / "replay.py"), "replay", "--bundle", str(violated_archive),
+                "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
+            self.assertEqual(replayed.returncode, 1, replayed.stderr + replay_report.read_text())
+            self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
+            # A claimed different witness cannot reuse the checked exports.
+            manifest_path = snapshot / "refutation" / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["witness"] = 1
+            manifest_path.write_text(json.dumps(manifest))
+            envelope["head"] = commit("tamper with witness")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["reason"], "invalid_evidence")
+            # A matching challenge with a false precondition cannot prove a violation.
+            shutil.rmtree(snapshot / "refutation")
+            shutil.copytree(FIXTURES / "false-precondition", snapshot / "refutation")
+            envelope["head"] = commit("wrong witness")
+            status, report = run()
+            self.assertEqual(status, 1, report)
+            self.assertEqual(report["results"][0]["decision"], "unproven")
+            self.assertEqual(report["results"][0]["reason"], "proof_failed")
+            # Restore the positive proof for the obsolete-proof and timeout tests.
+            shutil.rmtree(snapshot / "refutation")
+            shutil.copytree(FIXTURES / "verified", snapshot / "evidence")
+            shutil.copy(FIXTURES / "contract.json", root / "contract.json")
+            del baseline["obligations"][0]["refutation"]
+            for item in baseline["obligations"]:
+                item["contract_sha256"] = sha(root / "contract.json")
+            (root / "baseline.json").write_text(json.dumps(baseline))
+            envelope["baseline_sha256"] = sha(root / "baseline.json")
             (snapshot / "candidate.lean").write_text("def target (x : Nat) : Nat := x + 2\n")
             envelope["head"] = commit("changed")
             envelope["candidate_sha256"] = sha(snapshot / "candidate.lean")

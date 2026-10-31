@@ -12,7 +12,7 @@ import tempfile
 import time
 import uuid
 
-IMAGE_ID = "sha256:1dabadbf1992e8f45adb13d6ee8efa7a0aaa5bf7676855dd611c1d38c5ed6ccb"
+IMAGE_ID = "sha256:69f6b2a73ddd245bcaea963d01c4e00bafd2e9843d6c284109e792d97354ecc9"
 
 
 def main():
@@ -20,6 +20,7 @@ def main():
     for name in ("envelope", "baseline", "snapshot", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--image", default="proofci-validator-local")
+    parser.add_argument("--search-results", type=Path)
     args = parser.parse_args()
     report = args.report.resolve()
     try:
@@ -76,6 +77,17 @@ def main():
                 "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/" + baseline.name,
                 "--snapshot", "/snapshot", "--toolchain", "/lean", "--bwrap", "/usr/bin/bwrap",
                 "--report", "/result/report.json"]
+            if args.search_results:
+                with args.search_results.open("rb") as source:
+                    search_bytes = source.read(1024 * 1024 + 1)
+                if len(search_bytes) > 1024 * 1024:
+                    raise ValueError("search results exceed size limit")
+                search_path = temp / "search.json"
+                search_path.write_bytes(search_bytes)
+                os.chmod(search_path, 0o644)
+                image_index = command.index(image_id)
+                command[image_index:image_index] = ["--mount", f"type=bind,src={search_path},dst=/runinput/search.json,readonly"]
+                command.extend(["--search-results", "/runinput/search.json"])
             try:
                 guard = subprocess.Popen([sys.executable, str(Path(__file__).with_name("create_guard.py")),
                                           name, json.dumps(command)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

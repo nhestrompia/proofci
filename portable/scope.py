@@ -33,7 +33,8 @@ def describe(snapshot, base, head, baseline, deadline):
               "--no-renames", "--no-ext-diff", "--no-textconv", base, head)
     parts = raw.split(b"\0")
     changes, unsupported, uncovered = [], [], []
-    evidence_roots = [item["evidence"].rstrip("/") for item in baseline["obligations"]]
+    evidence_roots = [item[key].rstrip("/") for item in baseline["obligations"]
+                      for key in ("evidence", "refutation") if key in item]
     for index in range(0, len(parts) - 1, 2):
         metadata, name_bytes = parts[index:index + 2]
         old_mode, new_mode, old_oid, new_oid, status = metadata.decode("ascii").split()

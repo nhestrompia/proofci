@@ -95,19 +95,22 @@ def verify_snapshot(snapshot, envelope, baseline, deadline):
         raise ValueError("snapshot has uncommitted changes")
     paths = [baseline["candidate"]]
     for item in baseline["obligations"]:
-        evidence = path_in(snapshot, item["evidence"])
-        if evidence.is_dir():
-            entries = list(evidence.iterdir())
-            if len(entries) > 4:
-                raise ValueError("evidence contains too many files")
-            if sum(entry.stat().st_size for entry in entries if entry.is_file()) > envelope["resource_policy"]["file_bytes"]:
-                raise ValueError("evidence exceeds file resource limit")
-            for item_path in entries:
-                if not item_path.is_file() or item_path.is_symlink():
-                    raise ValueError("evidence must contain regular files")
-                if item_path.stat().st_size > 8 * 1024 * 1024:
-                    raise ValueError("evidence file exceeds size limit")
-                paths.append(str(item_path.relative_to(snapshot)))
+        for name in (item["evidence"], item.get("refutation")):
+            if name is None:
+                continue
+            evidence = path_in(snapshot, name)
+            if evidence.is_dir():
+                entries = list(evidence.iterdir())
+                if len(entries) > 4:
+                    raise ValueError("evidence contains too many files")
+                if sum(entry.stat().st_size for entry in entries if entry.is_file()) > envelope["resource_policy"]["file_bytes"]:
+                    raise ValueError("evidence exceeds file resource limit")
+                for item_path in entries:
+                    if not item_path.is_file() or item_path.is_symlink():
+                        raise ValueError("evidence must contain regular files")
+                    if item_path.stat().st_size > 8 * 1024 * 1024:
+                        raise ValueError("evidence file exceeds size limit")
+                    paths.append(str(item_path.relative_to(snapshot)))
     hashes = {}
     for name in paths:
         if git("ls-files", "--error-unmatch", "--", name) != name:
@@ -179,7 +182,9 @@ def validate(envelope, baseline, snapshot, baseline_root):
     seen = set()
     required = False
     for item in obligations:
-        fields(item, ("id", "policy", "contract", "contract_sha256", "evidence"))
+        if set(item) not in ({"id", "policy", "contract", "contract_sha256", "evidence"},
+                             {"id", "policy", "contract", "contract_sha256", "evidence", "refutation"}):
+            raise ValueError("unexpected or missing fields")
         if not isinstance(item["id"], str) or not item["id"].strip() or item["id"] in seen:
             raise ValueError("invalid or duplicate obligation id")
         seen.add(item["id"])
@@ -189,6 +194,8 @@ def validate(envelope, baseline, snapshot, baseline_root):
         if hashlib.sha256(bounded_read(path_in(baseline_root, item["contract"]), 16384)).hexdigest() != item["contract_sha256"]:
             raise ValueError("contract digest mismatch")
         path_in(snapshot, item["evidence"])
+        if "refutation" in item:
+            path_in(snapshot, item["refutation"])
     if not required:
         raise ValueError("baseline has no required obligations")
     return candidate
@@ -229,7 +236,7 @@ def run_validator(proof, candidate, contract, toolchain, bwrap, limits, deadline
             if process.returncode not in (0, 1):
                 raise RuntimeError("validator failed: " + stderr.decode(errors="replace")[-1000:])
             result = json.loads(stdout)
-            if result.get("decision") not in ("verified", "unproven") or (process.returncode == 0) != (result["decision"] == "verified"):
+            if result.get("decision") not in ("verified", "violated", "unproven") or (process.returncode == 0) != (result["decision"] in ("verified", "violated")):
                 raise RuntimeError("validator output and exit status disagree")
             return result, evidence_hashes
         raise RuntimeError("run verification through the resource-limited Linux distribution")
@@ -241,6 +248,7 @@ def main():
     for name in ("envelope", "baseline", "snapshot", "toolchain", "report"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--bwrap", type=Path)
+    parser.add_argument("--search-results", type=Path)
     args = parser.parse_args()
     start_monotonic = time.monotonic()
     report = {"version": 1, "status": "error", "results": [], "started_at": time.time()}
@@ -274,6 +282,19 @@ def main():
         if envelope["trust_policy"] != policy_digest():
             raise ValueError("trust policy identity mismatch")
         verify_snapshot(snapshot, envelope, baseline, deadline)
+        exhausted = set()
+        if args.search_results:
+            search_bytes = bounded_read(args.search_results, 1024 * 1024)
+            search = parse_json(search_bytes)
+            fields(search, ("version", "exhausted"))
+            ids = {item["id"] for item in baseline["obligations"]}
+            if (type(search["version"]) is not int or search["version"] != 1
+                    or not isinstance(search["exhausted"], list)
+                    or any(not isinstance(name, str) or name not in ids for name in search["exhausted"])
+                    or len(set(search["exhausted"])) != len(search["exhausted"])):
+                raise ValueError("invalid search results")
+            exhausted = set(search["exhausted"])
+            report["search_results_sha256"] = hashlib.sha256(search_bytes).hexdigest()
         candidate_bytes = bounded_read(candidate, limits["file_bytes"])
         candidate_reason = ("source exceeds adapter input limit" if len(candidate_bytes) > 16384
                             else scope.admission(candidate_bytes))
@@ -300,43 +321,61 @@ def main():
                 report["coverage"]["unsupported_changed_code"].append(
                     {"path": baseline["candidate"], "reason": candidate_reason, "required_dependency": True})
         for item in baseline["obligations"]:
-            proof = path_in(snapshot, item["evidence"])
             result = {"id": item["id"], "policy": item["policy"], "evidence": item["evidence"]}
-            contract = scope.binding.load_contract(bounded_read(path_in(baseline_root, item["contract"]), 16384))[0]
+            (contract, _), precondition = scope.binding.load_contract(bounded_read(path_in(baseline_root, item["contract"]), 16384))
             result["symbol"] = "target"
-            result["property"] = "target x = " + contract
+            result["property"] = (f"({precondition}) → " if precondition else "") + "target x = " + contract
             if candidate_reason is not None:
                 result.update(decision="unproven", reason="unsupported_semantics", detail=candidate_reason)
-            elif not proof.exists():
-                result.update(decision="unproven", reason="missing_evidence")
+                report["results"].append(result)
+                continue
+            submissions = []
+            for name in (item["evidence"], item.get("refutation")):
+                if name is None:
+                    continue
+                proof = path_in(snapshot, name)
+                checked = {"decision": "unproven", "reason": "missing_evidence"}
+                evidence_hashes = {}
+                if proof.exists():
+                    if deadline - time.monotonic() <= 0:
+                        checked["reason"] = "timeout"
+                    elif args.bwrap is None:
+                        checked["reason"] = "validation_unavailable"
+                    else:
+                        try:
+                            committed = verify_snapshot(snapshot, envelope, baseline, deadline)
+                            expected_evidence = {p.name: committed[str(p.relative_to(snapshot))] for p in proof.iterdir()}
+                            checked, evidence_hashes = run_validator(proof, candidate, path_in(baseline_root, item["contract"]),
+                                                    args.toolchain.resolve(strict=True), args.bwrap.resolve(strict=True),
+                                                    envelope["resource_policy"], deadline, envelope["candidate_sha256"], item["contract_sha256"], expected_evidence)
+                            verify_snapshot(snapshot, envelope, baseline, deadline)
+                            if time.monotonic() >= deadline:
+                                raise subprocess.TimeoutExpired("verification", envelope["resource_policy"]["timeout_seconds"])
+                            if evidence_hashes != {p.name: digest(p) for p in sorted(proof.iterdir())}:
+                                raise ValueError("evidence changed during validation")
+                        except (subprocess.TimeoutExpired, RunTimeout):
+                            checked = {"decision": "unproven", "reason": "timeout"}
+                        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+                            checked = {"decision": "unproven", "reason": "validation_unavailable", "detail": str(error)}
+                submissions.append({"evidence": name, "validation": checked, "evidence_sha256": evidence_hashes})
+            accepted = [entry for entry in submissions if entry["validation"]["decision"] in ("verified", "violated")]
+            execution_errors = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence", "timeout"}
+            error_entry = next((entry for entry in submissions if entry["validation"]["reason"] in execution_errors), None)
+            if len({entry["validation"]["decision"] for entry in accepted}) > 1:
+                result.update(decision="unproven", reason="contradictory_evidence")
             else:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    result.update(decision="unproven", reason="timeout")
-                elif args.bwrap is None:
-                    result.update(decision="unproven", reason="validation_unavailable")
-                else:
-                    try:
-                        committed = verify_snapshot(snapshot, envelope, baseline, deadline)
-                        expected_evidence = {p.name: committed[str(p.relative_to(snapshot))] for p in proof.iterdir()}
-                        checked, evidence_hashes = run_validator(proof, candidate, path_in(baseline_root, item["contract"]),
-                                                args.toolchain.resolve(strict=True), args.bwrap.resolve(strict=True),
-                                                envelope["resource_policy"], deadline, envelope["candidate_sha256"], item["contract_sha256"], expected_evidence)
-                        verify_snapshot(snapshot, envelope, baseline, deadline)
-                        if time.monotonic() >= deadline:
-                            raise subprocess.TimeoutExpired("verification", envelope["resource_policy"]["timeout_seconds"])
-                        if evidence_hashes != {p.name: digest(p) for p in sorted(proof.iterdir())}:
-                            raise ValueError("evidence changed during validation")
-                        result.update(decision=checked["decision"], reason=checked["reason"], validation=checked,
-                                      evidence_sha256=evidence_hashes)
-                    except (subprocess.TimeoutExpired, RunTimeout):
-                        result.update(decision="unproven", reason="timeout")
-                    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
-                        result.update(decision="unproven", reason="validation_unavailable", detail=str(error))
+                selected = error_entry or (accepted[0] if accepted else next((entry for entry in submissions if entry["validation"]["reason"] != "missing_evidence"), submissions[0]))
+                result.update(evidence=selected["evidence"], decision=selected["validation"]["decision"], reason=selected["validation"]["reason"],
+                              validation=selected["validation"], evidence_sha256=selected["evidence_sha256"])
+            if result["decision"] == "unproven" and result["reason"] in ("missing_evidence", "proof_failed", "unproven") and item["id"] in exhausted:
+                result["reason"] = "search_exhausted"
+                result["search"] = {"status": "exhausted"}
+            if len(submissions) > 1:
+                result["submissions"] = submissions
             report["results"].append(result)
         report["property_counts"] = {
             decision: sum(result["decision"] == decision for result in report["results"])
-            for decision in ("verified", "unproven")
+            for decision in ("verified", "violated", "unproven")
         }
         failures = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence", "timeout"}
         if any(r["reason"] in failures for r in report["results"]):

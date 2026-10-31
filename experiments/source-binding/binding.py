@@ -36,7 +36,7 @@ HEADER = ["def", "target", "(", "x", ":", "Nat", ")", ":", "Nat", ":="]
 EXPORT_SHAPES = {
     frozenset(("in", key)) for key in ("str", "num")
 } | {
-    frozenset(("il", key)) for key in ("succ", "max", "param")
+    frozenset(("il", key)) for key in ("succ", "max", "imax", "param")
 } | {
     frozenset(("ie", key)) for key in
     ("app", "bvar", "const", "forallE", "lam", "letE", "natVal", "proj", "sort", "strVal")
@@ -190,18 +190,30 @@ def load_contract(data):
         return result
 
     contract = json.loads(data, object_pairs_hook=unique_object)
-    if not isinstance(contract, dict) or set(contract) != {"rhs"} or not isinstance(contract["rhs"], str):
-        raise ValueError('contract must contain only a string field "rhs"')
-    return expression(tokens(contract["rhs"]))
+    if not isinstance(contract, dict) or set(contract) not in ({"rhs"}, {"rhs", "precondition"}) or not isinstance(contract["rhs"], str):
+        raise ValueError("invalid contract fields")
+    rhs = expression(tokens(contract["rhs"]))
+    precondition = None
+    if "precondition" in contract:
+        condition = contract["precondition"]
+        if (not isinstance(condition, dict) or set(condition) != {"lhs", "op", "rhs"}
+                or condition["op"] not in ("=", "<", "≤")
+                or not isinstance(condition["lhs"], str) or not isinstance(condition["rhs"], str)):
+            raise ValueError("unsupported precondition")
+        lhs, _ = expression(tokens(condition["lhs"]))
+        right, _ = expression(tokens(condition["rhs"]))
+        precondition = f"{lhs} {condition['op']} {right}"
+    return rhs, precondition
 
 
 def build_sources(candidate, contract):
     """Build the fixed challenge sources shared by construction and replay."""
     candidate_text = candidate.decode("utf-8")
     body, canonical_body = candidate_body(candidate_text)
-    rhs, _ = load_contract(contract)
+    (rhs, _), precondition = load_contract(contract)
     identity = f"theorem definition_identity : target = (fun (x : Nat) => {canonical_body}) := by rfl\n"
-    statement = f"theorem contract (x : Nat) : target x = {rhs} := by "
+    assumption = f" (h : {precondition})" if precondition else ""
+    statement = f"theorem contract (x : Nat){assumption} : target x = {rhs} := by "
     challenge = "import CandidateCheck\n" + statement + "sorry\n"
     return body, canonical_body, identity, statement, challenge
 
