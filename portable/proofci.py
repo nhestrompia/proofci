@@ -12,6 +12,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scope
+
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATOR = ROOT / "experiments/source-binding"
 IMAGE = "python@sha256:6a9220edda062e9223ea0784740a535987299420b96fbfd520b89bbd3e772485"
@@ -168,7 +171,7 @@ def validate(envelope, baseline, snapshot, baseline_root):
     if type(baseline["version"]) is not int or baseline["version"] != 1:
         raise ValueError("unsupported baseline version")
     candidate = path_in(snapshot, baseline["candidate"])
-    if hashlib.sha256(bounded_read(candidate, 16384)).hexdigest() != envelope["candidate_sha256"]:
+    if hashlib.sha256(bounded_read(candidate, limits["file_bytes"])).hexdigest() != envelope["candidate_sha256"]:
         raise ValueError("candidate digest mismatch")
     obligations = baseline["obligations"]
     if not isinstance(obligations, list) or not obligations:
@@ -271,10 +274,40 @@ def main():
         if envelope["trust_policy"] != policy_digest():
             raise ValueError("trust policy identity mismatch")
         verify_snapshot(snapshot, envelope, baseline, deadline)
+        candidate_bytes = bounded_read(candidate, limits["file_bytes"])
+        candidate_reason = ("source exceeds adapter input limit" if len(candidate_bytes) > 16384
+                            else scope.admission(candidate_bytes))
+        report["support"] = {
+            "policy_version": scope.SUPPORT_VERSION,
+            "policy_sha256": policy_digest(),
+            "admitted_candidate": baseline["candidate"],
+            "symbol": "target" if candidate_reason is None else None,
+            "admission_reason": candidate_reason,
+            "assumptions": ["protected baseline and verifier", "pinned Lean toolchain and trusted host"],
+            "permitted_foundational_axioms": sorted(scope.binding.PERMITTED_AXIOMS),
+            "exclusions": ["imports, additional declarations, macros, instances, attributes and runtime replacements",
+                           "compiled binaries, deployment, foreign languages and all other repository code"],
+            "guarantee": "Named approved properties of the admitted source-level target only",
+            "trusted_tools": ["Lean kernel", "Lean exporter", "Nanoda", "Comparator", "source adapter"],
+            "lean_commit": scope.binding.LEAN_COMMIT,
+            "toolchain_sha256": TOOLCHAIN_SHA256,
+            "deferred_frontends": ["Rust/Aeneas"],
+        }
+        report["coverage"] = scope.describe(snapshot, envelope["base"], envelope["head"], baseline, deadline)
+        if candidate_reason is not None:
+            report["support"]["unsupported_dependency"] = {"path": baseline["candidate"], "reason": candidate_reason}
+            if any(change["path"] == baseline["candidate"] for change in report["coverage"]["changes"]):
+                report["coverage"]["unsupported_changed_code"].append(
+                    {"path": baseline["candidate"], "reason": candidate_reason, "required_dependency": True})
         for item in baseline["obligations"]:
             proof = path_in(snapshot, item["evidence"])
             result = {"id": item["id"], "policy": item["policy"], "evidence": item["evidence"]}
-            if not proof.exists():
+            contract = scope.binding.load_contract(bounded_read(path_in(baseline_root, item["contract"]), 16384))[0]
+            result["symbol"] = "target"
+            result["property"] = "target x = " + contract
+            if candidate_reason is not None:
+                result.update(decision="unproven", reason="unsupported_semantics", detail=candidate_reason)
+            elif not proof.exists():
                 result.update(decision="unproven", reason="missing_evidence")
             else:
                 remaining = deadline - time.monotonic()
@@ -301,6 +334,10 @@ def main():
                     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
                         result.update(decision="unproven", reason="validation_unavailable", detail=str(error))
             report["results"].append(result)
+        report["property_counts"] = {
+            decision: sum(result["decision"] == decision for result in report["results"])
+            for decision in ("verified", "unproven")
+        }
         failures = {"validation_unavailable", "build_failure", "checker_disagreement", "contradictory_evidence", "timeout"}
         if any(r["reason"] in failures for r in report["results"]):
             raise ValueError("validator execution failed")
