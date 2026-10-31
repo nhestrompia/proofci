@@ -122,7 +122,9 @@ was reproduced, and 2 means replay failed or did not reproduce the result.
 The report explicitly says that historical CI publication was not reproduced.
 A digest supplied alongside an untrusted archive does not authenticate its
 origin; protect the digest separately. Missing inputs or the pinned image cause
-a nonpassing result. Archive limits are 256 MiB total and 128 MiB per member.
+a nonpassing result. Archive limits are 256 MiB total and 128 MiB per member. The expanded
+repository is limited to 256 MiB total, 128 MiB per file, and 100,000 files;
+export checks these limits before creating the bundle.
 
 On Linux, Git reconstruction runs with CPU, address-space, and file-size limits,
 plus wall-clock deadlines. macOS does not support the address-space limit;

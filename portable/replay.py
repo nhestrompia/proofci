@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 
 import proofci
+from container import IMAGE_ID
 
 MAX_ARCHIVE = 256 * 1024 * 1024
 MAX_FILE = 128 * 1024 * 1024
@@ -50,6 +51,39 @@ def read_file(path, limit=MAX_FILE):
     return proofci.bounded_read(path, limit)
 
 
+def check_tree(snapshot, head):
+    listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', head], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, preexec_fn=limit_reconstruction)
+    deadline = time.monotonic() + 60
+    total = count = 0
+    pending = b''
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([listing.stdout], [], [], remaining)[0]:
+                raise ValueError('repository inspection timed out')
+            chunk = os.read(listing.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            pending += chunk
+            while b'\0' in pending:
+                entry, pending = pending.split(b'\0', 1)
+                metadata = entry.split(b'\t', 1)[0].split()
+                count += 1
+                if len(metadata) != 4 or metadata[1] != b'blob' or not metadata[3].isdigit():
+                    raise ValueError('unsupported repository tree entry')
+                size = int(metadata[3])
+                total += size
+                if size > MAX_FILE or total > MAX_ARCHIVE or count > 100000:
+                    raise ValueError('expanded repository exceeds size or file count limit')
+            if len(pending) > 65536:
+                raise ValueError('repository path exceeds size limit')
+        if pending or listing.wait(timeout=30) != 0:
+            raise ValueError('cannot inspect repository tree')
+    finally:
+        if listing.poll() is None:
+            listing.kill()
+            listing.wait()
+
 def export(args):
     envelope_bytes = read_file(args.envelope, 1024 * 1024)
     baseline_bytes = read_file(args.baseline, 1024 * 1024)
@@ -65,6 +99,7 @@ def export(args):
     proofci.validate(envelope, baseline, snapshot, args.baseline.resolve().parent)
     import time
     proofci.verify_snapshot(snapshot, envelope, baseline, time.monotonic() + 60)
+    check_tree(snapshot, envelope['head'])
     files = {'envelope.json': envelope_bytes, 'baseline/baseline.json': baseline_bytes, 'report.json': report_bytes}
     for item in baseline['obligations']:
         name = safe_name(item['contract'])
@@ -153,42 +188,11 @@ def replay(args):
         subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
         if not isinstance(envelope.get('head'), str) or not re.fullmatch(r'[0-9a-f]{40}', envelope['head']):
             raise ValueError('invalid head commit')
-        # Count every tree entry, including repeated blobs, before materializing files.
-        listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', envelope['head']], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, preexec_fn=limit_reconstruction)
-        deadline = time.monotonic() + 60
-        total = count = 0
-        pending = b''
-        try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or not select.select([listing.stdout], [], [], remaining)[0]:
-                    raise ValueError('repository inspection timed out')
-                chunk = os.read(listing.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                pending += chunk
-                while b'\0' in pending:
-                    entry, pending = pending.split(b'\0', 1)
-                    metadata = entry.split(b'\t', 1)[0].split()
-                    count += 1
-                    if len(metadata) != 4 or metadata[1] != b'blob' or not metadata[3].isdigit():
-                        raise ValueError('unsupported repository tree entry')
-                    size = int(metadata[3])
-                    total += size
-                    if size > MAX_FILE or total > MAX_ARCHIVE or count > 100000:
-                        raise ValueError('expanded repository exceeds size or file count limit')
-                if len(pending) > 65536:
-                    raise ValueError('repository path exceeds size limit')
-            if pending or listing.wait(timeout=30) != 0:
-                raise ValueError('cannot inspect repository tree')
-        finally:
-            if listing.poll() is None:
-                listing.kill()
-                listing.wait()
+        check_tree(snapshot, envelope['head'])
         subprocess.run(['git', '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
         subprocess.run(['git', '-C', str(snapshot), 'remote', 'set-url', 'origin', envelope['repository']], check=True)
         result = root / 'replayed.json'
-        status = subprocess.run([sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result)]).returncode
+        status = subprocess.run([sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result), '--image', IMAGE_ID]).returncode
         fresh = proofci.parse_json(read_file(result, 8 * 1024 * 1024))
         def outcomes(report):
             return [(r['id'], r['policy'], r['decision'], r['reason'], r.get('evidence_sha256')) for r in report['results']]

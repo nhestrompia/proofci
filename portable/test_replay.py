@@ -50,11 +50,13 @@ class ReplayTest(CLITest):
         envelope = json.loads(path.read_text())
         envelope['head'] = head
         path.write_text(json.dumps(envelope))
-        archive, digest = self.export_bundle()
-        output = self.root / 'replay.json'
-        result = self.invoke('replay', '--bundle', archive, '--sha256', digest, '--output', output)
+        status, _ = self.run_cli()
+        self.assertEqual(status, 1)
+        result = self.invoke('export', '--envelope', path, '--baseline', self.root / 'baseline.json',
+                             '--snapshot', self.snapshot, '--report', self.root / 'report.json',
+                             '--output', self.root / 'evidence.tar')
         self.assertEqual(result.returncode, 2)
-        self.assertIn('expanded repository exceeds', json.loads(output.read_text())['reason'])
+        self.assertIn('expanded repository exceeds', result.stderr)
 
     def test_traversal_rejected_before_extraction(self):
         archive = self.root / 'hostile.tar'

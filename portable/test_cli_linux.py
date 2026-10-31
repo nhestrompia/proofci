@@ -59,7 +59,8 @@ class LinuxCLITests(unittest.TestCase):
                 (root / "envelope.json").write_text(json.dumps(envelope))
                 command = [sys.executable, str(HERE / "container.py"),
                     "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
-                    "--snapshot", str(snapshot), "--report", str(root / "report.json")]
+                    "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                    "--image", "sha256:ac3afc9c6af4bd70c5833105931561745d7e42701c2bfce246bc69d7f4076ea1"]
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)
