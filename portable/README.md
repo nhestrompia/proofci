@@ -27,7 +27,8 @@ A version 1 baseline has this shape:
       "policy": "required",
       "contract": "contracts/increment.json",
       "contract_sha256": "<sha256 of contract bytes>",
-      "evidence": "proofs/increment"
+      "evidence": "proofs/increment",
+      "refutation": "proofs/increment-refutation"
     }
   ]
 }
@@ -36,7 +37,10 @@ A version 1 baseline has this shape:
 Contract paths are relative to the baseline directory; candidate and evidence
 paths are relative to the checkout. Evidence uses the
 [bundle format](../experiments/source-binding/evidence-format.md). IDs must be
-unique and at least one obligation must be required.
+unique and at least one obligation must be required. The optional `refutation`
+path supplies a second independent evidence bundle. Both submissions are
+validated, and contradictory accepted evidence is an error with both references
+retained. Required violations block; advisory violations remain visible.
 
 A version 1 envelope contains `version`, `repository`, `head`, `base`,
 `candidate_sha256`, `baseline_sha256`, `dependency`, `toolchain`,
@@ -90,6 +94,20 @@ passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 ```sh
 PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
 ```
+
+A conditional contract may add `"precondition": {"lhs": "x", "op": "<", "rhs": "3"}`.
+Each side uses the restricted natural-number expression language; operators are
+`=`, `<`, and `≤`. The property holds only where the precondition holds. A
+concrete witness must independently establish the precondition and failure.
+
+To report a completed external search without accepting it as proof, pass
+`--search-results search.json` to the launcher. Its version 1 format is
+`{"version": 1, "exhausted": ["obligation-id"]}`. Only unresolved obligations
+receive `search_exhausted`; accepted evidence still determines the result. The
+report includes the SHA-256 of this input. The result’s `search.status` records
+exhaustion; its nested validation retains the reason the evidence was unresolved.
+This option does not run a search. When exporting that report for replay, pass
+the same `--search-results` file to `replay.py export`; its digest is checked.
 
 ## Reviewed local baselines
 

@@ -101,6 +101,16 @@ def export(args):
     proofci.verify_snapshot(snapshot, envelope, baseline, time.monotonic() + 60)
     check_tree(snapshot, envelope['head'])
     files = {'envelope.json': envelope_bytes, 'baseline/baseline.json': baseline_bytes, 'report.json': report_bytes}
+    expected_search = report.get('search_results_sha256')
+    if expected_search is not None:
+        if args.search_results is None:
+            raise ValueError('search results required to replay this report')
+        search = read_file(args.search_results, 1024 * 1024)
+        if sha(search) != expected_search:
+            raise ValueError('search results digest mismatch')
+        files['search-results.json'] = search
+    elif args.search_results is not None:
+        raise ValueError('report has no search results')
     for item in baseline['obligations']:
         name = safe_name(item['contract'])
         path = proofci.path_in(args.baseline.resolve().parent, name)
@@ -171,7 +181,7 @@ def ingest(path, expected):
         raise ValueError('bundle contents do not match manifest')
     if not {'envelope.json', 'baseline/baseline.json', 'report.json', 'repository.bundle'} <= files.keys():
         raise ValueError('bundle is missing required inputs')
-    if any(name not in ('envelope.json', 'report.json', 'repository.bundle') and not name.startswith('baseline/') for name in files):
+    if any(name not in ('envelope.json', 'report.json', 'repository.bundle', 'search-results.json') and not name.startswith('baseline/') for name in files):
         raise ValueError('unexpected bundle member')
     return files
 
@@ -194,7 +204,14 @@ def replay(args):
         subprocess.run(['git', '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
         subprocess.run(['git', '-C', str(snapshot), 'remote', 'set-url', 'origin', envelope['repository']], check=True)
         result = root / 'replayed.json'
-        status = subprocess.run([sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result), '--image', IMAGE_ID]).returncode
+        command = [sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result), '--image', IMAGE_ID]
+        if 'search-results.json' in files:
+            if sha(files['search-results.json']) != original.get('search_results_sha256'):
+                raise ValueError('search results digest mismatch')
+            command.extend(['--search-results', str(root / 'search-results.json')])
+        elif original.get('search_results_sha256') is not None:
+            raise ValueError('bundle is missing search results')
+        status = subprocess.run(command).returncode
         fresh = proofci.parse_json(read_file(result, 8 * 1024 * 1024))
         def outcomes(report):
             return [(r['id'], r['policy'], r['decision'], r['reason'], r.get('evidence_sha256')) for r in report['results']]
@@ -210,6 +227,7 @@ def main():
     create = commands.add_parser('export')
     for name in ('envelope', 'baseline', 'snapshot', 'report', 'output'):
         create.add_argument('--' + name, required=True, type=Path)
+    create.add_argument('--search-results', type=Path)
     run = commands.add_parser('replay')
     run.add_argument('--bundle', required=True, type=Path)
     run.add_argument('--sha256', required=True)
