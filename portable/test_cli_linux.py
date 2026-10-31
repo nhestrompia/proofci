@@ -59,7 +59,8 @@ class LinuxCLITests(unittest.TestCase):
                 (root / "envelope.json").write_text(json.dumps(envelope))
                 command = [sys.executable, str(HERE / "container.py"),
                     "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
-                    "--snapshot", str(snapshot), "--report", str(root / "report.json")]
+                    "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                    "--image", "sha256:1dabadbf1992e8f45adb13d6ee8efa7a0aaa5bf7676855dd611c1d38c5ed6ccb"]
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)
@@ -76,6 +77,16 @@ class LinuxCLITests(unittest.TestCase):
                 (output / "passing.json").write_text(json.dumps({"envelope": envelope, "baseline": baseline, "report": report}, indent=2) + "\n")
             self.assertEqual([x["decision"] for x in report["results"]], ["verified", "unproven"])
             self.assertIn("manifest.json", report["results"][0]["evidence_sha256"])
+            archive = root / "evidence.tar"
+            exported = subprocess.run([sys.executable, str(HERE / "replay.py"), "export", "--envelope", str(root / "envelope.json"),
+                "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--report", str(root / "report.json"),
+                "--output", str(archive)], capture_output=True, text=True)
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            replay_report = root / "replay.json"
+            replayed = subprocess.run([sys.executable, str(HERE / "replay.py"), "replay", "--bundle", str(archive),
+                "--sha256", exported.stdout.strip().removeprefix("sha256:"), "--output", str(replay_report)], capture_output=True, text=True)
+            self.assertEqual(replayed.returncode, 0, replayed.stderr + replay_report.read_text())
+            self.assertEqual(json.loads(replay_report.read_text())["status"], "reproduced")
             (snapshot / "unrelated.txt").write_text("unrelated change")
             envelope["head"] = commit("unrelated change")
             status, report = run()
