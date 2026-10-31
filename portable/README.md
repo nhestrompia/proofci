@@ -48,36 +48,34 @@ and `processes`. The pinned identity values can be printed from this checkout:
 python3 -c 'import sys; sys.path.insert(0,"portable"); import proofci; print("dependency", proofci.digest(proofci.VALIDATOR / "core-dependencies.json")); print("toolchain", proofci.TOOLCHAIN_SHA256); print("trust_policy", proofci.policy_digest())'
 ```
 
-Run with Docker and the pinned Linux ARM64 Lean distribution and bubblewrap
-binary from the [source-binding setup](../experiments/source-binding/README.md):
+Build the local-only Linux image using the pinned ARM64 Lean distribution and
+extracted bubblewrap package from the
+[source-binding setup](../experiments/source-binding/README.md):
 
 ```sh
-python3 portable/proofci.py --envelope run.json --baseline protected/baseline.json \
-  --snapshot checkout --toolchain /path/to/lean-4.35.0-linux_aarch64 \
-  --bwrap /path/to/bubblewrap --report report.json
-```
-
-Docker runs the digest-pinned Python image offline, unprivileged, with CPU,
-memory, process and temporary-storage limits. The validator checks the Lean
-tree and bubblewrap against pinned digests. The tighter of memory and file
-limits bounds the container memory, including nested tmpfs. This conservative
-bound may stop a run before either individual limit would be reached. The
-smaller of the CPU and wall-time budgets is applied as a wall deadline while
-the container is capped at one CPU. Docker and the host remain trusted.
-
-To build the local-only image containing the pinned validator and tools, use
-the extracted Lean directory and the extracted bubblewrap package directory
-as named build contexts:
-
-```sh
-docker buildx build --load --platform linux/arm64 \
+docker buildx build --provenance=false --build-arg SOURCE_DATE_EPOCH=0 \
+  --output type=docker,dest=proofci-validator.tar,rewrite-timestamp=true --platform linux/arm64 \
   --build-context lean=/path/to/lean-4.35.0-linux_aarch64 \
   --build-context bubblewrap=/path/to/extracted-bubblewrap \
   -f portable/Dockerfile -t proofci-validator-local .
+docker load -i proofci-validator.tar
 ```
 
-The build checks both tool digests. The CLI currently mounts those same pinned
-tools into the digest-pinned base image; it does not require the local image.
+The build checks the tool digests. The launcher rejects an image whose ID does
+not match the pinned distribution. Run as an unprivileged user with Docker:
+
+```sh
+python3 portable/container.py --envelope run.json --baseline protected/baseline.json \
+  --snapshot checkout --report report.json
+```
+
+Docker runs the CLI and validator offline, unprivileged, with CPU, memory,
+process and temporary-storage limits. The tighter of memory and file limits
+bounds container memory, including nested tmpfs. This conservative bound may
+stop a run before either individual limit would be reached. The smaller of the
+CPU and wall-time budgets is a wall deadline while the container is capped at
+one CPU. Docker and the host remain trusted. The verifier refuses to accept a
+proof outside a container with the required limits.
 
 Exit 0 means all required obligations were verified; exit 1 means a completed
 blocking result; exit 2 means configuration, timeout, cancellation or execution
@@ -90,6 +88,5 @@ Run unit checks with `python3 -m unittest discover -s portable`. The real
 passing and obsolete-proof scenarios require the pinned dependencies and Docker:
 
 ```sh
-PROOFCI_TEST_TOOLCHAIN=/path/to/lean PROOFCI_TEST_BWRAP=/path/to/bwrap \
-  python3 portable/test_cli_linux.py
+PROOFCI_TEST_PACKAGED=1 python3 portable/test_cli_linux.py
 ```

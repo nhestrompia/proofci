@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATOR = ROOT / "experiments/source-binding"
@@ -79,7 +78,7 @@ def path_in(root, name):
 
 def verify_snapshot(snapshot, envelope, baseline, deadline):
     def git(*args):
-        return subprocess.check_output(["git", "-c", "core.fsmonitor=false", "-C", str(snapshot), *args],
+        return subprocess.check_output(["git", "-c", "safe.directory=*", "-c", "core.fsmonitor=false", "-C", str(snapshot), *args],
                                        stderr=subprocess.PIPE, text=True, timeout=max(0, deadline - time.monotonic())).strip()
     if git("rev-parse", "--show-toplevel") != str(snapshot):
         raise ValueError("snapshot must be the repository root")
@@ -110,7 +109,7 @@ def verify_snapshot(snapshot, envelope, baseline, deadline):
     for name in paths:
         if git("ls-files", "--error-unmatch", "--", name) != name:
             raise ValueError("candidate and evidence must be committed")
-        committed = subprocess.check_output(["git", "-C", str(snapshot), "show", envelope["head"] + ":" + name],
+        committed = subprocess.check_output(["git", "-c", "safe.directory=*", "-C", str(snapshot), "show", envelope["head"] + ":" + name],
                                             stderr=subprocess.PIPE, timeout=max(0, deadline - time.monotonic()))
         if (snapshot / name).read_bytes() != committed:
             raise ValueError("snapshot bytes differ from committed content")
@@ -123,6 +122,22 @@ def policy_digest():
     for name in ("evidence.py", "binding.py", "admission.py", "toolchain.py", "core-dependencies.json"):
         h.update(name.encode() + b"\0" + (VALIDATOR / name).read_bytes())
     return h.hexdigest()
+
+
+def check_container_limits(limits):
+    cgroup = Path("/sys/fs/cgroup")
+    def number(name):
+        value = (cgroup / name).read_text().strip()
+        if not value.isdecimal():
+            raise ValueError("container resource limit is not set: " + name)
+        return int(value)
+    if number("memory.max") > min(limits["memory_bytes"], limits["file_bytes"]):
+        raise ValueError("container memory limit exceeds policy")
+    if number("memory.swap.max") != 0 or number("pids.max") > limits["processes"]:
+        raise ValueError("container swap or process limit exceeds policy")
+    cpu = (cgroup / "cpu.max").read_text().split()
+    if len(cpu) != 2 or not all(part.isdecimal() for part in cpu) or int(cpu[0]) > int(cpu[1]):
+        raise ValueError("container CPU quota exceeds one CPU")
 
 
 def finish_unchecked(report, baseline, reason):
@@ -179,7 +194,6 @@ def validate(envelope, baseline, snapshot, baseline_root):
 def run_validator(proof, candidate, contract, toolchain, bwrap, limits, deadline, candidate_hash, contract_hash, expected_evidence):
     if digest(bwrap) != BWRAP_SHA256:
         raise ValueError("bubblewrap digest mismatch")
-    name = "proofci-" + uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix="proofci-input-") as temp:
         root = Path(temp)
         (root / "candidate").write_bytes(bounded_read(candidate, 16384))
@@ -196,57 +210,27 @@ def run_validator(proof, candidate, contract, toolchain, bwrap, limits, deadline
         if evidence_hashes != expected_evidence:
             raise ValueError("staged evidence differs from committed content")
         os.chmod(root, 0o755)
-        command = ["docker", "create", "--name", name, "--label", f"proofci.run={os.getpid()}", "--rm", "--network", "none",
-                   "--platform", "linux/arm64", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                   "--security-opt", "seccomp=unconfined", "--security-opt", "systempaths=unconfined",
-                   "--user", "65534:65534", "--read-only", "--memory", str(min(limits["memory_bytes"], limits["file_bytes"])),
-                   "--memory-swap", str(min(limits["memory_bytes"], limits["file_bytes"])),
-                   "--pids-limit", str(limits["processes"]), "--cpus", "1", "--log-driver", "none",
-                   "--tmpfs", f"/tmp:rw,size={limits['file_bytes']},mode=1777",
-                   "--tmpfs", "/run:rw,size=1m,mode=1777", "-e", "HOME=/tmp",
-                   "--mount", f"type=bind,src={root},dst=/input,readonly",
-                   "--mount", f"type=bind,src={VALIDATOR},dst=/probe,readonly",
-                   "--mount", f"type=bind,src={toolchain},dst=/lean,readonly",
-                   "--mount", f"type=bind,src={bwrap},dst=/usr/bin/bwrap,readonly",
-                   IMAGE, "python3", "/probe/evidence.py", "/input/evidence", "/input/candidate",
-                   "/input/contract", "--toolchain", "/lean"]
-        try:
-            subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
-                           timeout=max(0, deadline - time.monotonic()))
-        except BaseException:
-            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=15, check=False)
-            raise
-        try:
-            process = subprocess.Popen(["docker", "start", "-a", name], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except BaseException:
-            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=15, check=False)
-            raise
-        try:
-            stdout, stderr = process.communicate(timeout=max(0, deadline - time.monotonic()))
-        except BaseException:
+        if os.environ.get("PROOFCI_CONTAINER") == "1":
+            command = [sys.executable, str(VALIDATOR / "evidence.py"), str(root / "evidence"),
+                       str(root / "candidate"), str(root / "contract"), "--toolchain", str(toolchain)]
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             try:
-                subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, timeout=15, check=False)
-            finally:
+                stdout, stderr = process.communicate(timeout=max(0, deadline - time.monotonic()))
+            except BaseException:
                 try:
-                    process.kill()
-                    process.communicate(timeout=15)
-                finally:
-                    subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL, timeout=15, check=False)
-                    inspection = subprocess.run(["docker", "inspect", name], stdout=subprocess.DEVNULL,
-                                                stderr=subprocess.PIPE, timeout=15, check=False)
-                    if inspection.returncode == 0 or b"no such object" not in inspection.stderr.lower():
-                        raise RuntimeError("container cleanup could not be confirmed")
-            raise
-        if process.returncode not in (0, 1):
-            raise RuntimeError("validator container failed: " + stderr.decode(errors="replace")[-1000:])
-        result = json.loads(stdout)
-        if result.get("decision") not in ("verified", "unproven") or (process.returncode == 0) != (result["decision"] == "verified"):
-            raise RuntimeError("validator output and exit status disagree")
-        return result, evidence_hashes
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate(timeout=15)
+                raise
+            if process.returncode not in (0, 1):
+                raise RuntimeError("validator failed: " + stderr.decode(errors="replace")[-1000:])
+            result = json.loads(stdout)
+            if result.get("decision") not in ("verified", "unproven") or (process.returncode == 0) != (result["decision"] == "verified"):
+                raise RuntimeError("validator output and exit status disagree")
+            return result, evidence_hashes
+        raise RuntimeError("run verification through the resource-limited Linux distribution")
+
 
 
 def main():
@@ -260,7 +244,7 @@ def main():
     status = 2
     baseline = None
     try:
-        report["execution"] = {"image": IMAGE, "bubblewrap_sha256": BWRAP_SHA256,
+        report["execution"] = {"image": os.environ.get("PROOFCI_IMAGE_ID", IMAGE), "bubblewrap_sha256": BWRAP_SHA256,
                                "validator_policy_sha256": policy_digest()}
         envelope = parse_json(bounded_read(args.envelope, 1024 * 1024))
         baseline_bytes = bounded_read(args.baseline, 1024 * 1024)
@@ -270,6 +254,8 @@ def main():
         fields(limits, ("timeout_seconds", "cpu_seconds", "memory_bytes", "file_bytes", "processes"))
         if any(type(value) is not int or value <= 0 for value in limits.values()):
             raise ValueError("resource limits must be positive integers")
+        if os.environ.get("PROOFCI_CONTAINER") == "1":
+            check_container_limits(limits)
         deadline = time.monotonic() + min(limits["timeout_seconds"], limits["cpu_seconds"])
         signal.signal(signal.SIGALRM, timeout_signal)
         signal.setitimer(signal.ITIMER_REAL, max(0.000001, deadline - time.monotonic()))

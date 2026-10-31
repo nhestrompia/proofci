@@ -111,7 +111,7 @@ class CLITest(unittest.TestCase):
         self.assertEqual(len(report["results"]), 2)
         self.assertLess(time.monotonic() - started, 5)
 
-    def test_validator_container_name_is_not_an_evidence_filename(self):
+    def test_host_validator_refuses_unlimited_execution(self):
         proof = self.root / "bundle"
         proof.mkdir()
         (proof / "solution.ndjson").write_bytes(b"evidence")
@@ -120,24 +120,14 @@ class CLITest(unittest.TestCase):
         candidate = self.snapshot / "candidate.lean"
         contract = self.root / "contract.json"
         sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
-        class Process:
-            returncode = 0
-            def communicate(self, timeout):
-                return b'{"decision":"verified","reason":"accepted"}', b""
         limits = {"memory_bytes": 1000000000, "file_bytes": 1000000000, "processes": 100}
         with (patch.object(proofci, "BWRAP_SHA256", sha(bwrap)),
-              patch.object(proofci.subprocess, "run") as create,
-              patch.object(proofci.subprocess, "Popen", return_value=Process()) as popen):
-            proofci.run_validator(proof, candidate, contract, self.root, bwrap, limits,
-                                  time.monotonic() + 10, sha(candidate), sha(contract),
-                                  {"solution.ndjson": sha(proof / "solution.ndjson")})
-        command = create.call_args.args[0]
-        name = command[command.index("--name") + 1]
-        self.assertTrue(name.startswith("proofci-"))
-        self.assertEqual(popen.call_args.args[0], ["docker", "start", "-a", name])
-        for flag, expected in (("--network", "none"), ("--memory", "1000000000"),
-                               ("--memory-swap", "1000000000"), ("--pids-limit", "100"), ("--cpus", "1")):
-            self.assertEqual(command[command.index(flag) + 1], expected)
+              patch.dict("os.environ", {}, clear=True)):
+            with self.assertRaisesRegex(RuntimeError, "resource-limited"):
+                proofci.run_validator(proof, candidate, contract, self.root, bwrap, limits,
+                                      time.monotonic() + 10, sha(candidate), sha(contract),
+                                      {"solution.ndjson": sha(proof / "solution.ndjson")})
+
 
 
 if __name__ == "__main__":

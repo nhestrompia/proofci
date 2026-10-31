@@ -19,8 +19,7 @@ proofci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(proofci)
 
 
-@unittest.skipUnless(os.environ.get("PROOFCI_TEST_TOOLCHAIN") and os.environ.get("PROOFCI_TEST_BWRAP"),
-                     "requires pinned toolchain, bubblewrap and Docker")
+@unittest.skipUnless(os.environ.get("PROOFCI_TEST_PACKAGED"), "requires the pinned local image and Docker")
 class LinuxCLITests(unittest.TestCase):
     def test_pass_and_obsolete_proof(self):
         with tempfile.TemporaryDirectory(prefix="proofci-cli-test-") as temp:
@@ -41,6 +40,9 @@ class LinuxCLITests(unittest.TestCase):
                 git("commit", "-qm", message)
                 return git("rev-parse", "HEAD")
             head = commit("valid")
+            checkout = root / "linked-checkout"
+            git("worktree", "add", "-qb", "fixture-worktree", str(checkout))
+            snapshot = checkout
             sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             baseline = {"version": 1, "candidate": "candidate.lean", "obligations": [
                 {"id": "increment", "policy": "required", "contract": "contract.json",
@@ -55,10 +57,9 @@ class LinuxCLITests(unittest.TestCase):
                 "memory_bytes": 2147483648, "file_bytes": 2147483648, "processes": 256}}
             def run(cancel=False):
                 (root / "envelope.json").write_text(json.dumps(envelope))
-                command = [sys.executable, str(HERE / "proofci.py"), "--envelope", str(root / "envelope.json"),
-                    "--baseline", str(root / "baseline.json"), "--snapshot", str(snapshot), "--toolchain",
-                    os.environ["PROOFCI_TEST_TOOLCHAIN"], "--bwrap", os.environ["PROOFCI_TEST_BWRAP"],
-                    "--report", str(root / "report.json")]
+                command = [sys.executable, str(HERE / "container.py"),
+                    "--envelope", str(root / "envelope.json"), "--baseline", str(root / "baseline.json"),
+                    "--snapshot", str(snapshot), "--report", str(root / "report.json")]
                 result = subprocess.Popen(command)
                 if cancel:
                     time.sleep(2)

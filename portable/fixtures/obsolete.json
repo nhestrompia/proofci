@@ -2,8 +2,8 @@
   "envelope": {
     "version": 1,
     "repository": "https://example.invalid/fixture.git",
-    "head": "f849c01762d2a183df0852133b8fe83d973b8f8b",
-    "base": "0cdcccf1fd88401a2d83e895eb430856b5bdf83f",
+    "head": "ccf25392923bc2bad21dd9886f438ce5f4316a7f",
+    "base": "e0d913e38b4836629ac490beaae26fc2a69b9599",
     "candidate_sha256": "4d78fe5c133049b8c7360f525364a2c1d3ef79a9907944d6fc6c6b7ab9a66158",
     "baseline_sha256": "f030ea18e63729766fa1c0f4c5af91a3660e5412b24941d19fb131ea611d5425",
     "dependency": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
@@ -39,11 +39,11 @@
   },
   "report": {
     "envelope": {
-      "base": "0cdcccf1fd88401a2d83e895eb430856b5bdf83f",
+      "base": "e0d913e38b4836629ac490beaae26fc2a69b9599",
       "baseline_sha256": "f030ea18e63729766fa1c0f4c5af91a3660e5412b24941d19fb131ea611d5425",
       "candidate_sha256": "4d78fe5c133049b8c7360f525364a2c1d3ef79a9907944d6fc6c6b7ab9a66158",
       "dependency": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
-      "head": "f849c01762d2a183df0852133b8fe83d973b8f8b",
+      "head": "ccf25392923bc2bad21dd9886f438ce5f4316a7f",
       "repository": "https://example.invalid/fixture.git",
       "resource_policy": {
         "cpu_seconds": 180,
@@ -56,7 +56,12 @@
       "trust_policy": "1d813eba3adb007e03f2bdb8f4448fe602a99fd512c72c81d54d788c7cac7819",
       "version": 1
     },
-    "finished_at": 1793479311.50512,
+    "execution": {
+      "bubblewrap_sha256": "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976",
+      "image": "sha256:ac3afc9c6af4bd70c5833105931561745d7e42701c2bfce246bc69d7f4076ea1",
+      "validator_policy_sha256": "1d813eba3adb007e03f2bdb8f4448fe602a99fd512c72c81d54d788c7cac7819"
+    },
+    "finished_at": 1793480758.166456,
     "results": [
       {
         "decision": "unproven",
@@ -84,9 +89,10 @@
         "reason": "missing_evidence"
       }
     ],
-    "started_at": 1793479310.8770938,
+    "started_at": 1793480757.94783,
     "status": "blocked",
     "usage": {
+      "elapsed_seconds": 0.21862912500000675,
       "model_calls": 0
     },
     "version": 1
