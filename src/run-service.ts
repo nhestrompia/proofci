@@ -5,6 +5,7 @@ import type { RunStore } from './run-store.ts';
 import { resolvePullDelivery } from './pull-delivery.ts';
 import { reconcileHead, resolveDelivery } from './delivery-worker.ts';
 import { executeNext } from './run-worker.ts';
+import type { ModelLedger } from './model-ledger.ts';
 import { executeRun } from './run-executor.ts';
 import type { EvidenceStore } from './evidence-store.ts';
 import { publishNext } from './publication-worker.ts';
@@ -26,9 +27,9 @@ export class RunService {
   private expirationBusy = false;
   private nextBaseline = 0;
   private timer: NodeJS.Timeout | undefined;
-  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; evidence: EvidenceStore; origin: string };
+  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; evidence: EvidenceStore; origin: string; ledger?: ModelLedger };
 
-  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; evidence: EvidenceStore; origin: string }) { this.options = options; }
+  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; evidence: EvidenceStore; origin: string; ledger?: ModelLedger }) { this.options = options; }
 
   start(): void {
     if (this.timer) return;
@@ -44,11 +45,11 @@ export class RunService {
 
   private async tick(): Promise<void> {
     if (this.stopSignal.signal.aborted) return;
-    const { store, selections, github, baselines, repositories, evidence } = this.options;
+    const { store, selections, github, baselines, repositories, evidence, ledger } = this.options;
     if (!this.expirationBusy && Date.now() >= this.nextExpiration) {
       this.expirationBusy = true;
       this.nextExpiration = Date.now() + 60_000;
-      void evidence.expire().catch(() => {}).finally(() => { this.expirationBusy = false; });
+      void Promise.all([evidence.expire(), ledger?.sweep()]).catch(() => {}).finally(() => { this.expirationBusy = false; });
     }
     if (!this.deliveryBusy) {
       this.deliveryBusy = true;
@@ -73,7 +74,7 @@ export class RunService {
     }
     if (!this.workerBusy) {
       this.workerBusy = true;
-      void executeNext({ store, leaseMs: 30_000, signal: this.stopSignal.signal,
+      void executeNext({ store, ledger, leaseMs: 30_000, signal: this.stopSignal.signal,
         authorize: async candidate => {
           const version = await selections.readVersion(candidate);
           if (version === null) return 'revoked';

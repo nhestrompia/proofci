@@ -10,6 +10,7 @@ import { processInstallationEvent } from './installation-events.ts';
 import { processPullEvent } from './pull-events.ts';
 import { processPushEvent } from './push-events.ts';
 import { processRerunEvent } from './rerun-events.ts';
+import { ModelLedger } from './model-ledger.ts';
 import { RunStore } from './run-store.ts';
 import { ForkPolicy, policyDigest } from './fork-policy.ts';
 import { ActiveBaselines } from './active-baselines.ts';
@@ -54,6 +55,8 @@ if (pilotConfig) {
   migrationService = new MigrationService({ sessions, github, selections: store, repositories });
   activeBaselines = baselines;
   runs = new RunStore(pool, authority); await runs.initialize();
+  // Hosted model calls stay disabled unless an operator enables a repository's model policy.
+  const ledger = new ModelLedger(pool); await ledger.initialize();
   forkPolicy = new ForkPolicy({ pool, selections: store, github, sessions, baselines, authority });
   for (const repository of repositories) await forkPolicy.syncPolicy(repository, repository.assistanceQuotaMicros);
   const retentionDays = Number(process.env.PROOFCI_EVIDENCE_RETENTION_DAYS ?? '30');
@@ -64,7 +67,7 @@ if (pilotConfig) {
   const versioning = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
   if (versioning.Status) throw new Error('Evidence bucket must not have versioning enabled or suspended');
   evidenceStore = new EvidenceStore(runs, s3, bucket, retentionDays * 86400);
-  runService = new RunService({ store: runs, selections: store, github, baselines, repositories, evidence: evidenceStore, origin: origin.origin });
+  runService = new RunService({ store: runs, selections: store, github, baselines, repositories, evidence: evidenceStore, origin: origin.origin, ledger });
   runService.start();
 }
 
