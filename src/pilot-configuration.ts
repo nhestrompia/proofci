@@ -13,6 +13,8 @@ export function readPilotConfiguration(path: string): PilotConfiguration[] {
         !('repositoryId' in entry) || typeof entry.repositoryId !== 'number' || !('store' in entry) || typeof entry.store !== 'string' ||
         !('repository' in entry) || typeof entry.repository !== 'string' || !('ref' in entry) || typeof entry.ref !== 'string' ||
         !entry.ref.startsWith('refs/heads/')) throw new Error('Invalid pilot configuration');
-    return { installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref };
+    const assistanceQuotaMicros = 'assistanceQuotaMicros' in entry ? entry.assistanceQuotaMicros : 0;
+    if (typeof assistanceQuotaMicros !== 'number' || !Number.isSafeInteger(assistanceQuotaMicros) || assistanceQuotaMicros < 0) throw new Error('Invalid assistance quota');
+    return { installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref, assistanceQuotaMicros };
   });
 }

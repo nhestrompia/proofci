@@ -17,7 +17,7 @@ docker run --rm --network none -v "$PWD/reports:/reports" proofci-worker-probe -
 
 The image uses software emulation and requires no `/dev/kvm`. The recorded Linux host is the Docker container's Linux kernel; on Docker Desktop it is not the physical host. A different architecture fails with a prerequisite error. The guest has no network device or host mounts. The dummy host files and Unix socket are created in the container solely for this probe; no real credentials are used.
 
-The fixed guest checks access to the dummy host objects, exercises cgroup memory and process limits, a supervised CPU budget, a disk workload confined to a size-limited tmpfs, and per-process limits. Separate guests exercise cancellation, fresh state, bounded output, and timeout. The serial result channel is trusted only because the guest runs these fixed, image-owned programs. It must not be reused as an authoritative channel for arbitrary job output. The challenge is the only job payload. No repository snapshot or executable job input is accepted by this launcher.
+The fixed guest checks access to the dummy host objects and a simulated other-repository cache sentinel, exercises cgroup memory and process limits, a supervised CPU budget, a disk workload confined to a size-limited tmpfs, and per-process limits. Separate guests exercise cancellation, fresh state, bounded output, and timeout. The serial result channel is trusted only because the guest runs these fixed, image-owned programs. It must not be reused as an authoritative channel for arbitrary job output. The challenge is the only job payload. No repository snapshot or executable job input is accepted by this launcher.
 
 Run the host-side process tests in Linux with:
 

@@ -14,9 +14,9 @@ import authority
 import dispatch
 import proofci
 import service_baseline
+import replay
 
-LIMITS = {'timeout_seconds': 900, 'cpu_seconds': 900, 'memory_bytes': 2147483648,
-          'file_bytes': 2147483648, 'processes': 256}
+LIMITS = json.loads(Path(__file__).with_name('resource_limits.json').read_text())
 
 
 def launch_vm(command, deadline):
@@ -25,9 +25,9 @@ def launch_vm(command, deadline):
     return dispatch._run_process(command, deadline)
 
 
-def execute(*, store, repository, head, base, baseline_digest, snapshot, report, candidate_kind='head-snapshot', candidate_lane=None):
+def execute(*, store, repository, head, base, baseline_digest, snapshot, report, candidate_kind='head-snapshot', candidate_lane=None, bundle=None):
     try:
-        if candidate_kind not in ('head-snapshot', 'resolved'):
+        if candidate_kind not in ('head-snapshot', 'resolved', 'pull-request'):
             raise ValueError('invalid candidate kind')
         if not re.fullmatch(r'[a-f0-9]{40}', head) or not re.fullmatch(r'[a-f0-9]{40}', base):
             raise ValueError('invalid candidate identity')
@@ -38,7 +38,7 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
         report = Path(report).resolve()
         if report.is_relative_to(snapshot):
             raise ValueError('report must be outside the snapshot')
-        managed_head = head if candidate_kind == 'head-snapshot' else base
+        managed_head = head if candidate_kind == 'head-snapshot' else None
         managed_ref = candidate_lane if candidate_kind == 'head-snapshot' else None
         authority_epoch = authority.observe(store, repository, managed_head, managed_ref)
         row = service_baseline.active_row(store, repository)
@@ -80,6 +80,9 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
                     status = 1
                     result['status'] = 'blocked'
                 report.write_bytes(baselines.encoded(result))
+                if bundle is not None:
+                    replay.export(argparse.Namespace(envelope=envelope_path, baseline=protected / 'baseline.json',
+                        snapshot=snapshot, report=report, search_results=None, output=Path(bundle)))
             return status
     except KeyboardInterrupt:
         dispatch._write_error(report, 'cancelled')
@@ -93,11 +96,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('store', 'repository', 'head', 'base', 'baseline-digest', 'snapshot', 'report'):
         parser.add_argument('--' + name, required=True)
-    parser.add_argument('--candidate-kind', choices=('head-snapshot', 'resolved'), default='head-snapshot')
+    parser.add_argument('--candidate-kind', choices=('head-snapshot', 'resolved', 'pull-request'), default='head-snapshot')
     parser.add_argument('--candidate-lane')
+    parser.add_argument('--bundle')
     args = parser.parse_args()
     return execute(store=args.store, repository=args.repository, head=args.head, base=args.base,
-                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, candidate_kind=args.candidate_kind, candidate_lane=args.candidate_lane)
+                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, candidate_kind=args.candidate_kind, candidate_lane=args.candidate_lane, bundle=args.bundle)
 
 
 if __name__ == '__main__':

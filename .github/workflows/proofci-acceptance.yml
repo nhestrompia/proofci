@@ -1,0 +1,82 @@
+name: ProofCI portable acceptance
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  source-head:
+    if: github.event.label.name == 'proofci-acceptance' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, ARM64, proofci-acceptance-isolated]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: snapshot
+      - name: Prepare actual pull request inputs
+        run: |
+          mkdir -p "$RUNNER_TEMP/proofci-head"
+          python3 /opt/proofci/examples/github-actions/prepare.py \
+            "$GITHUB_WORKSPACE/snapshot" /opt/proofci-baseline/baseline.json "$RUNNER_TEMP/proofci-head"
+      - name: Verify actual pull request source head
+        run: |
+          python3 /opt/proofci/portable/container.py \
+            --envelope "$RUNNER_TEMP/proofci-head/envelope.json" \
+            --baseline /opt/proofci-baseline/baseline.json \
+            --snapshot "$GITHUB_WORKSPACE/snapshot" --report "$RUNNER_TEMP/proofci-head/report.json"
+      - name: Retain source-head report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: proofci-source-head-${{ github.run_id }}
+          path: ${{ runner.temp }}/proofci-head/
+          if-no-files-found: warn
+  acceptance:
+    if: github.event.label.name == 'proofci-acceptance' && github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [passing, unproven, error]
+    runs-on: [self-hosted, linux, ARM64, proofci-acceptance-isolated]
+    timeout-minutes: 15
+    env:
+      PROOFCI_TEST_PACKAGED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Exercise pinned verifier and fixture snapshots
+        run: python3 portable/test_github_example_linux.py
+        env:
+          PROOFCI_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ matrix.scenario }}
+      - name: Return the selected public verification status
+        id: selected_status
+        continue-on-error: true
+        run: |
+          python3 -c 'import json, os, sys; x=json.load(open(os.path.join(os.environ["PROOFCI_ACCEPTANCE_OUTPUT"], "normalized.json"))); sys.exit(x[os.environ["SCENARIO"]]["exit"])'
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          PROOFCI_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ matrix.scenario }}
+      - name: Check the expected job outcome
+        if: ${{ always() }}
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          OUTCOME: ${{ steps.selected_status.outcome }}
+        run: |
+          if [ "$SCENARIO" = passing ]; then
+            test "$OUTCOME" = success
+          else
+            test "$OUTCOME" = failure
+          fi
+      - name: Upload reports after all outcomes
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: proofci-acceptance-${{ github.run_id }}-${{ matrix.scenario }}
+          path: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ matrix.scenario }}/
+          if-no-files-found: error

@@ -33,7 +33,7 @@ for (const reason of ['revocation', 'head change'] as const) test(`${reason} obs
     let checks = 0, headChecks = 0;
     const scope = { installationId: 1, repositoryId: 2 };
     const service = new MigrationService({
-      repositories: [{ ...scope, store, repository, ref: 'refs/heads/main' }],
+      repositories: [{ ...scope, store, repository, ref: 'refs/heads/main', assistanceQuotaMicros: 0 }],
       selections: { readVersion: async () => 'selected', removeIfVersion: async () => {} },
       sessions: { checkMaintainer: async () => ++checks === 1 || reason === 'head change' ? 42 : null },
       github: {

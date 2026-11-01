@@ -1,4 +1,4 @@
-import { createPrivateKey } from 'node:crypto';
+import { createHash, createPrivateKey } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Pool } from 'pg';
@@ -7,8 +7,10 @@ import { EnrollmentService } from './enrollment-service.ts';
 import { GitHubApp } from './github-app.ts';
 import { OAuthSessions } from './oauth.ts';
 import { processInstallationEvent } from './installation-events.ts';
+import { processPullEvent } from './pull-events.ts';
 import { processPushEvent } from './push-events.ts';
 import { RunStore } from './run-store.ts';
+import { ForkPolicy, policyDigest } from './fork-policy.ts';
 import { ActiveBaselines } from './active-baselines.ts';
 import { RunService, type PilotConfiguration } from './run-service.ts';
 import { MigrationService } from './migration-service.ts';
@@ -34,6 +36,8 @@ const enrollment = new EnrollmentService({ store, sessions, github });
 let runs: RunStore | undefined;
 let runService: RunService | undefined;
 let migrationService: MigrationService | undefined;
+let forkPolicy: ForkPolicy | undefined;
+let activeBaselines: ActiveBaselines | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
@@ -43,8 +47,11 @@ if (pilotConfig) {
   store.setAuthority(authority);
   const baselines = new ActiveBaselines(repositories);
   migrationService = new MigrationService({ sessions, github, selections: store, repositories });
+  activeBaselines = baselines;
   runs = new RunStore(pool, authority); await runs.initialize();
-  runService = new RunService({ store: runs, selections: store, github, baselines, repositories });
+  forkPolicy = new ForkPolicy({ pool, selections: store, github, sessions, baselines, authority });
+  for (const repository of repositories) await forkPolicy.syncPolicy(repository, repository.assistanceQuotaMicros);
+  runService = new RunService({ store: runs, selections: store, github, baselines, repositories, origin: origin.origin });
   runService.start();
 }
 
@@ -91,6 +98,33 @@ const server = createServer(async (request, response) => {
       setCookie(response, 'proofci_login', login.binding, 300);
       response.writeHead(303, { location: login.url, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return response.end();
     }
+    const pullPath = /^\/pulls\/([1-9]\d*)\/([1-9]\d*)\/([1-9]\d*)$/.exec(url.pathname);
+    if (request.method === 'GET' && pullPath && runs) {
+      const scope = { installationId: Number(pullPath[1]), repositoryId: Number(pullPath[2]) }, number = Number(pullPath[3]);
+      if (!Number.isSafeInteger(scope.installationId) || !Number.isSafeInteger(scope.repositoryId) || !Number.isSafeInteger(number) ||
+          await sessions.checkMaintainer({ session: cookie(request, 'proofci_session'), scope, github }) === null || !await store.isSelected(scope)) return reply(response, 404, 'Not found.');
+      const result = await runs.inspectPull(scope, number);
+      if (!result) return reply(response, 404, 'Not found.');
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return response.end(JSON.stringify(result));
+    }
+    const runPath = /^\/runs\/([1-9]\d*)\/([1-9]\d*)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/evidence)?$/i.exec(url.pathname);
+    if (request.method === 'GET' && runPath && runs) {
+      const scope = { installationId: Number(runPath[1]), repositoryId: Number(runPath[2]) };
+      if (!Number.isSafeInteger(scope.installationId) || !Number.isSafeInteger(scope.repositoryId) ||
+          await sessions.checkMaintainer({ session: cookie(request, 'proofci_session'), scope, github }) === null ||
+          !await store.isSelected(scope)) return reply(response, 404, 'Not found.');
+      if (runPath[4]) {
+        const evidence = await runs.evidence(scope, runPath[3]);
+        if (!evidence) return reply(response, 404, 'Not found.');
+        response.writeHead(200, { 'content-type': 'application/x-tar', 'content-disposition': 'attachment; filename="proofci-evidence.tar"', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-proofci-sha256': evidence.sha256 });
+        return response.end(evidence.bytes);
+      }
+      const run = await runs.inspect(scope, runPath[3]);
+      if (!run) return reply(response, 404, 'Not found.');
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return response.end(JSON.stringify(run));
+    }
     if (request.method === 'GET' && url.pathname === '/oauth/callback') {
       const session = await sessions.finish({ state: url.searchParams.get('state') ?? '', code: url.searchParams.get('code') ?? '', binding: cookie(request, 'proofci_login') });
       if (!session) return reply(response, 403, 'Sign-in failed.');
@@ -116,7 +150,15 @@ const server = createServer(async (request, response) => {
       if (event === 'push') {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
-        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId && item.ref === delivery.ref) ? runStore.acceptDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => {
+          const config = pilotRepositories.find(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId);
+          return config ? runStore.acceptDelivery(delivery, config.ref === delivery.ref) : Promise.resolve(true);
+        } } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+      } else if (event === 'pull_request') {
+        const runStore = runs;
+        if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
+        if (!await processPullEvent({ body, signature, event, deliveryId, secret, store: { acceptPullDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId) ? runStore.acceptPullDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+
       } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
     }
@@ -130,6 +172,35 @@ const server = createServer(async (request, response) => {
         const result = await migrationService.migrate({ session: cookie(request, 'proofci_session'), scope: { installationId, repositoryId }, head: data.get('head') ?? '', previous: data.get('previous') ?? '', replacement: data.get('replacement') ?? '' });
         return reply(response, result.status === 'passed' ? 200 : 422, `<h1>${result.status === 'passed' ? 'Policy changed' : 'Migration not activated'}</h1><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`);
       } catch { return reply(response, 403, 'Migration failed or authorization is stale. The previous baseline remains active unless another migration replaced it.'); }
+    }
+    if ((request.method === 'GET' || request.method === 'POST') && url.pathname === '/fork-assistance') {
+      const runStore = runs, policy = forkPolicy, baselines = activeBaselines;
+      if (!runStore || !policy || !baselines) return reply(response, 503, 'Run scheduling is not configured.');
+      if (request.method === 'POST' && request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');
+      const data = request.method === 'POST' ? await form(request) : url.searchParams;
+      const selection = data.get('repository') ?? '', numberText = data.get('number') ?? '';
+      if (!/^[1-9]\d*:[1-9]\d*$/.test(selection) || !/^[1-9]\d*$/.test(numberText)) return reply(response, 400, 'Invalid selection.');
+      const [installationId, repositoryId] = selection.split(':').map(Number), number = Number(numberText);
+      if (![installationId, repositoryId, number].every(Number.isSafeInteger)) return reply(response, 400, 'Invalid selection.');
+      const scope = { installationId, repositoryId }, session = cookie(request, 'proofci_session');
+      const config = pilotRepositories.find(item => item.installationId === installationId && item.repositoryId === repositoryId);
+      if (!config || await sessions.checkMaintainer({ session, scope, github }) === null || !await store.isSelected(scope)) return reply(response, 403, 'Request denied.');
+      const run = await runStore.findPull(scope, number);
+      if (request.method === 'POST' && data.get('action') === 'revoke') {
+        if (!await policy.revoke({ session, scope, number })) return reply(response, 403, 'Request denied.');
+        return reply(response, 200, 'Fork assistance approval revoked.');
+      }
+      if (!run || run.candidate.sourceRepositoryId === repositoryId) return reply(response, 404, 'No current fork run found.');
+      const baseline = await baselines.activeIdentity(scope);
+      if (!baseline || baseline.digest !== run.candidate.baseline || baseline.revision === null) return reply(response, 409, 'The active baseline is unavailable or needs revision tracking.');
+      const digest = createHash('sha256').update(JSON.stringify([run.id, run.candidate, baseline.revision, policyDigest(config.assistanceQuotaMicros)])).digest('hex');
+      if (request.method === 'POST') {
+        if (data.get('action') !== 'approve' || data.get('digest') !== digest || data.get('consent') !== 'yes') return reply(response, 409, 'The candidate or policy changed, or consent was not given. Review it again.');
+        if (!await policy.approve({ session, candidate: run.candidate, quotaMicros: config.assistanceQuotaMicros, baselineRevision: baseline.revision, consent: true })) return reply(response, 403, 'Approval denied or candidate changed.');
+        return reply(response, 200, 'Approval recorded. Hosted assistance remains deferred until durable request recovery is enabled.');
+      }
+      const c = run.candidate;
+      return reply(response, 200, `<h1>Fork assistance</h1><p>Source repository ID: ${c.sourceRepositoryId}. Destination repository ID: ${c.repositoryId}. Pull request: ${c.number}.</p><p>Head: ${c.head}<br>Base: ${c.base}<br>Baseline: ${c.baseline}<br>Baseline revision: ${baseline.revision}<br>Resource policy: ${policyDigest(config.assistanceQuotaMicros)}<br>Repository quota: ${config.assistanceQuotaMicros} microdollars.</p><p>Hosted assistance is deferred until durable request recovery is enabled.</p><form method="post"><input type="hidden" name="repository" value="${selection}"><input type="hidden" name="number" value="${number}"><input type="hidden" name="digest" value="${digest}"><label><input type="checkbox" name="consent" value="yes" required>Allow source transmission for these exact inputs</label><button name="action" value="approve">Approve</button><button name="action" value="revoke" formnovalidate>Revoke approval</button></form>`);
     }
     if (request.method === 'POST' && url.pathname === '/logout') {
       if (request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');

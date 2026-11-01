@@ -47,6 +47,12 @@ test('the webhook persists a signed selected push before acknowledging it', { sk
     assert.equal((await fetch(`${url}/webhooks/github`, { method: 'POST', headers, body })).status, 204);
     const deliveries = await new RunStore(pool).listDeliveries(scope);
     assert.equal(deliveries.filter(item => item.deliveryId === deliveryId).length, 1);
+    const pullBody = JSON.stringify({ action: 'opened', installation: { id: 1001 }, repository: { id: 1002 }, number: 7, pull_request: { number: 7, base: { repo: { id: 1002 } } } });
+    const pullHeaders = { 'x-github-event': 'pull_request', 'x-github-delivery': randomUUID(), 'x-hub-signature-256': `sha256=${createHmac('sha256', 'test-secret').update(pullBody).digest('hex')}` };
+    assert.equal((await fetch(`${url}/webhooks/github`, { method: 'POST', headers: pullHeaders, body: pullBody })).status, 204);
+    assert.ok(await new RunStore(pool).inspectPull(scope, 7));
+    assert.equal((await fetch(`${url}/pulls/1001/1002/7`)).status, 404);
+    assert.equal((await fetch(`${url}/runs/1001/1002/${randomUUID()}`)).status, 404);
   } finally {
     child?.kill('SIGKILL'); await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
     await rm(root, { recursive: true, force: true });

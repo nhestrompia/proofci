@@ -99,6 +99,18 @@ class MigrationTests(unittest.TestCase):
                 migration.activate(str(self.store), 'repo', identifier, head, actor, generation)
         self.assertEqual(self.active(), baselines.sha(self.old))
 
+    def test_pull_request_dispatch_retains_authority_and_evidence_export(self):
+        with closing(baselines.open_store(self.store)) as db:
+            baseline = baselines.lookup(db)['baseline_sha256']
+        with patch.object(service_execute.dispatch, 'run', side_effect=self.dispatch), \
+             patch.object(service_execute.replay, 'export') as export:
+            status = service_execute.execute(store=self.store, repository='repo', head=self.head, base='c'*40,
+                baseline_digest=baseline, snapshot=self.repo, report=self.report, candidate_kind='pull-request',
+                candidate_lane='pull/1', bundle=self.root / 'evidence.tar')
+        self.assertIn(status, (0, 1))
+        self.assertEqual(json.loads(self.report.read_text())['authority_epoch'], 1)
+        export.assert_called_once()
+
     def test_managed_run_rejects_head_aba_during_dispatch(self):
         with closing(baselines.open_store(self.store)) as db:
             baseline = baselines.lookup(db)['baseline_sha256']

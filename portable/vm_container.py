@@ -159,7 +159,7 @@ def run(args):
                 raise ValueError('VM status mismatch')
             value.setdefault('execution', {})['dispatch_phase'] = args.phase
             value['execution']['image'] = image_id
-            value['execution']['virtualization'] = 'qemu'
+            value['execution']['virtualization'] = 'apple' if runtime else 'qemu'
             report.write_text(json.dumps(value, sort_keys=True) + '\n')
             return status
     except KeyboardInterrupt:

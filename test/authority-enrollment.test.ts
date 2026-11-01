@@ -18,7 +18,7 @@ test('enrollment commits before enabling authority and removal fences before com
   const script = `import sys\nsys.path.insert(0, 'portable')\nimport baselines, authority\nfrom test_baselines import manifest\ndb = baselines.open_store(sys.argv[1])\ndata = baselines.encoded(manifest())\ndb.execute('INSERT INTO baselines(digest,manifest,manifest_path,baseline_sha256,repository,initial_head,approval_identity,approval_source,report) VALUES(?,?,?,?,?,?,?,?,?)', (baselines.sha(data),data,'contracts.json','b'*64,sys.argv[2],'a'*40,'1','test',b'{}'))\ndb.execute('INSERT INTO active VALUES(1,?)',(baselines.sha(data),))\ndb.commit()\ndb.close()\nauthority.mutate(sys.argv[1], 'bootstrap', sys.argv[2], head='a'*40, actor=1, ref='refs/heads/main')`;
   try {
     execFileSync('python3', ['-c', script, storePath, repository], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
-    const authority = new LocalAuthority([{ ...scope, store: storePath, repository, ref: 'refs/heads/main' }]);
+    const authority = new LocalAuthority([{ ...scope, store: storePath, repository, ref: 'refs/heads/main', assistanceQuotaMicros: 0 }]);
     const store = new EnrollmentStore(pool);
     await store.initialize();
     const events: string[] = [];
@@ -125,6 +125,33 @@ test('a selection racing removal cannot re-enable a stale enrollment', { skip: !
     assert.equal(await store.isSelected(scope), false);
   } finally {
     finishDisable();
+    await pool.query('DELETE FROM proofci_repository_selections WHERE installation_id=$1', [scope.installationId]).catch(() => {});
+    await pool.query('DELETE FROM proofci_installation_revisions WHERE installation_id=$1', [scope.installationId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('authority changes invalidate pending pull-request publication', { skip: !databaseUrl }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl });
+  const scope = { installationId: 910025, repositoryId: 910026 };
+  try {
+    const { RunStore } = await import('../src/run-store.ts');
+    const enrollment = new EnrollmentStore(pool);
+    let revision = 1;
+    const runs = new RunStore(pool, { current: async () => revision });
+    await enrollment.initialize(); await runs.initialize(); await enrollment.select(scope);
+    const candidate = { ...scope, kind: 'pull-request' as const, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), mergeHead: 'd'.repeat(40), baseline: 'c'.repeat(64) };
+    const id = await runs.admit(candidate);
+    const publication = await runs.claimPublication(60_000);
+    assert.ok(publication);
+    assert.equal(publication.id, id);
+    assert.equal(await runs.publicationCurrent(publication), true);
+    revision = 2;
+    assert.equal(await runs.publicationCurrent(publication), false);
+    assert.deepEqual(await runs.reconcileBaseline(scope, candidate.baseline), [3]);
+  } finally {
+    await pool.query('DELETE FROM proofci_publications WHERE run_id IN (SELECT id FROM proofci_runs WHERE installation_id=$1)', [scope.installationId]).catch(() => {});
+    await pool.query('DELETE FROM proofci_runs WHERE installation_id=$1', [scope.installationId]).catch(() => {});
     await pool.query('DELETE FROM proofci_repository_selections WHERE installation_id=$1', [scope.installationId]).catch(() => {});
     await pool.query('DELETE FROM proofci_installation_revisions WHERE installation_id=$1', [scope.installationId]).catch(() => {});
     await pool.end();
