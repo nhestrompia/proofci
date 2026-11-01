@@ -374,10 +374,22 @@ Do not run candidate code in `pull_request_target` to gain access to secrets.
     python3 "$RUNNER_TEMP/verifier/portable/container.py" \
       --envelope "$RUNNER_TEMP/protected/envelope.json" \
       --baseline "$RUNNER_TEMP/protected/baseline.json" \
-      --snapshot "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/report.json"
+      --snapshot "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/report.json" \
+      --image proofci-validator-local --validator-only
     status=$?
     echo "$status" > "$RUNNER_TEMP/exit-code.txt"
     exit "$status"
+- name: Export evidence
+  if: always()
+  shell: bash
+  run: |
+    if [ -s "$RUNNER_TEMP/report.json" ]; then
+      python3 "$RUNNER_TEMP/verifier/portable/replay.py" export \
+        --envelope "$RUNNER_TEMP/protected/envelope.json" \
+        --baseline "$RUNNER_TEMP/protected/baseline.json" \
+        --snapshot "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/report.json" \
+        --output "$RUNNER_TEMP/evidence.tar"
+    fi
 - name: Upload available results
   if: always()
   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
