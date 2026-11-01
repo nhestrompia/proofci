@@ -12,6 +12,7 @@ import { processPushEvent } from './push-events.ts';
 import { RunStore } from './run-store.ts';
 import { ActiveBaselines } from './active-baselines.ts';
 import { RunService, type PilotConfiguration } from './run-service.ts';
+import { MigrationService } from './migration-service.ts';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -31,6 +32,7 @@ await store.initialize();
 const enrollment = new EnrollmentService({ store, sessions, github });
 let runs: RunStore | undefined;
 let runService: RunService | undefined;
+let migrationService: MigrationService | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
@@ -49,6 +51,7 @@ if (pilotConfig) {
   }
   pilotRepositories = repositories;
   const baselines = new ActiveBaselines(repositories);
+  migrationService = new MigrationService({ sessions, github, selections: store, repositories });
   runs = new RunStore(pool); await runs.initialize();
   runService = new RunService({ store: runs, selections: store, github, baselines, repositories });
   runService.start();
@@ -90,7 +93,7 @@ const server = createServer(async (request, response) => {
       if (!repositories) return reply(response, 200, `${page}<p>Sign in to select a repository from an installed App.</p>`);
       if (repositories.length === 0) return reply(response, 200, `${page}<p>No repositories are available. Install the App on a repository you can maintain.</p><form method="post" action="/logout"><button>Sign out</button></form>`);
       const options = repositories.map(repo => `<option value="${repo.installationId}:${repo.repositoryId}">${escapeHtml(repo.name)}</option>`).join('');
-      return reply(response, 200, `${page}<form method="post" action="/enroll"><label>Repository <select name="repository" required>${options}</select></label><button>Enroll repository</button><button formaction="/inspect">Check policy</button><button formaction="/remove">Remove enrollment</button></form><form method="post" action="/logout"><button>Sign out</button></form>`);
+      return reply(response, 200, `${page}<form method="post" action="/migrate"><h2>Authorize contract migration</h2><label>Repository <select name="repository" required>${options}</select></label><label>Candidate commit <input name="head" required pattern="[0-9a-f]{40}"></label><label>Current manifest SHA-256 <input name="previous" required pattern="[0-9a-f]{64}"></label><label>Replacement manifest SHA-256 <input name="replacement" required pattern="[0-9a-f]{64}"></label><button>Authorize and verify migration</button></form><form method="post" action="/enroll"><label>Repository <select name="repository" required>${options}</select></label><button>Enroll repository</button><button formaction="/inspect">Check policy</button><button formaction="/remove">Remove enrollment</button></form><form method="post" action="/logout"><button>Sign out</button></form>`);
     }
     if (request.method === 'GET' && url.pathname === '/login') {
       const login = sessions.start();
@@ -125,6 +128,17 @@ const server = createServer(async (request, response) => {
         if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId && item.ref === delivery.ref) ? runStore.acceptDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
       } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
+    }
+    if (request.method === 'POST' && url.pathname === '/migrate') {
+      if (request.headers.origin !== origin.origin || !migrationService) return reply(response, 403, 'Migration denied.');
+      const data = await form(request);
+      const selection = data.get('repository') ?? '';
+      if (!/^[1-9]\d*:[1-9]\d*$/.test(selection)) return reply(response, 400, 'Invalid repository selection.');
+      const [installationId, repositoryId] = selection.split(':').map(Number);
+      try {
+        const result = await migrationService.migrate({ session: cookie(request, 'proofci_session'), scope: { installationId, repositoryId }, head: data.get('head') ?? '', previous: data.get('previous') ?? '', replacement: data.get('replacement') ?? '' });
+        return reply(response, result.status === 'passed' ? 200 : 422, `<h1>${result.status === 'passed' ? 'Policy changed' : 'Migration not activated'}</h1><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`);
+      } catch { return reply(response, 403, 'Migration failed or authorization is stale. The previous baseline remains active unless another migration replaced it.'); }
     }
     if (request.method === 'POST' && url.pathname === '/logout') {
       if (request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');

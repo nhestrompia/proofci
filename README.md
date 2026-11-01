@@ -87,3 +87,30 @@ node src/run-cancel.ts INSTALLATION_ID REPOSITORY_ID RUN_ID
 These commands use `DATABASE_URL`. Limit access to the database and pilot
 configuration to trusted operators. Cancellation persists, and duplicate
 notifications do not restart a cancelled candidate.
+
+## Migrate a baseline
+
+Sign in as a current repository maintainer and enroll the repository. Configure
+it in the local pilot and activate its initial baseline first. On the enrollment
+page, select the repository and enter the exact configured branch head, the
+current reviewed manifest SHA-256, and the replacement manifest SHA-256. The
+replacement manifest must be committed at the active manifest path in that head.
+The form authorizes a policy change and starts isolated verification. Obtain the
+current manifest digest from `python3 portable/baselines.py lookup --store STORE`
+and calculate the replacement digest from the committed manifest bytes. Review
+the replacement and the retired guarantees before submitting the form.
+
+The service checks maintainer access and enrollment again after verification.
+It activates the replacement only if the configured branch head, enrollment,
+maintainer, and previous baseline still match. The protected SQLite store keeps
+the authorization, the verification report, and the list of guarantee changes.
+The report identifies removed guarantees as retired and states that policy
+changed. An unsuccessful or interrupted migration does not activate the
+replacement. Ordinary runs continue using the active baseline until activation.
+The service must have the same isolated VM prerequisites as the head-snapshot
+pilot. This operation does not publish a GitHub check or protect merges.
+
+The final GitHub authority and head checks occur just before the SQLite
+activation transaction. A GitHub push or permission change in that interval is
+not fenced by the local store. Do not use this pilot as a production policy
+migration mechanism until that race is addressed.
