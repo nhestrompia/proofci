@@ -346,7 +346,10 @@ even after a failed step. These are acceptance fixtures, not a gate on the
 repository's own properties. The workflow loads the fixture code from the GitHub test-merge commit on
 `pull_request` and the merge-group commit on `merge_group`. The verifier checks
 the generated fixture commits, not those event commits. It requires no model or
-publishing credentials.
+publishing credentials. On Ubuntu 24.04, the workflow enables nested user
+namespaces on the disposable GitHub-hosted VM so bubblewrap can run inside the
+unprivileged verifier container. Use an equally disposable, isolated runner;
+the host and Docker remain trusted.
 
 For a repository gate, a trusted operator must supply the pinned verifier,
 image, envelope, and approved baseline outside the candidate checkout. The
