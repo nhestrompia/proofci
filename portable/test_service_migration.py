@@ -1,5 +1,8 @@
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -59,6 +62,16 @@ class MigrationTests(unittest.TestCase):
         with closing(baselines.open_store(self.store)) as db:
             return baselines.lookup(db)['digest']
 
+    def test_concurrent_schema_upgrades_are_serialized(self):
+        def upgrade(_):
+            with closing(baselines.open_store(self.store)) as db:
+                migration.schema(db)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(upgrade, range(4)))
+        with closing(baselines.open_store(self.store)) as db:
+            self.assertIn('revision', [row[1] for row in db.execute('PRAGMA table_info(active)')])
+            self.assertIn('previous_revision', [row[1] for row in db.execute('PRAGMA table_info(migrations)')])
+
     def test_verified_migration_records_retirement_and_activates(self):
         identifier = self.prepare()
         self.assertEqual(self.active(), baselines.sha(self.old))
@@ -93,9 +106,10 @@ class MigrationTests(unittest.TestCase):
             migration.activate(str(self.store), 'repo', second, self.head, 42, 'generation')
 
     def test_authorized_migration_can_restore_historical_baseline(self):
-        first = self.prepare()
+        first, stale = self.prepare(), self.prepare()
         with patch.object(migration.dispatch, 'run', side_effect=self.dispatch):
             migration.verify(str(self.store), 'repo', str(self.repo), first, str(self.report))
+            migration.verify(str(self.store), 'repo', str(self.repo), stale, str(self.report))
         migration.activate(str(self.store), 'repo', first, self.head, 42, 'generation')
         (self.repo / 'contracts.json').write_bytes(self.old)
         self.git('add', '.')
@@ -106,6 +120,23 @@ class MigrationTests(unittest.TestCase):
             migration.verify(str(self.store), 'repo', str(self.repo), restore, str(self.report))
         migration.activate(str(self.store), 'repo', restore, head, 42, 'generation')
         self.assertEqual(self.active(), baselines.sha(self.old))
+        with self.assertRaisesRegex(ValueError, 'active baseline changed'):
+            migration.activate(str(self.store), 'repo', stale, self.head, 42, 'generation')
+
+    @unittest.skipUnless(os.environ.get('PROOFCI_TEST_VM'), 'requires isolated verifier')
+    def test_real_isolated_verification_before_activation(self):
+        fixtures = Path(__file__).resolve().parent.parent / 'experiments/source-binding/fixtures'
+        shutil.copy(fixtures / 'candidate.lean', self.repo / 'candidate.lean')
+        shutil.copytree(fixtures / 'verified', self.repo / 'evidence')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'evidence')
+        self.head = self.git('rev-parse', 'HEAD')
+        identifier = self.prepare()
+        self.assertEqual(migration.verify(str(self.store), 'repo', str(self.repo), identifier, str(self.report)), 0, self.report.read_text())
+        self.assertEqual(self.active(), baselines.sha(self.old))
+        result = migration.activate(str(self.store), 'repo', identifier, self.head, 42, 'generation')
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(self.active(), baselines.sha(self.new))
 
     def test_changed_replacement_and_wrong_head_are_rejected(self):
         with self.assertRaises(ValueError):

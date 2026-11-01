@@ -20,13 +20,22 @@ import service_execute
 
 
 def schema(db):
-    db.execute('''CREATE TABLE IF NOT EXISTS migrations (
-        id TEXT PRIMARY KEY, repository TEXT NOT NULL, previous TEXT NOT NULL,
-        replacement TEXT NOT NULL, manifest BLOB NOT NULL, manifest_path TEXT NOT NULL,
-        head TEXT NOT NULL, actor INTEGER NOT NULL, selection_generation TEXT NOT NULL,
-        status TEXT NOT NULL, report BLOB, baseline_sha256 TEXT,
-        changes BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
-
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute('''CREATE TABLE IF NOT EXISTS migrations (
+            id TEXT PRIMARY KEY, repository TEXT NOT NULL, previous TEXT NOT NULL,
+            replacement TEXT NOT NULL, manifest BLOB NOT NULL, manifest_path TEXT NOT NULL,
+            head TEXT NOT NULL, actor INTEGER NOT NULL, selection_generation TEXT NOT NULL,
+            status TEXT NOT NULL, report BLOB, baseline_sha256 TEXT,
+            changes BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        if 'revision' not in {row[1] for row in db.execute('PRAGMA table_info(active)')}:
+            db.execute('ALTER TABLE active ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
+        if 'previous_revision' not in {row[1] for row in db.execute('PRAGMA table_info(migrations)')}:
+            db.execute('ALTER TABLE migrations ADD COLUMN previous_revision INTEGER NOT NULL DEFAULT -1')
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 def prepare(store, repository, snapshot, head, previous, replacement, actor, generation):
     if not re.fullmatch(r'[a-f0-9]{40}', head) or not all(re.fullmatch(r'[a-f0-9]{64}', x) for x in (previous, replacement)):
@@ -53,8 +62,9 @@ def prepare(store, repository, snapshot, head, previous, replacement, actor, gen
             active = baselines.lookup(db)
             if active['digest'] != previous or active['repository'] != repository:
                 raise ValueError('active baseline changed')
-            db.execute('INSERT INTO migrations(id, repository, previous, replacement, manifest, manifest_path, head, actor, selection_generation, status, changes) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                       (migration, repository, previous, replacement, data, row['manifest_path'], head, actor, generation, 'authorized', baselines.encoded(changes)))
+            revision = db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0]
+            db.execute('INSERT INTO migrations(id, repository, previous, replacement, manifest, manifest_path, head, actor, selection_generation, status, changes, previous_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (migration, repository, previous, replacement, data, row['manifest_path'], head, actor, generation, 'authorized', baselines.encoded(changes), revision))
     return migration
 
 
@@ -66,7 +76,7 @@ def verify(store, repository, snapshot, migration, report):
         if row is None or row['status'] != 'authorized':
             raise ValueError('migration is not authorized')
         active = baselines.lookup(db)
-        if active['digest'] != row['previous'] or active['repository'] != repository:
+        if active['digest'] != row['previous'] or active['repository'] != repository or db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0] != row['previous_revision']:
             raise ValueError('active baseline changed')
         data = baselines.snapshot_manifest(Path(snapshot), row['manifest_path'])
         if data != row['manifest'] or baselines.sha(data) != row['replacement']:
@@ -104,7 +114,7 @@ def verify(store, repository, snapshot, migration, report):
         db.execute('BEGIN IMMEDIATE')
         with db:
             active = baselines.lookup(db)
-            if active['digest'] != row['previous'] or active['repository'] != repository:
+            if active['digest'] != row['previous'] or active['repository'] != repository or db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0] != row['previous_revision']:
                 raise ValueError('active baseline changed')
             updated = db.execute("UPDATE migrations SET status='verified', report=?, baseline_sha256=? WHERE id=? AND status='authorized'", (baselines.encoded(result), digest, migration))
             if updated.rowcount != 1:
@@ -123,7 +133,7 @@ def activate(store, repository, migration, head, actor, generation):
             if row is None or row['status'] != 'verified' or row['head'] != head or row['actor'] != actor or row['selection_generation'] != generation:
                 raise ValueError('migration authorization is stale')
             active = baselines.lookup(db)
-            if active['digest'] != row['previous'] or active['repository'] != repository:
+            if active['digest'] != row['previous'] or active['repository'] != repository or db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0] != row['previous_revision']:
                 raise ValueError('active baseline changed')
             if baselines.sha(row['manifest']) != row['replacement']:
                 raise ValueError('replacement digest changed')
@@ -133,7 +143,7 @@ def activate(store, repository, migration, head, actor, generation):
             if existing is None:
                 db.execute('INSERT INTO baselines(digest, manifest, manifest_path, baseline_sha256, repository, initial_head, approval_identity, approval_source, report) VALUES(?,?,?,?,?,?,?,?,?)',
                            (row['replacement'], row['manifest'], row['manifest_path'], row['baseline_sha256'], repository, head, str(actor), 'authenticated-migration', row['report']))
-            changed = db.execute('UPDATE active SET digest=? WHERE id=1 AND digest=?', (row['replacement'], row['previous']))
+            changed = db.execute('UPDATE active SET digest=?, revision=revision+1 WHERE id=1 AND digest=? AND revision=?', (row['replacement'], row['previous'], row['previous_revision']))
             if changed.rowcount != 1:
                 raise ValueError('active baseline changed')
             db.execute("UPDATE migrations SET status='activated' WHERE id=?", (migration,))
