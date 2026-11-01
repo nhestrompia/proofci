@@ -1,5 +1,6 @@
 import { createPrivateKey } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Pool } from 'pg';
 import { EnrollmentStore } from './enrollment-store.ts';
@@ -7,6 +8,10 @@ import { EnrollmentService } from './enrollment-service.ts';
 import { GitHubApp } from './github-app.ts';
 import { OAuthSessions } from './oauth.ts';
 import { processInstallationEvent } from './installation-events.ts';
+import { processPushEvent } from './push-events.ts';
+import { RunStore } from './run-store.ts';
+import { ActiveBaselines } from './active-baselines.ts';
+import { RunService, type PilotConfiguration } from './run-service.ts';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -24,6 +29,30 @@ const pool = new Pool({ connectionString: required('DATABASE_URL') });
 const store = new EnrollmentStore(pool);
 await store.initialize();
 const enrollment = new EnrollmentService({ store, sessions, github });
+let runs: RunStore | undefined;
+let runService: RunService | undefined;
+let pilotRepositories: PilotConfiguration[] = [];
+const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
+if (pilotConfig) {
+  if (!isAbsolute(pilotConfig)) throw new Error('Pilot configuration path must be absolute');
+  const stat = lstatSync(pilotConfig);
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || stat.size > 65536) throw new Error('Invalid pilot configuration file');
+  const raw: unknown = JSON.parse(readFileSync(pilotConfig, 'utf8'));
+  if (!Array.isArray(raw)) throw new Error('Invalid pilot configuration');
+  const repositories: PilotConfiguration[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null || !('installationId' in entry) || typeof entry.installationId !== 'number' ||
+        !('repositoryId' in entry) || typeof entry.repositoryId !== 'number' || !('store' in entry) || typeof entry.store !== 'string' ||
+        !('repository' in entry) || typeof entry.repository !== 'string' || !('ref' in entry) || typeof entry.ref !== 'string' ||
+        !entry.ref.startsWith('refs/heads/')) throw new Error('Invalid pilot configuration');
+    repositories.push({ installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref });
+  }
+  pilotRepositories = repositories;
+  const baselines = new ActiveBaselines(repositories);
+  runs = new RunStore(pool); await runs.initialize();
+  runService = new RunService({ store: runs, selections: store, github, baselines, repositories });
+  runService.start();
+}
 
 function cookie(request: IncomingMessage, name: string): string {
   const entry = (request.headers.cookie ?? '').split('; ').find((part) => part.startsWith(`${name}=`));
@@ -88,7 +117,13 @@ const server = createServer(async (request, response) => {
       const signature = request.headers['x-hub-signature-256'];
       const event = request.headers['x-github-event'];
       const deliveryId = request.headers['x-github-delivery'];
-      if (typeof signature !== 'string' || typeof event !== 'string' || typeof deliveryId !== 'string' || !await processInstallationEvent({ body: Buffer.concat(chunks), signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
+      if (typeof signature !== 'string' || typeof event !== 'string' || typeof deliveryId !== 'string') return reply(response, 401, 'Invalid webhook.');
+      const body = Buffer.concat(chunks);
+      if (event === 'push') {
+        const runStore = runs;
+        if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
+        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId && item.ref === delivery.ref) ? runStore.acceptDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+      } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
     }
     if (request.method === 'POST' && url.pathname === '/logout') {
@@ -121,3 +156,5 @@ const server = createServer(async (request, response) => {
 const port = Number(process.env.PORT ?? '3000');
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
 server.listen(port, '127.0.0.1');
+process.once('SIGTERM', () => { runService?.stop(); server.close(); });
+process.once('SIGINT', () => { runService?.stop(); server.close(); });

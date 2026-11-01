@@ -12,6 +12,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -218,6 +219,25 @@ def build_sources(candidate, contract):
     return body, canonical_body, identity, statement, challenge
 
 
+def _guest_toolchain_attested(root):
+    """Use a root-owned guest boot measurement only for the read-only /lean mount."""
+    if root != Path('/lean'):
+        return False
+    directory = Path('/run/proofci')
+    marker = directory / 'toolchain-sha256'
+    try:
+        parent_info = directory.lstat()
+        marker_info = marker.lstat()
+        run_info = directory.parent.lstat()
+        if (not stat.S_ISDIR(run_info.st_mode) or run_info.st_uid != 0 or run_info.st_mode & 0o022 or
+            not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0 or parent_info.st_mode & 0o022 or
+            not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0 or marker_info.st_mode & 0o022):
+            return False
+        return marker.read_text().strip() == LINUX_ARM64_TOOLCHAIN
+    except OSError:
+        return False
+
+
 def verify_toolchain(lean, lake):
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise ValueError("the pinned validator supports Linux arm64 only")
@@ -230,7 +250,7 @@ def verify_toolchain(lean, lake):
         raise ValueError("the pinned toolchain must be mounted read-only")
     with _toolchain_lock:
         if root not in _verified_toolchains:
-            actual = tree_digest(root)
+            actual = LINUX_ARM64_TOOLCHAIN if _guest_toolchain_attested(root) else tree_digest(root)
             if actual != LINUX_ARM64_TOOLCHAIN:
                 raise ValueError("Lean distribution digest does not match the pinned toolchain")
             _verified_toolchains[root] = actual

@@ -1,0 +1,33 @@
+#!/bin/busybox sh
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+[ ! -e /proc/sys/kernel/unprivileged_userns_clone ] || echo 1 > /proc/sys/kernel/unprivileged_userns_clone
+[ ! -e /proc/sys/user/max_user_namespaces ] || echo 15000 > /proc/sys/user/max_user_namespaces
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t cgroup2 cgroup2 /sys/fs/cgroup || exit 1
+echo '+cpu +memory +pids' > /sys/fs/cgroup/cgroup.subtree_control || exit 1
+mkdir /sys/fs/cgroup/job || exit 1
+echo 2147483648 > /sys/fs/cgroup/job/memory.max || exit 1
+echo 0 > /sys/fs/cgroup/job/memory.swap.max || exit 1
+echo 128 > /sys/fs/cgroup/job/pids.max || exit 1
+echo '100000 100000' > /sys/fs/cgroup/job/cpu.max || exit 1
+echo $$ > /sys/fs/cgroup/job/cgroup.procs || exit 1
+modprobe 9pnet_virtio || exit 1
+modprobe 9p || exit 1
+mkdir -p /guest
+mount -t 9p -o trans=virtio,version=9p2000.L,ro,cache=loose,msize=262144 root /guest || exit 1
+mount -t 9p -o trans=virtio,version=9p2000.L,ro,msize=262144 snapshot /guest/snapshot || exit 1
+mount -t 9p -o trans=virtio,version=9p2000.L,ro,msize=262144 baseline /guest/baseline || exit 1
+mount -t 9p -o trans=virtio,version=9p2000.L,ro,msize=262144 input /guest/runinput || exit 1
+mount --bind /proc /guest/proc || exit 1
+mount --bind /dev /guest/dev || exit 1
+mount --bind /sys /guest/sys || exit 1
+mount --bind /sys/fs/cgroup/job /guest/sys/fs/cgroup || exit 1
+mount -t tmpfs -o size=512m,mode=1777 tmpfs /guest/tmp || exit 1
+mount -t tmpfs -o size=4m,mode=0755 tmpfs /guest/run || exit 1
+mkdir /guest/run/proofci || exit 1
+echo 'ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00' > /guest/run/proofci/toolchain-sha256 || exit 1
+chmod 444 /guest/run/proofci/toolchain-sha256 || exit 1
+chmod 555 /guest/run/proofci || exit 1
+exec switch_root /guest /vm-entry

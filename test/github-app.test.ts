@@ -154,3 +154,16 @@ test('uninstalled and removed repository scopes cannot authorize access', async 
     assert.deepEqual(paths, unavailable === 'installation' ? ['/app/installations/12'] : ['/app/installations/12', '/app/installations/12/access_tokens']);
   }
 });
+
+test('resolves the current immutable head with repository-scoped credentials', async () => {
+  const request: typeof fetch = async input => {
+    const path = new URL(String(input)).pathname;
+    if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+    if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
+    if (path === '/repositories/34') return Response.json({ id: 34, name: 'repo', owner: { login: 'owner' } });
+    if (path === '/repos/owner/repo/git/ref/heads/main') return Response.json({ ref: 'refs/heads/main', object: { type: 'commit', sha: 'a'.repeat(40) } });
+    throw new Error(`unexpected path ${path}`);
+  };
+  const app = new GitHubApp({ appId: 7, privateKey, request });
+  assert.equal(await app.resolveHead({ installationId: 12, repositoryId: 34 }, 'refs/heads/main'), 'a'.repeat(40));
+});
