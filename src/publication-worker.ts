@@ -13,11 +13,14 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
   const number = Number(item.candidate.lane.slice('pull/'.length));
   const scope = { installationId: item.candidate.installationId, repositoryId: item.candidate.repositoryId };
   if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid pull request lane');
+  const mergeHead = item.candidate.kind === 'pull-request' ? item.candidate.mergeHead : item.candidate.head;
+  const pullHead = item.candidate.kind === 'pull-request' ? item.candidate.head : item.candidate.pullHead;
+  if (!mergeHead) throw new Error('Missing merge commit');
   let currentHead: string | null = null;
   const fresh = async () => {
     if (!await options.store.publicationCurrent(item)) return false;
     const merge = await options.github.resolvePullMerge(scope, number);
-    if (merge.kind !== 'resolved' || merge.merge !== item.candidate.head || merge.head !== item.candidate.pullHead || merge.base !== item.candidate.base || await options.baselines.active(scope) !== item.candidate.baseline) return false;
+    if (merge.kind !== 'resolved' || merge.merge !== mergeHead || merge.head !== pullHead || merge.base !== item.candidate.base || await options.baselines.active(scope) !== item.candidate.baseline) return false;
     currentHead = merge.head;
     return await options.store.publicationCurrent(item);
   };
@@ -26,12 +29,12 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
       if (!await options.store.ownsPublication(item)) return;
       if (!await fresh()) {
         await options.store.markPublicationUnresolved(item);
-        await options.github.invalidateCheck(scope, { runId: item.id, sha: item.candidate.head });
+        await options.github.invalidateCheck(scope, { runId: item.id, sha: mergeHead });
         await options.store.finishPublication(item);
         return;
       }
       const report = item.report;
-      const output = item.state === 'completed' ? checkReport(item.candidate, report, item.evidenceSha256) : item.state === 'cancelled' ? { title: 'ProofCI cancelled', summary: 'Verification was cancelled.', conclusion: 'failure' as const } : null;
+      const output = item.state === 'completed' ? checkReport({ ...item.candidate, head: mergeHead }, report, item.evidenceSha256) : item.state === 'cancelled' ? { title: 'ProofCI cancelled', summary: 'Verification was cancelled.', conclusion: 'failure' as const } : null;
       if (output) output.summary = `Pull request head: ${currentHead}\n${output.summary}`;
       const annotations: Array<{ path: string; start_line: number; end_line: number; annotation_level: 'notice' | 'failure'; message: string }> = [];
       if (object(report) && object(report.support) && typeof report.support.admitted_candidate === 'string' && Array.isArray(report.results)) {
@@ -45,7 +48,7 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
         }
       }
       const detailsUrl = new URL(`/runs/${scope.installationId}/${scope.repositoryId}/${item.id}`, options.origin).toString();
-      await options.github.publishCheck(scope, { runId: item.id, sha: item.candidate.head, detailsUrl, output, annotations, fresh });
+      await options.github.publishCheck(scope, { runId: item.id, sha: mergeHead, detailsUrl, output, annotations, fresh });
       await options.store.finishPublication(item);
     });
     return true;

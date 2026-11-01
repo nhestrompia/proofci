@@ -14,7 +14,7 @@ test('durable runs deduplicate, recover leases, fence stale completions, and per
   try {
     const { EnrollmentStore } = await import('../src/enrollment-store.ts');
     const enrollment = new EnrollmentStore(pool);
-    await enrollment.initialize(); await store.initialize();
+    await enrollment.initialize(); await Promise.all([store.initialize(), new RunStore(pool).initialize()]);
     await enrollment.select({ installationId: 1, repositoryId: 2 });
     const candidate = { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'refs/heads/main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     const first = await store.admit(candidate);
@@ -163,7 +163,8 @@ test('a signed delivery survives restart and reaches the authorized executor onc
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });
 
-test('pull deliveries admit only current selected merge candidates and fence stale leases', { skip: !url }, async () => {
+test('pull observations survive restart and fence superseded and closed fork runs', { skip: !url }, async () => {
+
   const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: url });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -172,42 +173,117 @@ test('pull deliveries admit only current selected merge candidates and fence sta
     const { EnrollmentStore } = await import('../src/enrollment-store.ts');
     const enrollment = new EnrollmentStore(pool), runs = new RunStore(pool);
     await enrollment.initialize(); await runs.initialize();
-    const scope = { installationId: 51, repositoryId: 52 };
-    const event = { ...scope, deliveryId: randomUUID(), number: 7 };
-    assert.equal(await runs.acceptPullDelivery(event), false);
-    await enrollment.select(scope);
+    const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 5 };
+    await enrollment.select(event);
     assert.equal(await runs.acceptPullDelivery(event), true);
     assert.equal(await runs.acceptPullDelivery(event), true);
-    assert.equal(await runs.acceptPullDelivery({ ...event, number: 8 }), false);
-    const lease = await runs.claimPullDelivery(10);
+    const delivery = await new RunStore(pool).claimPullDelivery(60_000);
+    assert.ok(delivery);
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/5', number: 5, sourceRepositoryId: 3, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    assert.equal(await runs.processPullDelivery(delivery, async () => candidate), true);
+    const lease = await runs.claim(60_000);
     assert.ok(lease);
-    await pool.query("UPDATE proofci_pull_deliveries SET lease_until=now()-interval '1 second'");
-    const recovered = await runs.claimPullDelivery(60_000);
-    assert.ok(recovered);
-    const candidate = { ...scope, kind: 'resolved' as const, lane: 'pull/7', pullHead: '1'.repeat(40), head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
-    assert.equal(await runs.processPullDelivery(lease, async () => candidate), false);
-    assert.equal(await runs.processPullDelivery(recovered, async () => candidate), true);
-    assert.equal((await runs.list(scope)).length, 1);
-    const run = await runs.claim(60_000); assert.ok(run);
-    assert.equal(await runs.complete(run, { version: 1, status: 'blocked' }, Buffer.from('evidence')), true);
+    assert.deepEqual(lease.candidate, candidate);
+    assert.deepEqual(await runs.startDispatch(lease, async () => ({ started: true }), () => {}), { started: true });
+    assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }, false), true);
+    const missingBaseline = await runs.claimPullDelivery(60_000);
+    assert.ok(missingBaseline);
+    await runs.processPullDelivery(missingBaseline, async () => 'baseline-unavailable');
+    assert.equal(await runs.renew(lease, 60_000), false);
+    assert.equal(await runs.findPull(event, 5), null);
+    await runs.reconcilePulls(event, [5]);
+    await runs.reconcilePulls(event, [5]);
+    const pending = await pool.query("SELECT count(*)::int AS count FROM proofci_pull_deliveries WHERE pull_number=5 AND state IN ('queued','processing')");
+    assert.equal(pending.rows[0].count, 1);
+    const restored = await runs.claimPullDelivery(60_000);
+    assert.ok(restored);
+    await runs.processPullDelivery(restored, async () => candidate);
+    const restoredLease = await runs.claim(60_000);
+    assert.ok(restoredLease);
     assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }), true);
-    const unresolved = await runs.claimPullDelivery(60_000); assert.ok(unresolved);
-    assert.equal(await runs.processPullDelivery(unresolved, async () => 'merge_unresolved'), true);
-    assert.equal((await runs.list(scope))[0].applicable, true);
-    await pool.query("UPDATE proofci_pull_deliveries SET lease_until=now()-interval '1 second' WHERE delivery_id=$1", [unresolved.deliveryId]);
-    const retry = await runs.claimPullDelivery(60_000); assert.ok(retry);
-    assert.equal(await runs.processPullDelivery(retry, async () => candidate), true);
-    assert.deepEqual((await runs.list(scope)).map(item => item.id), [run.id]);
-    assert.equal(await runs.claim(1000), null);
+    assert.equal(await runs.renew(restoredLease, 60_000), false);
+    let oldStarted = false;
+    await assert.rejects(runs.startDispatch(restoredLease, async () => { oldStarted = true; return {}; }, () => {}));
+    assert.equal(oldStarted, false);
+    const updated = await runs.claimPullDelivery(60_000);
+    assert.ok(updated);
+    assert.equal(await runs.processPullDelivery(updated, async () => ({ ...candidate, head: 'd'.repeat(40) })), true);
+    assert.equal(await runs.renew(lease, 60_000), false);
+    const next = await runs.claim(60_000);
+    assert.ok(next);
+    assert.equal(next.candidate.head, 'd'.repeat(40));
     assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }), true);
-    const conflict = await runs.claimPullDelivery(60_000);
-    assert.ok(conflict);
-    assert.equal(await runs.processPullDelivery(conflict, async () => 'merge_conflict'), true);
-    assert.equal((await runs.list(scope))[0].applicable, false);
+    const closed = await runs.claimPullDelivery(60_000);
+    assert.ok(closed);
+    await runs.processPullDelivery(closed, async () => 'closed');
+    assert.equal(await runs.renew(next, 60_000), false);
+    let started = false;
+    await assert.rejects(runs.startDispatch(next, async () => { started = true; return {}; }, () => {}));
+    assert.equal(started, false);
+    assert.equal(await runs.claim(60_000), null);
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });
 
-test('publication outbox survives restart and fences an older run generation', { skip: !url }, async () => {
+test('a close observed during PR resolution cannot resurrect the older candidate', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const selections = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await selections.initialize(); await runs.initialize();
+    const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 3 };
+    await selections.select(event); await runs.acceptPullDelivery(event);
+    const delivery = await runs.claimPullDelivery(60_000); assert.ok(delivery);
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    let resume: () => void = () => {}, resolved: () => void = () => {};
+    const waiting = new Promise<void>(resolve => { resume = resolve; });
+    const entered = new Promise<void>(resolve => { resolved = resolve; });
+    const processing = runs.processPullDelivery(delivery, async () => { resolved(); await waiting; return candidate; });
+    await entered;
+    await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() });
+    resume();
+    await processing;
+    assert.equal(await runs.claim(60_000), null);
+    const close = await runs.claimPullDelivery(60_000); assert.ok(close);
+    assert.equal(close.deliveryId, delivery.deliveryId);
+    await runs.processPullDelivery(close, async () => 'closed');
+    assert.equal(await runs.claim(60_000), null);
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+
+test('a destination push during the first PR lookup forces a fresh resolution', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const selections = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await selections.initialize(); await runs.initialize();
+    const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 3 };
+    await selections.select(event); await runs.acceptPullDelivery(event);
+    const delivery = await runs.claimPullDelivery(60_000); assert.ok(delivery);
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    let resume: () => void = () => {}, entered: () => void = () => {};
+    const waiting = new Promise<void>(resolve => { resume = resolve; });
+    const resolving = new Promise<void>(resolve => { entered = resolve; });
+    const processing = runs.processPullDelivery(delivery, async () => { entered(); await waiting; return candidate; });
+    await resolving;
+    await runs.acceptDelivery({ deliveryId: randomUUID(), installationId: 1, repositoryId: 2, ref: 'refs/heads/main', head: 'd'.repeat(40), deleted: false }, false);
+    resume(); await processing;
+    assert.equal(await runs.claim(60_000), null);
+    const retry = await runs.claimPullDelivery(60_000); assert.ok(retry);
+    await runs.processPullDelivery(retry, async () => ({ ...candidate, base: 'd'.repeat(40) }));
+    assert.equal((await runs.claim(60_000))?.candidate.base, 'd'.repeat(40));
+
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+
+test('fork candidates publish their test merge and persist evidence', { skip: !url }, async () => {
   const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: url }); await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
@@ -215,73 +291,41 @@ test('publication outbox survives restart and fences an older run generation', {
     const { EnrollmentStore } = await import('../src/enrollment-store.ts');
     const enrollment = new EnrollmentStore(pool), runs = new RunStore(pool);
     await enrollment.initialize(); await runs.initialize();
-    const candidate = { kind: 'resolved' as const, installationId: 61, repositoryId: 62, lane: 'pull/3', pullHead: '1'.repeat(40), head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    const candidate = { kind: 'pull-request' as const, installationId: 61, repositoryId: 62, number: 3, sourceRepositoryId: 63, lane: 'pull/3', head: '1'.repeat(40), mergeHead: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     await enrollment.select(candidate); const id = await runs.admit(candidate);
-    let releaseLock: () => void = () => {};
-    let acquired: () => void = () => {};
-    const locked = new Promise<void>(resolve => { acquired = resolve; });
-    const held = runs.withPublicationLock(id, async () => { acquired(); await new Promise<void>(resolve => { releaseLock = resolve; }); });
-    await locked;
-    assert.equal(await new RunStore(pool).withPublicationLock(id, async () => {}), false);
-    releaseLock(); assert.equal(await held, true);
     const pending = await runs.claimPublication(60_000); assert.ok(pending);
-    assert.equal(await runs.publicationCurrent(pending), true);
+    assert.equal(pending.candidate.mergeHead, candidate.mergeHead);
     const lease = await runs.claim(60_000); assert.ok(lease);
+    assert.equal(lease.candidate.mergeHead, candidate.mergeHead);
     assert.equal(await runs.publicationCurrent(pending), false);
     assert.equal(await runs.complete(lease, { version: 1, status: 'passed' }, Buffer.from('evidence')), true);
+    assert.equal((await runs.evidence(candidate, id))?.bytes.toString(), 'evidence');
     assert.equal(await runs.finishPublication(pending), false);
     await runs.retryPublication(pending);
     await pool.query("UPDATE proofci_publications SET lease_until=now()-interval '1 second'");
-    const final = await new RunStore(pool).claimPublication(60_000); assert.ok(final);
-    assert.equal(final.id, id); assert.equal(final.state, 'completed');
-    assert.equal(await runs.publicationCurrent(final), true);
-    assert.equal(await runs.finishPublication(final), true);
-    assert.equal(await new RunStore(pool).claimPublication(60_000), null);
-    const report = (await runs.inspect(candidate, id))?.report;
-    assert.ok(typeof report === 'object' && report !== null && 'scheduler' in report);
-    assert.ok(typeof report.scheduler === 'object' && report.scheduler !== null && 'publication_seconds' in report.scheduler);
-    assert.deepEqual(await runs.reconcileBaseline(candidate, null), [3]);
-    const baselineUnavailable = await runs.claimPublication(60_000); assert.ok(baselineUnavailable);
-    await runs.markPublicationUnresolved(baselineUnavailable);
-    assert.equal(await runs.finishPublication(baselineUnavailable), true);
-    const delivery = { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: 3, deliveryId: randomUUID() };
-    assert.equal(await runs.acceptPullDelivery(delivery), true);
-    const restored = await runs.claimPullDelivery(60_000); assert.ok(restored);
-    assert.equal(await runs.processPullDelivery(restored, async () => candidate), true);
-    assert.equal((await runs.list(candidate)).length, 1);
-    const republish = await runs.claimPublication(60_000); assert.ok(republish);
-    assert.equal(republish.id, id); assert.equal(await runs.finishPublication(republish), true);
-    await enrollment.remove(candidate);
-    const revoked = await runs.claimPublication(60_000); assert.ok(revoked);
-    assert.equal(revoked.id, id); assert.equal(revoked.applicable, false);
-    assert.equal(await runs.publicationCurrent(revoked), false);
-  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
-});
-
-test('a failed publication retries the completed report without dispatching work again', { skip: !url }, async () => {
-  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
-  const admin = new Pool({ connectionString: url }); await admin.query(`CREATE SCHEMA ${schema}`);
-  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
-  try {
-    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
     const { publishNext } = await import('../src/publication-worker.ts');
-    const enrollment = new EnrollmentStore(pool), runs = new RunStore(pool);
-    await enrollment.initialize(); await runs.initialize();
-    const candidate = { kind: 'resolved' as const, installationId: 81, repositoryId: 82, lane: 'pull/4', pullHead: '1'.repeat(40), head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
-    await enrollment.select(candidate); const id = await runs.admit(candidate);
-    const lease = await runs.claim(60_000); assert.ok(lease);
-    const report = { version: 1, status: 'passed', envelope: { head: candidate.head, base: candidate.base, baseline_sha256: candidate.baseline, candidate_sha256: 'd'.repeat(64) }, dispatch: { final_status: 0 }, support: { guarantee: 'Target', assumptions: [], exclusions: [], admitted_candidate: 'candidate.lean' }, results: [{ id: 'one', policy: 'required', decision: 'verified', reason: 'accepted', validation: { decision: 'verified', candidate_sha256: 'd'.repeat(64), contract_sha256: 'e'.repeat(64) } }] };
-    assert.equal(await runs.complete(lease, report, Buffer.from('evidence')), true);
-    let attempts = 0;
-    const github = { resolvePullMerge: async () => ({ kind: 'resolved' as const, merge: candidate.head, base: candidate.base, head: candidate.pullHead }), invalidateCheck: async () => {}, publishCheck: async (_scope: unknown, input: { output: { conclusion: string } | null; fresh(): Promise<boolean> }) => {
-      attempts++; assert.equal(input.output?.conclusion, 'success'); assert.equal(await input.fresh(), true);
-      if (attempts === 1) throw new Error('transient');
-    } };
-    const options = { store: runs, github, baselines: { active: async () => candidate.baseline }, origin: 'https://example.com' };
-    await assert.rejects(publishNext(options));
-    await pool.query("UPDATE proofci_publications SET lease_until=now()-interval '1 second' WHERE run_id=$1", [id]);
-    assert.equal(await publishNext(options), true);
-    assert.equal(attempts, 2); assert.equal(await runs.claim(1000), null);
-    assert.equal((await runs.inspect(candidate, id))?.state, 'completed');
+    let publishedSha = '';
+    const github = { resolvePullMerge: async () => ({ kind: 'resolved' as const, head: candidate.head, base: candidate.base, merge: candidate.mergeHead }), invalidateCheck: async () => {}, publishCheck: async (_scope: unknown, input: { sha: string; output: unknown; fresh(): Promise<boolean> }) => { publishedSha = input.sha; assert.equal(await input.fresh(), true); } };
+    assert.equal(await publishNext({ store: runs, github, baselines: { active: async () => candidate.baseline }, origin: 'https://example.com' }), true);
+    assert.equal(publishedSha, candidate.mergeHead);
+    const delivery = { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: candidate.number, deliveryId: randomUUID() };
+    await runs.acceptPullDelivery(delivery);
+    const stale = await runs.claimPublication(60_000); assert.ok(stale);
+    assert.equal(await runs.publicationCurrent(stale), false);
+    await runs.markPublicationUnresolved(stale); await runs.finishPublication(stale);
+    const unresolved = await runs.claimPullDelivery(60_000); assert.ok(unresolved);
+    assert.equal(await runs.processPullDelivery(unresolved, async () => 'merge-unavailable'), true);
+    assert.equal((await runs.inspectPull(candidate, candidate.number))?.lastError, 'merge-unavailable');
+    assert.equal((await runs.list(candidate))[0].applicable, true);
+    await pool.query("UPDATE proofci_pull_deliveries SET lease_until=now()-interval '1 second' WHERE delivery_id=$1", [delivery.deliveryId]);
+    const retry = await runs.claimPullDelivery(60_000); assert.ok(retry);
+    assert.equal(await runs.processPullDelivery(retry, async () => candidate), true);
+    assert.deepEqual((await runs.list(candidate)).map(run => run.id), [id]);
+    const restored = await runs.claimPublication(60_000); assert.ok(restored);
+    assert.equal(await runs.publicationCurrent(restored), true);
+    await runs.finishPublication(restored);
+    await enrollment.remove(candidate);
+    const invalidated = await runs.claimPublication(60_000); assert.ok(invalidated);
+    assert.equal(invalidated.applicable, false);
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });

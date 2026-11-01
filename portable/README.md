@@ -335,3 +335,85 @@ export checks these limits before creating the bundle.
 On Linux, Git reconstruction runs with CPU, address-space, and file-size limits,
 plus wall-clock deadlines. macOS does not support the address-space limit;
 use a Linux host for the fully resource-bounded replay boundary.
+
+## GitHub Actions
+
+[The fixture workflow](../.github/workflows/portable-fixtures.yml) builds the
+pinned ARM64 image and runs the public container launcher for a passing proof,
+a missing proof, and an execution failure. It checks the expected public exit
+codes, retains each available report and evidence archive, and uploads artifacts
+even after a failed step. These are acceptance fixtures, not a gate on the
+repository's own properties. The workflow loads the fixture code from the GitHub test-merge commit on
+`pull_request` and the merge-group commit on `merge_group`. The verifier checks
+the generated fixture commits, not those event commits. It requires no model or
+publishing credentials. On Ubuntu 24.04, the workflow enables nested user
+namespaces on the disposable GitHub-hosted VM so bubblewrap can run inside the
+unprivileged verifier container. The fixture also passes
+`--allow-unconfined-apparmor`, which disables AppArmor for that container only.
+Use an equally disposable, isolated runner; the host and Docker remain trusted.
+
+For a repository gate, a trusted operator must supply the pinned verifier,
+image, envelope, and approved baseline outside the candidate checkout. The
+baseline and contracts must come from a protected source at an independently
+approved immutable revision, not the pull request. Set the envelope's `head`
+to the exact checked-out commit and `base` to the intended base commit, and
+calculate the candidate digest from the committed snapshot. The CLI validates
+these identities and the protected baseline digest. Keep the checkout clean;
+write the envelope, baseline, report and evidence outside it. Follow the input
+and image instructions above. Do not construct a baseline from candidate files.
+
+Run verification in an unprivileged `pull_request` job with `contents: read`,
+`persist-credentials: false`, and no model or publishing secrets. Include
+`merge_group` when using a merge queue. The example below assumes the trusted
+setup has already placed the verifier, image, envelope and baseline on the
+runner. `snapshot` is the checkout at GitHub's test-merge or merge-group commit.
+Do not run candidate code in `pull_request_target` to gain access to secrets.
+
+```yaml
+- name: Verify
+  id: proofci
+  shell: bash
+  run: |
+    set +e
+    python3 "$RUNNER_TEMP/verifier/portable/container.py" \
+      --envelope "$RUNNER_TEMP/protected/envelope.json" \
+      --baseline "$RUNNER_TEMP/protected/baseline.json" \
+      --snapshot "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/report.json" \
+      --image proofci-validator-local --validator-only --allow-unconfined-apparmor
+    status=$?
+    echo "$status" > "$RUNNER_TEMP/exit-code.txt"
+    exit "$status"
+- name: Export evidence
+  if: always()
+  shell: bash
+  run: |
+    if [ -s "$RUNNER_TEMP/report.json" ]; then
+      python3 "$RUNNER_TEMP/verifier/portable/replay.py" export \
+        --envelope "$RUNNER_TEMP/protected/envelope.json" \
+        --baseline "$RUNNER_TEMP/protected/baseline.json" \
+        --snapshot "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/report.json" \
+        --output "$RUNNER_TEMP/evidence.tar"
+    fi
+- name: Upload available results
+  if: always()
+  uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+  with:
+    name: proofci-results
+    path: |
+      ${{ runner.temp }}/report.json
+      ${{ runner.temp }}/exit-code.txt
+      ${{ runner.temp }}/evidence.tar
+    if-no-files-found: warn
+```
+
+Export evidence with `replay.py export` as described above when the required
+inputs and report are available. Run export in a separate `if: always()` step;
+it must not replace or mask the verification step's exit status. Evidence
+export may fail for an execution failure, so upload whatever is available.
+
+A workflow editable by the candidate can be changed to report success. It is
+not an authoritative required gate on its own. Protect the workflow and its
+setup through a trusted external enforcement mechanism, and configure the
+repository's required check and fresh-merge or merge-queue policy. A portable
+job inherits the host CI's isolation and trust configuration; this example does
+not establish those protections.
