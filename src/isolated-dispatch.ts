@@ -16,7 +16,7 @@ export async function isolatedDispatch(candidate: Candidate, input: Inputs, sign
     for (const key of ['PROOFCI_APPLE_RUNTIME', 'PROOFCI_APPLE_KERNEL', 'PROOFCI_APPLE_KERNEL_SHA256']) {
       if (process.env[key]) env[key] = process.env[key];
     }
-    const child = spawn('python3', [dispatcher, '--store', input.store, '--repository', input.repository, '--head', candidate.head, '--base', candidate.base, '--baseline-digest', candidate.baseline, '--snapshot', input.snapshot, '--report', input.report], { env, detached: true, stdio: 'ignore' });
+    const child = spawn('python3', [dispatcher, '--store', input.store, '--repository', input.repository, '--head', candidate.head, '--base', candidate.base, '--baseline-digest', candidate.baseline, '--candidate-kind', candidate.kind, '--candidate-lane', candidate.lane, '--snapshot', input.snapshot, '--report', input.report], { env, detached: true, stdio: 'ignore' });
     let killTimer: NodeJS.Timeout | undefined;
     const stop = () => {
       if (child.pid === undefined) return;

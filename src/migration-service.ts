@@ -33,7 +33,7 @@ export class MigrationService {
     try {
       const staged = await github.stageSnapshot(input.scope, { head: input.head, base: input.head, root, signal });
       if (staged.repository !== config.repository || await github.resolveHead(input.scope, config.ref) !== input.head) throw new Error('Candidate changed');
-      const prepared = await call('prepare', ['--snapshot', staged.snapshot, '--head', input.head, '--previous', input.previous, '--replacement', input.replacement, '--actor', String(actor), '--generation', generation]);
+      const prepared = await call('prepare', ['--snapshot', staged.snapshot, '--head', input.head, '--previous', input.previous, '--replacement', input.replacement, '--actor', String(actor), '--generation', generation, '--ref', config.ref]);
       const value: unknown = JSON.parse(prepared.stdout);
       if (typeof value !== 'object' || value === null || !('migration' in value) || typeof value.migration !== 'string' || !/^[a-f0-9]{32}$/.test(value.migration)) throw new Error('Invalid migration record');
       const report = join(root, 'report.json');

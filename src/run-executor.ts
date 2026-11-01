@@ -20,6 +20,7 @@ export async function executeRun(options: { candidate: Candidate; signal: AbortS
     if (candidate.kind === 'head-snapshot' && await github.resolveHead(candidate, candidate.lane) !== candidate.head) throw new RunFailure('candidate_superseded');
     const result = await isolatedDispatch(candidate, { store: config.store, repository: config.repository, snapshot: staged.snapshot, report: join(root, 'report.json') }, signal);
     if (signal.aborted) throw new RunFailure('cancelled');
+    if (result.status !== 'error' && candidate.authorityEpoch !== undefined && result.authority_epoch !== candidate.authorityEpoch) throw new RunFailure('candidate_superseded');
     if (candidate.kind === 'head-snapshot' && await github.resolveHead(candidate, candidate.lane) !== candidate.head) throw new RunFailure('candidate_superseded');
     if (await baselines.active(candidate) !== candidate.baseline) throw new RunFailure('baseline_unavailable');
     return result;

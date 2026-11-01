@@ -1,6 +1,5 @@
 import { createPrivateKey } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Pool } from 'pg';
 import { EnrollmentStore } from './enrollment-store.ts';
@@ -13,6 +12,8 @@ import { RunStore } from './run-store.ts';
 import { ActiveBaselines } from './active-baselines.ts';
 import { RunService, type PilotConfiguration } from './run-service.ts';
 import { MigrationService } from './migration-service.ts';
+import { LocalAuthority } from './local-authority.ts';
+import { readPilotConfiguration } from './pilot-configuration.ts';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -36,23 +37,13 @@ let migrationService: MigrationService | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
-  if (!isAbsolute(pilotConfig)) throw new Error('Pilot configuration path must be absolute');
-  const stat = lstatSync(pilotConfig);
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || stat.size > 65536) throw new Error('Invalid pilot configuration file');
-  const raw: unknown = JSON.parse(readFileSync(pilotConfig, 'utf8'));
-  if (!Array.isArray(raw)) throw new Error('Invalid pilot configuration');
-  const repositories: PilotConfiguration[] = [];
-  for (const entry of raw) {
-    if (typeof entry !== 'object' || entry === null || !('installationId' in entry) || typeof entry.installationId !== 'number' ||
-        !('repositoryId' in entry) || typeof entry.repositoryId !== 'number' || !('store' in entry) || typeof entry.store !== 'string' ||
-        !('repository' in entry) || typeof entry.repository !== 'string' || !('ref' in entry) || typeof entry.ref !== 'string' ||
-        !entry.ref.startsWith('refs/heads/')) throw new Error('Invalid pilot configuration');
-    repositories.push({ installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref });
-  }
+  const repositories = readPilotConfiguration(pilotConfig);
   pilotRepositories = repositories;
+  const authority = new LocalAuthority(repositories);
+  store.setAuthority(authority);
   const baselines = new ActiveBaselines(repositories);
   migrationService = new MigrationService({ sessions, github, selections: store, repositories });
-  runs = new RunStore(pool); await runs.initialize();
+  runs = new RunStore(pool, authority); await runs.initialize();
   runService = new RunService({ store: runs, selections: store, github, baselines, repositories });
   runService.start();
 }

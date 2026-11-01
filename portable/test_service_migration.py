@@ -10,7 +10,9 @@ import unittest
 from unittest.mock import patch
 
 import baselines
+import authority
 import service_migration as migration
+import service_execute
 from test_baselines import manifest
 
 
@@ -46,6 +48,7 @@ class MigrationTests(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', 'replacement')
         self.head = self.git('rev-parse', 'HEAD')
+        authority.mutate(self.store, 'bootstrap', 'repo', head=self.head, actor=42, ref='refs/heads/main')
         self.report = self.root / 'report.json'
 
     def git(self, *args):
@@ -96,6 +99,54 @@ class MigrationTests(unittest.TestCase):
                 migration.activate(str(self.store), 'repo', identifier, head, actor, generation)
         self.assertEqual(self.active(), baselines.sha(self.old))
 
+    def test_managed_run_rejects_head_aba_during_dispatch(self):
+        with closing(baselines.open_store(self.store)) as db:
+            baseline = baselines.lookup(db)['baseline_sha256']
+        def change_head(**kwargs):
+            first = authority.mutate(self.store, 'begin', 'repo', expected=self.head, head='c'*40, ref='refs/heads/main')['change']
+            authority.mutate(self.store, 'finish', 'repo', change=first, head='c'*40)
+            second = authority.mutate(self.store, 'begin', 'repo', expected='c'*40, head=self.head, ref='refs/heads/main')['change']
+            authority.mutate(self.store, 'finish', 'repo', change=second, head=self.head)
+            Path(kwargs['report_path']).write_text('{"version":1,"status":"passed"}')
+            return 0
+        with patch.object(service_execute.dispatch, 'run', side_effect=change_head):
+            status = service_execute.execute(store=self.store, repository='repo', head=self.head, base=self.head,
+                baseline_digest=baseline, snapshot=self.repo, report=self.report, candidate_lane='refs/heads/main')
+        self.assertEqual(status, 2)
+        self.assertEqual(json.loads(self.report.read_text())['status'], 'error')
+        self.assertEqual(self.active(), baselines.sha(self.old))
+
+    def test_revocation_and_regrant_invalidate_verified_approval(self):
+        identifier = self.prepare()
+        with patch.object(migration.dispatch, 'run', side_effect=self.dispatch):
+            migration.verify(str(self.store), 'repo', str(self.repo), identifier, str(self.report))
+        authority.mutate(self.store, 'revoke', 'repo', actor=42)
+        authority.mutate(self.store, 'grant', 'repo', actor=42)
+        with self.assertRaisesRegex(ValueError, 'authority revision changed'):
+            migration.activate(str(self.store), 'repo', identifier, self.head, 42, 'generation')
+        self.assertEqual(self.active(), baselines.sha(self.old))
+
+    def test_enrollment_removal_and_reselection_invalidate_approval(self):
+        identifier = self.prepare()
+        with patch.object(migration.dispatch, 'run', side_effect=self.dispatch):
+            migration.verify(str(self.store), 'repo', str(self.repo), identifier, str(self.report))
+        authority.mutate(self.store, 'disable', 'repo')
+        with self.assertRaisesRegex(ValueError, 'disabled'):
+            migration.activate(str(self.store), 'repo', identifier, self.head, 42, 'generation')
+        authority.mutate(self.store, 'enable', 'repo')
+        with self.assertRaisesRegex(ValueError, 'revision changed'):
+            migration.activate(str(self.store), 'repo', identifier, self.head, 42, 'generation')
+        self.assertEqual(self.active(), baselines.sha(self.old))
+
+    def test_pending_head_update_prevents_verified_activation(self):
+        identifier = self.prepare()
+        with patch.object(migration.dispatch, 'run', side_effect=self.dispatch):
+            migration.verify(str(self.store), 'repo', str(self.repo), identifier, str(self.report))
+        authority.mutate(self.store, 'begin', 'repo', expected=self.head, head='c'*40, ref='refs/heads/main')
+        with self.assertRaisesRegex(ValueError, 'authority unavailable'):
+            migration.activate(str(self.store), 'repo', identifier, self.head, 42, 'generation')
+        self.assertEqual(self.active(), baselines.sha(self.old))
+
     def test_competing_migration_cannot_overwrite_new_baseline(self):
         first, second = self.prepare(), self.prepare()
         with patch.object(migration.dispatch, 'run', side_effect=self.dispatch):
@@ -115,12 +166,14 @@ class MigrationTests(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', 'restore')
         head = self.git('rev-parse', 'HEAD')
+        change = authority.mutate(self.store, 'begin', 'repo', expected=self.head, head=head, ref='refs/heads/main')['change']
+        authority.mutate(self.store, 'finish', 'repo', change=change, head=head)
         restore = migration.prepare(str(self.store), 'repo', str(self.repo), head, baselines.sha(self.new), baselines.sha(self.old), 42, 'generation')
         with patch.object(migration.dispatch, 'run', side_effect=self.dispatch):
             migration.verify(str(self.store), 'repo', str(self.repo), restore, str(self.report))
         migration.activate(str(self.store), 'repo', restore, head, 42, 'generation')
         self.assertEqual(self.active(), baselines.sha(self.old))
-        with self.assertRaisesRegex(ValueError, 'active baseline changed'):
+        with self.assertRaisesRegex(ValueError, 'authority (revision|head) changed|active baseline changed'):
             migration.activate(str(self.store), 'repo', stale, self.head, 42, 'generation')
 
     @unittest.skipUnless(os.environ.get('PROOFCI_TEST_VM'), 'requires isolated verifier')

@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import { RunStore } from './run-store.ts';
+import { LocalAuthority } from './local-authority.ts';
+import { readPilotConfiguration } from './pilot-configuration.ts';
 
 const [installation, repository, id] = process.argv.slice(2);
 const installationId = Number(installation);
@@ -10,7 +12,8 @@ if (!Number.isSafeInteger(installationId) || installationId < 1 || !Number.isSaf
 }
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 try {
-  const store = new RunStore(pool);
+  const configuration = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
+  const store = new RunStore(pool, configuration ? new LocalAuthority(readPilotConfiguration(configuration)) : undefined);
   const scope = { installationId, repositoryId };
   const run = id ? await store.inspect(scope, id) : { runs: await store.list(scope), deliveries: await store.listDeliveries(scope) };
   if (run === null) { process.stderr.write('Run not found.\n'); process.exitCode = 1; }

@@ -13,6 +13,7 @@ import tempfile
 import uuid
 
 import baselines
+import authority
 import dispatch
 import proofci
 import service_baseline
@@ -32,12 +33,16 @@ def schema(db):
             db.execute('ALTER TABLE active ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
         if 'previous_revision' not in {row[1] for row in db.execute('PRAGMA table_info(migrations)')}:
             db.execute('ALTER TABLE migrations ADD COLUMN previous_revision INTEGER NOT NULL DEFAULT -1')
+        if 'authority_epoch' not in {row[1] for row in db.execute('PRAGMA table_info(migrations)')}:
+            db.execute('ALTER TABLE migrations ADD COLUMN authority_epoch INTEGER NOT NULL DEFAULT -1')
+        if 'authority_ref' not in {row[1] for row in db.execute('PRAGMA table_info(migrations)')}:
+            db.execute("ALTER TABLE migrations ADD COLUMN authority_ref TEXT NOT NULL DEFAULT ''")
         db.commit()
     except BaseException:
         db.rollback()
         raise
 
-def prepare(store, repository, snapshot, head, previous, replacement, actor, generation):
+def prepare(store, repository, snapshot, head, previous, replacement, actor, generation, ref='refs/heads/main'):
     if not re.fullmatch(r'[a-f0-9]{40}', head) or not all(re.fullmatch(r'[a-f0-9]{64}', x) for x in (previous, replacement)):
         raise ValueError('invalid migration identity')
     if type(actor) is not int or actor < 1 or not generation:
@@ -63,8 +68,9 @@ def prepare(store, repository, snapshot, head, previous, replacement, actor, gen
             if active['digest'] != previous or active['repository'] != repository:
                 raise ValueError('active baseline changed')
             revision = db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0]
-            db.execute('INSERT INTO migrations(id, repository, previous, replacement, manifest, manifest_path, head, actor, selection_generation, status, changes, previous_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                       (migration, repository, previous, replacement, data, row['manifest_path'], head, actor, generation, 'authorized', baselines.encoded(changes), revision))
+            epoch = authority.checked(db, repository, head=head, actor=actor, ref=ref)
+            db.execute('INSERT INTO migrations(id, repository, previous, replacement, manifest, manifest_path, head, actor, selection_generation, status, changes, previous_revision, authority_epoch, authority_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (migration, repository, previous, replacement, data, row['manifest_path'], head, actor, generation, 'authorized', baselines.encoded(changes), revision, epoch, ref))
     return migration
 
 
@@ -75,6 +81,7 @@ def verify(store, repository, snapshot, migration, report):
         row = db.execute('SELECT * FROM migrations WHERE id=? AND repository=?', (migration, repository)).fetchone()
         if row is None or row['status'] != 'authorized':
             raise ValueError('migration is not authorized')
+        authority.checked(db, repository, head=row['head'], actor=row['actor'], epoch=row['authority_epoch'], ref=row['authority_ref'])
         active = baselines.lookup(db)
         if active['digest'] != row['previous'] or active['repository'] != repository or db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0] != row['previous_revision']:
             raise ValueError('active baseline changed')
@@ -113,6 +120,7 @@ def verify(store, repository, snapshot, migration, report):
         result['retired_guarantees'] = [item for item in old_manifest['contracts'] if item['id'] in retired]
         db.execute('BEGIN IMMEDIATE')
         with db:
+            authority.checked(db, repository, head=row['head'], actor=row['actor'], epoch=row['authority_epoch'], ref=row['authority_ref'])
             active = baselines.lookup(db)
             if active['digest'] != row['previous'] or active['repository'] != repository or db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0] != row['previous_revision']:
                 raise ValueError('active baseline changed')
@@ -132,6 +140,7 @@ def activate(store, repository, migration, head, actor, generation):
             row = db.execute('SELECT * FROM migrations WHERE id=? AND repository=?', (migration, repository)).fetchone()
             if row is None or row['status'] != 'verified' or row['head'] != head or row['actor'] != actor or row['selection_generation'] != generation:
                 raise ValueError('migration authorization is stale')
+            authority.checked(db, repository, head=row['head'], actor=row['actor'], epoch=row['authority_epoch'], ref=row['authority_ref'])
             active = baselines.lookup(db)
             if active['digest'] != row['previous'] or active['repository'] != repository or db.execute('SELECT revision FROM active WHERE id=1').fetchone()[0] != row['previous_revision']:
                 raise ValueError('active baseline changed')
@@ -146,6 +155,7 @@ def activate(store, repository, migration, head, actor, generation):
             changed = db.execute('UPDATE active SET digest=?, revision=revision+1 WHERE id=1 AND digest=? AND revision=?', (row['replacement'], row['previous'], row['previous_revision']))
             if changed.rowcount != 1:
                 raise ValueError('active baseline changed')
+            db.execute('UPDATE authority_state SET epoch=epoch+1 WHERE id=1')
             db.execute("UPDATE migrations SET status='activated' WHERE id=?", (migration,))
             return json.loads(row['report'])
 
@@ -153,12 +163,12 @@ def activate(store, repository, migration, head, actor, generation):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('operation', choices=['prepare', 'verify', 'activate'])
-    for name in ('store', 'repository', 'snapshot', 'head', 'previous', 'replacement', 'actor', 'generation', 'migration', 'report'):
+    for name in ('store', 'repository', 'snapshot', 'head', 'previous', 'replacement', 'actor', 'generation', 'migration', 'report', 'ref'):
         parser.add_argument('--' + name)
     args = parser.parse_args()
     try:
         if args.operation == 'prepare':
-            result = {'migration': prepare(args.store, args.repository, args.snapshot, args.head, args.previous, args.replacement, int(args.actor), args.generation)}
+            result = {'migration': prepare(args.store, args.repository, args.snapshot, args.head, args.previous, args.replacement, int(args.actor), args.generation, args.ref)}
         elif args.operation == 'verify':
             return verify(args.store, args.repository, args.snapshot, args.migration, args.report)
         else:

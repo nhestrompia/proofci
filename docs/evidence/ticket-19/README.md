@@ -37,3 +37,15 @@ remained unchanged. See [the stale summary](stale-summary.json),
 [the store snapshot](activated-store.json). A separate [recheck](stale-recheck.json)
 recorded the rejection reason. Its [script](stale-recheck-command.txt) uses the
 verified authorization and the advanced head.
+
+On the later authority exercise, the local gateway advanced the same demo branch
+from `fa2a4ca8d6ed54dbadfa6424ee0b4566fc454dd8` to
+`aed0af69c803f3788681156aa0ee2b0add5144ed`. The exercise used a copied store
+and the real isolated Lean verifier. After verification, authority revocation
+and regrant invalidated the approval; the old baseline remained active. A new
+approval was verified and activated. See [the result](authority-result.json)
+and [the verifier report](authority-report.json). This replacement changed
+policy but did not retire a guarantee. The earlier exercise above demonstrates
+retirement. The demo branch did not have GitHub branch protection, so this
+exercise does not demonstrate exclusive gateway enforcement or the hosted App
+path.
