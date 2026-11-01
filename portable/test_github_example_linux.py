@@ -74,6 +74,8 @@ class GitHubLinuxTests(unittest.TestCase):
                             "--snapshot", str(snapshot), "--report", str(output / "report.json"),
                             "--output", str(dest / f"{name}-evidence.tar")], check=True, env=env,
                             capture_output=True, text=True)
+                    else:
+                        shutil.copytree(snapshot / "evidence", dest / "error-submitted-evidence", dirs_exist_ok=True)
             status, report = run()
             self.assertEqual(status, 0, report)
             self.assertEqual(report["results"][0]["decision"], "verified")

@@ -8,9 +8,10 @@ and artifact upload even when verification exits 1 or 2. An evidence archive
 is available only when export succeeds. If setup fails before the CLI starts,
 there may be no report.
 
-This is an example for a dedicated, disposable Linux ARM64 runner. It has not
-been exercised in a live GitHub Actions run in this repository. Do not treat it
-as an established required check or a substitute for the hosted service's
+This is an example for a dedicated, disposable Linux ARM64 runner. The source
+head and baseline were exercised in a live `pull_request` job. The example's
+`pull_request_target` trigger has not been exercised. Do not treat it as an
+established required check or a substitute for the hosted service's
 head-freshness and publication controls. `pull_request_target` runs with the
 base workflow and its job is associated with the base context; configure and
 validate any branch protection separately. The checked-out pull request is

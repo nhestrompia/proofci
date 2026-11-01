@@ -55,11 +55,24 @@ jobs:
         env:
           PROOFCI_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ matrix.scenario }}
       - name: Return the selected public verification status
+        id: selected_status
+        continue-on-error: true
         run: |
           python3 -c 'import json, os, sys; x=json.load(open(os.path.join(os.environ["PROOFCI_ACCEPTANCE_OUTPUT"], "normalized.json"))); sys.exit(x[os.environ["SCENARIO"]]["exit"])'
         env:
           SCENARIO: ${{ matrix.scenario }}
           PROOFCI_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ matrix.scenario }}
+      - name: Check the expected job outcome
+        if: ${{ always() }}
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          OUTCOME: ${{ steps.selected_status.outcome }}
+        run: |
+          if [ "$SCENARIO" = passing ]; then
+            test "$OUTCOME" = success
+          else
+            test "$OUTCOME" = failure
+          fi
       - name: Upload reports after all outcomes
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
