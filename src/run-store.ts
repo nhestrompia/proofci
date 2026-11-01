@@ -83,12 +83,17 @@ export class RunStore {
         generation INTEGER NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ, last_error TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
       )`);
+      await migration.query(`CREATE TABLE IF NOT EXISTS proofci_push_fences (
+        delivery_id UUID PRIMARY KEY, installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL,
+        ref TEXT NOT NULL, head TEXT NOT NULL, deleted BOOLEAN NOT NULL, selection_generation TEXT NOT NULL
+      )`);
+      await migration.query(`CREATE TABLE IF NOT EXISTS proofci_repository_push_revisions (installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL, revision BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (installation_id, repository_id))`);
       await migration.query('COMMIT');
     } catch (error) { await migration.query('ROLLBACK'); throw error; }
     finally { migration.release(); }
   }
 
-  async acceptDelivery(event: PushDelivery): Promise<boolean> {
+  async acceptDelivery(event: PushDelivery, scheduleHead = true, invalidatePulls = true): Promise<boolean> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -98,6 +103,26 @@ export class RunStore {
       await client.query('SELECT revision FROM proofci_installation_revisions WHERE installation_id=$1 FOR UPDATE', [event.installationId]);
       const selected = await client.query<{ generation: string }>('SELECT generation FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2', [event.installationId, event.repositoryId]);
       if (!selected.rows[0]) { await client.query('COMMIT'); return false; }
+      if (invalidatePulls) {
+        const values = [event.deliveryId, event.installationId, event.repositoryId, event.ref, event.head, event.deleted, selected.rows[0].generation];
+        const inserted = await client.query(`INSERT INTO proofci_push_fences (delivery_id, installation_id, repository_id, ref, head, deleted, selection_generation)
+          VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`, values);
+        if (!inserted.rowCount) {
+          const prior = await client.query('SELECT 1 FROM proofci_push_fences WHERE delivery_id=$1 AND installation_id=$2 AND repository_id=$3 AND ref=$4 AND head=$5 AND deleted=$6 AND selection_generation=$7', values);
+          if (!prior.rowCount) { await client.query('ROLLBACK'); return false; }
+        } else {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`fork-resource:${event.installationId}:${event.repositoryId}`]);
+          await client.query(`INSERT INTO proofci_repository_push_revisions (installation_id, repository_id, revision) VALUES ($1,$2,1)
+            ON CONFLICT (installation_id, repository_id) DO UPDATE SET revision=proofci_repository_push_revisions.revision+1`, [event.installationId, event.repositoryId]);
+          await client.query(`INSERT INTO proofci_pull_deliveries (delivery_id, installation_id, repository_id, pull_number, selection_generation)
+            SELECT gen_random_uuid(), $1, $2, number, $3 FROM (SELECT DISTINCT pull_number AS number FROM proofci_runs
+              WHERE installation_id=$1 AND repository_id=$2 AND kind='pull-request' AND applicable) pulls`, [event.installationId, event.repositoryId, selected.rows[0].generation]);
+          await client.query('UPDATE proofci_fork_policies SET revision=revision+1 WHERE installation_id=$1 AND repository_id=$2', [event.installationId, event.repositoryId]);
+          await client.query('DELETE FROM proofci_fork_decisions WHERE installation_id=$1 AND repository_id=$2', [event.installationId, event.repositoryId]);
+          await client.query("UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE installation_id=$1 AND repository_id=$2 AND kind='pull-request' AND applicable", [event.installationId, event.repositoryId]);
+        }
+      }
+      if (!scheduleHead) { await client.query('COMMIT'); return true; }
       const result = await client.query(`INSERT INTO proofci_push_deliveries
         (delivery_id, installation_id, repository_id, ref, head, deleted, selection_generation) VALUES ($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT (delivery_id) DO UPDATE SET delivery_id=EXCLUDED.delivery_id
@@ -123,6 +148,10 @@ export class RunStore {
       if (!selected.rows[0]) { await client.query('COMMIT'); return false; }
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${event.installationId}:${event.repositoryId}:pull/${event.number}`]);
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`fork-policy:${event.installationId}:${event.repositoryId}:${event.number}`]);
+      if (!invalidate) {
+        const pending = await client.query("SELECT 1 FROM proofci_pull_deliveries WHERE installation_id=$1 AND repository_id=$2 AND pull_number=$3 AND selection_generation=$4 AND state IN ('queued','processing') LIMIT 1", [event.installationId, event.repositoryId, event.number, selected.rows[0].generation]);
+        if (pending.rowCount) { await client.query('COMMIT'); return true; }
+      }
       const result = await client.query(`INSERT INTO proofci_pull_deliveries (delivery_id, installation_id, repository_id, pull_number, selection_generation)
         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`,
       [event.deliveryId, event.installationId, event.repositoryId, event.number, selected.rows[0].generation]);
@@ -141,9 +170,9 @@ export class RunStore {
     finally { client.release(); }
   }
 
-  async reconcilePulls(scope: RepositoryScope): Promise<void> {
-    const result = await this.pool.query<{ number: number }>("SELECT pull_number::float8 AS number FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND kind='pull-request' AND applicable", [scope.installationId, scope.repositoryId]);
-    for (const item of result.rows) await this.acceptPullDelivery({ ...scope, number: item.number, deliveryId: randomUUID() }, false);
+  async reconcilePulls(scope: RepositoryScope, openNumbers: number[], includeKnown = true): Promise<void> {
+    const known = includeKnown ? (await this.pool.query<{ number: number }>("SELECT pull_number::float8 AS number FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND kind='pull-request' AND applicable", [scope.installationId, scope.repositoryId])).rows.map(item => item.number) : [];
+    for (const number of new Set([...openNumbers, ...known])) await this.acceptPullDelivery({ ...scope, number, deliveryId: randomUUID() }, false);
   }
 
   async claimPullDelivery(leaseMs: number): Promise<PullLease | null> {
@@ -155,15 +184,16 @@ export class RunStore {
   }
 
   /** Resolve each notification under a per-PR lock and fence stale selections and leases. */
-  async processPullDelivery(delivery: PullLease, resolve: (delivery: PullLease) => Promise<Candidate | 'closed' | null>): Promise<boolean> {
+  async processPullDelivery(delivery: PullLease, resolve: (delivery: PullLease) => Promise<Candidate | 'closed' | 'baseline-unavailable' | null>): Promise<boolean> {
     const client = await this.pool.connect();
     const key = `pull:${delivery.installationId}:${delivery.repositoryId}:${delivery.number}`;
     try {
       await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [key]);
       const values = [delivery.installationId, delivery.repositoryId, delivery.number];
       const before = await client.query<{ revision: string }>('SELECT revision FROM proofci_fork_policy_revisions WHERE installation_id=$1 AND repository_id=$2 AND pull_number=$3', values);
+      const pushBefore = await client.query<{ revision: string }>('SELECT revision FROM proofci_repository_push_revisions WHERE installation_id=$1 AND repository_id=$2', values.slice(0, 2));
       const candidate = await resolve(delivery);
-      if (candidate && candidate !== 'closed') {
+      if (candidate && candidate !== 'closed' && candidate !== 'baseline-unavailable') {
         validateCandidate(candidate);
         if (candidate.kind !== 'pull-request' || candidate.installationId !== delivery.installationId || candidate.repositoryId !== delivery.repositoryId || candidate.number !== delivery.number) throw new Error('Resolved candidate does not match delivery');
       }
@@ -177,12 +207,13 @@ export class RunStore {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${delivery.installationId}:${delivery.repositoryId}:${lane}`]);
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`fork-policy:${delivery.installationId}:${delivery.repositoryId}:${delivery.number}`]);
         const now = await client.query<{ revision: string }>('SELECT revision FROM proofci_fork_policy_revisions WHERE installation_id=$1 AND repository_id=$2 AND pull_number=$3', values);
-        if ((before.rows[0]?.revision ?? '0') !== (now.rows[0]?.revision ?? '0')) {
+        const pushNow = await client.query<{ revision: string }>('SELECT revision FROM proofci_repository_push_revisions WHERE installation_id=$1 AND repository_id=$2', values.slice(0, 2));
+        if ((before.rows[0]?.revision ?? '0') !== (now.rows[0]?.revision ?? '0') || (pushBefore.rows[0]?.revision ?? '0') !== (pushNow.rows[0]?.revision ?? '0')) {
           await client.query("UPDATE proofci_pull_deliveries SET state='queued', lease_until=NULL WHERE delivery_id=$1", [delivery.deliveryId]);
           await client.query('COMMIT');
           return true;
         }
-        if (candidate === 'closed') {
+        if (candidate === 'closed' || candidate === 'baseline-unavailable') {
           await client.query(`INSERT INTO proofci_fork_policy_revisions (installation_id, repository_id, pull_number, revision) VALUES ($1,$2,$3,1)
             ON CONFLICT (installation_id, repository_id, pull_number) DO UPDATE SET revision=proofci_fork_policy_revisions.revision+1`, [delivery.installationId, delivery.repositoryId, delivery.number]);
           await client.query('DELETE FROM proofci_fork_decisions WHERE installation_id=$1 AND repository_id=$2 AND pull_number=$3', [delivery.installationId, delivery.repositoryId, delivery.number]);

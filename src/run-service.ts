@@ -50,8 +50,11 @@ export class RunService {
     if (!this.pullBusy) {
       this.pullBusy = true;
       void (async () => {
-        const delivery = await store.claimPullDelivery(300_000);
-        if (delivery) await store.processPullDelivery(delivery, item => resolvePullDelivery({ delivery: item, selections, github, baselines }));
+        while (!this.stopSignal.signal.aborted) {
+          const delivery = await store.claimPullDelivery(300_000);
+          if (!delivery) break;
+          await store.processPullDelivery(delivery, item => resolvePullDelivery({ delivery: item, selections, github, baselines }));
+        }
       })().catch(() => {}).finally(() => { this.pullBusy = false; });
     }
     if (!this.workerBusy) {
@@ -74,9 +77,11 @@ export class RunService {
       void (async () => {
         for (const item of repositories) {
           if (this.stopSignal.signal.aborted) break;
+          try { await reconcileHead({ scope: item, ref: item.ref, github, store: { acceptDelivery: delivery => store.acceptDelivery(delivery, true, false) } }); }
+          catch { /* Retry on the next reconciliation. */ }
           try {
-            await reconcileHead({ scope: item, ref: item.ref, github, store });
-            await store.reconcilePulls(item);
+            await store.reconcilePulls(item, []);
+            for await (const page of github.listOpenPullRequests(item)) await store.reconcilePulls(item, page, false);
           } catch { /* Retry on the next reconciliation. */ }
         }
       })().finally(() => { this.reconcileBusy = false; });

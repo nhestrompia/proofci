@@ -34,6 +34,7 @@ const enrollment = new EnrollmentService({ store, sessions, github });
 let runs: RunStore | undefined;
 let runService: RunService | undefined;
 let forkPolicy: ForkPolicy | undefined;
+let activeBaselines: ActiveBaselines | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
@@ -54,6 +55,7 @@ if (pilotConfig) {
   }
   pilotRepositories = repositories;
   const baselines = new ActiveBaselines(repositories);
+  activeBaselines = baselines;
   runs = new RunStore(pool); await runs.initialize();
   forkPolicy = new ForkPolicy({ pool, selections: store, github, sessions, baselines });
   for (const repository of repositories) await forkPolicy.syncPolicy(repository, repository.assistanceQuotaMicros);
@@ -129,7 +131,10 @@ const server = createServer(async (request, response) => {
       if (event === 'push') {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
-        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId && item.ref === delivery.ref) ? runStore.acceptDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => {
+          const config = pilotRepositories.find(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId);
+          return config ? runStore.acceptDelivery(delivery, config.ref === delivery.ref) : Promise.resolve(true);
+        } } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
       } else if (event === 'pull_request') {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
@@ -138,8 +143,8 @@ const server = createServer(async (request, response) => {
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
     }
     if ((request.method === 'GET' || request.method === 'POST') && url.pathname === '/fork-assistance') {
-      const runStore = runs, policy = forkPolicy;
-      if (!runStore || !policy) return reply(response, 503, 'Run scheduling is not configured.');
+      const runStore = runs, policy = forkPolicy, baselines = activeBaselines;
+      if (!runStore || !policy || !baselines) return reply(response, 503, 'Run scheduling is not configured.');
       if (request.method === 'POST' && request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');
       const data = request.method === 'POST' ? await form(request) : url.searchParams;
       const selection = data.get('repository') ?? '', numberText = data.get('number') ?? '';
@@ -155,14 +160,16 @@ const server = createServer(async (request, response) => {
         return reply(response, 200, 'Fork assistance approval revoked.');
       }
       if (!run || run.candidate.sourceRepositoryId === repositoryId) return reply(response, 404, 'No current fork run found.');
-      const digest = createHash('sha256').update(JSON.stringify([run.id, run.candidate, policyDigest(config.assistanceQuotaMicros)])).digest('hex');
+      const baseline = await baselines.activeIdentity(scope);
+      if (!baseline || baseline.digest !== run.candidate.baseline || baseline.revision === null) return reply(response, 409, 'The active baseline is unavailable or needs revision tracking.');
+      const digest = createHash('sha256').update(JSON.stringify([run.id, run.candidate, baseline.revision, policyDigest(config.assistanceQuotaMicros)])).digest('hex');
       if (request.method === 'POST') {
         if (data.get('action') !== 'approve' || data.get('digest') !== digest || data.get('consent') !== 'yes') return reply(response, 409, 'The candidate or policy changed, or consent was not given. Review it again.');
-        if (!await policy.approve({ session, candidate: run.candidate, quotaMicros: config.assistanceQuotaMicros, consent: true })) return reply(response, 403, 'Approval denied or candidate changed.');
+        if (!await policy.approve({ session, candidate: run.candidate, quotaMicros: config.assistanceQuotaMicros, baselineRevision: baseline.revision, consent: true })) return reply(response, 403, 'Approval denied or candidate changed.');
         return reply(response, 200, 'Approval recorded. Hosted assistance remains deferred until durable request recovery is enabled.');
       }
       const c = run.candidate;
-      return reply(response, 200, `<h1>Fork assistance</h1><p>Source repository ID: ${c.sourceRepositoryId}. Destination repository ID: ${c.repositoryId}. Pull request: ${c.number}.</p><p>Head: ${c.head}<br>Base: ${c.base}<br>Baseline: ${c.baseline}<br>Resource policy: ${policyDigest(config.assistanceQuotaMicros)}<br>Repository quota: ${config.assistanceQuotaMicros} microdollars.</p><p>Hosted assistance is deferred until durable request recovery is enabled.</p><form method="post"><input type="hidden" name="repository" value="${selection}"><input type="hidden" name="number" value="${number}"><input type="hidden" name="digest" value="${digest}"><label><input type="checkbox" name="consent" value="yes" required>Allow source transmission for these exact inputs</label><button name="action" value="approve">Approve</button><button name="action" value="revoke" formnovalidate>Revoke approval</button></form>`);
+      return reply(response, 200, `<h1>Fork assistance</h1><p>Source repository ID: ${c.sourceRepositoryId}. Destination repository ID: ${c.repositoryId}. Pull request: ${c.number}.</p><p>Head: ${c.head}<br>Base: ${c.base}<br>Baseline: ${c.baseline}<br>Baseline revision: ${baseline.revision}<br>Resource policy: ${policyDigest(config.assistanceQuotaMicros)}<br>Repository quota: ${config.assistanceQuotaMicros} microdollars.</p><p>Hosted assistance is deferred until durable request recovery is enabled.</p><form method="post"><input type="hidden" name="repository" value="${selection}"><input type="hidden" name="number" value="${number}"><input type="hidden" name="digest" value="${digest}"><label><input type="checkbox" name="consent" value="yes" required>Allow source transmission for these exact inputs</label><button name="action" value="approve">Approve</button><button name="action" value="revoke" formnovalidate>Revoke approval</button></form>`);
     }
     if (request.method === 'POST' && url.pathname === '/logout') {
       if (request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');

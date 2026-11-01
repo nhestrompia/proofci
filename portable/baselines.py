@@ -72,12 +72,30 @@ def materialize(manifest, root):
 
 def open_store(path):
     db = sqlite3.connect(path, timeout=30)
-    db.executescript("""CREATE TABLE IF NOT EXISTS baselines (
+    try:
+        db.executescript("""BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS baselines (
         digest TEXT PRIMARY KEY, manifest BLOB NOT NULL, manifest_path TEXT NOT NULL,
         baseline_sha256 TEXT NOT NULL, repository TEXT NOT NULL, initial_head TEXT NOT NULL,
         approval_identity TEXT NOT NULL, approval_source TEXT NOT NULL, report BLOB NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-        CREATE TABLE IF NOT EXISTS active (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL REFERENCES baselines(digest));""")
+        CREATE TABLE IF NOT EXISTS active (id INTEGER PRIMARY KEY CHECK(id=1), digest TEXT NOT NULL REFERENCES baselines(digest));
+        CREATE TABLE IF NOT EXISTS active_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
+        INSERT OR IGNORE INTO active_revision(id, revision) SELECT 1, CASE WHEN EXISTS(SELECT 1 FROM active WHERE id=1) THEN 1 ELSE 0 END;
+        CREATE TRIGGER IF NOT EXISTS active_revision_insert AFTER INSERT ON active BEGIN
+            UPDATE active_revision SET revision=revision+1 WHERE id=1;
+        END;
+        CREATE TRIGGER IF NOT EXISTS active_revision_update AFTER UPDATE OF digest ON active WHEN OLD.digest IS NOT NEW.digest BEGIN
+            UPDATE active_revision SET revision=revision+1 WHERE id=1;
+        END;
+        CREATE TRIGGER IF NOT EXISTS active_revision_delete AFTER DELETE ON active BEGIN
+            UPDATE active_revision SET revision=revision+1 WHERE id=1;
+        END;
+        COMMIT;""")
+    except Exception:
+        db.rollback()
+        db.close()
+        raise
     return db
 
 
@@ -146,6 +164,8 @@ def invoke(snapshot, envelope_path, manifest, report_path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    initialize = sub.add_parser("initialize", help="initialize or upgrade a protected baseline store")
+    initialize.add_argument("--store", type=Path, required=True)
     activate = sub.add_parser("activate")
     for name in ("store", "snapshot", "envelope", "report"):
         activate.add_argument("--" + name, type=Path, required=True)
@@ -160,6 +180,8 @@ def main():
     args = parser.parse_args()
     try:
         with closing(open_store(args.store)) as db:
+            if args.command == "initialize":
+                return 0
             if args.command == "lookup":
                 row = lookup(db, args.digest)
                 row["manifest"] = proofci.parse_json(row["manifest"])

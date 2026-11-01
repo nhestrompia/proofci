@@ -96,8 +96,9 @@ resolves the PR through the destination installation. It records the source and
 destination repository IDs and immutable head and base. It fetches the snapshot
 from the destination and runs the existing isolated verifier with no provider,
 installation, or signing credentials in the worker. Results are nonenforcing;
-this pilot does not publish a GitHub check. Reconciliation revisits known open
-PRs every five minutes. Configure webhook redelivery for failures.
+this pilot does not publish a GitHub check. Reconciliation lists open PRs and
+revisits applicable runs every five minutes. Configure webhook redelivery for
+failures.
 
 Fork proof assistance is off. Hosted provider calls must remain disabled until
 durable request recovery and accounting have passed their release gate. The
@@ -107,7 +108,10 @@ it defaults to zero. With a positive quota, a signed-in current maintainer can
 review a fork run at `/fork-assistance?repository=INSTALLATION_ID:REPOSITORY_ID&number=PR_NUMBER`.
 The approval form shows the exact inputs and requests explicit source-transmission
 consent. Approval records are scoped to the selection, source and destination,
-head, base, baseline, resource policy and quota. A new PR notification,
+head, base, baseline revision, resource policy and quota. For an existing store,
+run `python3 portable/baselines.py initialize --store /absolute/protected/baselines.db`
+as its trusted owner before recording approvals. Without revision tracking,
+fork assistance remains denied. A new PR notification or destination push,
 superseding candidate, explicit revocation or selection removal invalidates the
 record. A changed policy or current input does not match an old record. Approval
 only produces a deferred decision while the hosted provider gate is closed; it

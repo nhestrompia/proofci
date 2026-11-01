@@ -195,3 +195,33 @@ test('rejects closed, malformed, or mismatched pull request identities', async (
     await assert.rejects(new GitHubApp({ appId: 7, privateKey, request }).resolvePullRequest({ installationId: 12, repositoryId: 34 }, 5));
   }
 });
+
+test('lists open pull requests from the enrolled destination for reconciliation', async () => {
+  const request: typeof fetch = async input => {
+    const url = new URL(String(input)), path = url.pathname;
+    if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+    if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
+    if (path === '/repositories/34') return Response.json({ id: 34, name: 'repo', owner: { login: 'owner' } });
+    if (path === '/repos/owner/repo/pulls' && url.searchParams.get('state') === 'open') return Response.json([{ number: 5 }, { number: 7 }]);
+    throw new Error(`unexpected path ${path}`);
+  };
+  const pages = [];
+  for await (const page of new GitHubApp({ appId: 7, privateKey, request }).listOpenPullRequests({ installationId: 12, repositoryId: 34 })) pages.push(...page);
+  assert.deepEqual(pages, [5, 7]);
+});
+
+
+test('reconciliation yields each page before fetching the next one', async () => {
+  const request: typeof fetch = async input => {
+    const url = new URL(String(input)), path = url.pathname;
+    if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+    if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
+    if (path === '/repositories/34') return Response.json({ id: 34, name: 'repo', owner: { login: 'owner' } });
+    if (path === '/repos/owner/repo/pulls' && url.searchParams.get('page') === '1') return Response.json(Array.from({ length: 100 }, (_, i) => ({ number: i + 1 })));
+    if (path === '/repos/owner/repo/pulls' && url.searchParams.get('page') === '2') throw new Error('page unavailable');
+    throw new Error(`unexpected path ${path}`);
+  };
+  const pages = new GitHubApp({ appId: 7, privateKey, request }).listOpenPullRequests({ installationId: 12, repositoryId: 34 });
+  assert.equal((await pages.next()).value?.length, 100);
+  await assert.rejects(pages.next(), /page unavailable/);
+});

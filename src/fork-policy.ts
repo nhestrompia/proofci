@@ -8,7 +8,7 @@ import type { OAuthSessions } from './oauth.ts';
 import type { ActiveBaselines } from './active-baselines.ts';
 
 type ForkCandidate = Extract<Candidate, { kind: 'pull-request' }>;
-export type ForkDecision = RepositoryScope & { number: number; sourceRepositoryId: number; head: string; base: string; baseline: string; selectionGeneration: string; policyDigest: string; quotaMicros: number; maintainerId: number; consent: boolean };
+export type ForkDecision = RepositoryScope & { number: number; sourceRepositoryId: number; head: string; base: string; baseline: string; baselineRevision: number; selectionGeneration: string; policyDigest: string; quotaMicros: number; maintainerId: number; consent: boolean };
 
 /** A decision is tied to the exact source, destination, policy, selection and budget. */
 export function decisionMatches(approved: ForkDecision, current: ForkDecision, usedMicros: number): boolean {
@@ -16,7 +16,7 @@ export function decisionMatches(approved: ForkDecision, current: ForkDecision, u
     Number.isSafeInteger(approved.quotaMicros) && approved.quotaMicros > usedMicros && approved.quotaMicros === current.quotaMicros &&
     approved.installationId === current.installationId && approved.repositoryId === current.repositoryId && approved.number === current.number &&
     approved.sourceRepositoryId === current.sourceRepositoryId && approved.head === current.head && approved.base === current.base &&
-    approved.baseline === current.baseline && approved.selectionGeneration === current.selectionGeneration && approved.policyDigest === current.policyDigest;
+    approved.baseline === current.baseline && approved.baselineRevision === current.baselineRevision && approved.selectionGeneration === current.selectionGeneration && approved.policyDigest === current.policyDigest;
 }
 
 export function policyDigest(quotaMicros: number): string {
@@ -28,7 +28,7 @@ export function policyDigest(quotaMicros: number): string {
 }
 
 /** Hosted provider calls stay disabled until durable request recovery is available. */
-type Dependencies = { pool: Pool; selections: { readVersion(scope: RepositoryScope): Promise<string | null> }; github: Pick<GitHubApp, 'checkMaintainerAccess' | 'resolvePullRequest' | 'installationAccess'>; sessions: Pick<OAuthSessions, 'checkMaintainer'>; baselines: Pick<ActiveBaselines, 'active'> };
+type Dependencies = { pool: Pool; selections: { readVersion(scope: RepositoryScope): Promise<string | null> }; github: Pick<GitHubApp, 'checkMaintainerAccess' | 'resolvePullRequest' | 'installationAccess'>; sessions: Pick<OAuthSessions, 'checkMaintainer'>; baselines: Pick<ActiveBaselines, 'activeIdentity'> };
 export class ForkPolicy {
   private readonly options: Dependencies;
   constructor(options: Dependencies) { this.options = options; }
@@ -56,11 +56,12 @@ export class ForkPolicy {
     const selectionGeneration = await selections.readVersion(candidate);
     if (!selectionGeneration || await github.installationAccess(candidate) !== 'allowed') return null;
     const pr = await github.resolvePullRequest(candidate, candidate.number);
-    if (!pr || pr.sourceRepositoryId !== candidate.sourceRepositoryId || pr.destinationRepositoryId !== candidate.repositoryId || pr.head !== candidate.head || pr.base !== candidate.base || await baselines.active(candidate) !== candidate.baseline || await selections.readVersion(candidate) !== selectionGeneration) return null;
-    return { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: candidate.number, sourceRepositoryId: candidate.sourceRepositoryId, head: candidate.head, base: candidate.base, baseline: candidate.baseline, selectionGeneration, policyDigest: policyDigest(quotaMicros), quotaMicros };
+    const baseline = await baselines.activeIdentity(candidate);
+    if (!pr || pr.sourceRepositoryId !== candidate.sourceRepositoryId || pr.destinationRepositoryId !== candidate.repositoryId || pr.head !== candidate.head || pr.base !== candidate.base || !baseline || baseline.digest !== candidate.baseline || baseline.revision === null || await selections.readVersion(candidate) !== selectionGeneration) return null;
+    return { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: candidate.number, sourceRepositoryId: candidate.sourceRepositoryId, head: candidate.head, base: candidate.base, baseline: candidate.baseline, baselineRevision: baseline.revision, selectionGeneration, policyDigest: policyDigest(quotaMicros), quotaMicros };
   }
 
-  async approve(input: { session: string; candidate: ForkCandidate; quotaMicros: number; consent: boolean }): Promise<boolean> {
+  async approve(input: { session: string; candidate: ForkCandidate; quotaMicros: number; baselineRevision: number; consent: boolean }): Promise<boolean> {
     if (!input.consent) return false;
     const { candidate } = input;
     const values = [candidate.installationId, candidate.repositoryId, candidate.number];
@@ -69,7 +70,7 @@ export class ForkPolicy {
     const maintainerId = await this.options.sessions.checkMaintainer({ session: input.session, scope: input.candidate, github: this.options.github });
     if (maintainerId === null) return false;
     const current = await this.current(input.candidate, input.quotaMicros);
-    if (!current) return false;
+    if (!current || current.baselineRevision !== input.baselineRevision) return false;
     const decision: ForkDecision = { ...current, maintainerId, consent: true };
     const client = await this.options.pool.connect();
     try {
