@@ -161,6 +161,81 @@ notifications do not restart a cancelled candidate. A rerun of the `ProofCI`
 check by an actor with current write access starts a new attempt for the PR's
 current inputs.
 
+## Model attempt recovery
+
+Hosted model calls remain disabled. The control service records every model
+attempt in PostgreSQL before contacting a provider so that a restart cannot
+lose usage or silently repeat a paid call. No provider adapter is wired into the
+service yet. A repository has no model policy until an operator stores one, and
+a stored policy is disabled unless it sets `enabled`.
+
+Each logical attempt is identified by its run, obligation, and attempt number,
+and its request ID is derived from those values. A duplicate or concurrent
+dispatch of the same attempt converges on the same record. The broker moves an
+attempt through these states, committing each one before the next step:
+
+- `reserved`: the worst-case tokens and cost are held, and the provider has not been contacted.
+- `sending`: recorded immediately before the request. From here the provider may have received it.
+- `settled`: the exact usage and response are recorded.
+- `failed`: the call finished without a usable response. Usage is exact only when the provider confirmed it did not process the request.
+- `uncertain`: no outcome was recorded after `sending`, for example after a timeout, a lost response, or a crash.
+- `reconciled`: an operator recorded the provider's real outcome for an uncertain attempt.
+- `released`: the reservation was never sent.
+
+When a run generation is reclaimed after a restart, every attempt that the
+previous generation left in `sending` becomes `uncertain`. An uncertain attempt
+is resent only if the provider adapter declares idempotency for the same request
+ID, meaning a retry returns the original outcome without a second charge. The
+OpenAI Chat Completions request used by the portable adapter has no such
+guarantee, so it must be treated as non-idempotent. A response stored before a
+crash is validated again by the next generation, not requested again.
+
+Run and repository ceilings are calculated from the durable attempt rows, not
+from process memory. Recovery, reruns, and new runs therefore cannot reset them.
+Settled attempts count at their exact usage. Reserved, in-flight, uncertain, and
+failed attempts without known usage count at their full reservation. A new
+reservation is refused when that conservative total would exceed a ceiling. The
+final run report includes `usage.model`, which lists each attempt with exact
+usage where known, its upper-bound charge, and counts of uncertain, failed, and
+unknown-usage attempts.
+
+The send transition takes a lock on the leased run, the repository selection, and
+the model policy. Cancellation, a superseding candidate, removed repository
+access, disabled assistance, and revoked source consent are all durable, and
+each prevents any later send. A response that arrives after its generation lost
+the run is recorded for accounting and marked late. It can never satisfy a newer
+generation. Publication retries reuse the persisted report and make no model
+calls.
+
+Manage the policy and inspect or reconcile attempts with the operator command:
+
+```sh
+node src/model-attempts.ts policy INSTALLATION_ID REPOSITORY_ID policy.json
+node src/model-attempts.ts revoke-consent INSTALLATION_ID REPOSITORY_ID
+node src/model-attempts.ts disable INSTALLATION_ID REPOSITORY_ID
+node src/model-attempts.ts inspect INSTALLATION_ID REPOSITORY_ID RUN_ID
+node src/model-attempts.ts reconcile INSTALLATION_ID REPOSITORY_ID REQUEST_ID charged INPUT_TOKENS OUTPUT_TOKENS
+node src/model-attempts.ts reconcile INSTALLATION_ID REPOSITORY_ID REQUEST_ID not-processed
+```
+
+A policy file has this shape. Rates are microdollars per million tokens, and
+`maxAttemptsPerObligation` is at most 5:
+
+```json
+{"enabled": false, "private": true, "sourceConsent": false, "limits": {
+  "contextBytes": 65536, "maxOutputPerCall": 2048,
+  "inputMicrosPerMillion": 150000, "outputMicrosPerMillion": 600000,
+  "maxAttemptsPerObligation": 5,
+  "run": {"inputTokens": 200000, "outputTokens": 20000, "costMicros": 100000},
+  "repository": {"inputTokens": 2000000, "outputTokens": 200000, "costMicros": 1000000}}}
+```
+
+Reconcile an uncertain attempt only from the provider's own usage records.
+Reconciliation never imports a response. The recovery and fault-injection tests
+in `test/model-recovery.test.ts` use `PROOFCI_TEST_DATABASE_URL` and a
+deterministic model stub. They cover reservation, send, response persistence,
+validation, and publication handoff.
+
 ## Migrate a baseline
 
 The protected SQLite store is the authority for migration grants, the managed
@@ -268,8 +343,10 @@ renewal notices cancellation or removal, and cannot publish a late completion.
 A GitHub change not yet observed by a webhook or reconciliation cannot be acted
 on; the executor also rechecks GitHub and the baseline before dispatch and
 before accepting a result. There are no in-flight hosted model calls in this
-pilot. A future broker must define and test its own in-flight revocation and
-durable quota reservation boundary before the provider gate can open.
+pilot. The durable model ledger described in
+[Model attempt recovery](#model-attempt-recovery) defines the reservation and
+in-flight revocation boundary that a hosted broker must use; the provider gate
+remains closed until a provider adapter is reviewed and wired to it.
 
 The opt-in fork acceptance tests require the pinned verifier image and a working
 VM runtime. Build the separate probe image with

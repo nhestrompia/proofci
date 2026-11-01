@@ -1,14 +1,17 @@
-import type { Candidate, RunStore } from './run-store.ts';
+import type { Candidate, Lease, RunStore } from './run-store.ts';
 import { RunFailure } from './run-failure.ts';
 import type { EvidenceStore } from './evidence-store.ts';
+import type { ModelLedger } from './model-ledger.ts';
 
 type Store = Pick<RunStore, 'claim' | 'renew' | 'fail' | 'complete' | 'cancelLease' | 'retry' | 'startDispatch'>;
 
 type Options = {
   store: Store;
   authorize(candidate: Candidate): Promise<'allowed' | 'revoked' | 'unavailable'>;
-  execute(candidate: Candidate, signal: AbortSignal, ensureActive: () => Promise<boolean>, dispatch: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>): Promise<{ report: Record<string, unknown>; evidence: Buffer | null }>;
+  execute(candidate: Candidate, signal: AbortSignal, ensureActive: () => Promise<boolean>, dispatch: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>, lease: Lease): Promise<{ report: Record<string, unknown>; evidence: Buffer | null }>;
   evidence?: Pick<EvidenceStore, 'complete'>;
+  /** Durable model accounting. Recovery and final reports go through the run lifecycle. */
+  ledger?: Pick<ModelLedger, 'recover' | 'close' | 'usage'>;
   leaseMs: number;
   signal?: AbortSignal;
 };
@@ -28,7 +31,18 @@ export async function executeNext(options: Options): Promise<boolean> {
     renewing = true;
     void options.store.renew(lease, options.leaseMs).then(ok => { if (!ok) abort.abort(); }, () => abort.abort()).finally(() => { renewing = false; });
   }, Math.max(1, Math.floor(options.leaseMs / 3)));
+  const ledger = options.ledger;
+  /** Final reports carry every model attempt, including failed and uncertain ones. */
+  const account = async (report: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    if (!ledger) return report;
+    await ledger.close(lease);
+    const model = await ledger.usage(lease.id);
+    if (!model) return report;
+    const usage = typeof report.usage === 'object' && report.usage !== null ? report.usage : {};
+    return { ...report, usage: { ...usage, model } };
+  };
   try {
+    await ledger?.recover(lease);
     const access = await options.authorize(lease.candidate);
     if (access === 'revoked') {
       await options.store.cancelLease(lease);
@@ -40,8 +54,8 @@ export async function executeNext(options: Options): Promise<boolean> {
         if (access === 'unavailable') throw new Error('Authorization unavailable');
         return access === 'allowed' && !abort.signal.aborted;
       };
-      const result = await options.execute(lease.candidate, abort.signal, ensureActive, start => options.store.startDispatch(lease, start, stop));
-      const { report } = result;
+      const result = await options.execute(lease.candidate, abort.signal, ensureActive, start => options.store.startDispatch(lease, start, stop), lease);
+      const report = await account(result.report);
       if (!abort.signal.aborted && report.status === 'error' && lease.generation < 3) {
         await options.store.retry(lease, report);
       } else if (!abort.signal.aborted) {
@@ -58,7 +72,12 @@ export async function executeNext(options: Options): Promise<boolean> {
   } catch (error) {
     if (!abort.signal.aborted) {
       if (!(error instanceof RunFailure) && lease.generation < 3) await options.store.retry(lease);
-      else await options.store.fail(lease, error instanceof RunFailure ? error.reason : 'worker_execution_failed');
+      else {
+        const reason = error instanceof RunFailure ? error.reason : 'worker_execution_failed';
+        const report = ledger ? await account({ version: 1, status: 'error', reason }).catch(() => null) : null;
+        if (report && report.usage) await options.store.complete(lease, report);
+        else await options.store.fail(lease, reason);
+      }
     }
   } finally { clearInterval(timer); options.signal?.removeEventListener('abort', stop); }
   return true;
