@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decisionMatches, type ForkDecision } from '../src/fork-policy.ts';
 
-const decision: ForkDecision = { installationId: 1, repositoryId: 2, number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64), baselineRevision: 1, selectionGeneration: 'selection', policyDigest: 'd'.repeat(64), quotaMicros: 100, maintainerId: 5, consent: true };
+const decision: ForkDecision = { installationId: 1, repositoryId: 2, number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64), baselineRevision: 1, selectionGeneration: 'selection', policyDigest: 'd'.repeat(64), quotaMicros: 100, maintainerId: 5, consent: true, authorityEpoch: null };
 test('fork decisions require exact inputs, consent and available quota', () => {
   assert.equal(decisionMatches(decision, decision, 99), true);
   assert.equal(decisionMatches(decision, decision, 100), false);
@@ -94,5 +94,41 @@ test('maintainer approval is scoped to an active fork and cancellation revokes r
     assert.equal(await runs.acceptDelivery(push, false), true);
     assert.equal(await runs.acceptDelivery({ ...push, deliveryId: randomUUID() }, true, false), true);
     assert.equal(await policy.requestStatus({ ...fresh, candidate: fresh.candidate }, 100, 0), 'deferred');
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+test('authority revisions fence fork approvals and previously admitted runs', { skip: !process.env.PROOFCI_TEST_DATABASE_URL }, async () => {
+  const { Pool } = await import('pg');
+  const { randomUUID } = await import('node:crypto');
+  const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+  const { RunStore } = await import('../src/run-store.ts');
+  const { ForkPolicy } = await import('../src/fork-policy.ts');
+  const admin = new Pool({ connectionString: process.env.PROOFCI_TEST_DATABASE_URL });
+  const schema = `fork_authority_${randomUUID().replaceAll('-', '')}`;
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: process.env.PROOFCI_TEST_DATABASE_URL, options: `-c search_path=${schema}` });
+  try {
+    let epoch = 1;
+    const authority = { current: async () => epoch, managedRef: () => 'refs/heads/main' };
+    const selections = new EnrollmentStore(pool), runs = new RunStore(pool, authority);
+    await selections.initialize(); await runs.initialize();
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    await selections.select(candidate);
+    const github = { checkMaintainerAccess: async () => 5, installationAccess: async () => 'allowed' as const,
+      resolvePullRequest: async () => ({ number: 3, sourceRepositoryId: 4, destinationRepositoryId: 2, head: candidate.head, base: candidate.base, baseRef: 'refs/heads/main' }) };
+    const policy = new ForkPolicy({ pool, selections, github, authority, sessions: { checkMaintainer: async () => 5 }, baselines: { activeIdentity: async () => ({ digest: candidate.baseline, revision: 1 }) } });
+    await policy.syncPolicy(candidate, 100);
+    await runs.admit(candidate);
+    const lease = await runs.claim(60_000);
+    assert.ok(lease && lease.candidate.kind === 'pull-request');
+    assert.equal(await policy.approve({ session: 'session', candidate: lease.candidate, quotaMicros: 100, baselineRevision: 1, consent: true }), true);
+    assert.equal(await policy.requestStatus({ ...lease, candidate: lease.candidate }, 100, 0), 'deferred');
+    epoch = 2;
+    assert.equal(await runs.findPull(candidate, 3), null);
+    assert.equal(await policy.requestStatus({ ...lease, candidate: lease.candidate }, 100, 0), 'denied');
+    await runs.admit(candidate);
+    const next = await runs.claim(60_000);
+    assert.ok(next && next.candidate.kind === 'pull-request');
+    assert.equal(await policy.requestStatus({ ...next, candidate: next.candidate }, 100, 0), 'denied');
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });

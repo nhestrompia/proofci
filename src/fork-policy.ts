@@ -8,7 +8,7 @@ import type { OAuthSessions } from './oauth.ts';
 import type { ActiveBaselines } from './active-baselines.ts';
 
 type ForkCandidate = Extract<Candidate, { kind: 'pull-request' }>;
-export type ForkDecision = RepositoryScope & { number: number; sourceRepositoryId: number; head: string; mergeHead: string; base: string; baseline: string; baselineRevision: number; selectionGeneration: string; policyDigest: string; quotaMicros: number; maintainerId: number; consent: boolean };
+export type ForkDecision = RepositoryScope & { number: number; sourceRepositoryId: number; head: string; mergeHead: string; base: string; baseline: string; baselineRevision: number; selectionGeneration: string; policyDigest: string; quotaMicros: number; maintainerId: number; consent: boolean; authorityEpoch: number | null };
 
 /** A decision is tied to the exact source, destination, policy, selection and budget. */
 export function decisionMatches(approved: ForkDecision, current: ForkDecision, usedMicros: number): boolean {
@@ -16,7 +16,7 @@ export function decisionMatches(approved: ForkDecision, current: ForkDecision, u
     Number.isSafeInteger(approved.quotaMicros) && approved.quotaMicros > usedMicros && approved.quotaMicros === current.quotaMicros &&
     approved.installationId === current.installationId && approved.repositoryId === current.repositoryId && approved.number === current.number &&
     approved.sourceRepositoryId === current.sourceRepositoryId && approved.head === current.head && approved.mergeHead === current.mergeHead && approved.base === current.base &&
-    approved.baseline === current.baseline && approved.baselineRevision === current.baselineRevision && approved.selectionGeneration === current.selectionGeneration && approved.policyDigest === current.policyDigest;
+    approved.authorityEpoch === current.authorityEpoch && approved.baseline === current.baseline && approved.baselineRevision === current.baselineRevision && approved.selectionGeneration === current.selectionGeneration && approved.policyDigest === current.policyDigest;
 }
 
 export function policyDigest(quotaMicros: number): string {
@@ -28,7 +28,7 @@ export function policyDigest(quotaMicros: number): string {
 }
 
 /** Hosted provider calls stay disabled until durable request recovery is available. */
-type Dependencies = { pool: Pool; selections: { readVersion(scope: RepositoryScope): Promise<string | null> }; github: Pick<GitHubApp, 'checkMaintainerAccess' | 'resolvePullRequest' | 'installationAccess'>; sessions: Pick<OAuthSessions, 'checkMaintainer'>; baselines: Pick<ActiveBaselines, 'activeIdentity'> };
+type Dependencies = { pool: Pool; selections: { readVersion(scope: RepositoryScope): Promise<string | null> }; github: Pick<GitHubApp, 'checkMaintainerAccess' | 'resolvePullRequest' | 'installationAccess'>; sessions: Pick<OAuthSessions, 'checkMaintainer'>; baselines: Pick<ActiveBaselines, 'activeIdentity'>; authority?: { current(scope: RepositoryScope): Promise<number | null> } };
 export class ForkPolicy {
   private readonly options: Dependencies;
   constructor(options: Dependencies) { this.options = options; }
@@ -51,14 +51,16 @@ export class ForkPolicy {
   }
 
   private async current(candidate: ForkCandidate, quotaMicros: number): Promise<Omit<ForkDecision, 'maintainerId' | 'consent'> | null> {
-    const { selections, github, baselines } = this.options;
+    const { selections, github, baselines, authority } = this.options;
+    const epoch = authority ? await authority.current(candidate) : null;
+    if (authority && (epoch === null || candidate.authorityEpoch !== epoch)) return null;
     if (!Number.isSafeInteger(quotaMicros) || quotaMicros <= 0 || typeof candidate.mergeHead !== 'string' || !/^[a-f0-9]{40}$/.test(candidate.mergeHead)) return null;
     const selectionGeneration = await selections.readVersion(candidate);
     if (!selectionGeneration || await github.installationAccess(candidate) !== 'allowed') return null;
     const pr = await github.resolvePullRequest(candidate, candidate.number);
     const baseline = await baselines.activeIdentity(candidate);
     if (!pr || pr.sourceRepositoryId !== candidate.sourceRepositoryId || pr.destinationRepositoryId !== candidate.repositoryId || pr.head !== candidate.head || pr.base !== candidate.base || !baseline || baseline.digest !== candidate.baseline || baseline.revision === null || await selections.readVersion(candidate) !== selectionGeneration) return null;
-    return { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: candidate.number, sourceRepositoryId: candidate.sourceRepositoryId, head: candidate.head, mergeHead: candidate.mergeHead, base: candidate.base, baseline: candidate.baseline, baselineRevision: baseline.revision, selectionGeneration, policyDigest: policyDigest(quotaMicros), quotaMicros };
+    return { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: candidate.number, sourceRepositoryId: candidate.sourceRepositoryId, head: candidate.head, authorityEpoch: epoch, mergeHead: candidate.mergeHead, base: candidate.base, baseline: candidate.baseline, baselineRevision: baseline.revision, selectionGeneration, policyDigest: policyDigest(quotaMicros), quotaMicros };
   }
 
   async approve(input: { session: string; candidate: ForkCandidate; quotaMicros: number; baselineRevision: number; consent: boolean }): Promise<boolean> {
@@ -83,9 +85,9 @@ export class ForkPolicy {
       const result = await client.query(`INSERT INTO proofci_fork_decisions (installation_id, repository_id, pull_number, decision)
         SELECT $1,$2,$3,$4::jsonb FROM proofci_repository_selections s WHERE s.installation_id=$1 AND s.repository_id=$2 AND s.generation=$5
         AND EXISTS (SELECT 1 FROM proofci_fork_policies p WHERE p.installation_id=$1 AND p.repository_id=$2 AND p.digest=$10)
-        AND EXISTS (SELECT 1 FROM proofci_runs r WHERE r.installation_id=$1 AND r.repository_id=$2 AND r.pull_number=$3 AND r.kind='pull-request' AND r.applicable AND r.state <> 'cancelled' AND r.source_repository_id=$6 AND r.head=$7 AND r.base=$8 AND r.baseline=$9 AND r.merge_head=$11)
+        AND EXISTS (SELECT 1 FROM proofci_runs r WHERE r.installation_id=$1 AND r.repository_id=$2 AND r.pull_number=$3 AND r.kind='pull-request' AND r.applicable AND r.state <> 'cancelled' AND r.source_repository_id=$6 AND r.head=$7 AND r.base=$8 AND r.baseline=$9 AND r.merge_head=$11 AND r.authority_epoch IS NOT DISTINCT FROM $12)
         ON CONFLICT (installation_id, repository_id, pull_number) DO UPDATE SET decision=EXCLUDED.decision, created_at=clock_timestamp() RETURNING pull_number`,
-        [decision.installationId, decision.repositoryId, decision.number, JSON.stringify(decision), decision.selectionGeneration, decision.sourceRepositoryId, decision.head, decision.base, decision.baseline, decision.policyDigest, decision.mergeHead]);
+        [decision.installationId, decision.repositoryId, decision.number, JSON.stringify(decision), decision.selectionGeneration, decision.sourceRepositoryId, decision.head, decision.base, decision.baseline, decision.policyDigest, decision.mergeHead, decision.authorityEpoch]);
       await client.query('COMMIT');
       return result.rowCount === 1;
     } catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -116,9 +118,9 @@ export class ForkPolicy {
     const result = await this.options.pool.query<{ decision: ForkDecision }>(`SELECT d.decision FROM proofci_fork_decisions d JOIN proofci_runs r ON
       r.installation_id=d.installation_id AND r.repository_id=d.repository_id AND r.pull_number=d.pull_number
       WHERE r.id=$1 AND r.generation=$2 AND r.state='running' AND r.applicable AND r.lease_until > clock_timestamp()
-      AND r.selection_generation=$3 AND r.source_repository_id=$4 AND r.head=$5 AND r.base=$6 AND r.baseline=$7 AND r.merge_head=$9
+      AND r.selection_generation=$3 AND r.source_repository_id=$4 AND r.head=$5 AND r.base=$6 AND r.baseline=$7 AND r.merge_head=$9 AND r.authority_epoch IS NOT DISTINCT FROM $10
       AND EXISTS (SELECT 1 FROM proofci_fork_policies p WHERE p.installation_id=r.installation_id AND p.repository_id=r.repository_id AND p.digest=$8)`,
-    [lease.id, lease.generation, current.selectionGeneration, candidate.sourceRepositoryId, candidate.head, candidate.base, candidate.baseline, current.policyDigest, candidate.mergeHead]);
+    [lease.id, lease.generation, current.selectionGeneration, candidate.sourceRepositoryId, candidate.head, candidate.base, candidate.baseline, current.policyDigest, candidate.mergeHead, current.authorityEpoch]);
     const approved = result.rows[0]?.decision;
     if (!approved || !decisionMatches(approved, { ...current, maintainerId: approved.maintainerId, consent: true }, usedMicros)) return 'denied';
     return 'deferred';

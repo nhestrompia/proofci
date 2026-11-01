@@ -1,6 +1,5 @@
 import { createHash, createPrivateKey } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Pool } from 'pg';
 import { EnrollmentStore } from './enrollment-store.ts';
@@ -14,6 +13,9 @@ import { RunStore } from './run-store.ts';
 import { ForkPolicy, policyDigest } from './fork-policy.ts';
 import { ActiveBaselines } from './active-baselines.ts';
 import { RunService, type PilotConfiguration } from './run-service.ts';
+import { MigrationService } from './migration-service.ts';
+import { LocalAuthority } from './local-authority.ts';
+import { readPilotConfiguration } from './pilot-configuration.ts';
 import { GetBucketVersioningCommand, S3Client } from '@aws-sdk/client-s3';
 import { EvidenceStore } from './evidence-store.ts';
 import { downloadEvidence } from './evidence-access.ts';
@@ -36,32 +38,22 @@ await store.initialize();
 const enrollment = new EnrollmentService({ store, sessions, github });
 let runs: RunStore | undefined;
 let runService: RunService | undefined;
+let migrationService: MigrationService | undefined;
 let evidenceStore: EvidenceStore | undefined;
 let forkPolicy: ForkPolicy | undefined;
 let activeBaselines: ActiveBaselines | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
-  if (!isAbsolute(pilotConfig)) throw new Error('Pilot configuration path must be absolute');
-  const stat = lstatSync(pilotConfig);
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || stat.size > 65536) throw new Error('Invalid pilot configuration file');
-  const raw: unknown = JSON.parse(readFileSync(pilotConfig, 'utf8'));
-  if (!Array.isArray(raw)) throw new Error('Invalid pilot configuration');
-  const repositories: PilotConfiguration[] = [];
-  for (const entry of raw) {
-    if (typeof entry !== 'object' || entry === null || !('installationId' in entry) || typeof entry.installationId !== 'number' ||
-        !('repositoryId' in entry) || typeof entry.repositoryId !== 'number' || !('store' in entry) || typeof entry.store !== 'string' ||
-        !('repository' in entry) || typeof entry.repository !== 'string' || !('ref' in entry) || typeof entry.ref !== 'string' ||
-        !entry.ref.startsWith('refs/heads/')) throw new Error('Invalid pilot configuration');
-    const assistanceQuotaMicros = 'assistanceQuotaMicros' in entry ? entry.assistanceQuotaMicros : 0;
-    if (typeof assistanceQuotaMicros !== 'number' || !Number.isSafeInteger(assistanceQuotaMicros) || assistanceQuotaMicros < 0) throw new Error('Invalid assistance quota');
-    repositories.push({ installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref, assistanceQuotaMicros });
-  }
+  const repositories = readPilotConfiguration(pilotConfig);
   pilotRepositories = repositories;
+  const authority = new LocalAuthority(repositories);
+  store.setAuthority(authority);
   const baselines = new ActiveBaselines(repositories);
+  migrationService = new MigrationService({ sessions, github, selections: store, repositories });
   activeBaselines = baselines;
-  runs = new RunStore(pool); await runs.initialize();
-  forkPolicy = new ForkPolicy({ pool, selections: store, github, sessions, baselines });
+  runs = new RunStore(pool, authority); await runs.initialize();
+  forkPolicy = new ForkPolicy({ pool, selections: store, github, sessions, baselines, authority });
   for (const repository of repositories) await forkPolicy.syncPolicy(repository, repository.assistanceQuotaMicros);
   const retentionDays = Number(process.env.PROOFCI_EVIDENCE_RETENTION_DAYS ?? '30');
   if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) throw new Error('Invalid evidence retention');
@@ -123,7 +115,7 @@ const server = createServer(async (request, response) => {
       if (!repositories) return reply(response, 200, `${page}<p>Sign in to select a repository from an installed App.</p>`);
       if (repositories.length === 0) return reply(response, 200, `${page}<p>No repositories are available. Install the App on a repository you can maintain.</p><form method="post" action="/logout"><button>Sign out</button></form>`);
       const options = repositories.map(repo => `<option value="${repo.installationId}:${repo.repositoryId}">${escapeHtml(repo.name)}</option>`).join('');
-      return reply(response, 200, `${page}<form method="post" action="/enroll"><label>Repository <select name="repository" required>${options}</select></label><button>Enroll repository</button><button formaction="/inspect">Check policy</button><button formaction="/remove">Remove enrollment</button></form><form method="post" action="/logout"><button>Sign out</button></form>`);
+      return reply(response, 200, `${page}<form method="post" action="/migrate"><h2>Authorize contract migration</h2><label>Repository <select name="repository" required>${options}</select></label><label>Candidate commit <input name="head" required pattern="[0-9a-f]{40}"></label><label>Current manifest SHA-256 <input name="previous" required pattern="[0-9a-f]{64}"></label><label>Replacement manifest SHA-256 <input name="replacement" required pattern="[0-9a-f]{64}"></label><button>Authorize and verify migration</button></form><form method="post" action="/enroll"><label>Repository <select name="repository" required>${options}</select></label><button>Enroll repository</button><button formaction="/inspect">Check policy</button><button formaction="/remove">Remove enrollment</button></form><form method="post" action="/logout"><button>Sign out</button></form>`);
     }
     if (request.method === 'GET' && url.pathname === '/login') {
       const login = sessions.start();
@@ -195,6 +187,17 @@ const server = createServer(async (request, response) => {
 
       } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
+    }
+    if (request.method === 'POST' && url.pathname === '/migrate') {
+      if (request.headers.origin !== origin.origin || !migrationService) return reply(response, 403, 'Migration denied.');
+      const data = await form(request);
+      const selection = data.get('repository') ?? '';
+      if (!/^[1-9]\d*:[1-9]\d*$/.test(selection)) return reply(response, 400, 'Invalid repository selection.');
+      const [installationId, repositoryId] = selection.split(':').map(Number);
+      try {
+        const result = await migrationService.migrate({ session: cookie(request, 'proofci_session'), scope: { installationId, repositoryId }, head: data.get('head') ?? '', previous: data.get('previous') ?? '', replacement: data.get('replacement') ?? '' });
+        return reply(response, result.status === 'passed' ? 200 : 422, `<h1>${result.status === 'passed' ? 'Policy changed' : 'Migration not activated'}</h1><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`);
+      } catch { return reply(response, 403, 'Migration failed or authorization is stale. The previous baseline remains active unless another migration replaced it.'); }
     }
     if ((request.method === 'GET' || request.method === 'POST') && url.pathname === '/fork-assistance') {
       const runStore = runs, policy = forkPolicy, baselines = activeBaselines;

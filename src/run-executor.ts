@@ -37,6 +37,7 @@ export async function executeRun(options: { candidate: Candidate; signal: AbortS
     const start = () => isolatedDispatch({ ...candidate, head: verifiedHead }, { store: config.store, repository: config.repository, snapshot: staged.snapshot, report: join(root, 'report.json'), bundle }, signal);
     const result = await (options.dispatch ? options.dispatch(start) : start());
     if (signal.aborted) throw new RunFailure('cancelled');
+    if (result.status !== 'error' && candidate.authorityEpoch !== undefined && result.authority_epoch !== candidate.authorityEpoch) throw new RunFailure('candidate_superseded');
     await checkCurrent();
     let evidence: Buffer | null = null;
     if (result.status !== 'error') {

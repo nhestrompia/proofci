@@ -4,7 +4,7 @@ import type { RepositoryScope } from './enrollment-store.ts';
 import type { PushDelivery } from './push-events.ts';
 import type { PullDelivery } from './pull-events.ts';
 
-type CandidateInputs = { installationId: number; repositoryId: number; lane: string; head: string; base: string; baseline: string; pullHead?: string | null; mergeHead?: string | null };
+type CandidateInputs = { installationId: number; repositoryId: number; lane: string; head: string; base: string; baseline: string; pullHead?: string | null; mergeHead?: string | null; authorityEpoch?: number };
 export type Candidate = CandidateInputs & ({ kind: 'head-snapshot' | 'resolved' } | { kind: 'pull-request'; sourceRepositoryId: number; number: number });
 export type PullLease = PullDelivery & { generation: number; selectionGeneration: string };
 
@@ -22,10 +22,10 @@ function validateCandidate(candidate: Candidate): void {
       (candidate.kind === 'resolved' && /^pull\/[1-9]\d*$/.test(candidate.lane) && (typeof candidate.pullHead !== 'string' || !/^[a-f0-9]{40}$/.test(candidate.pullHead)))) throw new Error('Invalid immutable candidate');
 }
 
-async function insertCandidate(client: PoolClient, candidate: Candidate, selectionGeneration: string): Promise<string> {
+async function insertCandidate(client: PoolClient, candidate: Candidate, selectionGeneration: string, authorityEpoch: number | null): Promise<string> {
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${candidate.installationId}:${candidate.repositoryId}:${candidate.lane}`]);
   const params = [candidate.installationId, candidate.repositoryId, candidate.lane, candidate.head, candidate.base, candidate.baseline, candidate.kind, candidate.kind === 'pull-request' ? candidate.sourceRepositoryId : null, candidate.kind === 'pull-request' ? candidate.number : null, candidate.mergeHead ?? null, candidate.pullHead ?? null];
-  const existing = await client.query<{ id: string }>('SELECT id FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND head=$4 AND base=$5 AND baseline=$6 AND kind=$7 AND source_repository_id IS NOT DISTINCT FROM $8 AND pull_number IS NOT DISTINCT FROM $9 AND merge_head IS NOT DISTINCT FROM $10 AND pull_head IS NOT DISTINCT FROM $11 AND selection_generation=$12 AND applicable', [...params, selectionGeneration]);
+  const existing = await client.query<{ id: string }>('SELECT id FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND head=$4 AND base=$5 AND baseline=$6 AND kind=$7 AND source_repository_id IS NOT DISTINCT FROM $8 AND pull_number IS NOT DISTINCT FROM $9 AND merge_head IS NOT DISTINCT FROM $10 AND pull_head IS NOT DISTINCT FROM $11 AND selection_generation=$12 AND authority_epoch IS NOT DISTINCT FROM $13 AND applicable', [...params, selectionGeneration, authorityEpoch]);
   if (existing.rows[0]) return existing.rows[0].id;
   if (candidate.kind === 'pull-request') {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`fork-policy:${candidate.installationId}:${candidate.repositoryId}:${candidate.number}`]);
@@ -35,18 +35,34 @@ async function insertCandidate(client: PoolClient, candidate: Candidate, selecti
   }
   await client.query(`WITH changed AS (UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND applicable RETURNING id) UPDATE proofci_publications SET pending=true, revision=revision+1 WHERE run_id IN (SELECT id FROM changed)`, params.slice(0, 3));
   const id = randomUUID();
-  await client.query("INSERT INTO proofci_runs (id, installation_id, repository_id, lane, head, base, baseline, kind, source_repository_id, pull_number, merge_head, pull_head, selection_generation, state) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'queued')", [id, ...params, selectionGeneration]);
+  await client.query("INSERT INTO proofci_runs (id, installation_id, repository_id, lane, head, base, baseline, kind, source_repository_id, pull_number, merge_head, pull_head, selection_generation, authority_epoch, state) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued')", [id, ...params, selectionGeneration, authorityEpoch]);
 
   if (candidate.kind === 'pull-request' || (candidate.kind === 'resolved' && /^pull\/[1-9]\d*$/.test(candidate.lane))) await client.query('INSERT INTO proofci_publications (run_id) VALUES ($1)', [id]);
   return id;
 }
 
 type Run = { id: string; applicable: boolean; state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; report: unknown };
+type StoredRun = Run & { authority_epoch: string | null };
 
 /** Durable lifecycle for already authorized, immutable candidates. */
 export class RunStore {
   private readonly pool: Pool;
-  constructor(pool: Pool) { this.pool = pool; }
+  private readonly authority?: { current(scope: RepositoryScope): Promise<number | null> };
+  constructor(pool: Pool, authority?: { current(scope: RepositoryScope): Promise<number | null> }) { this.pool = pool; this.authority = authority; }
+
+  private async applicability(scope: RepositoryScope, runs: StoredRun[]): Promise<Run[]> {
+    const epoch = await this.authority?.current(scope) ?? null;
+    return runs.map(({ authority_epoch: admittedEpoch, ...run }) => {
+      if (!run.applicable) return run;
+      if (!this.authority && admittedEpoch === null) return run;
+      if (epoch === null || admittedEpoch !== String(epoch)) return { ...run, applicable: false };
+      if (run.state !== 'completed') return run;
+      const report = run.report;
+      const valid = typeof report === 'object' && report !== null &&
+        'authority_epoch' in report && report.authority_epoch === epoch;
+      return { ...run, applicable: valid };
+    });
+  }
 
   async initialize(): Promise<void> {
     const migration = await this.pool.connect();
@@ -62,6 +78,7 @@ export class RunStore {
       created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), first_started_at TIMESTAMPTZ, started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ,
       recovery_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
     )`);
+      await migration.query('ALTER TABLE proofci_runs ADD COLUMN IF NOT EXISTS authority_epoch BIGINT');
     await migration.query(`DO $$ BEGIN
       PERFORM pg_advisory_xact_lock(hashtextextended('proofci_runs_state_migration', 0));
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='proofci_runs'::regclass
@@ -287,7 +304,9 @@ export class RunStore {
           await client.query('DELETE FROM proofci_fork_decisions WHERE installation_id=$1 AND repository_id=$2 AND pull_number=$3', [delivery.installationId, delivery.repositoryId, delivery.number]);
           await client.query("UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND applicable", [delivery.installationId, delivery.repositoryId, lane]);
         } else {
-          const id = await insertCandidate(client, candidate, current.rows[0].selection_generation);
+          const epoch = await this.authority?.current(candidate) ?? null;
+          if (this.authority && epoch === null) throw new Error('Repository authority unavailable');
+          const id = await insertCandidate(client, candidate, current.rows[0].selection_generation, epoch);
           await client.query('UPDATE proofci_publications SET pending=true, revision=revision+1, needs_revalidation=false WHERE run_id=$1 AND needs_revalidation', [id]);
         }
       }
@@ -322,12 +341,13 @@ export class RunStore {
 
   /** Recheck published candidates when the protected baseline changes or becomes unavailable. */
   async reconcileBaseline(scope: RepositoryScope, baseline: string | null): Promise<number[]> {
+    const epoch = this.authority ? await this.authority.current(scope) : null;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query(`UPDATE proofci_publications p SET pending=true, revision=revision+1, needs_revalidation=true
         FROM proofci_runs r WHERE p.run_id=r.id AND r.installation_id=$1 AND r.repository_id=$2 AND r.applicable
-        AND r.baseline IS DISTINCT FROM $3 AND NOT p.needs_revalidation`, [scope.installationId, scope.repositoryId, baseline]);
+        AND (r.baseline IS DISTINCT FROM $3 OR ($4::boolean AND ($5::bigint IS NULL OR r.authority_epoch IS DISTINCT FROM $5))) AND NOT p.needs_revalidation`, [scope.installationId, scope.repositoryId, baseline, !!this.authority, epoch]);
       const result = await client.query<{ number: number }>(`SELECT substring(r.lane FROM 6)::float8 AS number FROM proofci_runs r JOIN proofci_publications p ON p.run_id=r.id
         WHERE r.installation_id=$1 AND r.repository_id=$2 AND r.applicable AND p.needs_revalidation AND r.lane ~ '^pull/[1-9][0-9]*$'
         AND NOT EXISTS (SELECT 1 FROM proofci_pull_deliveries d WHERE d.installation_id=r.installation_id AND d.repository_id=r.repository_id
@@ -360,7 +380,11 @@ export class RunStore {
           if (!delivery.deleted) throw new Error('Invalid deletion result');
           await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${delivery.installationId}:${delivery.repositoryId}:${delivery.ref}`]);
           await client.query("UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND applicable", [delivery.installationId, delivery.repositoryId, delivery.ref]);
-        } else await insertCandidate(client, candidate, current.rows[0].selection_generation);
+        } else {
+          const epoch = await this.authority?.current(candidate) ?? null;
+          if (this.authority && epoch === null) throw new Error('Repository authority unavailable');
+          await insertCandidate(client, candidate, current.rows[0].selection_generation, epoch);
+        }
       }
       await client.query("UPDATE proofci_push_deliveries SET state='done', lease_until=NULL, last_error=NULL WHERE delivery_id=$1", [delivery.deliveryId]);
       await client.query('COMMIT');
@@ -380,7 +404,9 @@ export class RunStore {
       await client.query('SELECT revision FROM proofci_installation_revisions WHERE installation_id=$1 FOR UPDATE', [candidate.installationId]);
       const selected = await client.query<{ generation: string }>('SELECT generation FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2', [candidate.installationId, candidate.repositoryId]);
       if (!selected.rows[0]) throw new Error('Repository not enrolled');
-      const id = await insertCandidate(client, candidate, selected.rows[0].generation);
+      const epoch = await this.authority?.current(candidate) ?? null;
+      if (this.authority && epoch === null) throw new Error('Repository authority unavailable');
+      const id = await insertCandidate(client, candidate, selected.rows[0].generation, epoch);
       await client.query('COMMIT');
       return id;
     } catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -398,7 +424,7 @@ export class RunStore {
       AND EXISTS (SELECT 1 FROM proofci_repository_selections s WHERE s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation)
       ORDER BY r.created_at, r.id FOR UPDATE OF r SKIP LOCKED LIMIT 1) RETURNING id, generation,
       jsonb_strip_nulls(jsonb_build_object('kind', kind, 'installationId', installation_id, 'repositoryId', repository_id, 'lane', lane,
-                        'head', head, 'base', base, 'baseline', baseline, 'mergeHead', merge_head, 'pullHead', pull_head)) || CASE WHEN kind='pull-request' THEN json_build_object('sourceRepositoryId', source_repository_id::float8, 'number', pull_number::float8)::jsonb ELSE '{}'::jsonb END AS candidate`, [leaseMs]);
+                        'head', head, 'base', base, 'baseline', baseline, 'mergeHead', merge_head, 'pullHead', pull_head, 'authorityEpoch', authority_epoch)) || CASE WHEN kind='pull-request' THEN json_build_object('sourceRepositoryId', source_repository_id::float8, 'number', pull_number::float8)::jsonb ELSE '{}'::jsonb END AS candidate`, [leaseMs]);
 
     return result.rows[0] ?? null;
   }
@@ -522,7 +548,7 @@ export class RunStore {
       WHERE run_id=(SELECT run_id FROM proofci_publications WHERE pending AND (lease_until IS NULL OR lease_until <= clock_timestamp()) ORDER BY run_id FOR UPDATE SKIP LOCKED LIMIT 1)
       RETURNING run_id, revision, generation)
       SELECT r.id, c.revision, c.generation AS "leaseGeneration", r.generation AS "runGeneration", r.state, r.applicable, r.report, r.evidence_sha256 AS "evidenceSha256",
-      json_build_object('kind',r.kind,'installationId',r.installation_id::float8,'repositoryId',r.repository_id::float8,'lane',r.lane,'head',r.head,'base',r.base,'baseline',r.baseline,'pullHead',r.pull_head,'mergeHead',r.merge_head,'number',r.pull_number,'sourceRepositoryId',r.source_repository_id) AS candidate
+      json_build_object('kind',r.kind,'installationId',r.installation_id::float8,'repositoryId',r.repository_id::float8,'lane',r.lane,'head',r.head,'base',r.base,'baseline',r.baseline,'pullHead',r.pull_head,'mergeHead',r.merge_head,'number',r.pull_number,'sourceRepositoryId',r.source_repository_id,'authorityEpoch',r.authority_epoch) AS candidate
       FROM claimed c JOIN proofci_runs r ON r.id=c.run_id`, [leaseMs]);
     return result.rows[0] ?? null;
   }
@@ -531,7 +557,9 @@ export class RunStore {
     const result = await this.pool.query(`UPDATE proofci_publications p SET lease_until=clock_timestamp()+interval '5 minutes' FROM proofci_runs r
       JOIN proofci_repository_selections s ON s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
       WHERE r.id=p.run_id AND r.id=$1 AND p.generation=$2 AND p.revision=$3 AND p.lease_until > clock_timestamp() AND NOT p.needs_revalidation AND r.generation=$4 AND r.state=$5 AND r.applicable`, [item.id, item.leaseGeneration, item.revision, item.runGeneration, item.state]);
-    return result.rowCount === 1;
+    if (result.rowCount !== 1) return false;
+    if (!this.authority) return true;
+    return item.candidate.authorityEpoch != null && await this.authority.current(item.candidate) === item.candidate.authorityEpoch;
   }
 
   async ownsPublication(item: Publication): Promise<boolean> {
@@ -583,13 +611,14 @@ export class RunStore {
   }
 
   async list(scope: RepositoryScope): Promise<Run[]> {
-    const result = await this.pool.query<Run>('SELECT id, state, applicable, report FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 ORDER BY created_at DESC LIMIT 100', [scope.installationId, scope.repositoryId]);
-    return result.rows;
+    const result = await this.pool.query<StoredRun>('SELECT id, state, applicable, report, authority_epoch FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 ORDER BY created_at DESC LIMIT 100', [scope.installationId, scope.repositoryId]);
+    return this.applicability(scope, result.rows);
   }
 
   async inspect(scope: RepositoryScope, id: string): Promise<Run | null> {
-    const result = await this.pool.query<Run>('SELECT id, state, applicable, report FROM proofci_runs WHERE id=$1 AND installation_id=$2 AND repository_id=$3', [id, scope.installationId, scope.repositoryId]);
-    return result.rows[0] ?? null;
+    const result = await this.pool.query<StoredRun>('SELECT id, state, applicable, report, authority_epoch FROM proofci_runs WHERE id=$1 AND installation_id=$2 AND repository_id=$3', [id, scope.installationId, scope.repositoryId]);
+    const run = result.rows[0];
+    return run ? (await this.applicability(scope, [run]))[0] ?? null : null;
   }
 
   async evidence(scope: RepositoryScope, id: string): Promise<{ bytes: Buffer; sha256: string } | null> {
@@ -618,12 +647,15 @@ export class RunStore {
   }
 
   async findPull(scope: RepositoryScope, number: number): Promise<{ id: string; candidate: Extract<Candidate, { kind: 'pull-request' }> } | null> {
-    const result = await this.pool.query<{ id: string; candidate: Extract<Candidate, { kind: 'pull-request' }> }>(`SELECT id, jsonb_build_object(
+    const result = await this.pool.query<{ id: string; candidate: Extract<Candidate, { kind: 'pull-request' }> }>(`SELECT id, jsonb_strip_nulls(jsonb_build_object(
       'kind', kind, 'installationId', installation_id::float8, 'repositoryId', repository_id::float8,
       'lane', lane, 'number', pull_number::float8, 'sourceRepositoryId', source_repository_id::float8,
-      'head', head, 'base', base, 'baseline', baseline, 'mergeHead', merge_head) AS candidate FROM proofci_runs
+      'head', head, 'base', base, 'baseline', baseline, 'mergeHead', merge_head, 'authorityEpoch', authority_epoch)) AS candidate FROM proofci_runs
       WHERE installation_id=$1 AND repository_id=$2 AND kind='pull-request' AND pull_number=$3 AND applicable AND state <> 'cancelled'`, [scope.installationId, scope.repositoryId, number]);
 
-    return result.rows[0] ?? null;
+    const run = result.rows[0];
+    if (!run) return null;
+    if (this.authority && (run.candidate.authorityEpoch == null || await this.authority.current(scope) !== run.candidate.authorityEpoch)) return null;
+    return run;
   }
 }

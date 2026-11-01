@@ -1,0 +1,65 @@
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+import subprocess
+import sys
+
+sys.path.insert(0, '/private/tmp/proofci-ticket-19/portable')
+import baselines
+import service_migration
+
+root = Path('/private/tmp/proofci19-live-demonstration3')
+root.mkdir(mode=0o700, exist_ok=False)
+branch = 'proofci-ticket19-demo-f805eec2'
+repository = 'https://github.com/nhestrompia/proofci.git'
+
+def api(path):
+    return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+
+def authorized():
+    user = api('user')
+    repo = api('repos/nhestrompia/proofci')
+    if repo['id'] != 1440679218 or not (repo.get('permissions', {}).get('maintain') or repo.get('permissions', {}).get('admin')):
+        raise ValueError('maintainer permission is not current')
+    return user['id']
+
+def current_head():
+    return api('repos/nhestrompia/proofci/git/ref/heads/' + branch)['object']['sha']
+
+actor = authorized()
+head = current_head()
+snapshot = root / 'snapshot'
+subprocess.run(['git', 'clone', '--quiet', '--depth=1', '--branch', branch, repository, str(snapshot)], check=True)
+with sqlite3.connect('/private/tmp/proofci-pilot-secure/baselines.db') as source, sqlite3.connect(root / 'baselines.db') as target:
+    source.backup(target)
+store = str(root / 'baselines.db')
+with baselines.open_store(store) as db:
+    previous = baselines.lookup(db)['digest']
+replacement = hashlib.sha256((snapshot / 'proofci-pilot-contracts.json').read_bytes()).hexdigest()
+try:
+    service_migration.prepare(store, repository, str(snapshot), '0'*40, previous, replacement, actor, 'live-demo')
+except ValueError:
+    stale_rejected = True
+else:
+    raise RuntimeError('stale authorization accepted')
+identifier = service_migration.prepare(store, repository, str(snapshot), head, previous, replacement, actor, 'live-demo')
+report = root / 'verification.json'
+status = service_migration.verify(store, repository, str(snapshot), identifier, str(report))
+if status != 0:
+    raise RuntimeError('verification failed: ' + report.read_text())
+if authorized() != actor or current_head() != head:
+    raise RuntimeError('authorization changed')
+result = service_migration.activate(store, repository, identifier, head, actor, 'live-demo')
+with baselines.open_store(store) as db:
+    active = baselines.lookup(db)['digest']
+if active != replacement or not result['policy_changed']:
+    raise RuntimeError('activation failed')
+summary = {'repository': repository, 'branch': branch, 'head': head, 'maintainer_id': actor,
+           'previous': previous, 'replacement': replacement, 'stale_candidate_rejected': stale_rejected,
+           'status': result['status'], 'policy_changed': result['policy_changed'], 'guarantee_changes': result['guarantee_changes'],
+           'retired_guarantees': result['retired_guarantees'], 'scope': 'local trusted caller with real GitHub user API; isolated copied baseline store'}
+(root / 'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
+print(json.dumps(summary, indent=2))

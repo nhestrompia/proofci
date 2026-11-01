@@ -71,6 +71,15 @@ file that is not writable by other users:
 ]
 ```
 
+Before enrolling, initialize the authority in the same protected store. Use the
+exact current managed branch head and the GitHub numeric user ID of an initial
+trusted maintainer. Bootstrap only after reviewing both values:
+
+```sh
+python3 portable/authority.py bootstrap --store /absolute/protected/baselines.db \
+  --repository https://github.com/OWNER/REPOSITORY.git --ref refs/heads/main \
+  --head FULL_COMMIT_SHA --actor NUMERIC_GITHUB_USER_ID
+```
 Set `PROOFCI_LOCAL_PILOT_CONFIG` to the absolute path of this file. Set
 `PROOFCI_S3_BUCKET` and `PROOFCI_S3_REGION` for a private, unversioned
 S3-compatible bucket. The service uses the AWS SDK credential provider chain;
@@ -136,14 +145,86 @@ candidate without a webhook:
 node src/run-dispatch.ts INSTALLATION_ID REPOSITORY_ID HEAD BASE BASELINE_SHA256 LANE
 ```
 
-Use full commit IDs and the active baseline SHA-256. The command prints the run
-ID. The worker rechecks the selected installation, repository access, and active
+Use full commit IDs and the active baseline SHA-256. Set `PROOFCI_LOCAL_PILOT_CONFIG`
+for managed repositories so the run binds the authority revision. The command prints the run ID. The worker rechecks the selected installation, repository access, and active
 baseline before executing. This command does not publish a GitHub check.
 
-These commands use `DATABASE_URL`. Limit access to the database and pilot
-configuration to trusted operators. Cancellation persists, and duplicate
+These commands use `DATABASE_URL`. Set `PROOFCI_LOCAL_PILOT_CONFIG` when
+inspecting managed runs so their authority revision can be checked. Without it,
+managed completed runs are reported as inapplicable. Limit access to the database
+and pilot configuration to trusted operators. Cancellation persists, and duplicate
 notifications do not restart a cancelled candidate.
 
+## Migrate a baseline
+
+The protected SQLite store is the authority for migration grants, the managed
+branch head, enrollment fences, and baseline activation. Grant or revoke a
+maintainer through this authority using their numeric GitHub user ID:
+
+```sh
+python3 portable/authority.py grant --store STORE --repository REPOSITORY --actor USER_ID
+python3 portable/authority.py revoke --store STORE --repository REPOSITORY --actor USER_ID
+```
+
+Grant and revoke operations must be restricted to trusted operators. Revoke in
+the authority before removing GitHub access. An authority revision changes on
+revocation, enrollment changes, managed head changes, and activation. In-flight
+migration approvals and completed run results from an older revision are no
+longer applicable, even if the original values are later restored.
+
+All changes to the managed GitHub ref must go through the gateway. Configure
+GitHub branch restrictions so only its dedicated credential can update the ref,
+and give no other actor bypass permission. Restrict administration of those
+rules, repository membership, the gateway credential, the SQLite store and its
+parent directories to trusted operators. All service instances must share this
+single protected store and the same pilot configuration. GitHub administrators
+and anyone who can write the protected store remain trusted. An out-of-band
+GitHub permission change or branch push is not serialized by the local store;
+without these restrictions the activation guarantee does not hold.
+
+The gateway uses a protected local Git object store containing both commits.
+Provide its credential through `PROOFCI_GATEWAY_TOKEN`, using a secret manager or
+another protected environment. Advance only a fast-forward commit:
+
+```sh
+python3 portable/authority_gateway.py advance --store STORE --repository REPOSITORY \
+  --git-dir /absolute/protected/repository.git --ref refs/heads/main \
+  --expected CURRENT_COMMIT_SHA --head NEW_COMMIT_SHA
+```
+
+The gateway records a pending change before contacting GitHub. Pending changes
+block activation and managed runs. After an interruption, `recover` finishes a
+change only when GitHub reports its target head. If the old head remains, the
+push may still be in flight, so the authority stays blocked. An unexpected head
+quarantines the authority. Do not clear either state by editing the database;
+restoring service requires an operator to establish an external fence against
+all uncertain writes and re-provision the authority from verified state.
+
+Sign in as a current repository maintainer and enroll the repository. Configure
+it in the local pilot and activate its initial baseline first. On the enrollment
+page, select the repository and enter the exact configured branch head, the
+current reviewed manifest SHA-256, and the replacement manifest SHA-256. The
+replacement manifest must be committed at the active manifest path in that head.
+The form authorizes a policy change and starts isolated verification. Obtain the
+current manifest digest from `python3 portable/baselines.py lookup --store STORE`
+and calculate the replacement digest from the committed manifest bytes. Review
+the replacement and the retired guarantees before submitting the form.
+
+The service checks maintainer access and enrollment again after verification.
+It activates the replacement only if the configured branch head, enrollment,
+maintainer, and previous baseline still match. The protected SQLite store keeps
+the authorization, the verification report, and the list of guarantee changes.
+The report identifies removed guarantees as retired and states that policy
+changed. An unsuccessful or interrupted migration does not activate the
+replacement. Ordinary runs continue using the active baseline until activation.
+The service must have the same isolated VM prerequisites as the head-snapshot
+pilot. This operation does not publish a GitHub check or protect merges.
+
+GitHub access and head are checked again immediately before activation. The
+transaction also checks the authority's grant, head, enrollment state, and
+revision. The authority controls those values only under the operator and GitHub
+restrictions above. This pilot has not configured those restrictions on the
+live demo branch and does not claim production merge enforcement.
 ## Fork verification and assistance
 
 Subscribe the App to pull request events as well as push events. The service
@@ -204,3 +285,10 @@ database. The test signs a local webhook and uses the local `gh` authentication
 only for snapshot staging. It requires network access and an open test PR; its
 installation authorization is a test fixture, so it does not establish GitHub
 App installation authorization or merge-check enforcement.
+
+The GitHub check publisher rechecks the local authority revision before a check
+update and reconciliation marks older revisions for revalidation. These checks
+are not atomic with a GitHub API request: an in-flight or previously published
+success can remain visible after a revision change. Do not rely on the published
+check as an enforcing merge gate for managed migrations until the merge path
+itself is fenced by the authority and existing checks have been invalidated.

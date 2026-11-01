@@ -12,6 +12,7 @@ import tempfile
 from types import SimpleNamespace
 
 import baselines
+import authority
 import dispatch
 import proofci
 import replay
@@ -26,11 +27,13 @@ def launch_vm(command, deadline):
     return dispatch._run_process(command, deadline)
 
 
-def execute(*, store, repository, head, base, baseline_digest, snapshot, report, evidence=None, bundle=None):
+def execute(*, store, repository, head, base, baseline_digest, snapshot, report, candidate_kind='head-snapshot', candidate_lane=None, evidence=None, bundle=None):
     if evidence is not None and bundle is not None:
         raise ValueError('choose one evidence output')
     evidence = evidence if evidence is not None else bundle
     try:
+        if candidate_kind not in ('head-snapshot', 'resolved', 'pull-request'):
+            raise ValueError('invalid candidate kind')
         if not re.fullmatch(r'[a-f0-9]{40}', head) or not re.fullmatch(r'[a-f0-9]{40}', base):
             raise ValueError('invalid candidate identity')
         snapshot = Path(snapshot)
@@ -40,6 +43,9 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
         report = Path(report).resolve()
         if report.is_relative_to(snapshot):
             raise ValueError('report must be outside the snapshot')
+        managed_head = head if candidate_kind == 'head-snapshot' else None
+        managed_ref = candidate_lane if candidate_kind == 'head-snapshot' else None
+        authority_epoch = authority.observe(store, repository, managed_head, managed_ref)
         row = service_baseline.active_row(store, repository)
         if row['baseline_sha256'] != baseline_digest:
             raise ValueError('active baseline changed')
@@ -61,6 +67,8 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
             status = dispatch.run(envelope_path=envelope_path, baseline_path=protected / 'baseline.json',
                                   snapshot=snapshot, report_path=report, launcher=launch_vm)
             result = proofci.parse_json(proofci.bounded_read(report, dispatch.MAX_REPORT_BYTES))
+            if authority.observe(store, repository, managed_head, managed_ref) != authority_epoch:
+                raise ValueError('repository authority changed')
             current = service_baseline.active_row(store, repository)
             if current['digest'] != row['digest'] or current['baseline_sha256'] != baseline_digest:
                 raise ValueError('active baseline changed')
@@ -70,6 +78,7 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
                     difference = baselines.changes(baselines.parse_manifest(row['manifest']), proposed)
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
                     difference = [{'kind': 'missing_or_invalid_manifest'}]
+                result['authority_epoch'] = authority_epoch
                 result['reviewed_baseline_sha256'] = row['digest']
                 result['proposed_guarantee_changes'] = difference
                 if difference and status == 0:
@@ -101,11 +110,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('store', 'repository', 'head', 'base', 'baseline-digest', 'snapshot', 'report'):
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--candidate-kind', choices=('head-snapshot', 'resolved', 'pull-request'), default='head-snapshot')
+    parser.add_argument('--candidate-lane')
     parser.add_argument('--evidence')
     parser.add_argument('--bundle')
     args = parser.parse_args()
     return execute(store=args.store, repository=args.repository, head=args.head, base=args.base,
-                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, evidence=args.evidence, bundle=args.bundle)
+                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, candidate_kind=args.candidate_kind, candidate_lane=args.candidate_lane, evidence=args.evidence, bundle=args.bundle)
 
 
 if __name__ == '__main__':

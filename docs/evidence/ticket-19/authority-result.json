@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "policy_changed": true,
+  "retired_guarantees": [],
+  "previous": "e30103ee308806d8d45f8e838da85a0cf8c4f089ac4949ffe8207d5f55be9bee",
+  "replacement": "3e4a19fedbeedc82342e0387d17512cf456b91e90e6a565508a3c1ce73f590ff",
+  "head": "aed0af69c803f3788681156aa0ee2b0add5144ed",
+  "stale_rejected": true
+}

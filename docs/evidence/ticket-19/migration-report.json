@@ -1,0 +1,151 @@
+{
+  "coverage": {
+    "changes": [],
+    "uncovered_supported_symbols": [],
+    "unsupported_changed_code": []
+  },
+  "dispatch": {
+    "dependencies": {
+      "mode": "pinned-image"
+    },
+    "elapsed_seconds": 194.72357291704975,
+    "final_status": 0,
+    "mode": "isolated-worker",
+    "worker_report_sha256": "32d38b94d13d7253c1571621eb97e585c16076144161ca7a693833c227e2509b",
+    "worker_status": 0
+  },
+  "envelope": {
+    "base": "d9c6545778fb4900d17d1fc07b4582150df31a1b",
+    "baseline_sha256": "9c53e57b3322babab97155c4dea2dbe3716818f02246c34767ed0f453a57bed8",
+    "candidate_sha256": "1f4ac79ec0f4970edf1e2d140d57fb6697f25fdf1e29851fada670e04ecdc900",
+    "dependency": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
+    "head": "d9c6545778fb4900d17d1fc07b4582150df31a1b",
+    "repository": "https://github.com/nhestrompia/proofci.git",
+    "resource_policy": {
+      "cpu_seconds": 900,
+      "file_bytes": 2147483648,
+      "memory_bytes": 2147483648,
+      "processes": 256,
+      "timeout_seconds": 900
+    },
+    "toolchain": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+    "trust_policy": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "version": 1
+  },
+  "execution": {
+    "bubblewrap_sha256": "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976",
+    "dispatch_phase": "final-validation",
+    "image": "sha256:166f221ee92c8e38ca0a211fe10d057d919216216c21e661b48cf73859a6acce",
+    "validator_policy_sha256": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "virtualization": "qemu"
+  },
+  "finished_at": 1793541266.6348593,
+  "guarantee_changes": [
+    {
+      "id": "increment",
+      "kind": "removed"
+    },
+    {
+      "id": "increment-v2",
+      "kind": "added"
+    }
+  ],
+  "policy_changed": true,
+  "previous_baseline_sha256": "85e7f438ee3e60c2de5d660477985aaedfc1757c484d41d4630f9276fc68f5cb",
+  "property_counts": {
+    "unproven": 0,
+    "verified": 1,
+    "violated": 0
+  },
+  "replacement_manifest_sha256": "e30103ee308806d8d45f8e838da85a0cf8c4f089ac4949ffe8207d5f55be9bee",
+  "results": [
+    {
+      "decision": "verified",
+      "elapsed_seconds": 87.005309458,
+      "evidence": "experiments/source-binding/fixtures/verified",
+      "evidence_sha256": {
+        "challenge.ndjson": "452605e709f040afa8db7d8a5609f19ba3a6fddaf5f0c3898ea7f8bc714c90c7",
+        "manifest.json": "c256890f70fff8af835d4fedbfd021788ee3af4fdf7827fc7601104c349af757",
+        "solution.lean": "941d7e81417330c256a8d3795b3d41c5440af1c10da6ace5a00834c6759aaef2",
+        "solution.ndjson": "b920b92a1f26811139417bc2104a40b7c2e3b141d92a378c6d37f058d85383c2"
+      },
+      "id": "increment-v2",
+      "policy": "required",
+      "property": "target x = x + 1",
+      "reason": "accepted by the reconstructed challenge and independent checkers",
+      "started_at": 1793541179.6294978,
+      "symbol": "target",
+      "validation": {
+        "candidate_sha256": "1f4ac79ec0f4970edf1e2d140d57fb6697f25fdf1e29851fada670e04ecdc900",
+        "checker": [
+          "comparator"
+        ],
+        "contract_sha256": "b31c1f6cfc0a1a7374051eeaf0496fa51503a9a74879ab76fe44d462dea8052c",
+        "decision": "verified",
+        "permitted_axioms": [
+          "Classical.choice",
+          "Quot.sound",
+          "propext"
+        ],
+        "policy": "fixed source-binding validator",
+        "reason": "accepted by the reconstructed challenge and independent checkers",
+        "statement_sha256": "ba655746c437598927e3027df985248dfe1a663a0771d87424f1752ad3096e59"
+      }
+    }
+  ],
+  "retired_guarantees": [
+    {
+      "assumptions": [],
+      "evidence": "experiments/source-binding/fixtures/verified",
+      "explanation": "Adds one",
+      "formal_statement": "x + 1",
+      "id": "increment",
+      "implementation_bindings": [
+        "target"
+      ],
+      "owner": "maintainer",
+      "policy": "required",
+      "specification_closure": []
+    }
+  ],
+  "started_at": 1793541176.9210875,
+  "status": "passed",
+  "support": {
+    "admission_reason": null,
+    "admitted_candidate": "experiments/source-binding/fixtures/candidate.lean",
+    "assumptions": [
+      "protected baseline and verifier",
+      "pinned Lean toolchain and trusted host"
+    ],
+    "deferred_frontends": [
+      "Rust/Aeneas"
+    ],
+    "exclusions": [
+      "imports, additional declarations, macros, instances, attributes and runtime replacements",
+      "compiled binaries, deployment, foreign languages and all other repository code"
+    ],
+    "guarantee": "Named approved properties of the admitted source-level target only",
+    "lean_commit": "eb6cafb7290e8bd5f2937522d8d804f58f02bafc",
+    "permitted_foundational_axioms": [
+      "Classical.choice",
+      "Quot.sound",
+      "propext"
+    ],
+    "policy_sha256": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "policy_version": "lean-target-v1",
+    "symbol": "target",
+    "toolchain_sha256": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+    "trusted_tools": [
+      "Lean kernel",
+      "Lean exporter",
+      "Nanoda",
+      "Comparator",
+      "source adapter"
+    ]
+  },
+  "usage": {
+    "elapsed_seconds": 89.714105167,
+    "model_calls": 0
+  },
+  "version": 1
+}
