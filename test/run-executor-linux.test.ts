@@ -30,7 +30,12 @@ test('the executor uses an approved baseline and the real isolated verifier', { 
     const github = { resolveHead: async () => head, stageSnapshot: async (_scope: unknown, input: { root: string }) => {
       const target = join(input.root, 'snapshot'); await cp(snapshot, target, { recursive: true }); return { snapshot: target, repository };
     } };
-    const result = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ installationId: 1, repositoryId: 2, store, repository }]) });
+    const result = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ installationId: 1, repositoryId: 2, store, repository }]), evidence: true });
     assert.equal(result.report.status, 'passed');
+    assert.ok(result.evidence);
+    const archive = join(root, 'evidence.tar'); await writeFile(archive, result.evidence);
+    const archiveDigest = createHash('sha256').update(result.evidence).digest('hex');
+    const checked = JSON.parse(execFileSync('python3', ['portable/check_hosted_bundle.py', archive, archiveDigest], { encoding: 'utf8' }));
+    assert.deepEqual(checked.report, result.report);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

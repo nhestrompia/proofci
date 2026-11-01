@@ -318,6 +318,12 @@ python3 portable/replay.py replay --bundle evidence.tar --sha256 <trusted-sha256
   --output replay-report.json
 ```
 
+For a run dispatched through the VM, replay uses the pinned VM image recorded
+by the dispatcher. The host must have that image and a working VM runtime. KVM
+is recommended: software emulation can exhaust the per-obligation time limit.
+The current VM dispatcher is evidence-only and does not accept generated proof
+suggestions or search results; bundles claiming those VM inputs are rejected.
+
 Replay validates the archive before extraction, reconstructs a fresh checkout,
 and runs the same verifier without model calls or a proof-result cache. For a
 generated proof, it reconstructs the recorded suggestion and validates it

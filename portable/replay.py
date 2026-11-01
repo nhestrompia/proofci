@@ -227,6 +227,11 @@ def reconstruct(files, root):
     envelope = proofci.parse_json(files['envelope.json'])
     original = proofci.parse_json(files['report.json'])
     baseline = proofci.parse_json(files['baseline/baseline.json'])
+    execution = original.get('execution')
+    if isinstance(execution, dict) and execution.get('virtualization') == 'qemu':
+        if original.get('search_results_sha256') is not None or any(
+                isinstance(result, dict) and 'proof_suggestion' in result for result in original.get('results', [])):
+            raise ValueError('VM evidence cannot contain search results or generated proof suggestions')
     if sha(files['baseline/baseline.json']) != envelope.get('baseline_sha256'):
         raise ValueError('baseline digest mismatch')
     search_digest = original.get('search_results_sha256')
@@ -261,7 +266,19 @@ def replay(args):
         root = Path(tmp)
         envelope, original, snapshot, changes = reconstruct(files, root)
         result = root / 'replayed.json'
-        command = [sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result), '--image', IMAGE_ID]
+        execution = original.get('execution')
+        use_vm = isinstance(execution, dict) and execution.get('virtualization') == 'qemu'
+        if use_vm:
+            from vm_container import VM_IMAGE_ID
+            phase = execution.get('dispatch_phase')
+            if execution.get('image') != VM_IMAGE_ID or phase not in ('worker', 'final-validation'):
+                raise ValueError('unsupported VM verifier identity or phase')
+            launcher, image = 'vm_container.py', VM_IMAGE_ID
+        else:
+            launcher, image = 'container.py', IMAGE_ID
+        command = [sys.executable, str(Path(__file__).with_name(launcher)), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result), '--image', image]
+        if use_vm:
+            command.extend(['--phase', phase, '--validator-only'])
         if 'search-results.json' in files:
             command.extend(['--search-results', str(root / 'search-results.json')])
         limits = envelope['resource_policy']
