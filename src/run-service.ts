@@ -5,6 +5,8 @@ import type { RunStore } from './run-store.ts';
 import { reconcileHead, resolveDelivery } from './delivery-worker.ts';
 import { executeNext } from './run-worker.ts';
 import { executeRun } from './run-executor.ts';
+import { publishNext } from './publication-worker.ts';
+import { randomUUID } from 'node:crypto';
 
 export type PilotConfiguration = BaselineConfiguration & { ref: string };
 
@@ -12,13 +14,15 @@ export type PilotConfiguration = BaselineConfiguration & { ref: string };
 export class RunService {
   private readonly stopSignal = new AbortController();
   private deliveryBusy = false;
+  private pullBusy = false;
+  private publicationBusy = false;
   private workerBusy = false;
   private reconcileBusy = false;
   private nextReconcile = 0;
   private timer: NodeJS.Timeout | undefined;
-  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[] };
+  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; origin: string };
 
-  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[] }) { this.options = options; }
+  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; origin: string }) { this.options = options; }
 
   start(): void {
     if (this.timer) return;
@@ -59,13 +63,39 @@ export class RunService {
         execute: (candidate, signal) => executeRun({ candidate, signal, github, baselines }),
       }).catch(() => {}).finally(() => { this.workerBusy = false; });
     }
+    if (!this.pullBusy) {
+      this.pullBusy = true;
+      void (async () => {
+        const delivery = await store.claimPullDelivery(300_000);
+        if (!delivery) return;
+        try { await store.processPullDelivery(delivery, async item => {
+          const scope = { installationId: item.installationId, repositoryId: item.repositoryId };
+          if (await selections.readVersion(scope) !== item.selectionGeneration) return 'selection_changed';
+          const access = await github.installationAccess(scope);
+          if (access === 'revoked') { await selections.removeIfVersion(scope, item.selectionGeneration); return 'installation_revoked'; }
+          if (access !== 'allowed') throw new Error('GitHub access unavailable');
+          const resolved = await github.resolvePullMerge(scope, item.number);
+          if (resolved.kind === 'blocked') return resolved.reason;
+          const baseline = await baselines.active(scope);
+          if (!baseline) return 'baseline_unavailable';
+          return { ...scope, kind: 'resolved', lane: `pull/${item.number}`, head: resolved.merge, base: resolved.base, pullHead: resolved.head, baseline };
+        }); } catch { await store.recordPullFailure(delivery); }
+      })().catch(() => {}).finally(() => { this.pullBusy = false; });
+    }
+    if (!this.publicationBusy) {
+      this.publicationBusy = true;
+      void publishNext({ store, github, baselines, origin: this.options.origin }).catch(() => {}).finally(() => { this.publicationBusy = false; });
+    }
     if (!this.reconcileBusy && Date.now() >= this.nextReconcile) {
       this.reconcileBusy = true;
       this.nextReconcile = Date.now() + 300_000;
       void (async () => {
         for (const item of repositories) {
           if (this.stopSignal.signal.aborted) break;
-          try { await reconcileHead({ scope: item, ref: item.ref, github, store }); } catch { /* Retry on the next reconciliation. */ }
+          try {
+            await reconcileHead({ scope: item, ref: item.ref, github, store });
+            for (const number of await github.listOpenPullRequests(item)) await store.acceptPullDelivery({ installationId: item.installationId, repositoryId: item.repositoryId, number, deliveryId: randomUUID() });
+          } catch { /* Retry on the next reconciliation. */ }
         }
       })().finally(() => { this.reconcileBusy = false; });
     }
