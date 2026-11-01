@@ -44,6 +44,42 @@ class ReplayTest(CLITest):
         self.assertEqual(result.returncode, 2)
         self.assertIn('digest mismatch', json.loads(output.read_text())['reason'])
 
+    def test_export_requires_complete_history_for_distinct_base_and_head(self):
+        envelope_path = self.root / 'envelope.json'
+        envelope = json.loads(envelope_path.read_text())
+        initial = envelope['base']
+        (self.snapshot / 'base-marker.txt').write_text('base\n')
+        subprocess.run(['git', '-C', str(self.snapshot), 'add', 'base-marker.txt'], check=True)
+        subprocess.run(['git', '-C', str(self.snapshot), 'commit', '-qm', 'base'], check=True)
+        base = subprocess.check_output(['git', '-C', str(self.snapshot), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(self.snapshot), 'checkout', '-qb', 'feature', initial], check=True)
+        (self.snapshot / 'marker.txt').write_text('change\n')
+        subprocess.run(['git', '-C', str(self.snapshot), 'add', 'marker.txt'], check=True)
+        subprocess.run(['git', '-C', str(self.snapshot), 'commit', '-qm', 'change'], check=True)
+        subprocess.run(['git', '-C', str(self.snapshot), 'checkout', '-qb', 'test-base', base], check=True)
+        subprocess.run(['git', '-C', str(self.snapshot), 'merge', '--quiet', '--no-ff', '-m', 'test merge', 'feature'], check=True)
+        head = subprocess.check_output(['git', '-C', str(self.snapshot), 'rev-parse', 'HEAD'], text=True).strip()
+        envelope['head'] = head
+        envelope['base'] = base
+        envelope_path.write_text(json.dumps(envelope))
+        archive, _ = self.export_bundle()
+        self.assertTrue(archive.is_file())
+        with tarfile.open(archive, 'r:') as tar:
+            bundled_repo = self.root / 'repository.bundle'
+            bundled_repo.write_bytes(tar.extractfile('repository.bundle').read())
+        restored = self.root / 'restored'
+        subprocess.run(['git', 'clone', '--quiet', '--no-checkout', str(bundled_repo), str(restored)], check=True)
+        for commit in (head, base):
+            subprocess.run(['git', '-C', str(restored), 'cat-file', '-e', f'{commit}^{{commit}}'], check=True)
+        shallow = self.root / 'shallow'
+        subprocess.run(['git', 'clone', '--quiet', '--depth=1', self.snapshot.as_uri(), str(shallow)], check=True)
+        subprocess.run(['git', '-C', str(shallow), 'fetch', '--quiet', '--depth=1', self.snapshot.as_uri(), base], check=True)
+        subprocess.run(['git', '-C', str(shallow), 'remote', 'set-url', 'origin', 'repo'], check=True)
+        result = self.invoke('export', '--envelope', envelope_path, '--baseline', self.root / 'baseline.json',
+                             '--snapshot', shallow, '--report', self.root / 'report.json', '--output', self.root / 'shallow.tar')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('complete history', result.stderr)
+
     def test_compressed_repository_expansion_is_rejected(self):
         large = self.snapshot / 'large.bin'
         with large.open('wb') as stream:
@@ -115,6 +151,51 @@ class ReplayTest(CLITest):
         report = json.loads(files['report.json'])
         report['execution']['image'] = vm_container.VM_IMAGE_ID
         report['execution']['virtualization'] = 'qemu'
+        report['execution']['dispatch_phase'] = 'final-validation'
+        files['report.json'] = json.dumps(report).encode()
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['report.json'] = hashlib.sha256(files['report.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        def run(command, deadline):
+            fresh = dict(report)
+            fresh['execution'] = dict(report['execution'])
+            if Path(command[1]).name != 'vm_container.py':
+                fresh['execution']['image'] = replay.IMAGE_ID
+                fresh['execution'].pop('virtualization')
+                fresh['execution']['dispatch_phase'] = 'worker'
+            else:
+                self.assertEqual(command[command.index('--phase') + 1], 'final-validation')
+                self.assertIn('--validator-only', command)
+            Path(command[command.index('--report') + 1]).write_text(json.dumps(fresh))
+            return 1
+        output = self.root / 'vm-replay.json'
+        with patch.object(replay, '_run', side_effect=run):
+            status = replay.replay(SimpleNamespace(bundle=archive, sha256=hashlib.sha256(archive.read_bytes()).hexdigest(), output=output))
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.read_text())['status'], 'reproduced')
+
+        for field, value in (('search_results_sha256', '0' * 64), ('proof_suggestion', 'by trivial')):
+            invalid = json.loads(files['report.json'])
+            if field == 'proof_suggestion':
+                invalid['results'][0][field] = value
+            else:
+                invalid[field] = value
+            bad_files = {**files, 'report.json': json.dumps(invalid).encode()}
+            with tempfile.TemporaryDirectory() as temp, self.assertRaisesRegex(ValueError, 'VM evidence cannot contain'):
+                replay.reconstruct(bad_files, Path(temp))
+
+
+    def test_apple_vm_report_replays_with_the_recorded_vm_execution(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        report = json.loads(files['report.json'])
+        report['execution']['image'] = vm_container.VM_IMAGE_ID
+        report['execution']['virtualization'] = 'apple'
         report['execution']['dispatch_phase'] = 'final-validation'
         files['report.json'] = json.dumps(report).encode()
         manifest = json.loads(files['manifest.json'])

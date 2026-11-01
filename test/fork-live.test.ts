@@ -41,8 +41,21 @@ test('a public GitHub fork snapshot reaches the real isolated verifier without m
     const helper = `import hashlib, pathlib, sys\nsys.path.insert(0, 'portable')\nimport baselines\nstore, path, repo, head, output = sys.argv[1:]\ndata = pathlib.Path(path).read_bytes()\nmanifest = baselines.parse_manifest(data)\nbaseline = baselines.materialize(manifest, pathlib.Path(output))\ndigest = hashlib.sha256(data).hexdigest()\nwith baselines.open_store(store) as db:\n db.execute('INSERT INTO baselines (digest, manifest, manifest_path, baseline_sha256, repository, initial_head, approval_identity, approval_source, report) VALUES (?,?,?,?,?,?,?,?,?)', (digest, data, 'proofci-absent-manifest.json', baseline, repo, head, 'test-reviewer', 'fixture', b'{}'))\n db.execute('INSERT INTO active (id, digest) VALUES (1, ?)', (digest,))\n`;
     execFileSync('python3', ['-c', helper, store, manifestPath, repository, pr.head, baselineOutput]);
     const baseline = createHash('sha256').update(await readFile(join(baselineOutput, 'baseline.json'))).digest('hex');
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: pr.destinationRepositoryId, lane: `pull/${number}`, number, sourceRepositoryId: pr.sourceRepositoryId, head: pr.head, base: pr.base, baseline };
-    const github = { installationAccess: async () => 'allowed' as const, resolveHead: async () => null, resolvePullRequest, stageSnapshot: async (_scope: unknown, input: { head: string; base: string; root: string; signal: AbortSignal }) => fetchSnapshot({ ...input, owner, name, token }) };
+    const resolvePullMerge = async () => {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${name}/pulls/${number}`, { headers: { accept: 'application/vnd.github+json' } });
+      if (!response.ok) throw new Error(`GitHub pull request returned ${response.status}`);
+      const data: unknown = await response.json();
+      if (typeof data !== 'object' || !data || !('mergeable' in data) || data.mergeable !== true || !('merge_commit_sha' in data) || typeof data.merge_commit_sha !== 'string' || !/^[a-f0-9]{40}$/.test(data.merge_commit_sha)) throw new Error('Live pull merge unavailable');
+      const current = await resolvePullRequest();
+      const commitResponse = await fetch(`https://api.github.com/repos/${owner}/${name}/git/commits/${data.merge_commit_sha}`);
+      if (!commitResponse.ok) throw new Error('Live merge commit unavailable');
+      const commit: unknown = await commitResponse.json();
+      if (typeof commit !== 'object' || !commit || !('parents' in commit) || !Array.isArray(commit.parents) || commit.parents.length !== 2 || commit.parents[0]?.sha !== current.base || commit.parents[1]?.sha !== current.head) throw new Error('Live merge parents changed');
+      return { kind: 'resolved' as const, merge: data.merge_commit_sha, head: current.head, base: current.base };
+    };
+    const merge = await resolvePullMerge();
+    const candidate = { mergeHead: merge.merge, kind: 'pull-request' as const, installationId: 1, repositoryId: pr.destinationRepositoryId, lane: `pull/${number}`, number, sourceRepositoryId: pr.sourceRepositoryId, head: pr.head, base: pr.base, baseline };
+    const github = { installationAccess: async () => 'allowed' as const, resolveHead: async () => null, resolvePullRequest, resolvePullMerge, stageSnapshot: async (_scope: unknown, input: { head: string; base: string; root: string; signal: AbortSignal }) => fetchSnapshot({ ...input, owner, name, token }) };
     const baselines = new ActiveBaselines([{ ...candidate, store, repository }]);
     const schema = `fork_live_${randomUUID().replaceAll('-', '')}`;
     const admin = new Pool({ connectionString: databaseUrl });

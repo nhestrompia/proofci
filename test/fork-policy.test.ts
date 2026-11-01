@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decisionMatches, type ForkDecision } from '../src/fork-policy.ts';
 
-const decision: ForkDecision = { installationId: 1, repositoryId: 2, number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64), baselineRevision: 1, selectionGeneration: 'selection', policyDigest: 'd'.repeat(64), quotaMicros: 100, maintainerId: 5, consent: true };
+const decision: ForkDecision = { installationId: 1, repositoryId: 2, number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64), baselineRevision: 1, selectionGeneration: 'selection', policyDigest: 'd'.repeat(64), quotaMicros: 100, maintainerId: 5, consent: true };
 test('fork decisions require exact inputs, consent and available quota', () => {
   assert.equal(decisionMatches(decision, decision, 99), true);
   assert.equal(decisionMatches(decision, decision, 100), false);
-  for (const change of [{ head: 'e'.repeat(40) }, { base: 'e'.repeat(40) }, { baseline: 'e'.repeat(64) }, { baselineRevision: 2 }, { policyDigest: 'e'.repeat(64) }, { selectionGeneration: 'new' }, { sourceRepositoryId: 8 }, { number: 4 }, { repositoryId: 9 }, { consent: false }]) {
+  for (const change of [{ head: 'e'.repeat(40) }, { mergeHead: 'e'.repeat(40) }, { base: 'e'.repeat(40) }, { baseline: 'e'.repeat(64) }, { baselineRevision: 2 }, { policyDigest: 'e'.repeat(64) }, { selectionGeneration: 'new' }, { sourceRepositoryId: 8 }, { number: 4 }, { repositoryId: 9 }, { consent: false }]) {
     assert.equal(decisionMatches(decision, { ...decision, ...change }, 0), false);
   }
 });
@@ -25,7 +25,7 @@ test('maintainer approval is scoped to an active fork and cancellation revokes r
   try {
     const selections = new EnrollmentStore(pool), runs = new RunStore(pool);
     await selections.initialize(); await runs.initialize();
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     await selections.select(candidate);
     let maintainer = true, head = candidate.head;
     const github = { checkMaintainerAccess: async () => maintainer ? 5 : null, installationAccess: async () => 'allowed' as const,
@@ -36,6 +36,8 @@ test('maintainer approval is scoped to an active fork and cancellation revokes r
     const policy = new ForkPolicy({ pool, selections, github, sessions, baselines: { activeIdentity: async () => ({ digest: candidate.baseline, revision: baselineRevision }) } });
     await policy.syncPolicy(candidate, 100);
     await runs.admit(candidate);
+    const found = await runs.findPull(candidate, candidate.number);
+    assert.equal(found?.candidate.mergeHead, candidate.mergeHead);
     const lease = await runs.claim(60_000);
     assert.ok(lease && lease.candidate.kind === 'pull-request');
     assert.equal(await policy.requestStatus({ ...lease, candidate: lease.candidate }, 100, 0), 'denied');
@@ -43,7 +45,7 @@ test('maintainer approval is scoped to an active fork and cancellation revokes r
     maintainer = false;
     assert.equal(await policy.approve({ session: 'candidate', candidate, quotaMicros: 100, baselineRevision: 1, consent: true }), false);
     maintainer = true;
-    assert.equal(await policy.approve({ session: 'maintainer', candidate, quotaMicros: 100, baselineRevision: 1, consent: true }), true);
+    assert.equal(await policy.approve({ session: 'maintainer', candidate: found!.candidate, quotaMicros: 100, baselineRevision: 1, consent: true }), true);
     assert.equal(await policy.requestStatus({ ...lease, candidate: lease.candidate }, 100, 0), 'deferred');
     baselineRevision = 3;
     assert.equal(await policy.requestStatus({ ...lease, candidate: lease.candidate }, 100, 0), 'denied');

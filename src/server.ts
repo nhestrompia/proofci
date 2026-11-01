@@ -71,7 +71,7 @@ if (pilotConfig) {
   const versioning = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
   if (versioning.Status) throw new Error('Evidence bucket must not have versioning enabled or suspended');
   evidenceStore = new EvidenceStore(runs, s3, bucket, retentionDays * 86400);
-  runService = new RunService({ store: runs, selections: store, github, baselines, repositories, evidence: evidenceStore });
+  runService = new RunService({ store: runs, selections: store, github, baselines, repositories, evidence: evidenceStore, origin: origin.origin });
   runService.start();
 }
 
@@ -130,6 +130,35 @@ const server = createServer(async (request, response) => {
       setCookie(response, 'proofci_login', login.binding, 300);
       response.writeHead(303, { location: login.url, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return response.end();
     }
+    const pullPath = /^\/pulls\/([1-9]\d*)\/([1-9]\d*)\/([1-9]\d*)$/.exec(url.pathname);
+    if (request.method === 'GET' && pullPath && runs) {
+      const scope = { installationId: Number(pullPath[1]), repositoryId: Number(pullPath[2]) }, number = Number(pullPath[3]);
+      if (!Number.isSafeInteger(scope.installationId) || !Number.isSafeInteger(scope.repositoryId) || !Number.isSafeInteger(number) ||
+          await sessions.checkMaintainer({ session: cookie(request, 'proofci_session'), scope, github }) === null || !await store.isSelected(scope)) return reply(response, 404, 'Not found.');
+      const result = await runs.inspectPull(scope, number);
+      if (!result) return reply(response, 404, 'Not found.');
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return response.end(JSON.stringify(result));
+    }
+    const runPath = /^\/runs\/([1-9]\d*)\/([1-9]\d*)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/evidence)?$/i.exec(url.pathname);
+    if (request.method === 'GET' && runPath && runs) {
+      const scope = { installationId: Number(runPath[1]), repositoryId: Number(runPath[2]) };
+      if (!Number.isSafeInteger(scope.installationId) || !Number.isSafeInteger(scope.repositoryId) ||
+          await sessions.checkMaintainer({ session: cookie(request, 'proofci_session'), scope, github }) === null ||
+          !await store.isSelected(scope)) return reply(response, 404, 'Not found.');
+      if (runPath[4]) {
+        if (!evidenceStore) return reply(response, 404, 'Not found.');
+        const result = await downloadEvidence({ scope, runId: runPath[3], session: cookie(request, 'proofci_session'), sessions, github, selections: store, evidence: evidenceStore });
+        if (result.kind === 'missing') return reply(response, 404, 'Not found.');
+        if (result.kind === 'expired') return reply(response, 410, 'Evidence has expired. Historical property results remain unchanged.');
+        response.writeHead(200, { 'content-type': 'application/x-tar', 'content-disposition': 'attachment; filename="proofci-evidence.tar"', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-proofci-sha256': result.sha256 });
+        return response.end(result.bytes);
+      }
+      const run = await runs.inspect(scope, runPath[3]);
+      if (!run) return reply(response, 404, 'Not found.');
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      return response.end(JSON.stringify(run));
+    }
     if (request.method === 'GET' && url.pathname === '/oauth/callback') {
       const session = await sessions.finish({ state: url.searchParams.get('state') ?? '', code: url.searchParams.get('code') ?? '', binding: cookie(request, 'proofci_login') });
       if (!session) return reply(response, 403, 'Sign-in failed.');
@@ -163,6 +192,7 @@ const server = createServer(async (request, response) => {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
         if (!await processPullEvent({ body, signature, event, deliveryId, secret, store: { acceptPullDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId) ? runStore.acceptPullDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+
       } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
     }

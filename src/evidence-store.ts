@@ -38,7 +38,7 @@ export class EvidenceStore {
       const checked: unknown = JSON.parse(stdout);
       if (typeof checked !== 'object' || checked === null || !('report' in checked) || !('envelope' in checked) ||
           !isDeepStrictEqual(checked.report, report) || typeof checked.envelope !== 'object' || checked.envelope === null ||
-          !('head' in checked.envelope) || checked.envelope.head !== lease.candidate.head ||
+          !('head' in checked.envelope) || checked.envelope.head !== (lease.candidate.kind === 'pull-request' ? lease.candidate.mergeHead : lease.candidate.head) ||
           !('base' in checked.envelope) || checked.envelope.base !== lease.candidate.base ||
           !('baseline_sha256' in checked.envelope) || checked.envelope.baseline_sha256 !== lease.candidate.baseline ||
           !('envelope' in report) || !isDeepStrictEqual(report.envelope, checked.envelope)) throw new Error('Evidence does not match run report');
@@ -51,13 +51,13 @@ export class EvidenceStore {
   }
 
   async download(scope: RepositoryScope, runId: string): Promise<{ kind: 'missing' } | { kind: 'expired' } | { kind: 'available'; bytes: Uint8Array; sha256: string }> {
-    const evidence = await this.runs.evidence(scope, runId);
-    if (!evidence) return { kind: 'missing' };
+    const evidence = await this.runs.hostedEvidence(scope, runId);
+    if (!evidence) return this.runs.legacyEvidence(scope, runId, this.retentionSeconds);
     if (evidence.expired) return { kind: 'expired' };
     let object;
     try { object = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: evidence.key })); }
     catch (error) {
-      const current = await this.runs.evidence(scope, runId);
+      const current = await this.runs.hostedEvidence(scope, runId);
       if (!current) return { kind: 'missing' };
       if (current.expired) return { kind: 'expired' };
       throw error;
@@ -77,13 +77,14 @@ export class EvidenceStore {
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
     const bytes = Buffer.concat(chunks, length);
     if (bytes.length !== evidence.bytes || createHash('sha256').update(bytes).digest('hex') !== evidence.sha256) throw new Error('Stored evidence digest mismatch');
-    const current = await this.runs.evidence(scope, runId);
+    const current = await this.runs.hostedEvidence(scope, runId);
     if (!current) return { kind: 'missing' };
     if (current.expired) return { kind: 'expired' };
     return { kind: 'available', bytes, sha256: evidence.sha256 };
   }
 
   async expire(): Promise<void> {
+    await this.runs.expireLegacyEvidence(this.retentionSeconds);
     for (const item of await this.runs.expiredEvidence()) {
       try {
         await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: item.key }));

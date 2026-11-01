@@ -31,7 +31,7 @@ test('the executor uses an approved baseline and the real isolated verifier', { 
     const github = { resolveHead: async () => head, stageSnapshot: async (_scope: unknown, input: { root: string }) => {
       const target = join(input.root, 'snapshot'); await cp(snapshot, target, { recursive: true }); return { snapshot: target, repository };
     } };
-    const result = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ installationId: 1, repositoryId: 2, store, repository }]), evidence: true });
+    const result = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ installationId: 1, repositoryId: 2, store, repository }]) });
     assert.equal(result.report.status, missingEvidence ? 'blocked' : 'passed');
     if (missingEvidence) {
       const results = result.report.results;

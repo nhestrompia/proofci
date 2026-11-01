@@ -124,6 +124,10 @@ def export(args):
     if sha(baseline_bytes) != envelope['baseline_sha256']:
         raise ValueError('baseline digest mismatch')
     snapshot = args.snapshot.resolve(strict=True)
+    shallow = subprocess.run(['git', '-C', str(snapshot), 'rev-parse', '--is-shallow-repository'],
+                             check=True, capture_output=True, text=True, timeout=60)
+    if shallow.stdout.strip() != 'false':
+        raise ValueError('evidence export requires a repository with complete history')
     proofci.validate(envelope, baseline, snapshot, args.baseline.resolve().parent)
     import time
     proofci.verify_snapshot(snapshot, envelope, baseline, time.monotonic() + 60)
@@ -228,7 +232,7 @@ def reconstruct(files, root):
     original = proofci.parse_json(files['report.json'])
     baseline = proofci.parse_json(files['baseline/baseline.json'])
     execution = original.get('execution')
-    if isinstance(execution, dict) and execution.get('virtualization') == 'qemu':
+    if isinstance(execution, dict) and execution.get('virtualization') in ('qemu', 'apple'):
         if original.get('search_results_sha256') is not None or any(
                 isinstance(result, dict) and 'proof_suggestion' in result for result in original.get('results', [])):
             raise ValueError('VM evidence cannot contain search results or generated proof suggestions')
@@ -267,7 +271,7 @@ def replay(args):
         envelope, original, snapshot, changes = reconstruct(files, root)
         result = root / 'replayed.json'
         execution = original.get('execution')
-        use_vm = isinstance(execution, dict) and execution.get('virtualization') == 'qemu'
+        use_vm = isinstance(execution, dict) and execution.get('virtualization') in ('qemu', 'apple')
         if use_vm:
             from vm_container import VM_IMAGE_ID
             phase = execution.get('dispatch_phase')

@@ -4,7 +4,7 @@
 
 ProofCI aims to preserve approved correctness contracts across code changes through AI-assisted proof construction and Lean 4 validation.
 
-The project is in the research and specification stage. No verifier is implemented yet.
+The verifier supports a restricted Lean source language and approved contracts.
 
 - [Feasibility, architecture, and CI integration](docs/research/ci-and-architecture.md)
 - [Verification trust model and language support](docs/research/verification-feasibility.md)
@@ -12,7 +12,7 @@ The project is in the research and specification stage. No verifier is implement
 
 ## GitHub enrollment
 
-The Node.js 24 control service stores selected installation and repository IDs in PostgreSQL. The repository-authorization interface checks the stored selection and live App access. The scheduler is a separate, not yet implemented component and must call this interface before dispatch. Maintainers select a repository after signing in; enrollment, removal, and policy inspection recheck their current repository authority. GitHub App and user tokens remain in the control process. Sessions are held in memory and expire on restart.
+The Node.js 24 control service stores selected installation and repository IDs in PostgreSQL. The scheduler checks the stored selection and live App access before dispatch. Maintainers select a repository after signing in; enrollment, removal, and policy inspection recheck their current repository authority. GitHub App and user tokens remain in the control process. Sessions are held in memory and expire on restart.
 
 Register a GitHub App with repository permissions for contents read, pull requests read, checks write, and metadata read. The service rejects contents or pull-request write access. Administration read is optional and is intended only for policy inspection. Install it on the selected repository. Configure an OAuth callback at `https://YOUR-ORIGIN/oauth/callback`. A pilot App was installed on `nhestrompia/proofci` and tested for repository-scoped token issuance, OAuth maintainer enrollment, rejection of an unselected public repository, and denial during an actual suspension followed by successful restoration.
 
@@ -22,10 +22,11 @@ Run `npm test` and `npm run typecheck`. Set `PROOFCI_TEST_DATABASE_URL` to an is
 
 Enrollment does not activate contracts or protect merges. Policy inspection checks available default-branch protection and active rules. Missing permissions and unsupported rulesets leave the required-check configuration unconfirmed. A confirmed configuration means GitHub reports the expected App check, strict freshness, and administrator enforcement; it does not establish that checks are published or that any contract is active. Live repository removal, uninstall, and merge-enforcement tests have not yet been completed. Access checks fail closed while a repository is unavailable. A verified installation deletion, suspension, or repository-removal webhook clears the affected enrollment; an unambiguous revocation observed during an access check also clears it. Configure and monitor webhook delivery and redeliver failures: a removal and restoration between checks cannot be detected if its webhook is missed. The local pilot App webhook is currently disabled and needs a publicly reachable HTTPS endpoint before these events can be received. Configure a required check restricted to the expected App and require fresh merge results or a merge queue. Administration read may be needed to inspect branch protection.
 
-## Run the head-snapshot pilot
+## Run the verification pilot
 
-The pilot schedules nonenforcing runs for explicitly configured branches. It does
-not publish GitHub checks or enable hosted AI. Use a Linux ARM64 host with KVM,
+The pilot schedules nonenforcing head-snapshot runs for configured branches and
+publishes a `ProofCI` check for pull requests on GitHub's test-merge commit. It
+does not yet support merge queue candidates or enable hosted AI. Use a Linux ARM64 host with KVM,
 Docker, PostgreSQL, and the pinned verifier images. Software emulation can exceed
 the verifier's fixed obligation budget. Build the verifier image as described in
 [the portable verifier guide](portable/README.md), tag it
@@ -98,10 +99,27 @@ packaged `test_service_execute_linux.py` test with `PROOFCI_TEST_PACKAGED=1` and
 the storage test. It downloads the persisted bundle and replays it with the
 pinned verifier image.
 
-Configure the GitHub App and service as described above, subscribe the App webhook to
-push events, and enroll the repository. Reconciliation checks configured
-branches every five minutes and recovers missed push events. A missing active
-baseline or revoked installation cannot schedule a run.
+Set `PROOFCI_LOCAL_PILOT_CONFIG` to the absolute path of this file. Configure
+the GitHub App and service as described above, subscribe the App webhook to
+push and pull request events, and enroll the repository. Reconciliation checks
+configured branches and open pull requests every five minutes. A missing active
+baseline or revoked installation cannot schedule a run. The check stays pending
+or fails unless the final validator accepts every required obligation. Configure
+the required `ProofCI` check from this App and require up-to-date branches before
+relying on it as a gate.
+
+The check links to `/runs/INSTALLATION_ID/REPOSITORY_ID/RUN_ID`. A signed-in
+maintainer can read the full report there and download its immutable replay
+bundle from the same URL with `/evidence` appended. The report records the bundle
+SHA-256; pass that digest to the replay command in the portable verifier guide.
+Snapshot fetching includes the history needed for replay and rejects a staged
+repository larger than 256 MiB. Evidence export rejects shallow repositories.
+Unresolved merge candidates are visible to maintainers at
+`/pulls/INSTALLATION_ID/REPOSITORY_ID/PULL_NUMBER`. Check publication retries
+from the database without rerunning proof work. Newly hosted bundles are stored
+in the configured S3-compatible bucket. Older database-stored bundles remain
+available through their existing links until the configured retention deadline;
+the cleanup timer also removes expired database-stored bundles.
 
 Inspect runs and deliveries, or cancel a run, using the enrollment scope:
 

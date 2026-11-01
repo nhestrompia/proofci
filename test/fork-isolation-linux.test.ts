@@ -55,12 +55,15 @@ test('a fork proof cannot access the test sentinels or a public network endpoint
     await writeFile(manifestPath, JSON.stringify(evidenceManifest));
     git(snapshot, 'add', 'evidence'); git(snapshot, 'commit', '-qm', 'exercise proof isolation');
     const head = git(snapshot, 'rev-parse', 'HEAD');
+    git(snapshot, 'checkout', '-qb', 'test-merge', base);
+    git(snapshot, 'merge', '--no-ff', '-qm', 'test merge', head);
+    const mergeHead = git(snapshot, 'rev-parse', 'HEAD');
     const store = join(root, 'baseline.db'), baselineOutput = join(root, 'baseline'); await mkdir(baselineOutput);
     const helper = `import hashlib, pathlib, sys\nsys.path.insert(0, 'portable')\nimport baselines\nstore, path, repo, head, output = sys.argv[1:]\ndata = pathlib.Path(path).read_bytes()\nmanifest = baselines.parse_manifest(data)\nbaseline = baselines.materialize(manifest, pathlib.Path(output))\ndigest = hashlib.sha256(data).hexdigest()\nwith baselines.open_store(store) as db:\n db.execute('INSERT INTO baselines (digest, manifest, manifest_path, baseline_sha256, repository, initial_head, approval_identity, approval_source, report) VALUES (?,?,?,?,?,?,?,?,?)', (digest, data, 'contracts.json', baseline, repo, head, 'reviewer', 'fixture', b'{}'))\n db.execute('INSERT INTO active (id, digest) VALUES (1, ?)', (digest,))\n`;
     execFileSync('python3', ['-c', helper, store, join(baseSnapshot, 'contracts.json'), repository, base, baselineOutput]);
     const baseline = createHash('sha256').update(await readFile(join(baselineOutput, 'baseline.json'))).digest('hex');
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/1', number: 1, sourceRepositoryId: 3, head, base, baseline };
-    const github = { resolveHead: async () => null, resolvePullRequest: async () => ({ number: 1, sourceRepositoryId: 3, destinationRepositoryId: 2, head, base }), stageSnapshot: async (_scope: unknown, input: { root: string }) => { const target = join(input.root, 'snapshot'); await cp(snapshot, target, { recursive: true }); return { snapshot: target, repository }; } };
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/1', number: 1, sourceRepositoryId: 3, head, base, mergeHead, baseline };
+    const github = { resolveHead: async () => null, resolvePullMerge: async () => ({ kind: 'resolved' as const, merge: mergeHead, head, base }), resolvePullRequest: async () => ({ number: 1, sourceRepositoryId: 3, destinationRepositoryId: 2, head, base }), stageSnapshot: async (_scope: unknown, input: { root: string }) => { const target = join(input.root, 'snapshot'); await cp(snapshot, target, { recursive: true }); return { snapshot: target, repository }; } };
     const { report } = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ ...candidate, store, repository }]) });
     assert.ok(typeof report.dispatch === 'object' && report.dispatch !== null && 'worker_status' in report.dispatch, JSON.stringify(report));
     assert.equal(report.dispatch.worker_status, 1, JSON.stringify(report));

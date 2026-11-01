@@ -7,7 +7,7 @@ type Store = Pick<RunStore, 'claim' | 'renew' | 'fail' | 'complete' | 'cancelLea
 type Options = {
   store: Store;
   authorize(candidate: Candidate): Promise<'allowed' | 'revoked' | 'unavailable'>;
-  execute(candidate: Candidate, signal: AbortSignal, ensureActive: () => Promise<boolean>, dispatch: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>): Promise<{ report: Record<string, unknown>; evidence?: Buffer }>;
+  execute(candidate: Candidate, signal: AbortSignal, ensureActive: () => Promise<boolean>, dispatch: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>): Promise<{ report: Record<string, unknown>; evidence: Buffer | null }>;
   evidence?: Pick<EvidenceStore, 'complete'>;
   leaseMs: number;
   signal?: AbortSignal;
@@ -43,7 +43,7 @@ export async function executeNext(options: Options): Promise<boolean> {
       const result = await options.execute(lease.candidate, abort.signal, ensureActive, start => options.store.startDispatch(lease, start, stop));
       const { report } = result;
       if (!abort.signal.aborted && report.status === 'error' && lease.generation < 3) {
-        await options.store.retry(lease);
+        await options.store.retry(lease, report);
       } else if (!abort.signal.aborted) {
         const current = await options.authorize(lease.candidate);
         if (current === 'allowed' && !abort.signal.aborted) {

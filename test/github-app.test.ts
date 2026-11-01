@@ -169,6 +169,7 @@ test('resolves the current immutable head with repository-scoped credentials', a
 });
 
 test('resolves a fork pull request from its destination repository, with explicit immutable identities', async () => {
+
   const request: typeof fetch = async input => {
     const path = new URL(String(input)).pathname;
     if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
@@ -184,6 +185,7 @@ test('resolves a fork pull request from its destination repository, with explici
 test('rejects closed, malformed, or mismatched pull request identities', async () => {
   const valid = { number: 5, state: 'open', head: { sha: 'a'.repeat(40), repo: { id: 99 } }, base: { sha: 'b'.repeat(40), repo: { id: 34 } } };
   for (const pr of [{ ...valid, number: 6 }, { ...valid, head: { ...valid.head, repo: null } }, { ...valid, base: { ...valid.base, repo: { id: 35 } } }, { ...valid, head: { ...valid.head, sha: 'bad' } }]) {
+
     const request: typeof fetch = async input => {
       const path = new URL(String(input)).pathname;
       if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
@@ -198,6 +200,7 @@ test('rejects closed, malformed, or mismatched pull request identities', async (
 
 test('lists open pull requests from the enrolled destination for reconciliation', async () => {
   const request: typeof fetch = async input => {
+
     const url = new URL(String(input)), path = url.pathname;
     if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
     if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
@@ -224,4 +227,79 @@ test('reconciliation yields each page before fetching the next one', async () =>
   const pages = new GitHubApp({ appId: 7, privateKey, request }).listOpenPullRequests({ installationId: 12, repositoryId: 34 });
   assert.equal((await pages.next()).value?.length, 100);
   await assert.rejects(pages.next(), /page unavailable/);
+
+});
+
+test('resolves only the current GitHub test merge whose parents match the pull request', async () => {
+  const base = 'a'.repeat(40), head = 'b'.repeat(40), merge = 'c'.repeat(40);
+  let ref = merge;
+  const request: typeof fetch = async input => {
+    const path = new URL(String(input)).pathname;
+    if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+    if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
+    if (path === '/repositories/34') return Response.json({ id: 34, name: 'repo', owner: { login: 'owner' } });
+    if (path === '/repos/owner/repo/pulls/5') return Response.json({ number: 5, state: 'open', mergeable: true, merge_commit_sha: merge, base: { sha: base, repo: { id: 34 } }, head: { sha: head } });
+    if (path === '/repos/owner/repo/git/ref/pull/5/merge') return Response.json({ ref: 'refs/pull/5/merge', object: { type: 'commit', sha: ref } });
+    if (path === `/repos/owner/repo/git/commits/${merge}`) return Response.json({ sha: merge, parents: [{ sha: base }, { sha: head }] });
+    throw new Error(`unexpected path ${path}`);
+  };
+  const app = new GitHubApp({ appId: 7, privateKey, request });
+  assert.deepEqual(await app.resolvePullMerge({ installationId: 12, repositoryId: 34 }, 5), { kind: 'resolved', merge, head, base });
+  ref = 'd'.repeat(40);
+  assert.deepEqual(await app.resolvePullMerge({ installationId: 12, repositoryId: 34 }, 5), { kind: 'blocked', reason: 'merge_ref_mismatch' });
+});
+
+test('blocks unresolved, conflicting, missing, or stale pull request test merges', async () => {
+  const base = 'a'.repeat(40), head = 'b'.repeat(40), merge = 'c'.repeat(40);
+  for (const [scenario, reason] of [
+    ['unresolved', 'merge_unresolved'], ['conflict', 'merge_conflict'],
+    ['missing', 'merge_ref_missing'], ['parents', 'merge_parents_mismatch'],
+  ]) {
+    const request: typeof fetch = async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+      if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
+      if (path === '/repositories/34') return Response.json({ id: 34, name: 'repo', owner: { login: 'owner' } });
+      if (path === '/repos/owner/repo/pulls/5') return Response.json({ number: 5, state: 'open', mergeable: scenario === 'unresolved' ? null : scenario !== 'conflict', merge_commit_sha: merge, base: { sha: base, repo: { id: 34 } }, head: { sha: head } });
+      if (path === '/repos/owner/repo/git/ref/pull/5/merge') return scenario === 'missing' ? new Response('', { status: 404 }) : Response.json({ ref: 'refs/pull/5/merge', object: { type: 'commit', sha: merge } });
+      if (path === `/repos/owner/repo/git/commits/${merge}`) return Response.json({ sha: merge, parents: [{ sha: base }, { sha: 'd'.repeat(40) }] });
+      throw new Error(`unexpected path ${path}`);
+    };
+    const app = new GitHubApp({ appId: 7, privateKey, request });
+    assert.deepEqual(await app.resolvePullMerge({ installationId: 12, repositoryId: 34 }, 5), { kind: 'blocked', reason });
+  }
+});
+
+test('reconciles a check after an ambiguous error and batches annotations without duplicates', async () => {
+  const sha = 'a'.repeat(40), runId = '12345678-1234-4234-8234-123456789abc';
+  let created = false, failed = false, creates = 0, completed = false;
+  const stored: Array<{ message: string }> = [];
+  const request: typeof fetch = async (input, init) => {
+    const url = new URL(String(input)), path = url.pathname;
+    if (path === '/app/installations/12') return Response.json({ id: 12, app_id: 7, suspended_at: null, permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' } });
+    if (path === '/app/installations/12/access_tokens') return Response.json({ token: 'secret', permissions: { contents: 'read', pull_requests: 'read', checks: 'write', metadata: 'read' }, repositories: [{ id: 34 }] });
+    if (path === '/repositories/34') return Response.json({ id: 34, name: 'repo', owner: { login: 'owner' } });
+    if (path === `/repos/owner/repo/commits/${sha}/check-runs`) return Response.json({ check_runs: created ? [{ id: 9, external_id: runId, app: { id: 7 } }] : [] });
+    if (path === '/repos/owner/repo/check-runs' && init?.method === 'POST') { created = true; creates++; return Response.json({ id: 9 }); }
+    if (path === '/repos/owner/repo/check-runs/9/annotations') {
+      const page = Number(url.searchParams.get('page')); return Response.json(stored.slice((page - 1) * 100, page * 100));
+    }
+    if (path === '/repos/owner/repo/check-runs/9' && init?.method === 'PATCH') {
+      const body = JSON.parse(String(init.body));
+      if (body.output.annotations) {
+        assert.ok(body.output.annotations.length <= 50);
+        stored.push(...body.output.annotations);
+        if (stored.length === 100 && !failed) { failed = true; throw new Error('response lost'); }
+      }
+      if (body.status === 'completed') { assert.equal(body.conclusion, 'success'); completed = true; }
+      return Response.json({ id: 9 });
+    }
+    throw new Error(`unexpected path ${path}`);
+  };
+  const app = new GitHubApp({ appId: 7, privateKey, request });
+  const annotations = Array.from({ length: 120 }, (_, index) => ({ path: 'candidate.lean', start_line: 1, end_line: 1, annotation_level: 'notice' as const, message: `property ${index}` }));
+  const input = { runId, sha, detailsUrl: 'https://example.com/run', output: { title: 'Verified', summary: 'all verified', conclusion: 'success' as const }, annotations, fresh: async () => true };
+  await assert.rejects(app.publishCheck({ installationId: 12, repositoryId: 34 }, input));
+  await app.publishCheck({ installationId: 12, repositoryId: 34 }, input);
+  assert.equal(creates, 1); assert.equal(stored.length, 120); assert.equal(new Set(stored.map(item => item.message)).size, 120); assert.equal(completed, true);
 });

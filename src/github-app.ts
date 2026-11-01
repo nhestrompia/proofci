@@ -5,6 +5,7 @@ import { fetchSnapshot } from './snapshot-fetch.ts';
 type AppOptions = { appId: number; privateKey: KeyObject; request?: typeof fetch };
 type RepositoryScope = { installationId: number; repositoryId: number };
 export type InstallationAccess = 'allowed' | 'revoked' | 'unavailable';
+export type PullMerge = { kind: 'resolved'; merge: string; head: string; base: string } | { kind: 'blocked'; reason: 'pull_unavailable' | 'merge_unresolved' | 'merge_conflict' | 'merge_ref_missing' | 'merge_ref_mismatch' | 'merge_parents_mismatch' };
 class GitHubStatusError extends Error { readonly status: number; constructor(status: number) { super('GitHub access check failed'); this.status = status; } }
 class AccessRevoked extends Error {}
 type Repository = { id: number; name: string; owner: string; defaultBranch: string | null; token: string };
@@ -32,9 +33,9 @@ export class GitHubApp {
     return `${data}.${createSign('RSA-SHA256').update(data).sign(this.privateKey, 'base64url')}`;
   }
 
-  private async api(path: string, token: string, body?: unknown): Promise<unknown> {
+  private async api(path: string, token: string, body?: unknown, method?: 'PATCH'): Promise<unknown> {
     const response = await this.request(`https://api.github.com${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: body === undefined ? 'GET' : method ?? 'POST',
       headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: 'error', signal: AbortSignal.timeout(15_000),
@@ -100,6 +101,84 @@ export class GitHubApp {
   }
 
   async checkInstallationAccess(scope: RepositoryScope): Promise<boolean> { return await this.installationAccess(scope) === 'allowed'; }
+
+  private async findCheck(repo: Repository, sha: string, runId: string): Promise<number | undefined> {
+    const prefix = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+    const found: number[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const result = await this.api(`${prefix}/commits/${sha}/check-runs?filter=all&per_page=100&page=${page}`, repo.token);
+      if (!object(result) || !Array.isArray(result.check_runs)) throw new Error('Invalid check list');
+      for (const check of result.check_runs) {
+        if (object(check) && check.external_id === runId && object(check.app) && check.app.id === this.appId && typeof check.id === 'number' && Number.isSafeInteger(check.id)) found.push(check.id);
+      }
+      if (result.check_runs.length < 100) break;
+      if (page === 10) throw new Error('Check list exceeds limit');
+    }
+    if (found.length > 1) throw new Error('Duplicate logical checks');
+    return found[0];
+  }
+
+  async invalidateCheck(scope: RepositoryScope, input: { runId: string; sha: string }): Promise<void> {
+    if (!/^[0-9a-f-]{36}$/.test(input.runId) || !/^[a-f0-9]{40}$/.test(input.sha)) throw new Error('Invalid check identity');
+    const repo = await this.repository(scope);
+    const id = await this.findCheck(repo, input.sha, input.runId);
+    if (id === undefined) return;
+    const prefix = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+    await this.api(`${prefix}/check-runs/${id}`, repo.token, { status: 'completed', conclusion: 'failure', output: { title: 'ProofCI result is stale', summary: 'The pull request, baseline, or run generation changed.' } }, 'PATCH');
+  }
+
+  /** Reconcile a check by its stable run ID before creating or updating it. */
+  async publishCheck(scope: RepositoryScope, input: { runId: string; sha: string; detailsUrl: string; output: { title: string; summary: string; conclusion: 'success' | 'failure' } | null; annotations: Array<{ path: string; start_line: number; end_line: number; annotation_level: 'notice' | 'failure'; message: string }>; fresh(): Promise<boolean> }): Promise<void> {
+    if (!/^[0-9a-f-]{36}$/.test(input.runId) || !/^[a-f0-9]{40}$/.test(input.sha)) throw new Error('Invalid check identity');
+    const repo = await this.repository(scope);
+    const prefix = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+    let id = await this.findCheck(repo, input.sha, input.runId);
+    if (id === undefined) {
+      if (!await input.fresh()) throw new Error('Check is stale');
+      const created = await this.api(`${prefix}/check-runs`, repo.token, { name: 'ProofCI', head_sha: input.sha, external_id: input.runId, status: 'in_progress', details_url: input.detailsUrl, output: { title: 'ProofCI running', summary: 'Verification is in progress.' } });
+      if (!object(created) || typeof created.id !== 'number' || !Number.isSafeInteger(created.id)) throw new Error('Invalid check response');
+      id = created.id;
+    }
+    if (!input.output) return;
+    const existing = new Set<string>();
+    for (let page = 1; page <= 100; page++) {
+      const result = await this.api(`${prefix}/check-runs/${id}/annotations?per_page=100&page=${page}`, repo.token);
+      if (!Array.isArray(result)) throw new Error('Invalid annotation list');
+      for (const annotation of result) if (object(annotation) && typeof annotation.message === 'string') existing.add(annotation.message);
+      if (result.length < 100) break;
+      if (!await input.fresh()) throw new Error('Check is stale');
+      if (page === 100) throw new Error('Annotation list exceeds limit');
+    }
+    const missing = input.annotations.filter(annotation => !existing.has(annotation.message));
+    for (let index = 0; index < missing.length; index += 50) {
+      if (!await input.fresh()) throw new Error('Check is stale');
+      await this.api(`${prefix}/check-runs/${id}`, repo.token, { output: { title: input.output.title, summary: input.output.summary, annotations: missing.slice(index, index + 50) } }, 'PATCH');
+    }
+    if (!await input.fresh()) throw new Error('Check is stale');
+    await this.api(`${prefix}/check-runs/${id}`, repo.token, { status: 'completed', conclusion: input.output.conclusion, details_url: input.detailsUrl, output: { title: input.output.title, summary: input.output.summary } }, 'PATCH');
+  }
+
+  /** Resolve GitHub's own test merge and verify that it binds the current PR inputs. */
+  async resolvePullMerge(scope: RepositoryScope, number: number): Promise<PullMerge> {
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid pull request number');
+    const repo = await this.repository(scope);
+    const prefix = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+    let pull: unknown;
+    try { pull = await this.api(`${prefix}/pulls/${number}`, repo.token); }
+    catch (error) { if (error instanceof GitHubStatusError && error.status === 404) return { kind: 'blocked', reason: 'pull_unavailable' }; throw error; }
+    if (!object(pull) || pull.number !== number || pull.state !== 'open' || !object(pull.base) || !object(pull.base.repo) || pull.base.repo.id !== scope.repositoryId || !object(pull.head)) return { kind: 'blocked', reason: 'pull_unavailable' };
+    if (pull.mergeable === false) return { kind: 'blocked', reason: 'merge_conflict' };
+    const sha = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+    if (pull.mergeable !== true || !sha(pull.merge_commit_sha) || !sha(pull.head.sha) || !sha(pull.base.sha)) return { kind: 'blocked', reason: 'merge_unresolved' };
+    const { merge_commit_sha: merge, head: { sha: head }, base: { sha: base } } = pull;
+    let ref: unknown;
+    try { ref = await this.api(`${prefix}/git/ref/pull/${number}/merge`, repo.token); }
+    catch (error) { if (error instanceof GitHubStatusError && error.status === 404) return { kind: 'blocked', reason: 'merge_ref_missing' }; throw error; }
+    if (!object(ref) || ref.ref !== `refs/pull/${number}/merge` || !object(ref.object) || ref.object.type !== 'commit' || ref.object.sha !== merge) return { kind: 'blocked', reason: 'merge_ref_mismatch' };
+    const commit = await this.api(`${prefix}/git/commits/${merge}`, repo.token);
+    if (!object(commit) || commit.sha !== merge || !Array.isArray(commit.parents) || commit.parents.length !== 2 || !object(commit.parents[0]) || !object(commit.parents[1]) || commit.parents[0].sha !== base || commit.parents[1].sha !== head) return { kind: 'blocked', reason: 'merge_parents_mismatch' };
+    return { kind: 'resolved', merge, head, base };
+  }
 
   /** Reconciliation treats this list as observations; each PR is resolved separately. */
   async *listOpenPullRequests(scope: RepositoryScope): AsyncGenerator<number[]> {

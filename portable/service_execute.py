@@ -26,7 +26,10 @@ def launch_vm(command, deadline):
     return dispatch._run_process(command, deadline)
 
 
-def execute(*, store, repository, head, base, baseline_digest, snapshot, report, evidence=None):
+def execute(*, store, repository, head, base, baseline_digest, snapshot, report, evidence=None, bundle=None):
+    if evidence is not None and bundle is not None:
+        raise ValueError('choose one evidence output')
+    evidence = evidence if evidence is not None else bundle
     try:
         if not re.fullmatch(r'[a-f0-9]{40}', head) or not re.fullmatch(r'[a-f0-9]{40}', base):
             raise ValueError('invalid candidate identity')
@@ -99,9 +102,10 @@ def main():
     for name in ('store', 'repository', 'head', 'base', 'baseline-digest', 'snapshot', 'report'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--evidence')
+    parser.add_argument('--bundle')
     args = parser.parse_args()
     return execute(store=args.store, repository=args.repository, head=args.head, base=args.base,
-                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, evidence=args.evidence)
+                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, evidence=args.evidence, bundle=args.bundle)
 
 
 if __name__ == '__main__':
