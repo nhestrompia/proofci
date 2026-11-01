@@ -17,8 +17,8 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare(event, snapshot, baseline, output):
-    if event.get("action") not in ("opened", "reopened", "synchronize", "ready_for_review"):
+def prepare(event, snapshot, baseline, output, event_name):
+    if event.get("action") not in ("opened", "reopened", "synchronize", "ready_for_review", "labeled"):
         raise ValueError("unsupported pull request event")
     pr = event["pull_request"]
     head, base = pr["head"]["sha"], pr["base"]["sha"]
@@ -45,17 +45,18 @@ def prepare(event, snapshot, baseline, output):
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "envelope.json").write_text(json.dumps(envelope, indent=2) + "\n")
-    (output / "github.json").write_text(json.dumps({"platform": "github", "event": "pull_request_target",
+    (output / "github.json").write_text(json.dumps({"platform": "github", "event": event_name,
         "pull_request": pr["number"], "head": head, "base": base,
         "scope": "source-head-only"}, indent=2) + "\n")
 
 
 if __name__ == "__main__":
     try:
-        if os.environ.get("GITHUB_EVENT_NAME") != "pull_request_target":
-            raise ValueError("expected pull_request_target")
+        event_name = os.environ.get("GITHUB_EVENT_NAME")
+        if event_name not in ("pull_request", "pull_request_target"):
+            raise ValueError("expected a pull request event")
         prepare(json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes()),
-                Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))
+                Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), event_name)
     except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.SubprocessError) as error:
         print(f"proofci GitHub preparation failed: {error}", file=sys.stderr)
         sys.exit(2)

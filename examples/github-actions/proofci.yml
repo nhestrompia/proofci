@@ -36,6 +36,19 @@ jobs:
             --baseline /opt/proofci-baseline/baseline.json \
             --snapshot "$GITHUB_WORKSPACE/snapshot" \
             --report "$PROOFCI_OUTPUT/report.json"
+      - name: Export available evidence
+        if: ${{ always() }}
+        env:
+          PROOFCI_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ -s "$PROOFCI_OUTPUT/report.json" ]; then
+            python3 /opt/proofci/portable/replay.py export \
+              --envelope "$PROOFCI_OUTPUT/envelope.json" \
+              --baseline /opt/proofci-baseline/baseline.json \
+              --snapshot "$GITHUB_WORKSPACE/snapshot" \
+              --report "$PROOFCI_OUTPUT/report.json" \
+              --output "$PROOFCI_OUTPUT/evidence.tar" || echo 'Evidence export was unavailable.'
+          fi
       - name: Upload available report and metadata
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

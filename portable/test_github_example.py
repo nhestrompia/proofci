@@ -43,6 +43,10 @@ class GitHubExampleTests(unittest.TestCase):
             envelope = json.loads((root / "output/envelope.json").read_text())
             self.assertEqual((envelope["head"], envelope["base"]), (head, base))
             self.assertEqual(json.loads((root / "output/github.json").read_text())["scope"], "source-head-only")
+            env["GITHUB_EVENT_NAME"] = "pull_request"
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((root / "output/github.json").read_text())["event"], "pull_request")
             event.write_text(json.dumps({"action": "synchronize", "pull_request": {"number": 7,
                 "head": {"sha": base}, "base": {"sha": base}}}))
             result = subprocess.run(command, env=env, capture_output=True, text=True)

@@ -68,6 +68,12 @@ class GitHubLinuxTests(unittest.TestCase):
                     shutil.copy(output / "report.json", dest / f"{name}-report.json")
                     shutil.copy(output / "envelope.json", dest / f"{name}-envelope.json")
                     shutil.copy(output / "github.json", dest / f"{name}-github.json")
+                    if name != "error":
+                        subprocess.run([sys.executable, str(ROOT / "portable/replay.py"), "export",
+                            "--envelope", str(output / "envelope.json"), "--baseline", str(baseline),
+                            "--snapshot", str(snapshot), "--report", str(output / "report.json"),
+                            "--output", str(dest / f"{name}-evidence.tar")], check=True, env=env,
+                            capture_output=True, text=True)
             status, report = run()
             self.assertEqual(status, 0, report)
             self.assertEqual(report["results"][0]["decision"], "verified")
@@ -83,6 +89,7 @@ class GitHubLinuxTests(unittest.TestCase):
             self.assertEqual(status, 2, report)
             self.assertEqual(report["status"], "error")
             record("error", status, report)
+            self.assertEqual(results, json.loads((ROOT / "portable/fixtures/github-normalized.json").read_text()))
             if os.environ.get("PROOFCI_ACCEPTANCE_OUTPUT"):
                 (Path(os.environ["PROOFCI_ACCEPTANCE_OUTPUT"]) / "normalized.json").write_text(
                     json.dumps(results, indent=2, sort_keys=True) + "\n")

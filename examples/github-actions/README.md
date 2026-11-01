@@ -3,9 +3,9 @@
 This example runs the portable CLI on a pull request's source commit. It records
 the pull request number, head, base and `source-head-only` scope alongside the
 CLI report. It does not validate GitHub's synthetic merge commit. The workflow
-job fails when preparation or verification fails; the artifact upload runs even
-when verification exits 1 or 2. The report contains evidence references and
-digests, not a complete evidence archive. If setup fails before the CLI starts,
+job fails when preparation or verification fails; it attempts evidence export
+and artifact upload even when verification exits 1 or 2. An evidence archive
+is available only when export succeeds. If setup fails before the CLI starts,
 there may be no report.
 
 This is an example for a dedicated, disposable Linux ARM64 runner. It has not
@@ -46,6 +46,7 @@ work around those limits. The base commit must be present in the full checkout;
 preparation fails if either commit cannot be verified.
 
 The artifacts inherit the repository's Actions access and retention settings.
+The evidence archive includes the snapshot history and protected contracts.
 Review those settings before using private source or contracts. An artifact is
-not an authenticated baseline and must not be used to select one. For a replay
-bundle, follow the separate export instructions in the portable README.
+not an authenticated baseline and must not be used to select one. Protect the
+exported archive digest separately as described in the portable README.
