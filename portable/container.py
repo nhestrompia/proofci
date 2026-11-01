@@ -16,7 +16,8 @@ import uuid
 import report as report_contract
 import proofci
 
-IMAGE_ID = "sha256:e36c6538bbc74aaac0266e772e672c07327b524a2102e047bc65eb5c59c577d2"
+IMAGE_ID = "sha256:0768934aa3f0d7d40edb6bbe879c97ef66f2fd825549861ee8bc2598adda4054"
+IMAGE_CONFIG_ID = "sha256:0fed6287e0b5723db99852e9aad1c45d35e284c5f1891c42c90240444793a594"
 
 
 def main():
@@ -70,7 +71,7 @@ def main():
                 raise ValueError("dependency staging directory is invalid")
         image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.image],
                                            text=True, timeout=max(0, deadline - time.monotonic())).strip()
-        if image_id != IMAGE_ID:
+        if image_id not in (IMAGE_ID, IMAGE_CONFIG_ID):
             raise ValueError("local image identity does not match the pinned distribution")
         if baseline.parent.is_relative_to(snapshot):
             raise ValueError("protected baseline must be outside the candidate snapshot")
