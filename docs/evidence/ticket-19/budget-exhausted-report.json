@@ -1,0 +1,106 @@
+{
+  "coverage": {
+    "changes": [],
+    "uncovered_supported_symbols": [],
+    "unsupported_changed_code": []
+  },
+  "dispatch": {
+    "dependencies": {
+      "mode": "pinned-image"
+    },
+    "elapsed_seconds": 267.09128024987876,
+    "final_status": 1,
+    "mode": "isolated-worker",
+    "worker_report_sha256": "f50d0b48e310e3bc947719e3ab3953412a8f06851fb6c95f243f4169dca8c028",
+    "worker_status": 1
+  },
+  "envelope": {
+    "base": "7d33ff9c3f1651609ea43ee913df1177341eb4b2",
+    "baseline_sha256": "672ea610110306280a2b0f56223ac22fed9ddf6c1875c254ece5b8f820eee327",
+    "candidate_sha256": "1f4ac79ec0f4970edf1e2d140d57fb6697f25fdf1e29851fada670e04ecdc900",
+    "dependency": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
+    "head": "7d33ff9c3f1651609ea43ee913df1177341eb4b2",
+    "repository": "https://github.com/nhestrompia/proofci.git",
+    "resource_policy": {
+      "cpu_seconds": 900,
+      "file_bytes": 2147483648,
+      "memory_bytes": 2147483648,
+      "processes": 256,
+      "timeout_seconds": 900
+    },
+    "toolchain": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+    "trust_policy": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "version": 1
+  },
+  "execution": {
+    "bubblewrap_sha256": "b3b829e18a7d43ee589dc37e351cb9480ff7301b493d8227b8c754294638b976",
+    "dispatch_phase": "final-validation",
+    "image": "sha256:166f221ee92c8e38ca0a211fe10d057d919216216c21e661b48cf73859a6acce",
+    "validator_policy_sha256": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "virtualization": "qemu"
+  },
+  "finished_at": 1793540826.4040306,
+  "property_counts": {
+    "unproven": 1,
+    "verified": 0,
+    "violated": 0
+  },
+  "results": [
+    {
+      "decision": "unproven",
+      "elapsed_seconds": 120.144593141,
+      "evidence": "experiments/source-binding/fixtures/verified",
+      "evidence_sha256": {},
+      "id": "increment",
+      "policy": "required",
+      "property": "target x = x + 1",
+      "reason": "obligation_budget_exhausted",
+      "started_at": 1793540706.2593546,
+      "symbol": "target",
+      "validation": {
+        "decision": "unproven",
+        "reason": "obligation_budget_exhausted"
+      }
+    }
+  ],
+  "started_at": 1793540701.2201548,
+  "status": "blocked",
+  "support": {
+    "admission_reason": null,
+    "admitted_candidate": "experiments/source-binding/fixtures/candidate.lean",
+    "assumptions": [
+      "protected baseline and verifier",
+      "pinned Lean toolchain and trusted host"
+    ],
+    "deferred_frontends": [
+      "Rust/Aeneas"
+    ],
+    "exclusions": [
+      "imports, additional declarations, macros, instances, attributes and runtime replacements",
+      "compiled binaries, deployment, foreign languages and all other repository code"
+    ],
+    "guarantee": "Named approved properties of the admitted source-level target only",
+    "lean_commit": "eb6cafb7290e8bd5f2937522d8d804f58f02bafc",
+    "permitted_foundational_axioms": [
+      "Classical.choice",
+      "Quot.sound",
+      "propext"
+    ],
+    "policy_sha256": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "policy_version": "lean-target-v1",
+    "symbol": "target",
+    "toolchain_sha256": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+    "trusted_tools": [
+      "Lean kernel",
+      "Lean exporter",
+      "Nanoda",
+      "Comparator",
+      "source adapter"
+    ]
+  },
+  "usage": {
+    "elapsed_seconds": 125.184234893,
+    "model_calls": 0
+  },
+  "version": 1
+}

@@ -1,0 +1,21 @@
+import json
+from pathlib import Path
+import sqlite3
+import sys
+
+sys.path.insert(0, '/private/tmp/proofci-ticket-19/portable')
+import service_migration
+root = Path('/private/tmp/proofci19-live-demonstration3')
+summary = json.loads((root/'stale-summary.json').read_text())
+with sqlite3.connect(root/'baselines.db') as db:
+    row = db.execute('SELECT id, actor FROM migrations WHERE head=? AND status=?', (summary['authorized_head'], 'verified')).fetchone()
+if row is None:
+    raise RuntimeError('verified authorization unavailable')
+try:
+    service_migration.activate(str(root/'baselines.db'), summary['repository'], row[0], summary['advanced_head'], row[1], 'live-demo')
+except ValueError as error:
+    if str(error) != 'migration authorization is stale':
+        raise
+    print(json.dumps({'reason': str(error), 'authorized_head': summary['authorized_head'], 'advanced_head': summary['advanced_head']}))
+else:
+    raise RuntimeError('stale authorization accepted')

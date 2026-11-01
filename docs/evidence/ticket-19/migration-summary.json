@@ -1,0 +1,37 @@
+{
+  "repository": "https://github.com/nhestrompia/proofci.git",
+  "branch": "proofci-ticket19-demo-f805eec2",
+  "head": "d9c6545778fb4900d17d1fc07b4582150df31a1b",
+  "maintainer_id": 76179132,
+  "previous": "85e7f438ee3e60c2de5d660477985aaedfc1757c484d41d4630f9276fc68f5cb",
+  "replacement": "e30103ee308806d8d45f8e838da85a0cf8c4f089ac4949ffe8207d5f55be9bee",
+  "stale_candidate_rejected": true,
+  "status": "passed",
+  "policy_changed": true,
+  "guarantee_changes": [
+    {
+      "id": "increment",
+      "kind": "removed"
+    },
+    {
+      "id": "increment-v2",
+      "kind": "added"
+    }
+  ],
+  "retired_guarantees": [
+    {
+      "assumptions": [],
+      "evidence": "experiments/source-binding/fixtures/verified",
+      "explanation": "Adds one",
+      "formal_statement": "x + 1",
+      "id": "increment",
+      "implementation_bindings": [
+        "target"
+      ],
+      "owner": "maintainer",
+      "policy": "required",
+      "specification_closure": []
+    }
+  ],
+  "scope": "local trusted caller with real GitHub user API; isolated copied baseline store"
+}

@@ -1,0 +1,51 @@
+import base64
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, '/private/tmp/proofci-ticket-19/portable')
+import baselines
+import service_migration
+
+root = Path('/private/tmp/proofci19-live-demonstration3')
+repository = 'https://github.com/nhestrompia/proofci.git'
+branch = 'proofci-ticket19-demo-f805eec2'
+prefix = 'repos/nhestrompia/proofci'
+def api(*args):
+    return json.loads(subprocess.check_output(['gh', 'api', *args], text=True))
+user = api('user')
+repo = api(prefix)
+if repo['id'] != 1440679218 or not (repo.get('permissions', {}).get('admin') or repo.get('permissions', {}).get('maintain')):
+    raise RuntimeError('current maintainer access required')
+item = api(prefix + '/contents/proofci-pilot-contracts.json?ref=' + branch)
+manifest = json.loads(base64.b64decode(item['content']))
+manifest['contracts'][0]['explanation'] = 'Adds one; stale approval demonstration'
+content = base64.b64encode((json.dumps(manifest, sort_keys=True, separators=(',', ':'))+'\n').encode()).decode()
+update = api('-X', 'PUT', prefix+'/contents/proofci-pilot-contracts.json', '-f', 'message=Prepare stale migration approval demonstration', '-f', 'branch='+branch, '-f', 'sha='+item['sha'], '-f', 'content='+content)
+head = update['commit']['sha']
+snapshot = root / 'stale-snapshot'
+subprocess.run(['git', 'clone', '--quiet', '--depth=1', '--branch', branch, repository, str(snapshot)], check=True)
+store = str(root/'baselines.db')
+with baselines.open_store(store) as db:
+    previous = baselines.lookup(db)['digest']
+replacement = hashlib.sha256((snapshot/'proofci-pilot-contracts.json').read_bytes()).hexdigest()
+authorization = service_migration.prepare(store, repository, str(snapshot), head, previous, replacement, user['id'], 'live-demo')
+report = root/'stale-verification.json'
+status = service_migration.verify(store, repository, str(snapshot), authorization, str(report))
+if status != 0:
+    raise RuntimeError('verification failed: '+report.read_text())
+marker = base64.b64encode(b'This commit supersedes the approved candidate.\n').decode()
+advanced = api('-X', 'PUT', prefix+'/contents/proofci-ticket19-stale-demo.txt', '-f', 'message=Supersede migration candidate', '-f', 'branch='+branch, '-f', 'content='+marker)['commit']['sha']
+try:
+    service_migration.activate(store, repository, authorization, advanced, user['id'], 'live-demo')
+except ValueError:
+    pass
+else:
+    raise RuntimeError('stale authorization accepted')
+with baselines.open_store(store) as db:
+    assert baselines.lookup(db)['digest'] == previous
+result = {'repository':repository, 'branch':branch, 'authorized_head':head, 'advanced_head':advanced, 'status':'rejected', 'active_baseline_unchanged':True, 'scope':'local trusted caller with real GitHub user API; isolated copied baseline store'}
+(root/'stale-summary.json').write_text(json.dumps(result, indent=2)+'\n')
+print(json.dumps(result, indent=2))

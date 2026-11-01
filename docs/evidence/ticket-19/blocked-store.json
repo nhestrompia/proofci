@@ -1,0 +1,18 @@
+{
+  "active": {
+    "digest": "85e7f438ee3e60c2de5d660477985aaedfc1757c484d41d4630f9276fc68f5cb",
+    "revision": 0
+  },
+  "migrations": [
+    {
+      "actor": 76179132,
+      "baseline_sha256": null,
+      "head": "7d33ff9c3f1651609ea43ee913df1177341eb4b2",
+      "id": "c6bbd8da30f1436baff50f9a8f8783e0",
+      "previous": "85e7f438ee3e60c2de5d660477985aaedfc1757c484d41d4630f9276fc68f5cb",
+      "previous_revision": 0,
+      "replacement": "75c6e0a7b5bd17be5d6e868a6767a5f1fd3c10849b161940d5adc40161f6864a",
+      "status": "authorized"
+    }
+  ]
+}
