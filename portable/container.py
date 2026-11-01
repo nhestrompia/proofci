@@ -114,8 +114,12 @@ def main():
                 contract_bytes = proofci.bounded_read(contract, 16384)
                 if hashlib.sha256(contract_bytes).hexdigest() != item.get("contract_sha256"):
                     raise ValueError("protected contract digest mismatch")
-                contract_target.write_bytes(contract_bytes)
-                os.chmod(contract_target, 0o444)
+                if contract_target.exists():
+                    if contract_target.read_bytes() != contract_bytes:
+                        raise ValueError("conflicting protected contract contents")
+                else:
+                    contract_target.write_bytes(contract_bytes)
+                    os.chmod(contract_target, 0o444)
             envelope_path = temp / "envelope.json"
             envelope_path.write_bytes(raw)
             os.chmod(envelope_path, 0o644)

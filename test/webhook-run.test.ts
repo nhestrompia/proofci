@@ -9,10 +9,15 @@ import { join } from 'node:path';
 import { Pool } from 'pg';
 import { EnrollmentStore } from '../src/enrollment-store.ts';
 import { RunStore } from '../src/run-store.ts';
+import { CreateBucketCommand, DeleteBucketCommand, S3Client } from '@aws-sdk/client-s3';
 
 const database = process.env.PROOFCI_TEST_DATABASE_URL;
-test('the webhook persists a signed selected push before acknowledging it', { skip: !database, timeout: 30_000 }, async () => {
-  if (!database) return;
+const endpoint = process.env.PROOFCI_TEST_S3_ENDPOINT;
+test('the webhook persists a signed selected push before acknowledging it', { skip: !database || !endpoint, timeout: 30_000 }, async () => {
+  if (!database || !endpoint) return;
+  const bucket = `proofci-${randomUUID()}`;
+  const s3 = new S3Client({ endpoint, region: 'us-east-1', forcePathStyle: true, credentials: { accessKeyId: 'test', secretAccessKey: 'test' } });
+  await s3.send(new CreateBucketCommand({ Bucket: bucket }));
   const schema = `webhook_test_${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString: database });
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -31,7 +36,7 @@ test('the webhook persists a signed selected push before acknowledging it', { sk
     const listener = createServer(); await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
     const address = listener.address(); assert.ok(address && typeof address !== 'string');
     const port = address.port; await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
-    child = spawn(process.execPath, ['src/server.ts'], { stdio: 'ignore', env: { ...process.env, DATABASE_URL: db.toString(), GITHUB_APP_ID: '1', GITHUB_PRIVATE_KEY_FILE: key, GITHUB_CLIENT_ID: 'test', GITHUB_CLIENT_SECRET: 'test', GITHUB_WEBHOOK_SECRET: 'test-secret', PROOFCI_ORIGIN: `http://127.0.0.1:${port}`, PROOFCI_LOCAL_PILOT_CONFIG: config, PORT: String(port) } });
+    child = spawn(process.execPath, ['src/server.ts'], { stdio: 'ignore', env: { ...process.env, DATABASE_URL: db.toString(), GITHUB_APP_ID: '1', GITHUB_PRIVATE_KEY_FILE: key, GITHUB_CLIENT_ID: 'test', GITHUB_CLIENT_SECRET: 'test', GITHUB_WEBHOOK_SECRET: 'test-secret', PROOFCI_ORIGIN: `http://127.0.0.1:${port}`, PROOFCI_LOCAL_PILOT_CONFIG: config, PROOFCI_S3_BUCKET: bucket, PROOFCI_S3_REGION: 'us-east-1', PROOFCI_S3_ENDPOINT: endpoint, AWS_ACCESS_KEY_ID: 'test', AWS_SECRET_ACCESS_KEY: 'test', PORT: String(port) } });
     const url = `http://127.0.0.1:${port}`;
     let ready = false;
     for (let attempt = 0; attempt < 100 && !ready; attempt++) {
@@ -55,6 +60,7 @@ test('the webhook persists a signed selected push before acknowledging it', { sk
     assert.equal((await fetch(`${url}/runs/1001/1002/${randomUUID()}`)).status, 404);
   } finally {
     child?.kill('SIGKILL'); await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
+    await s3.send(new DeleteBucketCommand({ Bucket: bucket })); s3.destroy();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -9,6 +9,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import baselines
+import replay
+import service_baseline
+import service_execute
 
 
 def manifest():
@@ -121,6 +124,26 @@ class BaselineTests(unittest.TestCase):
         with closing(baselines.open_store(self.store)) as db:
             with self.assertRaisesRegex(ValueError, "not found"):
                 baselines.lookup(db)
+
+    def test_service_exports_the_completed_report_before_protected_inputs_are_removed(self):
+        with patch.object(baselines, 'invoke', side_effect=self.success):
+            self.assertEqual(self.activate(), 0)
+        baseline_digest = service_baseline.lookup(self.store, 'repo')['baseline_sha256']
+        archive = self.root / 'evidence.tar'
+
+        def dispatch_without_vm(*, envelope_path, baseline_path, snapshot, report_path, launcher):
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name('proofci.py')),
+                '--envelope', str(envelope_path), '--baseline', str(baseline_path),
+                '--snapshot', str(snapshot), '--toolchain', str(self.root / 'missing-toolchain'), '--report', str(report_path)])
+            return result.returncode
+
+        with patch.object(service_execute.dispatch, 'run', side_effect=dispatch_without_vm):
+            status = service_execute.execute(store=self.store, repository='repo', head=self.head, base=self.head,
+                baseline_digest=baseline_digest, snapshot=self.snapshot, report=self.report, evidence=archive)
+        self.assertEqual(status, 1)
+        files = replay.ingest(archive, replay.sha(archive.read_bytes()))
+        self.assertEqual(json.loads(files['report.json']), json.loads(self.report.read_bytes()))
+        self.assertEqual(json.loads(files['envelope.json'])['baseline_sha256'], baseline_digest)
 
 
 if __name__ == "__main__":

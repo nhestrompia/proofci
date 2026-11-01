@@ -53,7 +53,8 @@ test('a public GitHub fork snapshot reaches the real isolated verifier without m
       if (typeof commit !== 'object' || !commit || !('parents' in commit) || !Array.isArray(commit.parents) || commit.parents.length !== 2 || commit.parents[0]?.sha !== current.base || commit.parents[1]?.sha !== current.head) throw new Error('Live merge parents changed');
       return { kind: 'resolved' as const, merge: data.merge_commit_sha, head: current.head, base: current.base };
     };
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: pr.destinationRepositoryId, lane: `pull/${number}`, number, sourceRepositoryId: pr.sourceRepositoryId, head: pr.head, base: pr.base, baseline };
+    const merge = await resolvePullMerge();
+    const candidate = { mergeHead: merge.merge, kind: 'pull-request' as const, installationId: 1, repositoryId: pr.destinationRepositoryId, lane: `pull/${number}`, number, sourceRepositoryId: pr.sourceRepositoryId, head: pr.head, base: pr.base, baseline };
     const github = { installationAccess: async () => 'allowed' as const, resolveHead: async () => null, resolvePullRequest, resolvePullMerge, stageSnapshot: async (_scope: unknown, input: { head: string; base: string; root: string; signal: AbortSignal }) => fetchSnapshot({ ...input, owner, name, token }) };
     const baselines = new ActiveBaselines([{ ...candidate, store, repository }]);
     const schema = `fork_live_${randomUUID().replaceAll('-', '')}`;

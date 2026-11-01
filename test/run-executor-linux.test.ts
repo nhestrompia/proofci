@@ -12,7 +12,8 @@ test('the executor uses an approved baseline and the real isolated verifier', { 
   try {
     const snapshot = join(root, 'snapshot'); await mkdir(snapshot);
     await cp('experiments/source-binding/fixtures/candidate.lean', join(snapshot, 'candidate.lean'));
-    await cp('experiments/source-binding/fixtures/verified', join(snapshot, 'evidence'), { recursive: true });
+    const missingEvidence = Boolean(process.env.PROOFCI_TEST_MISSING_EVIDENCE);
+    if (!missingEvidence) await cp('experiments/source-binding/fixtures/verified', join(snapshot, 'evidence'), { recursive: true });
     const manifest = { version: 1, candidate: 'candidate.lean', contracts: [{ id: 'increment', explanation: 'Adds one', owner: 'maintainer', formal_statement: 'x + 1', assumptions: [], specification_closure: [], implementation_bindings: ['target'], policy: 'required', evidence: 'evidence' }] };
     await writeFile(join(snapshot, 'contracts.json'), JSON.stringify(manifest));
     const git = (...args: string[]) => execFileSync('git', ['-C', snapshot, ...args], { encoding: 'utf8' }).trim();
@@ -31,7 +32,16 @@ test('the executor uses an approved baseline and the real isolated verifier', { 
       const target = join(input.root, 'snapshot'); await cp(snapshot, target, { recursive: true }); return { snapshot: target, repository };
     } };
     const result = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ installationId: 1, repositoryId: 2, store, repository }]) });
-    assert.equal(result.report.status, 'passed', JSON.stringify(result.report));
-
+    assert.equal(result.report.status, missingEvidence ? 'blocked' : 'passed');
+    if (missingEvidence) {
+      const results = result.report.results;
+      assert.ok(Array.isArray(results));
+      assert.equal(results[0]?.reason, 'missing_evidence');
+    }
+    assert.ok(result.evidence);
+    const archive = join(root, 'evidence.tar'); await writeFile(archive, result.evidence);
+    const archiveDigest = createHash('sha256').update(result.evidence).digest('hex');
+    const checked = JSON.parse(execFileSync('python3', ['portable/check_hosted_bundle.py', archive, archiveDigest], { encoding: 'utf8' }));
+    assert.deepEqual(checked.report, result.report);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -71,6 +71,34 @@ file that is not writable by other users:
 ]
 ```
 
+Set `PROOFCI_LOCAL_PILOT_CONFIG` to the absolute path of this file. Set
+`PROOFCI_S3_BUCKET` and `PROOFCI_S3_REGION` for a private, unversioned
+S3-compatible bucket. The service uses the AWS SDK credential provider chain;
+keep those credentials in the control process and give it object read, write,
+delete, and bucket versioning inspection permissions. For another S3-compatible
+server, set `PROOFCI_S3_ENDPOINT` to its endpoint. Do not grant candidate
+workers access to the bucket. Versioned or versioning-suspended buckets are
+rejected because deleting only the current version would retain evidence.
+
+Completed verification reports contain an evidence link, SHA-256 digest, and
+expiration time. Sign in as a current repository maintainer to download the
+bundle. Replay it with the digest from the report using the commands in the
+[portable guide](portable/README.md#export-and-replay-evidence). The service
+checks access again for each download. It returns an expiration message after
+the deadline, even if cleanup is delayed. Expiration removes the hosted bundle,
+not the historical report or its property outcomes. `PROOFCI_EVIDENCE_RETENTION_DAYS`
+sets the retention period from completion; it defaults to 30 days. A service
+timer deletes expired objects and abandoned uploads independently of webhooks.
+
+To exercise the storage boundary, set `PROOFCI_TEST_DATABASE_URL` to an isolated
+PostgreSQL database and `PROOFCI_TEST_S3_ENDPOINT` to an isolated S3-compatible
+test server, then run `node --test test/evidence-store.test.ts`. The test creates
+and removes its own schema and bucket. To include a real verifier result, run the
+packaged `test_service_execute_linux.py` test with `PROOFCI_TEST_PACKAGED=1` and
+`PROOFCI_TEST_HOSTED_BUNDLE` set to an output path. Set the same path when running
+the storage test. It downloads the persisted bundle and replays it with the
+pinned verifier image.
+
 Set `PROOFCI_LOCAL_PILOT_CONFIG` to the absolute path of this file. Configure
 the GitHub App and service as described above, subscribe the App webhook to
 push and pull request events, and enroll the repository. Reconciliation checks
@@ -88,8 +116,10 @@ Snapshot fetching includes the history needed for replay and rejects a staged
 repository larger than 256 MiB. Evidence export rejects shallow repositories.
 Unresolved merge candidates are visible to maintainers at
 `/pulls/INSTALLATION_ID/REPOSITORY_ID/PULL_NUMBER`. Check publication retries
-from the database without rerunning proof work. PostgreSQL holds the bundle, so
-operators must provision storage and protect database backups accordingly.
+from the database without rerunning proof work. Newly hosted bundles are stored
+in the configured S3-compatible bucket. Older database-stored bundles remain
+available through their existing links until the configured retention deadline;
+the cleanup timer also removes expired database-stored bundles.
 
 Inspect runs and deliveries, or cancel a run, using the enrollment scope:
 
@@ -98,6 +128,17 @@ node src/run-inspect.ts INSTALLATION_ID REPOSITORY_ID
 node src/run-inspect.ts INSTALLATION_ID REPOSITORY_ID RUN_ID
 node src/run-cancel.ts INSTALLATION_ID REPOSITORY_ID RUN_ID
 ```
+
+An operator with access to the service database can also admit an immutable
+candidate without a webhook:
+
+```sh
+node src/run-dispatch.ts INSTALLATION_ID REPOSITORY_ID HEAD BASE BASELINE_SHA256 LANE
+```
+
+Use full commit IDs and the active baseline SHA-256. The command prints the run
+ID. The worker rechecks the selected installation, repository access, and active
+baseline before executing. This command does not publish a GitHub check.
 
 These commands use `DATABASE_URL`. Limit access to the database and pilot
 configuration to trusted operators. Cancellation persists, and duplicate

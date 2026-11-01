@@ -16,7 +16,7 @@ test('durable runs deduplicate, recover leases, fence stale completions, and per
     const enrollment = new EnrollmentStore(pool);
     await enrollment.initialize(); await Promise.all([store.initialize(), new RunStore(pool).initialize()]);
     await enrollment.select({ installationId: 1, repositoryId: 2 });
-    const candidate = { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'refs/heads/main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    const candidate = { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'refs/heads/main', head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     const first = await store.admit(candidate);
     assert.equal(await store.admit(candidate), first);
     const lease = await store.claim(10);
@@ -50,7 +50,9 @@ test('durable runs deduplicate, recover leases, fence stale completions, and per
     assert.equal(failed?.id, fourth);
     assert.ok(failed);
     assert.equal(await store.fail(failed, 'worker_unavailable'), true);
-    const failedReport = (await store.inspect(candidate, fourth))?.report;
+    const failedRun = await store.inspect(candidate, fourth);
+    assert.equal(failedRun?.state, 'failed');
+    const failedReport = failedRun?.report;
     assert.ok(typeof failedReport === 'object' && failedReport !== null && 'reason' in failedReport);
     assert.equal(failedReport.reason, 'worker_unavailable');
     assert.ok('scheduler' in failedReport);
@@ -179,7 +181,7 @@ test('pull observations survive restart and fence superseded and closed fork run
     assert.equal(await runs.acceptPullDelivery(event), true);
     const delivery = await new RunStore(pool).claimPullDelivery(60_000);
     assert.ok(delivery);
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/5', number: 5, sourceRepositoryId: 3, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/5', number: 5, sourceRepositoryId: 3, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     assert.equal(await runs.processPullDelivery(delivery, async () => candidate), true);
     const lease = await runs.claim(60_000);
     assert.ok(lease);
@@ -236,7 +238,7 @@ test('a close observed during PR resolution cannot resurrect the older candidate
     const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 3 };
     await selections.select(event); await runs.acceptPullDelivery(event);
     const delivery = await runs.claimPullDelivery(60_000); assert.ok(delivery);
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     let resume: () => void = () => {}, resolved: () => void = () => {};
     const waiting = new Promise<void>(resolve => { resume = resolve; });
     const entered = new Promise<void>(resolve => { resolved = resolve; });
@@ -266,7 +268,7 @@ test('a destination push during the first PR lookup forces a fresh resolution', 
     const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 3 };
     await selections.select(event); await runs.acceptPullDelivery(event);
     const delivery = await runs.claimPullDelivery(60_000); assert.ok(delivery);
-    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     let resume: () => void = () => {}, entered: () => void = () => {};
     const waiting = new Promise<void>(resolve => { resume = resolve; });
     const resolving = new Promise<void>(resolve => { entered = resolve; });
@@ -327,5 +329,30 @@ test('fork candidates publish their test merge and persist evidence', { skip: !u
     await enrollment.remove(candidate);
     const invalidated = await runs.claimPublication(60_000); assert.ok(invalidated);
     assert.equal(invalidated.applicable, false);
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+
+test('migration backfills valid pull publications and retires old unresolved candidates', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url }); await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const selections = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await selections.initialize(); await runs.initialize();
+    const candidate = { kind: 'pull-request' as const, installationId: 91, repositoryId: 92, lane: 'pull/1', number: 1, sourceRepositoryId: 93, head: 'a'.repeat(40), mergeHead: 'd'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    await selections.select(candidate);
+    await assert.rejects(runs.admit({ ...candidate, mergeHead: 'invalid' }));
+    const valid = await runs.admit(candidate);
+    const old = await runs.admit({ ...candidate, lane: 'pull/2', number: 2 });
+    await pool.query('DELETE FROM proofci_publications WHERE run_id IN ($1,$2)', [valid, old]);
+    await pool.query('UPDATE proofci_runs SET merge_head=NULL WHERE id=$1', [old]);
+    await runs.initialize();
+    const publication = await runs.claimPublication(60_000); assert.ok(publication);
+    assert.equal(publication.id, valid);
+    const row = await pool.query('SELECT applicable, state FROM proofci_runs WHERE id=$1', [old]);
+    assert.equal(row.rows[0].applicable, false);
+    assert.equal(row.rows[0].state, 'cancelled');
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });

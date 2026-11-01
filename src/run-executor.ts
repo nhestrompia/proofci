@@ -10,7 +10,6 @@ import { RunFailure } from './run-failure.ts';
 
 /** Prepare a fresh snapshot and use the protected baseline and verifier. */
 export async function executeRun(options: { candidate: Candidate; signal: AbortSignal; github: Pick<GitHubApp, 'stageSnapshot' | 'resolveHead'> & Partial<Pick<GitHubApp, 'resolvePullRequest' | 'resolvePullMerge'>>; baselines: ActiveBaselines; ensureActive?: () => Promise<boolean>; dispatch?: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>> }): Promise<{ report: Record<string, unknown>; evidence: Buffer | null }> {
-
   const { candidate, signal, github, baselines } = options;
   const checkCurrent = async () => {
     if (signal.aborted || (options.ensureActive && !await options.ensureActive())) throw new RunFailure('cancelled');
@@ -50,6 +49,5 @@ export async function executeRun(options: { candidate: Candidate; signal: AbortS
       } finally { await file.close(); }
     }
     return { report: result, evidence };
-
   } finally { await rm(root, { recursive: true, force: true }); }
 }
