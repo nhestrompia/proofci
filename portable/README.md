@@ -120,9 +120,7 @@ process and temporary-storage limits. The tighter of memory and file limits
 bounds container memory, including nested tmpfs. This conservative bound may
 stop a run before either individual limit would be reached. The smaller of the
 CPU and wall-time budgets is a wall deadline while the container is capped at
-one CPU. The verifier container also disables Docker's AppArmor profile to allow its
-nested bubblewrap sandbox. Run it on a disposable, isolated host; the host and
-Docker remain trusted. The verifier refuses to accept a
+one CPU. Docker and the host remain trusted. The verifier refuses to accept a
 proof outside a container with the required limits.
 
 Exit 0 means all required obligations were verified; exit 1 means a completed
@@ -350,8 +348,9 @@ repository's own properties. The workflow loads the fixture code from the GitHub
 the generated fixture commits, not those event commits. It requires no model or
 publishing credentials. On Ubuntu 24.04, the workflow enables nested user
 namespaces on the disposable GitHub-hosted VM so bubblewrap can run inside the
-unprivileged verifier container. Use an equally disposable, isolated runner;
-the host and Docker remain trusted.
+unprivileged verifier container. The fixture also passes
+`--allow-unconfined-apparmor`, which disables AppArmor for that container only.
+Use an equally disposable, isolated runner; the host and Docker remain trusted.
 
 For a repository gate, a trusted operator must supply the pinned verifier,
 image, envelope, and approved baseline outside the candidate checkout. The
@@ -380,7 +379,7 @@ Do not run candidate code in `pull_request_target` to gain access to secrets.
       --envelope "$RUNNER_TEMP/protected/envelope.json" \
       --baseline "$RUNNER_TEMP/protected/baseline.json" \
       --snapshot "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/report.json" \
-      --image proofci-validator-local --validator-only
+      --image proofci-validator-local --validator-only --allow-unconfined-apparmor
     status=$?
     echo "$status" > "$RUNNER_TEMP/exit-code.txt"
     exit "$status"

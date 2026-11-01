@@ -47,7 +47,7 @@ if case == "execution-failure":
     envelope["baseline_sha256"] = "0" * 64
 (output / "envelope.json").write_text(json.dumps(envelope))
 command = [sys.executable, str(root / "portable/container.py"), "--envelope", str(output / "envelope.json"),
-           "--baseline", str(output / "baseline.json"), "--snapshot", str(snapshot), "--report", str(output / "report.json"), "--image", "proofci-validator-local", "--validator-only"]
+           "--baseline", str(output / "baseline.json"), "--snapshot", str(snapshot), "--report", str(output / "report.json"), "--image", "proofci-validator-local", "--validator-only", "--allow-unconfined-apparmor"]
 status = subprocess.run(command, check=False).returncode
 (output / "exit-code.txt").write_text(f"{status}\n")
 if (output / "report.json").exists():

@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--dependencies", type=Path)
     parser.add_argument("--phase", choices=("worker", "final-validation"), default="worker")
     parser.add_argument("--validator-only", action="store_true")
+    parser.add_argument("--allow-unconfined-apparmor", action="store_true")
     args = parser.parse_args()
     report = args.report.resolve()
     try:
@@ -127,7 +128,6 @@ def main():
             command = ["docker", "create", "--name", name, "--label", f"proofci.run={os.getpid()}", "--rm", "--network", "none",
                 "--platform", "linux/arm64", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--security-opt", "seccomp=unconfined", "--security-opt", "systempaths=unconfined",
-                "--security-opt", "apparmor=unconfined",
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--read-only", "--memory", str(min(limits["memory_bytes"], limits["file_bytes"])),
                 "--memory-swap", str(min(limits["memory_bytes"], limits["file_bytes"])),
@@ -142,6 +142,9 @@ def main():
                 "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/baseline.json",
                 "--snapshot", "/snapshot", "--toolchain", "/lean", "--bwrap", "/usr/bin/bwrap",
                 "--report", "/result/report.json"]
+            if args.allow_unconfined_apparmor:
+                index = command.index("--user")
+                command[index:index] = ["--security-opt", "apparmor=unconfined"]
             if args.validator_only:
                 command.append("--validator-only")
             if args.artifacts is not None:
