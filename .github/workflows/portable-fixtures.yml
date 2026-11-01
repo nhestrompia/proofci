@@ -1,0 +1,54 @@
+name: Portable verifier fixtures
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: passing
+            expected: 0
+          - case: unproven
+            expected: 1
+          - case: execution-failure
+            expected: 2
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build pinned distribution
+        run: .github/scripts/build-validator.sh
+      - name: Run fixture
+        id: verify
+        shell: bash
+        run: |
+          set +e
+          python3 .github/scripts/actions-fixture.py '${{ matrix.case }}' "$RUNNER_TEMP/proofci"
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          test "$status" -eq '${{ matrix.expected }}'
+          test "$(cat "$RUNNER_TEMP/proofci/exit-code.txt")" -eq "$status"
+          test -s "$RUNNER_TEMP/proofci/report.json"
+          if [ "${{ matrix.case }}" != execution-failure ]; then
+            test -s "$RUNNER_TEMP/proofci/evidence.tar"
+          fi
+      - name: Retain report and evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: proofci-${{ matrix.case }}
+          path: |
+            ${{ runner.temp }}/proofci/report.json
+            ${{ runner.temp }}/proofci/exit-code.txt
+            ${{ runner.temp }}/proofci/evidence.tar
+          if-no-files-found: warn
