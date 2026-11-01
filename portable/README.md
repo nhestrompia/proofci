@@ -120,7 +120,9 @@ process and temporary-storage limits. The tighter of memory and file limits
 bounds container memory, including nested tmpfs. This conservative bound may
 stop a run before either individual limit would be reached. The smaller of the
 CPU and wall-time budgets is a wall deadline while the container is capped at
-one CPU. Docker and the host remain trusted. The verifier refuses to accept a
+one CPU. The verifier container also disables Docker's AppArmor profile to allow its
+nested bubblewrap sandbox. Run it on a disposable, isolated host; the host and
+Docker remain trusted. The verifier refuses to accept a
 proof outside a container with the required limits.
 
 Exit 0 means all required obligations were verified; exit 1 means a completed

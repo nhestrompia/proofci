@@ -127,6 +127,7 @@ def main():
             command = ["docker", "create", "--name", name, "--label", f"proofci.run={os.getpid()}", "--rm", "--network", "none",
                 "--platform", "linux/arm64", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--security-opt", "seccomp=unconfined", "--security-opt", "systempaths=unconfined",
+                "--security-opt", "apparmor=unconfined",
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--read-only", "--memory", str(min(limits["memory_bytes"], limits["file_bytes"])),
                 "--memory-swap", str(min(limits["memory_bytes"], limits["file_bytes"])),
