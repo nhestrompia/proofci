@@ -7,7 +7,7 @@ import type { RunStore } from './run-store.ts';
 function object(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 
 /** Publish one durable outbox entry without dispatching verification again. */
-export async function publishNext(options: { store: Pick<RunStore, 'claimPublication' | 'publicationCurrent' | 'ownsPublication' | 'finishPublication' | 'retryPublication' | 'withPublicationLock'>; github: Pick<GitHubApp, 'resolvePullMerge' | 'publishCheck' | 'invalidateCheck'>; baselines: Pick<ActiveBaselines, 'active'>; origin: string }): Promise<boolean> {
+export async function publishNext(options: { store: Pick<RunStore, 'claimPublication' | 'publicationCurrent' | 'ownsPublication' | 'markPublicationUnresolved' | 'finishPublication' | 'retryPublication' | 'withPublicationLock'>; github: Pick<GitHubApp, 'resolvePullMerge' | 'publishCheck' | 'invalidateCheck'>; baselines: Pick<ActiveBaselines, 'active'>; origin: string }): Promise<boolean> {
   const item = await options.store.claimPublication(300_000);
   if (!item) return false;
   const number = Number(item.candidate.lane.slice('pull/'.length));
@@ -25,6 +25,7 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
     await options.store.withPublicationLock(item.id, async () => {
       if (!await options.store.ownsPublication(item)) return;
       if (!await fresh()) {
+        await options.store.markPublicationUnresolved(item);
         await options.github.invalidateCheck(scope, { runId: item.id, sha: item.candidate.head });
         await options.store.finishPublication(item);
         return;

@@ -26,7 +26,7 @@ Enrollment does not activate contracts or protect merges. Policy inspection chec
 
 The pilot schedules nonenforcing head-snapshot runs for configured branches and
 publishes a `ProofCI` check for pull requests on GitHub's test-merge commit. It
-does not enable hosted AI. Use a Linux ARM64 host with KVM,
+does not yet support merge queue candidates or enable hosted AI. Use a Linux ARM64 host with KVM,
 Docker, PostgreSQL, and the pinned verifier images. Software emulation can exceed
 the verifier's fixed obligation budget. Build the verifier image as described in
 [the portable verifier guide](portable/README.md), tag it
@@ -77,8 +77,8 @@ push and pull request events, and enroll the repository. Reconciliation checks
 configured branches and open pull requests every five minutes. A missing active
 baseline or revoked installation cannot schedule a run. The check stays pending
 or fails unless the final validator accepts every required obligation. Configure
-the required `ProofCI` check from this App and require up-to-date branches or a
-merge queue before relying on it as a gate.
+the required `ProofCI` check from this App and require up-to-date branches before
+relying on it as a gate.
 
 The check links to `/runs/INSTALLATION_ID/REPOSITORY_ID/RUN_ID`. A signed-in
 maintainer can read the full report there and download its immutable replay

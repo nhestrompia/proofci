@@ -188,6 +188,17 @@ test('pull deliveries admit only current selected merge candidates and fence sta
     assert.equal(await runs.processPullDelivery(lease, async () => candidate), false);
     assert.equal(await runs.processPullDelivery(recovered, async () => candidate), true);
     assert.equal((await runs.list(scope)).length, 1);
+    const run = await runs.claim(60_000); assert.ok(run);
+    assert.equal(await runs.complete(run, { version: 1, status: 'blocked' }, Buffer.from('evidence')), true);
+    assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }), true);
+    const unresolved = await runs.claimPullDelivery(60_000); assert.ok(unresolved);
+    assert.equal(await runs.processPullDelivery(unresolved, async () => 'merge_unresolved'), true);
+    assert.equal((await runs.list(scope))[0].applicable, true);
+    await pool.query("UPDATE proofci_pull_deliveries SET lease_until=now()-interval '1 second' WHERE delivery_id=$1", [unresolved.deliveryId]);
+    const retry = await runs.claimPullDelivery(60_000); assert.ok(retry);
+    assert.equal(await runs.processPullDelivery(retry, async () => candidate), true);
+    assert.deepEqual((await runs.list(scope)).map(item => item.id), [run.id]);
+    assert.equal(await runs.claim(1000), null);
     assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }), true);
     const conflict = await runs.claimPullDelivery(60_000);
     assert.ok(conflict);
@@ -229,6 +240,10 @@ test('publication outbox survives restart and fences an older run generation', {
     const report = (await runs.inspect(candidate, id))?.report;
     assert.ok(typeof report === 'object' && report !== null && 'scheduler' in report);
     assert.ok(typeof report.scheduler === 'object' && report.scheduler !== null && 'publication_seconds' in report.scheduler);
+    await enrollment.remove(candidate);
+    const revoked = await runs.claimPublication(60_000); assert.ok(revoked);
+    assert.equal(revoked.id, id); assert.equal(revoked.applicable, false);
+    assert.equal(await runs.publicationCurrent(revoked), false);
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });
 

@@ -56,7 +56,20 @@ export class RunStore {
       revision INTEGER NOT NULL DEFAULT 1, generation INTEGER NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ,
       last_error TEXT, published_at TIMESTAMPTZ
     )`);
+    await this.pool.query('ALTER TABLE proofci_publications ADD COLUMN IF NOT EXISTS needs_revalidation BOOLEAN NOT NULL DEFAULT false');
     await this.pool.query("INSERT INTO proofci_publications (run_id) SELECT id FROM proofci_runs WHERE kind='resolved' AND lane ~ '^pull/[1-9][0-9]*$' ON CONFLICT DO NOTHING");
+    await this.pool.query(`CREATE OR REPLACE FUNCTION proofci_fence_selection() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF TG_OP = 'UPDATE' AND NEW.generation = OLD.generation THEN RETURN NEW; END IF;
+        WITH changed AS (UPDATE proofci_runs SET applicable=false,
+          state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END,
+          lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END
+          WHERE installation_id=OLD.installation_id AND repository_id=OLD.repository_id AND selection_generation=OLD.generation AND applicable RETURNING id)
+        UPDATE proofci_publications SET pending=true, revision=revision+1 WHERE run_id IN (SELECT id FROM changed);
+        RETURN OLD;
+      END $$`);
+    await this.pool.query('DROP TRIGGER IF EXISTS proofci_fence_selection_trigger ON proofci_repository_selections');
+    await this.pool.query('CREATE TRIGGER proofci_fence_selection_trigger AFTER DELETE OR UPDATE OF generation ON proofci_repository_selections FOR EACH ROW EXECUTE FUNCTION proofci_fence_selection()');
     await this.pool.query(`CREATE TABLE IF NOT EXISTS proofci_push_deliveries (
       delivery_id UUID PRIMARY KEY, installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL,
       ref TEXT NOT NULL, head TEXT NOT NULL, deleted BOOLEAN NOT NULL, selection_generation TEXT NOT NULL,
@@ -118,15 +131,20 @@ export class RunStore {
       const current = await client.query<{ selection_generation: string }>("SELECT selection_generation FROM proofci_pull_deliveries WHERE delivery_id=$1 AND generation=$2 AND state='processing' AND lease_until > clock_timestamp() FOR UPDATE", [delivery.deliveryId, delivery.generation]);
       if (!current.rows[0]) { await client.query('ROLLBACK'); return false; }
       const selected = await client.query('SELECT 1 FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2 AND generation=$3', [delivery.installationId, delivery.repositoryId, current.rows[0].selection_generation]);
+      const retry = typeof candidate === 'string' && ['merge_unresolved', 'merge_ref_missing', 'merge_ref_mismatch', 'merge_parents_mismatch', 'baseline_unavailable'].includes(candidate);
       if (selected.rowCount === 1) {
-        if (typeof candidate !== 'string') await insertCandidate(client, candidate, current.rows[0].selection_generation);
-        else {
+        if (typeof candidate !== 'string') {
+          const id = await insertCandidate(client, candidate, current.rows[0].selection_generation);
+          await client.query('UPDATE proofci_publications SET pending=true, revision=revision+1, needs_revalidation=false WHERE run_id=$1 AND needs_revalidation', [id]);
+        } else if (retry) {
+          await client.query(`UPDATE proofci_publications SET pending=true, revision=revision+1, needs_revalidation=true
+            WHERE run_id IN (SELECT id FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND applicable) AND NOT needs_revalidation`, [delivery.installationId, delivery.repositoryId, lane]);
+        } else {
           await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${delivery.installationId}:${delivery.repositoryId}:${lane}`]);
           await client.query(`WITH changed AS (UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND applicable RETURNING id)
             UPDATE proofci_publications SET pending=true, revision=revision+1 WHERE run_id IN (SELECT id FROM changed)`, [delivery.installationId, delivery.repositoryId, lane]);
         }
       }
-      const retry = typeof candidate === 'string' && ['merge_unresolved', 'merge_ref_missing', 'merge_ref_mismatch', 'merge_parents_mismatch', 'baseline_unavailable'].includes(candidate);
       await client.query("UPDATE proofci_pull_deliveries SET state=CASE WHEN $3 THEN 'processing' ELSE 'done' END, lease_until=CASE WHEN $3 THEN clock_timestamp()+interval '30 seconds' ELSE NULL END, last_error=$2 WHERE delivery_id=$1", [delivery.deliveryId, typeof candidate === 'string' ? candidate : null, retry]);
       await client.query('COMMIT');
       return true;
@@ -302,6 +320,10 @@ export class RunStore {
   async ownsPublication(item: Publication): Promise<boolean> {
     const result = await this.pool.query('SELECT 1 FROM proofci_publications WHERE run_id=$1 AND generation=$2 AND pending AND lease_until > clock_timestamp()', [item.id, item.leaseGeneration]);
     return result.rowCount === 1;
+  }
+
+  async markPublicationUnresolved(item: Publication): Promise<void> {
+    await this.pool.query('UPDATE proofci_publications SET needs_revalidation=true WHERE run_id=$1 AND generation=$2 AND lease_until > clock_timestamp()', [item.id, item.leaseGeneration]);
   }
 
   async finishPublication(item: Publication): Promise<boolean> {

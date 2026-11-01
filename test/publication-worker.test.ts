@@ -8,7 +8,7 @@ const item: Publication = { id: '12345678-1234-4234-8234-123456789abc', revision
 
 test('publication rechecks the merge, baseline and generation immediately before completing', async () => {
   let current = true, completed = false, retried = false;
-  const store = { claimPublication: async () => item, ownsPublication: async () => true, publicationCurrent: async () => current, finishPublication: async () => { completed = true; return true; }, retryPublication: async () => { retried = true; }, withPublicationLock: async (_id: string, publish: () => Promise<void>) => { await publish(); return true; } };
+  const store = { claimPublication: async () => item, ownsPublication: async () => true, markPublicationUnresolved: async () => {}, publicationCurrent: async () => current, finishPublication: async () => { completed = true; return true; }, retryPublication: async () => { retried = true; }, withPublicationLock: async (_id: string, publish: () => Promise<void>) => { await publish(); return true; } };
   const github = { invalidateCheck: async () => {}, resolvePullMerge: async () => ({ kind: 'resolved' as const, merge: candidate.head, base: candidate.base, head: '1'.repeat(40) }), publishCheck: async (_scope: unknown, input: { output: { conclusion: string } | null; fresh(): Promise<boolean>; annotations: unknown[] }) => {
     assert.equal(input.output?.conclusion, 'success'); assert.equal(input.annotations.length, 1);
     current = false;
@@ -21,7 +21,7 @@ test('publication rechecks the merge, baseline and generation immediately before
 
 test('a publisher that lost its lease cannot invalidate a newer check', async () => {
   let calls = 0;
-  const store = { claimPublication: async () => item, ownsPublication: async () => false, publicationCurrent: async () => false, finishPublication: async () => { calls++; return true; }, retryPublication: async () => {}, withPublicationLock: async (_id: string, publish: () => Promise<void>) => { await publish(); return true; } };
+  const store = { claimPublication: async () => item, ownsPublication: async () => false, markPublicationUnresolved: async () => { calls++; }, publicationCurrent: async () => false, finishPublication: async () => { calls++; return true; }, retryPublication: async () => {}, withPublicationLock: async (_id: string, publish: () => Promise<void>) => { await publish(); return true; } };
   const github = { resolvePullMerge: async () => { calls++; return { kind: 'blocked' as const, reason: 'merge_unresolved' as const }; }, publishCheck: async () => { calls++; }, invalidateCheck: async () => { calls++; } };
   await publishNext({ store, github, baselines: { active: async () => candidate.baseline }, origin: 'https://example.com' });
   assert.equal(calls, 0);
