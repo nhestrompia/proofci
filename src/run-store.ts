@@ -26,7 +26,7 @@ async function insertCandidate(client: PoolClient, candidate: Candidate, selecti
   return id;
 }
 
-type Run = { id: string; applicable: boolean; state: 'queued' | 'running' | 'completed' | 'cancelled'; report: unknown };
+type Run = { id: string; applicable: boolean; state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; report: unknown };
 
 /** Durable lifecycle for already authorized, immutable candidates. */
 export class RunStore {
@@ -37,13 +37,29 @@ export class RunStore {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS proofci_runs (
       id UUID PRIMARY KEY, installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL,
       lane TEXT NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, baseline TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('head-snapshot','resolved')), selection_generation TEXT NOT NULL,
-      state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'cancelled')),
+      state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
       generation INTEGER NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ, report JSONB,
       applicable BOOLEAN NOT NULL DEFAULT true,
       created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), first_started_at TIMESTAMPTZ, started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ,
       recovery_seconds DOUBLE PRECISION NOT NULL DEFAULT 0
     )`);
+    await this.pool.query(`DO $$ BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended('proofci_runs_state_migration', 0));
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='proofci_runs'::regclass
+        AND conname='proofci_runs_state_check' AND pg_get_constraintdef(oid) LIKE '%''failed''%') THEN
+        ALTER TABLE proofci_runs DROP CONSTRAINT IF EXISTS proofci_runs_state_check;
+        ALTER TABLE proofci_runs ADD CONSTRAINT proofci_runs_state_check CHECK (state IN ('queued','running','completed','failed','cancelled'));
+      END IF;
+    END $$`);
     await this.pool.query('CREATE UNIQUE INDEX IF NOT EXISTS proofci_runs_applicable_lane ON proofci_runs (installation_id, repository_id, lane) WHERE applicable');
+    await this.pool.query('ALTER TABLE proofci_runs ADD COLUMN IF NOT EXISTS evidence_id UUID');
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS proofci_evidence (
+      id UUID PRIMARY KEY, run_id UUID NOT NULL REFERENCES proofci_runs(id), generation INTEGER NOT NULL,
+      object_key TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending','ready','deleting','expired')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), expires_at TIMESTAMPTZ
+    )`);
+    await this.pool.query("CREATE UNIQUE INDEX IF NOT EXISTS proofci_evidence_ready_run ON proofci_evidence(run_id) WHERE state='ready'");
     await this.pool.query(`CREATE TABLE IF NOT EXISTS proofci_push_deliveries (
       delivery_id UUID PRIMARY KEY, installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL,
       ref TEXT NOT NULL, head TEXT NOT NULL, deleted BOOLEAN NOT NULL, selection_generation TEXT NOT NULL,
@@ -184,12 +200,68 @@ export class RunStore {
       SELECT s.generation FROM proofci_repository_selections s JOIN proofci_runs r ON
       s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
       WHERE r.id=$1 FOR SHARE OF s)
-      UPDATE proofci_runs SET state='completed', report=$3::jsonb || jsonb_build_object('scheduler', jsonb_build_object(
+      UPDATE proofci_runs SET state=CASE WHEN $3::jsonb->>'status'='error' THEN 'failed' ELSE 'completed' END, report=$3::jsonb || jsonb_build_object('scheduler', jsonb_build_object(
         'scope', CASE WHEN kind='head-snapshot' THEN 'head-snapshot-nonenforcing' ELSE 'resolved-candidate' END, 'queue_seconds', extract(epoch from first_started_at-created_at),
         'execution_seconds', extract(epoch from clock_timestamp()-started_at), 'recovery_seconds', recovery_seconds,
         'recoveries', generation-1)), lease_until=NULL, completed_at=clock_timestamp()
       WHERE id=$1 AND generation=$2 AND state='running' AND lease_until > clock_timestamp() AND EXISTS (SELECT 1 FROM selection)`, [lease.id, lease.generation, JSON.stringify(report)]);
     return result.rowCount === 1;
+  }
+
+  async reserveEvidence(lease: Lease, id: string, key: string, digest: string, bytes: number): Promise<boolean> {
+    const result = await this.pool.query(`INSERT INTO proofci_evidence (id,run_id,generation,object_key,sha256,bytes,state)
+      SELECT $3,r.id,r.generation,$4,$5,$6,'pending' FROM proofci_runs r
+      JOIN proofci_repository_selections s ON s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
+      WHERE r.id=$1 AND r.generation=$2 AND r.state='running' AND r.lease_until > clock_timestamp()
+        AND r.installation_id=$7 AND r.repository_id=$8 AND r.head=$9 AND r.base=$10 AND r.baseline=$11`,
+      [lease.id, lease.generation, id, key, digest, bytes, lease.candidate.installationId, lease.candidate.repositoryId,
+        lease.candidate.head, lease.candidate.base, lease.candidate.baseline]);
+    return result.rowCount === 1;
+  }
+
+  async completeEvidence(lease: Lease, id: string, report: unknown, retentionSeconds: number): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const completed = await client.query(`WITH selection AS MATERIALIZED (
+        SELECT s.generation FROM proofci_repository_selections s JOIN proofci_runs r ON
+        s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
+        WHERE r.id=$1 FOR SHARE OF s)
+        UPDATE proofci_runs SET state='completed', report=$4::jsonb || jsonb_build_object('scheduler', jsonb_build_object(
+          'scope', CASE WHEN kind='head-snapshot' THEN 'head-snapshot-nonenforcing' ELSE 'resolved-candidate' END,
+          'queue_seconds', extract(epoch from first_started_at-created_at), 'execution_seconds', extract(epoch from clock_timestamp()-started_at),
+          'recovery_seconds', recovery_seconds, 'recoveries', generation-1)) || jsonb_build_object('evidence', jsonb_build_object(
+          'sha256', (SELECT sha256 FROM proofci_evidence WHERE id=$3),
+          'url', format('/evidence/%s/%s/%s', installation_id, repository_id, id),
+          'expires_at', transaction_timestamp()+($5 * interval '1 second'))), evidence_id=$3, lease_until=NULL, completed_at=clock_timestamp()
+        WHERE id=$1 AND generation=$2 AND state='running' AND lease_until > clock_timestamp() AND EXISTS (SELECT 1 FROM selection)
+        AND EXISTS (SELECT 1 FROM proofci_evidence WHERE id=$3 AND run_id=$1 AND generation=$2 AND state='pending')`,
+        [lease.id, lease.generation, id, JSON.stringify(report), retentionSeconds]);
+      if (completed.rowCount !== 1) { await client.query('ROLLBACK'); return false; }
+      await client.query("UPDATE proofci_evidence SET state='ready', expires_at=transaction_timestamp()+($2 * interval '1 second') WHERE id=$1", [id, retentionSeconds]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  async evidence(scope: RepositoryScope, runId: string): Promise<{ key: string; sha256: string; bytes: number; expired: boolean } | null> {
+    const result = await this.pool.query<{ key: string; sha256: string; bytes: number; expired: boolean }>(`SELECT e.object_key AS key,e.sha256,e.bytes,(e.state='expired' OR e.state='deleting' OR e.expires_at <= clock_timestamp()) AS expired
+      FROM proofci_evidence e JOIN proofci_runs r ON r.id=e.run_id AND r.evidence_id=e.id JOIN proofci_repository_selections s
+      ON s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
+      WHERE r.id=$1 AND r.installation_id=$2 AND r.repository_id=$3 AND r.state='completed' AND e.state IN ('ready','deleting','expired')`, [runId, scope.installationId, scope.repositoryId]);
+    return result.rows[0] ?? null;
+  }
+
+  async expiredEvidence(): Promise<Array<{ id: string; key: string }>> {
+    const result = await this.pool.query<{ id: string; key: string }>(`UPDATE proofci_evidence SET state='deleting' WHERE id IN (
+      SELECT id FROM proofci_evidence WHERE (state='ready' AND expires_at <= clock_timestamp()) OR (state='pending' AND created_at < clock_timestamp()-interval '2 hours') OR state='deleting'
+      LIMIT 100 FOR UPDATE SKIP LOCKED) RETURNING id,object_key AS key`);
+    return result.rows;
+  }
+
+  async evidenceDeleted(id: string): Promise<void> {
+    await this.pool.query("UPDATE proofci_evidence SET state='expired' WHERE id=$1 AND state='deleting'", [id]);
   }
 
   async cancelLease(lease: Lease): Promise<boolean> {

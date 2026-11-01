@@ -48,7 +48,9 @@ test('durable runs deduplicate, recover leases, fence stale completions, and per
     assert.equal(failed?.id, fourth);
     assert.ok(failed);
     assert.equal(await store.fail(failed, 'worker_unavailable'), true);
-    const failedReport = (await store.inspect(candidate, fourth))?.report;
+    const failedRun = await store.inspect(candidate, fourth);
+    assert.equal(failedRun?.state, 'failed');
+    const failedReport = failedRun?.report;
     assert.ok(typeof failedReport === 'object' && failedReport !== null && 'reason' in failedReport);
     assert.equal(failedReport.reason, 'worker_unavailable');
     assert.ok('scheduler' in failedReport);
@@ -154,9 +156,9 @@ test('a signed delivery survives restart and reaches the authorized executor onc
     const baselines = { active: async () => 'b'.repeat(64) };
     await restarted.processDelivery(delivery, item => resolveDelivery({ delivery: item, selections: enrollment, github, baselines }));
     let executions = 0;
-    await executeNext({ store: restarted, authorize: async () => 'allowed', leaseMs: 60_000, execute: async () => { executions++; return { version: 1, status: 'blocked' }; } });
+    await executeNext({ store: restarted, authorize: async () => 'allowed', leaseMs: 60_000, execute: async () => { executions++; return { report: { version: 1, status: 'blocked' } }; } });
     assert.equal(executions, 1);
-    assert.equal(await executeNext({ store: restarted, authorize: async () => 'allowed', leaseMs: 60_000, execute: async () => { executions++; return {}; } }), false);
+    assert.equal(await executeNext({ store: restarted, authorize: async () => 'allowed', leaseMs: 60_000, execute: async () => { executions++; return { report: {} }; } }), false);
     assert.equal(await restarted.claimDelivery(60_000), null);
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });

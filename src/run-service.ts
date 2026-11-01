@@ -5,6 +5,7 @@ import type { RunStore } from './run-store.ts';
 import { reconcileHead, resolveDelivery } from './delivery-worker.ts';
 import { executeNext } from './run-worker.ts';
 import { executeRun } from './run-executor.ts';
+import type { EvidenceStore } from './evidence-store.ts';
 
 export type PilotConfiguration = BaselineConfiguration & { ref: string };
 
@@ -15,10 +16,12 @@ export class RunService {
   private workerBusy = false;
   private reconcileBusy = false;
   private nextReconcile = 0;
+  private nextExpiration = 0;
+  private expirationBusy = false;
   private timer: NodeJS.Timeout | undefined;
-  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[] };
+  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; evidence: EvidenceStore };
 
-  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[] }) { this.options = options; }
+  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; evidence: EvidenceStore }) { this.options = options; }
 
   start(): void {
     if (this.timer) return;
@@ -34,7 +37,12 @@ export class RunService {
 
   private async tick(): Promise<void> {
     if (this.stopSignal.signal.aborted) return;
-    const { store, selections, github, baselines, repositories } = this.options;
+    const { store, selections, github, baselines, repositories, evidence } = this.options;
+    if (!this.expirationBusy && Date.now() >= this.nextExpiration) {
+      this.expirationBusy = true;
+      this.nextExpiration = Date.now() + 60_000;
+      void evidence.expire().catch(() => {}).finally(() => { this.expirationBusy = false; });
+    }
     if (!this.deliveryBusy) {
       this.deliveryBusy = true;
       void (async () => {
@@ -56,7 +64,8 @@ export class RunService {
           if (access === 'allowed' && await selections.readVersion(candidate) !== version) return 'revoked';
           return access;
         },
-        execute: (candidate, signal) => executeRun({ candidate, signal, github, baselines }),
+        evidence,
+        execute: (candidate, signal) => executeRun({ candidate, signal, github, baselines, evidence: true }),
       }).catch(() => {}).finally(() => { this.workerBusy = false; });
     }
     if (!this.reconcileBusy && Date.now() >= this.nextReconcile) {

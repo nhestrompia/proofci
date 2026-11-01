@@ -70,6 +70,39 @@ class ReplayTest(CLITest):
         self.assertIn('unsafe archive path', json.loads(output.read_text())['reason'])
         self.assertFalse((self.root.parent / 'escape').exists())
 
+    def test_hosted_ingestion_rejects_a_self_consistent_archive_with_a_substituted_baseline(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        files['baseline/baseline.json'] = b'{}'
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['baseline/baseline.json'] = hashlib.sha256(files['baseline/baseline.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        result = subprocess.run([sys.executable, str(REPLAY.with_name('check_hosted_bundle.py')), str(archive), digest], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('baseline digest mismatch', result.stderr)
+
+    def test_hosted_ingestion_rejects_unbound_search_results(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        files['search-results.json'] = b'{}'
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['search-results.json'] = hashlib.sha256(files['search-results.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        result = subprocess.run([sys.executable, str(REPLAY.with_name('check_hosted_bundle.py')), str(archive), hashlib.sha256(archive.read_bytes()).hexdigest()], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('search results digest mismatch', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

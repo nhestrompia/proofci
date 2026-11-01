@@ -12,6 +12,9 @@ import { processPushEvent } from './push-events.ts';
 import { RunStore } from './run-store.ts';
 import { ActiveBaselines } from './active-baselines.ts';
 import { RunService, type PilotConfiguration } from './run-service.ts';
+import { GetBucketVersioningCommand, S3Client } from '@aws-sdk/client-s3';
+import { EvidenceStore } from './evidence-store.ts';
+import { downloadEvidence } from './evidence-access.ts';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -31,6 +34,7 @@ await store.initialize();
 const enrollment = new EnrollmentService({ store, sessions, github });
 let runs: RunStore | undefined;
 let runService: RunService | undefined;
+let evidenceStore: EvidenceStore | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
@@ -50,7 +54,15 @@ if (pilotConfig) {
   pilotRepositories = repositories;
   const baselines = new ActiveBaselines(repositories);
   runs = new RunStore(pool); await runs.initialize();
-  runService = new RunService({ store: runs, selections: store, github, baselines, repositories });
+  const retentionDays = Number(process.env.PROOFCI_EVIDENCE_RETENTION_DAYS ?? '30');
+  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) throw new Error('Invalid evidence retention');
+  const endpoint = process.env.PROOFCI_S3_ENDPOINT;
+  const s3 = new S3Client({ region: required('PROOFCI_S3_REGION'), endpoint, forcePathStyle: Boolean(endpoint) });
+  const bucket = required('PROOFCI_S3_BUCKET');
+  const versioning = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
+  if (versioning.Status) throw new Error('Evidence bucket must not have versioning enabled or suspended');
+  evidenceStore = new EvidenceStore(runs, s3, bucket, retentionDays * 86400);
+  runService = new RunService({ store: runs, selections: store, github, baselines, repositories, evidence: evidenceStore });
   runService.start();
 }
 
@@ -85,6 +97,18 @@ function escapeHtml(text: string): string {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? '/', origin);
+    const evidenceMatch = /^\/evidence\/([1-9]\d*)\/([1-9]\d*)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(url.pathname);
+    if (request.method === 'GET' && evidenceMatch && evidenceStore) {
+      const scope = { installationId: Number(evidenceMatch[1]), repositoryId: Number(evidenceMatch[2]) };
+      if (!Number.isSafeInteger(scope.installationId) || !Number.isSafeInteger(scope.repositoryId)) return reply(response, 404, 'Not found.');
+      const result = await downloadEvidence({ scope, runId: evidenceMatch[3], session: cookie(request, 'proofci_session'),
+        sessions, github, selections: store, evidence: evidenceStore });
+      if (result.kind === 'missing') return reply(response, 404, 'Not found.');
+      if (result.kind === 'expired') return reply(response, 410, 'Evidence has expired. Historical property results remain unchanged.');
+      response.writeHead(200, { 'content-type': 'application/x-tar', 'content-disposition': 'attachment; filename="proofci-evidence.tar"',
+        'content-length': result.bytes.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-proofci-sha256': result.sha256 });
+      return response.end(result.bytes);
+    }
     if (request.method === 'GET' && url.pathname === '/') {
       const repositories = await sessions.listRepositories(cookie(request, 'proofci_session'), github);
       if (!repositories) return reply(response, 200, `${page}<p>Sign in to select a repository from an installed App.</p>`);

@@ -7,7 +7,7 @@ test('a run denied at dispatch never invokes the executor', async () => {
   let cancelled = false;
   const lease = { id: 'run', generation: 1, candidate: { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) } };
   const store = { claim: async () => lease, renew: async () => true, fail: async () => true, cancelLease: async () => { cancelled = true; return true; }, retry: async () => true, complete: async () => true };
-  assert.equal(await executeNext({ store, authorize: async () => 'revoked', execute: async () => { invoked = true; return {}; }, leaseMs: 1000 }), true);
+  assert.equal(await executeNext({ store, authorize: async () => 'revoked', execute: async () => { invoked = true; return { report: {} }; }, leaseMs: 1000 }), true);
   assert.equal(invoked, false);
   assert.equal(cancelled, true);
 });
@@ -19,7 +19,7 @@ test('a lost lease aborts the executor and cannot publish its late report', asyn
   const store = { claim: async () => lease, renew: async () => false, fail: async () => true, cancelLease: async () => true, retry: async () => true, complete: async () => { completed = true; return true; } };
   await executeNext({ store, authorize: async () => 'allowed', leaseMs: 30, execute: async (_candidate, signal) => {
     await new Promise<void>(resolve => signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true }));
-    return { status: 'passed' };
+    return { report: { status: 'passed' } };
   } });
   assert.equal(aborted, true);
   assert.equal(completed, false);

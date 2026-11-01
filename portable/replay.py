@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Export a portable evidence archive and independently replay it."""
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -16,6 +17,7 @@ import tarfile
 import tempfile
 
 import proofci
+import baselines
 from assist import _run
 from container import IMAGE_ID
 
@@ -52,6 +54,30 @@ def read_file(path, limit=MAX_FILE):
     return proofci.bounded_read(path, limit)
 
 
+def validate_policy(policy_bytes, report, envelope, snapshot):
+    if policy_bytes is None:
+        if 'reviewed_baseline_sha256' in report or 'proposed_guarantee_changes' in report:
+            raise ValueError('reviewed baseline policy required for replay')
+        return []
+    policy = proofci.parse_json(policy_bytes)
+    proofci.fields(policy, ('manifest', 'manifest_path'))
+    manifest = base64.b64decode(policy['manifest'], validate=True)
+    if sha(manifest) != report.get('reviewed_baseline_sha256'):
+        raise ValueError('reviewed manifest digest mismatch')
+    safe_name(policy['manifest_path'])
+    with tempfile.TemporaryDirectory(prefix='proofci-policy-') as temporary:
+        if baselines.materialize(baselines.parse_manifest(manifest), Path(temporary)) != envelope['baseline_sha256']:
+            raise ValueError('reviewed manifest does not match baseline')
+    try:
+        proposed = baselines.parse_manifest(baselines.snapshot_manifest(snapshot, policy['manifest_path']), supported=False)
+        changes = baselines.changes(baselines.parse_manifest(manifest), proposed)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        changes = [{'kind': 'missing_or_invalid_manifest'}]
+    if changes != report.get('proposed_guarantee_changes'):
+        raise ValueError('report baseline changes do not match snapshot')
+    return changes
+
+
 def check_tree(snapshot, head):
     listing = subprocess.Popen(['git', '-C', str(snapshot), 'ls-tree', '-r', '-l', '-z', head], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, preexec_fn=limit_reconstruction)
     deadline = time.monotonic() + 60
@@ -84,6 +110,7 @@ def check_tree(snapshot, head):
         if listing.poll() is None:
             listing.kill()
             listing.wait()
+        listing.stdout.close()
 
 def export(args):
     envelope_bytes = read_file(args.envelope, 1024 * 1024)
@@ -102,6 +129,13 @@ def export(args):
     proofci.verify_snapshot(snapshot, envelope, baseline, time.monotonic() + 60)
     check_tree(snapshot, envelope['head'])
     files = {'envelope.json': envelope_bytes, 'baseline/baseline.json': baseline_bytes, 'report.json': report_bytes}
+    policy_path = getattr(args, 'baseline_policy', None)
+    if policy_path is not None:
+        policy_bytes = read_file(policy_path, 1024 * 1024)
+        validate_policy(policy_bytes, report, envelope, snapshot)
+        files['baseline-policy.json'] = policy_bytes
+    else:
+        validate_policy(None, report, envelope, snapshot)
     expected_search = report.get('search_results_sha256')
     if expected_search is not None:
         if args.search_results is None:
@@ -182,36 +216,54 @@ def ingest(path, expected):
         raise ValueError('bundle contents do not match manifest')
     if not {'envelope.json', 'baseline/baseline.json', 'report.json', 'repository.bundle'} <= files.keys():
         raise ValueError('bundle is missing required inputs')
-    if any(name not in ('envelope.json', 'report.json', 'repository.bundle', 'search-results.json') and not name.startswith('baseline/') for name in files):
+    if any(name not in ('envelope.json', 'report.json', 'repository.bundle', 'search-results.json', 'baseline-policy.json') and not name.startswith('baseline/') for name in files):
         raise ValueError('unexpected bundle member')
     return files
 
 
-def replay(args):
-    files = ingest(args.bundle, args.sha256)
+def reconstruct(files, root):
+    import report as report_contract
+    root = root.resolve(strict=True)
     envelope = proofci.parse_json(files['envelope.json'])
     original = proofci.parse_json(files['report.json'])
+    baseline = proofci.parse_json(files['baseline/baseline.json'])
+    if sha(files['baseline/baseline.json']) != envelope.get('baseline_sha256'):
+        raise ValueError('baseline digest mismatch')
+    search_digest = original.get('search_results_sha256')
+    if 'search-results.json' in files:
+        if sha(files['search-results.json']) != search_digest:
+            raise ValueError('search results digest mismatch')
+    elif search_digest is not None:
+        raise ValueError('bundle is missing search results')
+    report_contract.validate(original, envelope, baseline)
+    for name, data in files.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    snapshot = root / 'snapshot'
+    git_options = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false']
+    git_env = proofci.git_environment()
+    subprocess.run(['git', *git_options, '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction, env=git_env)
+    if not isinstance(envelope.get('head'), str) or not re.fullmatch(r'[0-9a-f]{40}', envelope['head']):
+        raise ValueError('invalid head commit')
+    check_tree(snapshot, envelope['head'])
+    subprocess.run(['git', *git_options, '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction, env=git_env)
+    subprocess.run(['git', *git_options, '-C', str(snapshot), 'remote', 'set-url', 'origin', envelope['repository']], check=True, timeout=60, preexec_fn=limit_reconstruction, env=git_env)
+    proofci.validate(envelope, baseline, snapshot, root / 'baseline')
+    proofci.verify_snapshot(snapshot, envelope, baseline, time.monotonic() + 60)
+    changes = validate_policy(files.get('baseline-policy.json'), original, envelope, snapshot)
+    return envelope, original, snapshot, changes
+
+
+def replay(args):
+    files = ingest(args.bundle, args.sha256)
     with tempfile.TemporaryDirectory(prefix='proofci-replay-') as tmp:
         root = Path(tmp)
-        for name, data in files.items():
-            target = root / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-        snapshot = root / 'snapshot'
-        subprocess.run(['git', '-c', 'transfer.unpackLimit=1', 'clone', '--no-checkout', str(root / 'repository.bundle'), str(snapshot)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
-        if not isinstance(envelope.get('head'), str) or not re.fullmatch(r'[0-9a-f]{40}', envelope['head']):
-            raise ValueError('invalid head commit')
-        check_tree(snapshot, envelope['head'])
-        subprocess.run(['git', '-C', str(snapshot), 'checkout', '--detach', envelope['head']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, preexec_fn=limit_reconstruction)
-        subprocess.run(['git', '-C', str(snapshot), 'remote', 'set-url', 'origin', envelope['repository']], check=True)
+        envelope, original, snapshot, changes = reconstruct(files, root)
         result = root / 'replayed.json'
         command = [sys.executable, str(Path(__file__).with_name('container.py')), '--envelope', str(root / 'envelope.json'), '--baseline', str(root / 'baseline/baseline.json'), '--snapshot', str(snapshot), '--report', str(result), '--image', IMAGE_ID]
         if 'search-results.json' in files:
-            if sha(files['search-results.json']) != original.get('search_results_sha256'):
-                raise ValueError('search results digest mismatch')
             command.extend(['--search-results', str(root / 'search-results.json')])
-        elif original.get('search_results_sha256') is not None:
-            raise ValueError('bundle is missing search results')
         limits = envelope['resource_policy']
         deadline = time.monotonic() + min(900, limits['timeout_seconds'], limits['cpu_seconds'])
         status = _run(command, deadline)
@@ -253,7 +305,7 @@ def replay(args):
             fresh['results'] = [current[item['id']] for item in fresh['results']]
             fresh['property_counts'] = {decision: sum(item['decision'] == decision for item in fresh['results'])
                                         for decision in ('verified', 'violated', 'unproven')}
-            passed = all(item['decision'] == 'verified' for item in fresh['results'] if item['policy'] == 'required')
+            passed = not changes and all(item['decision'] == 'verified' for item in fresh['results'] if item['policy'] == 'required')
             fresh['status'] = 'passed' if passed else 'blocked'
             status = 0 if passed else 1
         def outcomes(report):
