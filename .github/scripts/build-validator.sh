@@ -14,7 +14,7 @@ docker buildx build --provenance=false --build-arg SOURCE_DATE_EPOCH=0 \
   --build-context "lean=$tmp/lean-4.35.0-linux_aarch64" --build-context "bubblewrap=$tmp/bwrap" \
   -f "$root/portable/Dockerfile" -t proofci-validator-local "$root"
 docker load -i "$tmp/image.tar"
-expected=sha256:e36c6538bbc74aaac0266e772e672c07327b524a2102e047bc65eb5c59c577d2
+expected=sha256:0768934aa3f0d7d40edb6bbe879c97ef66f2fd825549861ee8bc2598adda4054
 actual=$(docker image inspect --format '{{.Id}}' proofci-validator-local)
 if [ "$actual" != "$expected" ]; then
   printf 'Built image identity %s does not match pinned identity %s\n' "$actual" "$expected" >&2
