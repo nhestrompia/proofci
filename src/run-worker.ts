@@ -1,12 +1,12 @@
 import type { Candidate, RunStore } from './run-store.ts';
 import { RunFailure } from './run-failure.ts';
 
-type Store = Pick<RunStore, 'claim' | 'renew' | 'fail' | 'complete' | 'cancelLease' | 'retry'>;
+type Store = Pick<RunStore, 'claim' | 'renew' | 'fail' | 'complete' | 'cancelLease' | 'retry' | 'startDispatch'>;
 
 type Options = {
   store: Store;
   authorize(candidate: Candidate): Promise<'allowed' | 'revoked' | 'unavailable'>;
-  execute(candidate: Candidate, signal: AbortSignal): Promise<Record<string, unknown>>;
+  execute(candidate: Candidate, signal: AbortSignal, ensureActive: () => Promise<boolean>, dispatch: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>): Promise<Record<string, unknown>>;
   leaseMs: number;
   signal?: AbortSignal;
 };
@@ -31,7 +31,11 @@ export async function executeNext(options: Options): Promise<boolean> {
     if (access === 'revoked') {
       await options.store.cancelLease(lease);
     } else if (access === 'allowed' && !abort.signal.aborted) {
-      const report = await options.execute(lease.candidate, abort.signal);
+      const ensureActive = async () => {
+        if (abort.signal.aborted || !await options.store.renew(lease, options.leaseMs)) return false;
+        return !abort.signal.aborted && await options.authorize(lease.candidate) === 'allowed' && !abort.signal.aborted;
+      };
+      const report = await options.execute(lease.candidate, abort.signal, ensureActive, start => options.store.startDispatch(lease, start, stop));
       if (!abort.signal.aborted && report.status === 'error' && lease.generation < 3) {
         await options.store.retry(lease);
       } else if (!abort.signal.aborted) {

@@ -14,8 +14,7 @@ import dispatch
 import proofci
 import service_baseline
 
-LIMITS = {'timeout_seconds': 900, 'cpu_seconds': 900, 'memory_bytes': 2147483648,
-          'file_bytes': 2147483648, 'processes': 256}
+LIMITS = json.loads(Path(__file__).with_name('resource_limits.json').read_text())
 
 
 def launch_vm(command, deadline):

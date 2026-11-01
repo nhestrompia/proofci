@@ -87,3 +87,39 @@ node src/run-cancel.ts INSTALLATION_ID REPOSITORY_ID RUN_ID
 These commands use `DATABASE_URL`. Limit access to the database and pilot
 configuration to trusted operators. Cancellation persists, and duplicate
 notifications do not restart a cancelled candidate.
+
+## Fork verification and assistance
+
+Subscribe the App to pull request events as well as push events. The service
+queues signed pull request observations for enrolled pilot repositories, then
+resolves the PR through the destination installation. It records the source and
+destination repository IDs and immutable head and base. It fetches the snapshot
+from the destination and runs the existing isolated verifier with no provider,
+installation, or signing credentials in the worker. Results are nonenforcing;
+this pilot does not publish a GitHub check. Reconciliation revisits known open
+PRs every five minutes. Configure webhook redelivery for failures.
+
+Fork proof assistance is off. Hosted provider calls must remain disabled until
+durable request recovery and accounting have passed their release gate. The
+service never sends candidate source to a model provider. An operator can set
+`assistanceQuotaMicros` in the protected pilot configuration, in microdollars;
+it defaults to zero. With a positive quota, a signed-in current maintainer can
+review a fork run at `/fork-assistance?repository=INSTALLATION_ID:REPOSITORY_ID&number=PR_NUMBER`.
+The approval form shows the exact inputs and requests explicit source-transmission
+consent. Approval records are scoped to the selection, source and destination,
+head, base, baseline, resource policy and quota. A new PR notification,
+superseding candidate, explicit revocation or selection removal invalidates the
+record. A changed policy or current input does not match an old record. Approval
+only produces a deferred decision while the hosted provider gate is closed; it
+is not a broker reservation or a claim that quota accounting is ready.
+
+The dispatch boundary is the database transaction that checks the active run and
+selection and starts the isolated process. Cancellation, removal, and accepted
+PR updates lock or invalidate those records, so an update ordered before that
+boundary prevents process start. Work already started is aborted when its lease
+renewal notices cancellation or removal, and cannot publish a late completion.
+A GitHub change not yet observed by a webhook or reconciliation cannot be acted
+on; the executor also rechecks GitHub and the baseline before dispatch and
+before accepting a result. There are no in-flight hosted model calls in this
+pilot. A future broker must define and test its own in-flight revocation and
+durable quota reservation boundary before the provider gate can open.
