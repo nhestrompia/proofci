@@ -69,8 +69,14 @@ def main():
             dependency_root = args.dependencies.resolve(strict=True)
             if not dependency_root.is_dir() or dependency_root.is_relative_to(snapshot) or dependency_root.is_relative_to(baseline.parent):
                 raise ValueError("dependency staging directory is invalid")
-        image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.image],
-                                           text=True, timeout=max(0, deadline - time.monotonic())).strip()
+        try:
+            image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.image],
+                                               text=True, timeout=max(0, deadline - time.monotonic())).strip()
+        except subprocess.CalledProcessError:
+            if args.image != IMAGE_ID:
+                raise
+            image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_CONFIG_ID],
+                                               text=True, timeout=max(0, deadline - time.monotonic())).strip()
         if image_id not in (IMAGE_ID, IMAGE_CONFIG_ID):
             raise ValueError("local image identity does not match the pinned distribution")
         if baseline.parent.is_relative_to(snapshot):
