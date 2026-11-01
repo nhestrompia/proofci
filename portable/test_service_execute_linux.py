@@ -23,7 +23,9 @@ class ServiceExecuteTests(unittest.TestCase):
             root = Path(temporary)
             snapshot = root / 'snapshot'; snapshot.mkdir()
             shutil.copy(FIXTURES / 'candidate.lean', snapshot / 'candidate.lean')
-            shutil.copytree(FIXTURES / 'verified', snapshot / 'evidence')
+            missing_evidence = bool(os.environ.get('PROOFCI_TEST_MISSING_EVIDENCE'))
+            if not missing_evidence:
+                shutil.copytree(FIXTURES / 'verified', snapshot / 'evidence')
             manifest = baselines.encoded({'version': 1, 'candidate': 'candidate.lean', 'contracts': [{
                 'id': 'increment', 'explanation': 'Adds one', 'owner': 'maintainer', 'formal_statement': 'x + 1',
                 'assumptions': [], 'specification_closure': [], 'implementation_bindings': ['target'],
@@ -57,15 +59,17 @@ class ServiceExecuteTests(unittest.TestCase):
                 status = service_execute.execute(store=store, repository=repository, head=head, base=head,
                                                  baseline_digest=digest, snapshot=snapshot, report=report, evidence=archive)
             result = json.loads(report.read_text())
-            self.assertEqual(status, 1 if policy_changed else 0, result)
-            self.assertEqual(result['status'], 'blocked' if policy_changed else 'passed')
+            self.assertEqual(status, 1 if policy_changed or missing_evidence else 0, result)
+            self.assertEqual(result['status'], 'blocked' if policy_changed or missing_evidence else 'passed')
             self.assertEqual(result['reviewed_baseline_sha256'], manifest_digest)
             self.assertEqual(bool(result['proposed_guarantee_changes']), policy_changed)
-            self.assertEqual(result['dispatch']['final_status'], 0)
+            self.assertEqual(result['dispatch']['final_status'], 1 if missing_evidence else 0)
+            if missing_evidence:
+                self.assertEqual(result['results'][0]['reason'], 'missing_evidence')
             replay_report = root / 'replay.json'
             replay = subprocess.run(['python3', str(Path(__file__).with_name('replay.py')), 'replay',
                 '--bundle', str(archive), '--sha256', hashlib.sha256(archive.read_bytes()).hexdigest(), '--output', str(replay_report)], timeout=240)
-            self.assertEqual(replay.returncode, 1 if policy_changed else 0, replay_report.read_text())
+            self.assertEqual(replay.returncode, 1 if policy_changed or missing_evidence else 0, replay_report.read_text())
             self.assertEqual(json.loads(replay_report.read_text())['status'], 'reproduced')
             if os.environ.get('PROOFCI_TEST_HOSTED_BUNDLE'):
                 shutil.copyfile(archive, os.environ['PROOFCI_TEST_HOSTED_BUNDLE'])

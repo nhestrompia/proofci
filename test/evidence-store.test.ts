@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,7 +63,8 @@ test('persisted evidence is scoped, immutable, and expires without changing the 
       const downloadedPath = join(root, 'downloaded.tar');
       await writeFile(downloadedPath, downloaded.bytes);
       const output = join(root, 'replay.json');
-      execFileSync('python3', ['portable/replay.py', 'replay', '--bundle', downloadedPath, '--sha256', downloaded.sha256, '--output', output], { timeout: 240_000 });
+      const replay = spawnSync('python3', ['portable/replay.py', 'replay', '--bundle', downloadedPath, '--sha256', downloaded.sha256, '--output', output], { timeout: 240_000 });
+      assert.equal(replay.status, fixture.report.status === 'passed' ? 0 : 1, replay.stderr.toString());
       assert.equal(JSON.parse(await readFile(output, 'utf8')).status, 'reproduced');
     }
     const github = { checkMaintainerAccess: async () => 123, installationAccess: async () => 'allowed' as const };
