@@ -16,7 +16,7 @@ import uuid
 import report as report_contract
 import proofci
 
-IMAGE_ID = "sha256:ee6ec3f4b5fd15350d929639a318787050b24e9aeeb6fff33540169a203574ad"
+IMAGE_ID = "sha256:e36c6538bbc74aaac0266e772e672c07327b524a2102e047bc65eb5c59c577d2"
 
 
 def main():

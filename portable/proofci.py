@@ -56,10 +56,17 @@ def digest(path):
 
 def bounded_read(path, limit):
     with path.open("rb") as source:
-        data = source.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError(f"{path.name} exceeds {limit} bytes")
-    return data
+        chunks = []
+        total = 0
+        while True:
+            chunk = source.read(min(1024 * 1024, limit + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise ValueError(f"{path.name} exceeds {limit} bytes")
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def parse_json(data):

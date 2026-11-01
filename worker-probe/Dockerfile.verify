@@ -1,0 +1,10 @@
+FROM proofci-ticket12-verifier AS verifier
+FROM proofci-worker-probe
+COPY --from=verifier / /vm-root/
+RUN test "$(chroot /vm-root /usr/local/bin/python3 /app/experiments/source-binding/toolchain.py /lean)" = ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00 \
+ && mkdir -p /vm-root/snapshot /vm-root/baseline
+COPY worker-probe/guest/verify-entry /vm-root/vm-entry
+RUN cp /bin/busybox.static /vm-root/bin/busybox.static && chmod 755 /vm-root/vm-entry
+COPY worker-probe/guest/verify-init /verify-init
+COPY worker-probe/verify.py /verify.py
+ENTRYPOINT ["python3", "/verify.py"]

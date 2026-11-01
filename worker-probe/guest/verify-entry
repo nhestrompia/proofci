@@ -1,0 +1,10 @@
+#!/bin/sh
+export HOME=/tmp PATH=/usr/local/bin:/usr/bin:/bin PROOFCI_CONTAINER=1
+/usr/bin/setpriv --reuid 65534 --regid 65534 --clear-groups /usr/local/bin/python3 /app/portable/proofci.py --envelope /runinput/envelope.json --baseline /baseline/baseline.json --snapshot /snapshot --toolchain /lean --bwrap /usr/bin/bwrap --validator-only --report /tmp/report.json
+status=$?
+if [ -f /tmp/report.json ]; then
+  printf 'PROOFCI_REPORT:'
+  /bin/busybox.static base64 -w 0 /tmp/report.json
+  printf '\nPROOFCI_STATUS:%s\n' "$status"
+fi
+exec /bin/busybox.static poweroff -f

@@ -1,5 +1,6 @@
 import { createSign, type KeyObject } from 'node:crypto';
 import { assessEnforcement, type Enforcement } from './enforcement.ts';
+import { fetchSnapshot } from './snapshot-fetch.ts';
 
 type AppOptions = { appId: number; privateKey: KeyObject; request?: typeof fetch };
 type RepositoryScope = { installationId: number; repositoryId: number };
@@ -99,6 +100,27 @@ export class GitHubApp {
   }
 
   async checkInstallationAccess(scope: RepositoryScope): Promise<boolean> { return await this.installationAccess(scope) === 'allowed'; }
+
+  /** Resolve a branch through the installation-scoped GitHub API. */
+  async resolveHead(scope: RepositoryScope, ref: string): Promise<string | null> {
+    if (!ref.startsWith('refs/heads/') || ref.length > 512 || ref.length === 'refs/heads/'.length ||
+        /[\x00-\x20\x7f~^:?*\[\\]/.test(ref) || ref.includes('..') || ref.includes('@{') ||
+        ref.endsWith('/') || ref.endsWith('.') || ref.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.lock'))) throw new Error('Invalid branch ref');
+    const repo = await this.repository(scope);
+    const branch = ref.slice('refs/heads/'.length).split('/').map(encodeURIComponent).join('/');
+    let result: unknown;
+    try { result = await this.api(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/ref/heads/${branch}`, repo.token); }
+    catch (error) { if (error instanceof GitHubStatusError && error.status === 404) return null; throw error; }
+    if (!object(result) || result.ref !== ref || !object(result.object) || result.object.type !== 'commit' ||
+        typeof result.object.sha !== 'string' || !/^[a-f0-9]{40}$/.test(result.object.sha)) throw new Error('Invalid branch head');
+    return result.object.sha;
+  }
+
+  /** Stage an immutable checkout without exposing the installation token to the verifier. */
+  async stageSnapshot(scope: RepositoryScope, input: { head: string; base: string; root: string; signal: AbortSignal }): Promise<{ snapshot: string; repository: string }> {
+    const repo = await this.repository(scope);
+    return fetchSnapshot({ ...input, owner: repo.owner, name: repo.name, token: repo.token });
+  }
 
   /** Inspect the default branch when GitHub grants access to protection and rule evidence. */
   async inspectEnforcement(scope: RepositoryScope): Promise<Enforcement> {

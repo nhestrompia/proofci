@@ -4,12 +4,16 @@ type Store = { removeRepositories(installationId: number, repositoryIds: number[
 function object(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function id(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value > 0; }
 
-/** Verify GitHub's signature before invalidating any selections. */
-export async function processInstallationEvent(input: { body: Buffer; signature: string; event: string; deliveryId: string; secret: string; store: Store }): Promise<boolean> {
+export function verifyWebhook(input: { body: Buffer; signature: string; deliveryId: string; secret: string }): boolean {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.deliveryId) || !input.secret || !/^sha256=[a-f0-9]{64}$/.test(input.signature)) return false;
   const received = Buffer.from(input.signature.slice(7), 'hex');
   const expected = createHmac('sha256', input.secret).update(input.body).digest();
-  if (!timingSafeEqual(received, expected)) return false;
+  return timingSafeEqual(received, expected);
+}
+
+/** Verify GitHub's signature before invalidating any selections. */
+export async function processInstallationEvent(input: { body: Buffer; signature: string; event: string; deliveryId: string; secret: string; store: Store }): Promise<boolean> {
+  if (!verifyWebhook(input)) return false;
   if (input.event !== 'installation' && input.event !== 'installation_repositories') return true;
   let value: unknown;
   try { value = JSON.parse(input.body.toString('utf8')); } catch { return false; }
