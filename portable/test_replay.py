@@ -7,6 +7,11 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import replay
+import vm_container
 
 from test_proofci import CLITest
 
@@ -105,6 +110,128 @@ class ReplayTest(CLITest):
         self.assertEqual(result.returncode, 2)
         self.assertIn('unsafe archive path', json.loads(output.read_text())['reason'])
         self.assertFalse((self.root.parent / 'escape').exists())
+
+    def test_hosted_ingestion_rejects_a_self_consistent_archive_with_a_substituted_baseline(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        files['baseline/baseline.json'] = b'{}'
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['baseline/baseline.json'] = hashlib.sha256(files['baseline/baseline.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        result = subprocess.run([sys.executable, str(REPLAY.with_name('check_hosted_bundle.py')), str(archive), digest], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('baseline digest mismatch', result.stderr)
+
+    def test_hosted_ingestion_rejects_unbound_search_results(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        files['search-results.json'] = b'{}'
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['search-results.json'] = hashlib.sha256(files['search-results.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        result = subprocess.run([sys.executable, str(REPLAY.with_name('check_hosted_bundle.py')), str(archive), hashlib.sha256(archive.read_bytes()).hexdigest()], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('search results digest mismatch', result.stderr)
+
+    def test_vm_report_replays_with_the_recorded_vm_execution(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        report = json.loads(files['report.json'])
+        report['execution']['image'] = vm_container.VM_IMAGE_ID
+        report['execution']['virtualization'] = 'qemu'
+        report['execution']['dispatch_phase'] = 'final-validation'
+        files['report.json'] = json.dumps(report).encode()
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['report.json'] = hashlib.sha256(files['report.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        def run(command, deadline):
+            fresh = dict(report)
+            fresh['execution'] = dict(report['execution'])
+            if Path(command[1]).name != 'vm_container.py':
+                fresh['execution']['image'] = replay.IMAGE_ID
+                fresh['execution'].pop('virtualization')
+                fresh['execution']['dispatch_phase'] = 'worker'
+            else:
+                self.assertEqual(command[command.index('--phase') + 1], 'final-validation')
+                self.assertIn('--validator-only', command)
+            Path(command[command.index('--report') + 1]).write_text(json.dumps(fresh))
+            return 1
+        output = self.root / 'vm-replay.json'
+        with patch.object(replay, '_run', side_effect=run):
+            status = replay.replay(SimpleNamespace(bundle=archive, sha256=hashlib.sha256(archive.read_bytes()).hexdigest(), output=output))
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.read_text())['status'], 'reproduced')
+
+        for field, value in (('search_results_sha256', '0' * 64), ('proof_suggestion', 'by trivial')):
+            invalid = json.loads(files['report.json'])
+            if field == 'proof_suggestion':
+                invalid['results'][0][field] = value
+            else:
+                invalid[field] = value
+            bad_files = {**files, 'report.json': json.dumps(invalid).encode()}
+            with tempfile.TemporaryDirectory() as temp, self.assertRaisesRegex(ValueError, 'VM evidence cannot contain'):
+                replay.reconstruct(bad_files, Path(temp))
+
+
+    def test_apple_vm_report_replays_with_the_recorded_vm_execution(self):
+        archive, _ = self.export_bundle()
+        with tarfile.open(archive, 'r:') as tar:
+            files = {member.name: tar.extractfile(member).read() for member in tar}
+        report = json.loads(files['report.json'])
+        report['execution']['image'] = vm_container.VM_IMAGE_ID
+        report['execution']['virtualization'] = 'apple'
+        report['execution']['dispatch_phase'] = 'final-validation'
+        files['report.json'] = json.dumps(report).encode()
+        manifest = json.loads(files['manifest.json'])
+        manifest['files']['report.json'] = hashlib.sha256(files['report.json']).hexdigest()
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(archive, 'w') as tar:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name); info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        def run(command, deadline):
+            fresh = dict(report)
+            fresh['execution'] = dict(report['execution'])
+            if Path(command[1]).name != 'vm_container.py':
+                fresh['execution']['image'] = replay.IMAGE_ID
+                fresh['execution'].pop('virtualization')
+                fresh['execution']['dispatch_phase'] = 'worker'
+            else:
+                self.assertEqual(command[command.index('--phase') + 1], 'final-validation')
+                self.assertIn('--validator-only', command)
+            Path(command[command.index('--report') + 1]).write_text(json.dumps(fresh))
+            return 1
+        output = self.root / 'vm-replay.json'
+        with patch.object(replay, '_run', side_effect=run):
+            status = replay.replay(SimpleNamespace(bundle=archive, sha256=hashlib.sha256(archive.read_bytes()).hexdigest(), output=output))
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.read_text())['status'], 'reproduced')
+
+        for field, value in (('search_results_sha256', '0' * 64), ('proof_suggestion', 'by trivial')):
+            invalid = json.loads(files['report.json'])
+            if field == 'proof_suggestion':
+                invalid['results'][0][field] = value
+            else:
+                invalid[field] = value
+            bad_files = {**files, 'report.json': json.dumps(invalid).encode()}
+            with tempfile.TemporaryDirectory() as temp, self.assertRaisesRegex(ValueError, 'VM evidence cannot contain'):
+                replay.reconstruct(bad_files, Path(temp))
 
 
 if __name__ == '__main__':

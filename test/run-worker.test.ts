@@ -8,7 +8,6 @@ test('a run denied at dispatch never invokes the executor', async () => {
   const lease = { id: 'run', generation: 1, candidate: { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) } };
   const store = { startDispatch: async (_lease: unknown, start: () => Promise<Record<string, unknown>>) => start(), claim: async () => lease, renew: async () => true, fail: async () => true, cancelLease: async () => { cancelled = true; return true; }, retry: async () => true, complete: async () => true };
   assert.equal(await executeNext({ store, authorize: async () => 'revoked', execute: async () => { invoked = true; return { report: {}, evidence: null }; }, leaseMs: 1000 }), true);
-
   assert.equal(invoked, false);
   assert.equal(cancelled, true);
 });
@@ -36,6 +35,39 @@ test('transient execution errors are retried before the final failure', async ()
     await executeNext({ store, authorize: async () => 'allowed', execute: async () => { throw new Error('temporary'); }, leaseMs: 1000 });
   }
   assert.deepEqual(outcomes, ['retry', 'failed']);
+});
+
+test('authorized dispatch retains evidence for the leased run', async () => {
+  const lease = { id: 'run', generation: 1, candidate: { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) } };
+  const report = { status: 'passed' };
+  const bytes = Buffer.from('evidence');
+  let dispatched = false;
+  let saved = false;
+  const store = { claim: async () => lease, renew: async () => true, fail: async () => true, cancelLease: async () => true, retry: async () => true, complete: async () => { throw new Error('evidence must be persisted'); },
+    startDispatch: async (_lease: unknown, start: () => Promise<Record<string, unknown>>) => { dispatched = true; return start(); } };
+  await executeNext({ store, authorize: async () => 'allowed', leaseMs: 1000,
+    execute: async (_candidate, _signal, ensureActive, dispatch) => {
+      assert.equal(await ensureActive(), true);
+      return { report: await dispatch(async () => report), evidence: bytes };
+    },
+    evidence: { complete: async (actualLease, actualReport, actualBytes) => {
+      assert.equal(actualLease, lease); assert.equal(actualReport, report); assert.equal(actualBytes, bytes); saved = true; return true;
+    } },
+  });
+  assert.equal(dispatched, true);
+  assert.equal(saved, true);
+});
+
+
+test('temporary authorization failure during dispatch retries the run', async () => {
+  const lease = { id: 'run', generation: 1, candidate: { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) } };
+  let checks = 0;
+  let retried = false;
+  const store = { claim: async () => lease, renew: async () => true, fail: async () => { throw new Error('unexpected failure'); }, cancelLease: async () => true, retry: async () => { retried = true; return true; }, complete: async () => true,
+    startDispatch: async (_lease: unknown, start: () => Promise<Record<string, unknown>>) => start() };
+  await executeNext({ store, leaseMs: 1000, authorize: async () => ++checks === 1 ? 'allowed' : 'unavailable',
+    execute: async (_candidate, _signal, ensureActive) => { await ensureActive(); return { report: { status: 'passed' }, evidence: null }; } });
+  assert.equal(retried, true);
 });
 
 test('a retryable verifier error remains available for inspection', async () => {

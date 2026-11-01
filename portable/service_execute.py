@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run an approved baseline against a staged immutable snapshot."""
 import argparse
+import base64
 import json
 from pathlib import Path
 import re
@@ -8,13 +9,14 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
+from types import SimpleNamespace
 
 import baselines
 import authority
 import dispatch
 import proofci
-import service_baseline
 import replay
+import service_baseline
 
 LIMITS = json.loads(Path(__file__).with_name('resource_limits.json').read_text())
 
@@ -25,7 +27,10 @@ def launch_vm(command, deadline):
     return dispatch._run_process(command, deadline)
 
 
-def execute(*, store, repository, head, base, baseline_digest, snapshot, report, candidate_kind='head-snapshot', candidate_lane=None, bundle=None):
+def execute(*, store, repository, head, base, baseline_digest, snapshot, report, candidate_kind='head-snapshot', candidate_lane=None, evidence=None, bundle=None):
+    if evidence is not None and bundle is not None:
+        raise ValueError('choose one evidence output')
+    evidence = evidence if evidence is not None else bundle
     try:
         if candidate_kind not in ('head-snapshot', 'resolved', 'pull-request'):
             raise ValueError('invalid candidate kind')
@@ -80,9 +85,18 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
                     status = 1
                     result['status'] = 'blocked'
                 report.write_bytes(baselines.encoded(result))
-                if bundle is not None:
-                    replay.export(argparse.Namespace(envelope=envelope_path, baseline=protected / 'baseline.json',
-                        snapshot=snapshot, report=report, search_results=None, output=Path(bundle)))
+                if evidence is not None:
+                    evidence_path = Path(evidence)
+                    if evidence_path.is_symlink() or evidence_path.exists():
+                        raise ValueError('evidence output must not exist')
+                    evidence = evidence_path.resolve()
+                    if evidence.is_relative_to(snapshot) or evidence.is_relative_to(protected) or evidence in (report, Path(store).resolve()):
+                        raise ValueError('evidence must be outside trusted inputs, snapshot, and report')
+                    policy_path = root / 'baseline-policy.json'
+                    policy_path.write_bytes(baselines.encoded({'manifest': base64.b64encode(row['manifest']).decode('ascii'),
+                        'manifest_path': row['manifest_path']}))
+                    replay.export(SimpleNamespace(envelope=envelope_path, baseline=protected / 'baseline.json',
+                        snapshot=snapshot, report=report, output=evidence, search_results=None, baseline_policy=policy_path))
             return status
     except KeyboardInterrupt:
         dispatch._write_error(report, 'cancelled')
@@ -98,10 +112,11 @@ def main():
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--candidate-kind', choices=('head-snapshot', 'resolved', 'pull-request'), default='head-snapshot')
     parser.add_argument('--candidate-lane')
+    parser.add_argument('--evidence')
     parser.add_argument('--bundle')
     args = parser.parse_args()
     return execute(store=args.store, repository=args.repository, head=args.head, base=args.base,
-                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, candidate_kind=args.candidate_kind, candidate_lane=args.candidate_lane, bundle=args.bundle)
+                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, candidate_kind=args.candidate_kind, candidate_lane=args.candidate_lane, evidence=args.evidence, bundle=args.bundle)
 
 
 if __name__ == '__main__':

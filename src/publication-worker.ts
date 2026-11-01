@@ -34,7 +34,7 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
         return;
       }
       const report = item.report;
-      const output = item.state === 'completed' ? checkReport({ ...item.candidate, head: mergeHead }, report, item.evidenceSha256) : item.state === 'cancelled' ? { title: 'ProofCI cancelled', summary: 'Verification was cancelled.', conclusion: 'failure' as const } : null;
+      const output = (item.state === 'completed' || item.state === 'failed') ? checkReport({ ...item.candidate, head: mergeHead }, report, item.evidenceSha256) : item.state === 'cancelled' ? { title: 'ProofCI cancelled', summary: 'Verification was cancelled.', conclusion: 'failure' as const } : null;
       if (output) output.summary = `Pull request head: ${currentHead}\n${output.summary}`;
       const annotations: Array<{ path: string; start_line: number; end_line: number; annotation_level: 'notice' | 'failure'; message: string }> = [];
       if (object(report) && object(report.support) && typeof report.support.admitted_candidate === 'string' && Array.isArray(report.results)) {
