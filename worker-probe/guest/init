@@ -41,7 +41,7 @@ if $BB cat "@HOST_HOME@/sentinel" >/dev/null 2>&1; then
 else
   $BB echo 'PROOFCI_RESULT {"probe":"host-home","status":"denied"}'
 fi
-for target in credentials other-workspace; do
+for target in credentials other-workspace other-repository-cache; do
   if $BB cat "@HOST_TMP@/$target/sentinel" >/dev/null 2>&1; then
     $BB echo "PROOFCI_RESULT {\"probe\":\"$target\",\"status\":\"failed\"}"
   else

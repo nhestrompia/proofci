@@ -123,3 +123,24 @@ on; the executor also rechecks GitHub and the baseline before dispatch and
 before accepting a result. There are no in-flight hosted model calls in this
 pilot. A future broker must define and test its own in-flight revocation and
 durable quota reservation boundary before the provider gate can open.
+
+The opt-in fork acceptance tests require the pinned verifier image and a working
+VM runtime. Build the separate probe image with
+`docker buildx build --platform linux/arm64 -t proofci-ticket16-probe --load worker-probe`, then run
+`PROOFCI_TEST_FORK_ISOLATION=1 node --test test/fork-isolation-linux.test.ts`.
+The test submits an educational local Git fork containing proof code that
+attempts to read host, credential and other-repository cache sentinels and to
+reach 1.1.1.1 on port 443. The test first checks that endpoint from the host.
+The proof's checks run in the worker's construction sandbox, then intentionally
+fail with a test marker. The test also runs a separate fixed-guest probe that
+checks those access categories and the container socket. It is a different
+guest from the verifier.
+
+`PROOFCI_TEST_LIVE_FORK=1 node --test test/fork-live.test.ts` fetches a public
+GitHub fork PR and runs it against a temporary fixture baseline. The current
+fixture binds a JSON file, so the expected result is `unsupported_semantics` and
+the public result blocks. Set `PROOFCI_TEST_DATABASE_URL` to an isolated test
+database. The test signs a local webhook and uses the local `gh` authentication
+only for snapshot staging. It requires network access and an open test PR; its
+installation authorization is a test fixture, so it does not establish GitHub
+App installation authorization or merge-check enforcement.
