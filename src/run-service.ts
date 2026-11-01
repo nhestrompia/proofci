@@ -2,18 +2,20 @@ import type { EnrollmentStore } from './enrollment-store.ts';
 import type { GitHubApp } from './github-app.ts';
 import type { ActiveBaselines, BaselineConfiguration } from './active-baselines.ts';
 import type { RunStore } from './run-store.ts';
+import { resolvePullDelivery } from './pull-delivery.ts';
 import { reconcileHead, resolveDelivery } from './delivery-worker.ts';
 import { executeNext } from './run-worker.ts';
 import { executeRun } from './run-executor.ts';
 import type { EvidenceStore } from './evidence-store.ts';
 
-export type PilotConfiguration = BaselineConfiguration & { ref: string };
+export type PilotConfiguration = BaselineConfiguration & { ref: string; assistanceQuotaMicros: number };
 
 /** Local pilot scheduler. Hosted operation requires a separate VM worker boundary. */
 export class RunService {
   private readonly stopSignal = new AbortController();
   private deliveryBusy = false;
   private workerBusy = false;
+  private pullBusy = false;
   private reconcileBusy = false;
   private nextReconcile = 0;
   private nextExpiration = 0;
@@ -53,6 +55,16 @@ export class RunService {
         }
       })().catch(() => {}).finally(() => { this.deliveryBusy = false; });
     }
+    if (!this.pullBusy) {
+      this.pullBusy = true;
+      void (async () => {
+        while (!this.stopSignal.signal.aborted) {
+          const delivery = await store.claimPullDelivery(300_000);
+          if (!delivery) break;
+          await store.processPullDelivery(delivery, item => resolvePullDelivery({ delivery: item, selections, github, baselines }));
+        }
+      })().catch(() => {}).finally(() => { this.pullBusy = false; });
+    }
     if (!this.workerBusy) {
       this.workerBusy = true;
       void executeNext({ store, leaseMs: 30_000, signal: this.stopSignal.signal,
@@ -65,7 +77,7 @@ export class RunService {
           return access;
         },
         evidence,
-        execute: (candidate, signal) => executeRun({ candidate, signal, github, baselines, evidence: true }),
+        execute: (candidate, signal, ensureActive, dispatch) => executeRun({ candidate, signal, github, baselines, evidence: true, ensureActive, dispatch }),
       }).catch(() => {}).finally(() => { this.workerBusy = false; });
     }
     if (!this.reconcileBusy && Date.now() >= this.nextReconcile) {
@@ -74,7 +86,12 @@ export class RunService {
       void (async () => {
         for (const item of repositories) {
           if (this.stopSignal.signal.aborted) break;
-          try { await reconcileHead({ scope: item, ref: item.ref, github, store }); } catch { /* Retry on the next reconciliation. */ }
+          try { await reconcileHead({ scope: item, ref: item.ref, github, store: { acceptDelivery: delivery => store.acceptDelivery(delivery, true, false) } }); }
+          catch { /* Retry on the next reconciliation. */ }
+          try {
+            await store.reconcilePulls(item, []);
+            for await (const page of github.listOpenPullRequests(item)) await store.reconcilePulls(item, page, false);
+          } catch { /* Retry on the next reconciliation. */ }
         }
       })().finally(() => { this.reconcileBusy = false; });
     }

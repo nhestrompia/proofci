@@ -1,0 +1,58 @@
+# Install this file on the protected default branch after provisioning the runner.
+name: ProofCI source head
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  proofci:
+    runs-on: [self-hosted, linux, ARM64, proofci-isolated]
+    timeout-minutes: 15
+    steps:
+      - name: Check out pull request source head as data
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: snapshot
+      - name: Prepare immutable inputs
+        env:
+          PROOFCI_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          mkdir -p "$PROOFCI_OUTPUT"
+          python3 /opt/proofci/examples/github-actions/prepare.py \
+            "$GITHUB_WORKSPACE/snapshot" /opt/proofci-baseline/baseline.json \
+            "$PROOFCI_OUTPUT"
+      - name: Verify
+        env:
+          PROOFCI_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          python3 /opt/proofci/portable/container.py \
+            --envelope "$PROOFCI_OUTPUT/envelope.json" \
+            --baseline /opt/proofci-baseline/baseline.json \
+            --snapshot "$GITHUB_WORKSPACE/snapshot" \
+            --report "$PROOFCI_OUTPUT/report.json"
+      - name: Export available evidence
+        if: ${{ always() }}
+        env:
+          PROOFCI_OUTPUT: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ -s "$PROOFCI_OUTPUT/report.json" ]; then
+            python3 /opt/proofci/portable/replay.py export \
+              --envelope "$PROOFCI_OUTPUT/envelope.json" \
+              --baseline /opt/proofci-baseline/baseline.json \
+              --snapshot "$GITHUB_WORKSPACE/snapshot" \
+              --report "$PROOFCI_OUTPUT/report.json" \
+              --output "$PROOFCI_OUTPUT/evidence.tar" || echo 'Evidence export was unavailable.'
+          fi
+      - name: Upload available report and metadata
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: proofci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/proofci-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn

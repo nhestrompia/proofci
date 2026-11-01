@@ -66,6 +66,24 @@ class LauncherTests(unittest.TestCase):
             guard.wait(timeout=5)
             self.assertTrue(marker.exists())
 
+    def test_default_image_falls_back_to_pinned_configuration_id(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            (root / "baseline").write_text("{}")
+            (root / "envelope").write_text(json.dumps({"resource_policy": {
+                "timeout_seconds": 10, "cpu_seconds": 10, "memory_bytes": 100000000,
+                "file_bytes": 100000000, "processes": 10}}))
+            args = ["container.py", "--envelope", str(root / "envelope"), "--baseline", str(root / "baseline"),
+                    "--snapshot", str(snapshot), "--report", str(root / "report")]
+            missing = subprocess.CalledProcessError(1, "docker inspect")
+            with (patch.object(sys, "argv", args), patch.object(launcher.os, "getuid", return_value=1000),
+                  patch.object(launcher.subprocess, "check_output", side_effect=[missing, launcher.IMAGE_CONFIG_ID, missing]) as inspect):
+                self.assertEqual(launcher.main(), 2)
+            self.assertEqual(inspect.call_args_list[1].args[0][-1], launcher.IMAGE_CONFIG_ID)
+            self.assertNotIn("image identity", json.loads((root / "report").read_text())["reason"])
+
     def test_rejects_untrusted_image_before_running_it(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

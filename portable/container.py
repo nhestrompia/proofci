@@ -16,7 +16,8 @@ import uuid
 import report as report_contract
 import proofci
 
-IMAGE_ID = "sha256:e36c6538bbc74aaac0266e772e672c07327b524a2102e047bc65eb5c59c577d2"
+IMAGE_ID = "sha256:0768934aa3f0d7d40edb6bbe879c97ef66f2fd825549861ee8bc2598adda4054"
+IMAGE_CONFIG_ID = "sha256:0fed6287e0b5723db99852e9aad1c45d35e284c5f1891c42c90240444793a594"
 
 
 def main():
@@ -31,6 +32,7 @@ def main():
     parser.add_argument("--dependencies", type=Path)
     parser.add_argument("--phase", choices=("worker", "final-validation"), default="worker")
     parser.add_argument("--validator-only", action="store_true")
+    parser.add_argument("--allow-unconfined-apparmor", action="store_true")
     args = parser.parse_args()
     report = args.report.resolve()
     try:
@@ -68,9 +70,15 @@ def main():
             dependency_root = args.dependencies.resolve(strict=True)
             if not dependency_root.is_dir() or dependency_root.is_relative_to(snapshot) or dependency_root.is_relative_to(baseline.parent):
                 raise ValueError("dependency staging directory is invalid")
-        image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.image],
-                                           text=True, timeout=max(0, deadline - time.monotonic())).strip()
-        if image_id != IMAGE_ID:
+        try:
+            image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.image],
+                                               text=True, timeout=max(0, deadline - time.monotonic())).strip()
+        except subprocess.CalledProcessError:
+            if args.image != IMAGE_ID:
+                raise
+            image_id = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE_CONFIG_ID],
+                                               text=True, timeout=max(0, deadline - time.monotonic())).strip()
+        if image_id not in (IMAGE_ID, IMAGE_CONFIG_ID):
             raise ValueError("local image identity does not match the pinned distribution")
         if baseline.parent.is_relative_to(snapshot):
             raise ValueError("protected baseline must be outside the candidate snapshot")
@@ -138,6 +146,9 @@ def main():
                 "-e", f"PROOFCI_IMAGE_ID={image_id}", image_id, "--envelope", "/runinput/envelope.json", "--baseline", "/baseline/baseline.json",
                 "--snapshot", "/snapshot", "--toolchain", "/lean", "--bwrap", "/usr/bin/bwrap",
                 "--report", "/result/report.json"]
+            if args.allow_unconfined_apparmor:
+                index = command.index("--user")
+                command[index:index] = ["--security-opt", "apparmor=unconfined"]
             if args.validator_only:
                 command.append("--validator-only")
             if args.artifacts is not None:

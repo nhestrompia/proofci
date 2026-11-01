@@ -1,0 +1,46 @@
+{
+  "error": {
+    "exit": 2,
+    "reason": "protected contract digest mismatch",
+    "results": [],
+    "status": "error"
+  },
+  "passing": {
+    "exit": 0,
+    "reason": null,
+    "results": [
+      {
+        "decision": "verified",
+        "evidence_sha256": {
+          "challenge.ndjson": "452605e709f040afa8db7d8a5609f19ba3a6fddaf5f0c3898ea7f8bc714c90c7",
+          "manifest.json": "c256890f70fff8af835d4fedbfd021788ee3af4fdf7827fc7601104c349af757",
+          "solution.lean": "941d7e81417330c256a8d3795b3d41c5440af1c10da6ace5a00834c6759aaef2",
+          "solution.ndjson": "b920b92a1f26811139417bc2104a40b7c2e3b141d92a378c6d37f058d85383c2"
+        },
+        "id": "increment",
+        "policy": "required",
+        "reason": "accepted by the reconstructed challenge and independent checkers"
+      }
+    ],
+    "status": "passed"
+  },
+  "unproven": {
+    "exit": 1,
+    "reason": null,
+    "results": [
+      {
+        "decision": "unproven",
+        "evidence_sha256": {
+          "challenge.ndjson": "452605e709f040afa8db7d8a5609f19ba3a6fddaf5f0c3898ea7f8bc714c90c7",
+          "manifest.json": "c256890f70fff8af835d4fedbfd021788ee3af4fdf7827fc7601104c349af757",
+          "solution.lean": "941d7e81417330c256a8d3795b3d41c5440af1c10da6ace5a00834c6759aaef2",
+          "solution.ndjson": "b920b92a1f26811139417bc2104a40b7c2e3b141d92a378c6d37f058d85383c2"
+        },
+        "id": "increment",
+        "policy": "required",
+        "reason": "invalid_evidence"
+      }
+    ],
+    "status": "blocked"
+  }
+}

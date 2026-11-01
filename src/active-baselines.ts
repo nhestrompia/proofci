@@ -25,6 +25,10 @@ export class ActiveBaselines {
   }
 
   async active(scope: RepositoryScope): Promise<string | null> {
+    return (await this.activeIdentity(scope))?.digest ?? null;
+  }
+
+  async activeIdentity(scope: RepositoryScope): Promise<{ digest: string; revision: number | null } | null> {
     const config = this.configuration(scope);
     if (!config) return null;
     let stdout: string;
@@ -38,7 +42,8 @@ export class ActiveBaselines {
     }
     const value: unknown = JSON.parse(stdout);
     if (typeof value !== 'object' || value === null || !('baseline_sha256' in value) ||
-        typeof value.baseline_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.baseline_sha256)) throw new Error('Invalid active baseline');
-    return value.baseline_sha256;
+        typeof value.baseline_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.baseline_sha256) || !('active_revision' in value) ||
+        (value.active_revision !== null && (typeof value.active_revision !== 'number' || !Number.isSafeInteger(value.active_revision) || value.active_revision < 1))) throw new Error('Invalid active baseline');
+    return { digest: value.baseline_sha256, revision: value.active_revision };
   }
 }

@@ -19,12 +19,20 @@ def active_row(store, repository):
     if path.is_symlink() or not path.is_file():
         raise ValueError('protected baseline store is unavailable')
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        db.execute('BEGIN')
         try:
             row = baselines.lookup(db)
         except ValueError as error:
             if str(error) == 'baseline not found':
                 raise NoActiveBaseline('no active baseline') from error
             raise
+        try:
+            revision = db.execute('SELECT revision FROM active_revision WHERE id=1').fetchone()
+        except sqlite3.OperationalError as error:
+            if 'no such table: active_revision' not in str(error):
+                raise
+            revision = None
+        row['active_revision'] = revision[0] if revision else None
     if row['repository'] != repository:
         raise ValueError('active baseline repository mismatch')
     return row
@@ -32,7 +40,7 @@ def active_row(store, repository):
 
 def lookup(store, repository):
     row = active_row(store, repository)
-    return {'baseline_sha256': row['baseline_sha256'], 'reviewed_sha256': row['digest'],
+    return {'baseline_sha256': row['baseline_sha256'], 'reviewed_sha256': row['digest'], 'active_revision': row['active_revision'],
             'initial_head': row['initial_head'], 'manifest_path': row['manifest_path']}
 
 
