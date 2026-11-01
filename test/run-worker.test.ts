@@ -36,3 +36,11 @@ test('transient execution errors are retried before the final failure', async ()
   }
   assert.deepEqual(outcomes, ['retry', 'failed']);
 });
+
+test('a retryable verifier error remains available for inspection', async () => {
+  const lease = { id: 'run', generation: 1, candidate: { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) } };
+  let recorded: unknown;
+  const store = { claim: async () => lease, renew: async () => true, fail: async () => true, cancelLease: async () => true, complete: async () => true, retry: async (_lease: typeof lease, report?: unknown) => { recorded = report; return true; } };
+  await executeNext({ store, authorize: async () => 'allowed', execute: async () => ({ report: { version: 1, status: 'error', reason: 'validation_unavailable' }, evidence: null }), leaseMs: 1000 });
+  assert.deepEqual(recorded, { version: 1, status: 'error', reason: 'validation_unavailable' });
+});

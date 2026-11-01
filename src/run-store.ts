@@ -290,8 +290,8 @@ export class RunStore {
     return result.rowCount === 1;
   }
 
-  async retry(lease: Lease): Promise<boolean> {
-    const result = await this.pool.query("UPDATE proofci_runs SET state='queued', lease_until=clock_timestamp()+interval '30 seconds' WHERE id=$1 AND generation=$2 AND state='running' AND lease_until > clock_timestamp()", [lease.id, lease.generation]);
+  async retry(lease: Lease, report: unknown = null): Promise<boolean> {
+    const result = await this.pool.query("UPDATE proofci_runs SET state='queued', report=COALESCE($3::jsonb,report), lease_until=clock_timestamp()+interval '30 seconds' WHERE id=$1 AND generation=$2 AND state='running' AND lease_until > clock_timestamp()", [lease.id, lease.generation, report === null ? null : JSON.stringify(report)]);
     return result.rowCount === 1;
   }
 

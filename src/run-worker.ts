@@ -33,7 +33,7 @@ export async function executeNext(options: Options): Promise<boolean> {
     } else if (access === 'allowed' && !abort.signal.aborted) {
       const { report, evidence } = await options.execute(lease.candidate, abort.signal);
       if (!abort.signal.aborted && report.status === 'error' && lease.generation < 3) {
-        await options.store.retry(lease);
+        await options.store.retry(lease, report);
       } else if (!abort.signal.aborted) {
         const current = await options.authorize(lease.candidate);
         if (current === 'allowed' && !abort.signal.aborted) await options.store.complete(lease, report, evidence);
