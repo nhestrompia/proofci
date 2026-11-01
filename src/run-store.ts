@@ -197,6 +197,23 @@ export class RunStore {
     return result.rows[0] ?? null;
   }
 
+  /** Recheck published candidates when the protected baseline changes or becomes unavailable. */
+  async reconcileBaseline(scope: RepositoryScope, baseline: string | null): Promise<number[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`UPDATE proofci_publications p SET pending=true, revision=revision+1, needs_revalidation=true
+        FROM proofci_runs r WHERE p.run_id=r.id AND r.installation_id=$1 AND r.repository_id=$2 AND r.applicable
+        AND r.baseline IS DISTINCT FROM $3 AND NOT p.needs_revalidation`, [scope.installationId, scope.repositoryId, baseline]);
+      const result = await client.query<{ number: number }>(`SELECT substring(r.lane FROM 6)::float8 AS number FROM proofci_runs r JOIN proofci_publications p ON p.run_id=r.id
+        WHERE r.installation_id=$1 AND r.repository_id=$2 AND r.applicable AND p.needs_revalidation AND r.lane ~ '^pull/[1-9][0-9]*$'
+        AND NOT EXISTS (SELECT 1 FROM proofci_pull_deliveries d WHERE d.installation_id=r.installation_id AND d.repository_id=r.repository_id
+          AND d.number=substring(r.lane FROM 6)::bigint AND d.state IN ('queued','processing'))`, [scope.installationId, scope.repositoryId]);
+      await client.query('COMMIT');
+      return result.rows.map(row => row.number);
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+
   /** Resolve under a per-lane lock; only a current lease and selection may admit work. */
   async processDelivery(delivery: DeliveryLease, resolve: (delivery: DeliveryLease) => Promise<Candidate | 'deleted' | null>): Promise<boolean> {
     const client = await this.pool.connect();

@@ -240,6 +240,17 @@ test('publication outbox survives restart and fences an older run generation', {
     const report = (await runs.inspect(candidate, id))?.report;
     assert.ok(typeof report === 'object' && report !== null && 'scheduler' in report);
     assert.ok(typeof report.scheduler === 'object' && report.scheduler !== null && 'publication_seconds' in report.scheduler);
+    assert.deepEqual(await runs.reconcileBaseline(candidate, null), [3]);
+    const baselineUnavailable = await runs.claimPublication(60_000); assert.ok(baselineUnavailable);
+    await runs.markPublicationUnresolved(baselineUnavailable);
+    assert.equal(await runs.finishPublication(baselineUnavailable), true);
+    const delivery = { installationId: candidate.installationId, repositoryId: candidate.repositoryId, number: 3, deliveryId: randomUUID() };
+    assert.equal(await runs.acceptPullDelivery(delivery), true);
+    const restored = await runs.claimPullDelivery(60_000); assert.ok(restored);
+    assert.equal(await runs.processPullDelivery(restored, async () => candidate), true);
+    assert.equal((await runs.list(candidate)).length, 1);
+    const republish = await runs.claimPublication(60_000); assert.ok(republish);
+    assert.equal(republish.id, id); assert.equal(await runs.finishPublication(republish), true);
     await enrollment.remove(candidate);
     const revoked = await runs.claimPublication(60_000); assert.ok(revoked);
     assert.equal(revoked.id, id); assert.equal(revoked.applicable, false);

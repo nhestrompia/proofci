@@ -16,9 +16,11 @@ export class RunService {
   private deliveryBusy = false;
   private pullBusy = false;
   private publicationBusy = false;
+  private baselineBusy = false;
   private workerBusy = false;
   private reconcileBusy = false;
   private nextReconcile = 0;
+  private nextBaseline = 0;
   private timer: NodeJS.Timeout | undefined;
   private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; origin: string };
 
@@ -85,6 +87,17 @@ export class RunService {
     if (!this.publicationBusy) {
       this.publicationBusy = true;
       void publishNext({ store, github, baselines, origin: this.options.origin }).catch(() => {}).finally(() => { this.publicationBusy = false; });
+    }
+    if (!this.baselineBusy && Date.now() >= this.nextBaseline) {
+      this.baselineBusy = true;
+      this.nextBaseline = Date.now() + 5_000;
+      void (async () => {
+        for (const item of repositories) {
+          let baseline: string | null = null;
+          try { baseline = await baselines.active(item); } catch { /* An unavailable baseline cannot sustain a passing check. */ }
+          for (const number of await store.reconcileBaseline(item, baseline)) await store.acceptPullDelivery({ installationId: item.installationId, repositoryId: item.repositoryId, number, deliveryId: randomUUID() });
+        }
+      })().catch(() => {}).finally(() => { this.baselineBusy = false; });
     }
     if (!this.reconcileBusy && Date.now() >= this.nextReconcile) {
       this.reconcileBusy = true;
