@@ -6,6 +6,8 @@ import { resolvePullDelivery } from './pull-delivery.ts';
 import { reconcileHead, resolveDelivery } from './delivery-worker.ts';
 import { executeNext } from './run-worker.ts';
 import { executeRun } from './run-executor.ts';
+import { publishNext } from './publication-worker.ts';
+import { randomUUID } from 'node:crypto';
 
 export type PilotConfiguration = BaselineConfiguration & { ref: string; assistanceQuotaMicros: number };
 
@@ -13,14 +15,17 @@ export type PilotConfiguration = BaselineConfiguration & { ref: string; assistan
 export class RunService {
   private readonly stopSignal = new AbortController();
   private deliveryBusy = false;
-  private workerBusy = false;
   private pullBusy = false;
+  private publicationBusy = false;
+  private baselineBusy = false;
+  private workerBusy = false;
   private reconcileBusy = false;
   private nextReconcile = 0;
+  private nextBaseline = 0;
   private timer: NodeJS.Timeout | undefined;
-  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[] };
+  private readonly options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; origin: string };
 
-  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[] }) { this.options = options; }
+  constructor(options: { store: RunStore; selections: EnrollmentStore; github: GitHubApp; baselines: ActiveBaselines; repositories: PilotConfiguration[]; origin: string }) { this.options = options; }
 
   start(): void {
     if (this.timer) return;
@@ -53,7 +58,8 @@ export class RunService {
         while (!this.stopSignal.signal.aborted) {
           const delivery = await store.claimPullDelivery(300_000);
           if (!delivery) break;
-          await store.processPullDelivery(delivery, item => resolvePullDelivery({ delivery: item, selections, github, baselines }));
+          try { await store.processPullDelivery(delivery, item => resolvePullDelivery({ delivery: item, selections, github, baselines })); }
+          catch { await store.recordPullFailure(delivery); }
         }
       })().catch(() => {}).finally(() => { this.pullBusy = false; });
     }
@@ -71,6 +77,21 @@ export class RunService {
         execute: (candidate, signal, ensureActive, dispatch) => executeRun({ candidate, signal, github, baselines, ensureActive, dispatch }),
       }).catch(() => {}).finally(() => { this.workerBusy = false; });
     }
+    if (!this.publicationBusy) {
+      this.publicationBusy = true;
+      void publishNext({ store, github, baselines, origin: this.options.origin }).catch(() => {}).finally(() => { this.publicationBusy = false; });
+    }
+    if (!this.baselineBusy && Date.now() >= this.nextBaseline) {
+      this.baselineBusy = true;
+      this.nextBaseline = Date.now() + 5_000;
+      void (async () => {
+        for (const item of repositories) {
+          let baseline: string | null = null;
+          try { baseline = await baselines.active(item); } catch { /* An unavailable baseline cannot sustain a passing check. */ }
+          for (const number of await store.reconcileBaseline(item, baseline)) await store.acceptPullDelivery({ installationId: item.installationId, repositoryId: item.repositoryId, number, deliveryId: randomUUID() });
+        }
+      })().catch(() => {}).finally(() => { this.baselineBusy = false; });
+    }
     if (!this.reconcileBusy && Date.now() >= this.nextReconcile) {
       this.reconcileBusy = true;
       this.nextReconcile = Date.now() + 300_000;
@@ -82,6 +103,7 @@ export class RunService {
           try {
             await store.reconcilePulls(item, []);
             for await (const page of github.listOpenPullRequests(item)) await store.reconcilePulls(item, page, false);
+
           } catch { /* Retry on the next reconciliation. */ }
         }
       })().finally(() => { this.reconcileBusy = false; });

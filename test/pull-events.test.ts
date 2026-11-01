@@ -16,4 +16,5 @@ test('only authenticated pull request events for their destination reach the que
   const bad = Buffer.from(JSON.stringify({ ...event, repository: { id: 35 } }));
   assert.equal(await processPullEvent({ body: bad, signature: 'sha256=' + createHmac('sha256', secret).update(bad).digest('hex'), event: 'pull_request', deliveryId, secret, store }), false);
   assert.equal(accepted.length, 1);
+
 });

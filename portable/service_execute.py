@@ -13,6 +13,7 @@ import baselines
 import dispatch
 import proofci
 import service_baseline
+import replay
 
 LIMITS = json.loads(Path(__file__).with_name('resource_limits.json').read_text())
 
@@ -23,7 +24,7 @@ def launch_vm(command, deadline):
     return dispatch._run_process(command, deadline)
 
 
-def execute(*, store, repository, head, base, baseline_digest, snapshot, report):
+def execute(*, store, repository, head, base, baseline_digest, snapshot, report, bundle=None):
     try:
         if not re.fullmatch(r'[a-f0-9]{40}', head) or not re.fullmatch(r'[a-f0-9]{40}', base):
             raise ValueError('invalid candidate identity')
@@ -70,6 +71,9 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report)
                     status = 1
                     result['status'] = 'blocked'
                 report.write_bytes(baselines.encoded(result))
+                if bundle is not None:
+                    replay.export(argparse.Namespace(envelope=envelope_path, baseline=protected / 'baseline.json',
+                        snapshot=snapshot, report=report, search_results=None, output=Path(bundle)))
             return status
     except KeyboardInterrupt:
         dispatch._write_error(report, 'cancelled')
@@ -83,9 +87,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('store', 'repository', 'head', 'base', 'baseline-digest', 'snapshot', 'report'):
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--bundle')
     args = parser.parse_args()
     return execute(store=args.store, repository=args.repository, head=args.head, base=args.base,
-                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report)
+                   baseline_digest=args.baseline_digest, snapshot=args.snapshot, report=args.report, bundle=args.bundle)
 
 
 if __name__ == '__main__':

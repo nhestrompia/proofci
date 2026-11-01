@@ -97,6 +97,10 @@ def export(args):
     if sha(baseline_bytes) != envelope['baseline_sha256']:
         raise ValueError('baseline digest mismatch')
     snapshot = args.snapshot.resolve(strict=True)
+    shallow = subprocess.run(['git', '-C', str(snapshot), 'rev-parse', '--is-shallow-repository'],
+                             check=True, capture_output=True, text=True, timeout=60)
+    if shallow.stdout.strip() != 'false':
+        raise ValueError('evidence export requires a repository with complete history')
     proofci.validate(envelope, baseline, snapshot, args.baseline.resolve().parent)
     import time
     proofci.verify_snapshot(snapshot, envelope, baseline, time.monotonic() + 60)

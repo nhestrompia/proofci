@@ -72,7 +72,7 @@ export async function fetchSnapshot(input: { owner: string; name: string; token:
   await git(['init', '-q', snapshot], env, input.root, input.signal);
   await git(['-C', snapshot, 'remote', 'add', 'origin', repository], env, input.root, input.signal);
   const auth = Buffer.from(`x-access-token:${input.token}`).toString('base64');
-  await git(['-C', snapshot, 'fetch', '--no-tags', '--no-recurse-submodules', '--depth=1', 'origin', input.head, input.base],
+  await git(['-C', snapshot, 'fetch', '--no-tags', '--no-recurse-submodules', 'origin', input.head, input.base],
     { ...env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${auth}` }, input.root, input.signal);
   await git(['-C', snapshot, 'checkout', '-q', '--detach', input.head], env, input.root, input.signal);
   if (!await withinLimits(input.root)) throw new Error('Snapshot exceeds limits');

@@ -14,5 +14,6 @@ export async function processPullEvent(input: { body: Buffer; signature: string;
       !object(value.repository) || !id(value.repository.id) || !object(value.pull_request) || value.pull_request.number !== value.number ||
       !object(value.pull_request.base) || !object(value.pull_request.base.repo) || value.pull_request.base.repo.id !== value.repository.id) return false;
   if (!['opened', 'reopened', 'synchronize', 'edited', 'closed', 'ready_for_review', 'converted_to_draft'].includes(value.action)) return true;
+
   return input.store.acceptPullDelivery({ deliveryId: input.deliveryId, installationId: value.installation.id, repositoryId: value.repository.id, number: value.number });
 }

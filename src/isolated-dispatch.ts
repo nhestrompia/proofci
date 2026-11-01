@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { Candidate } from './run-store.ts';
 
 const dispatcher = fileURLToPath(new URL('../portable/service_execute.py', import.meta.url));
-type Inputs = { store: string; repository: string; snapshot: string; report: string };
+type Inputs = { store: string; repository: string; snapshot: string; report: string; bundle?: string };
 
 /** Invoke the protected dispatcher with staged inputs and no service credentials. */
 export async function isolatedDispatch(candidate: Candidate, input: Inputs, signal: AbortSignal): Promise<Record<string, unknown>> {
@@ -16,7 +16,7 @@ export async function isolatedDispatch(candidate: Candidate, input: Inputs, sign
     for (const key of ['PROOFCI_APPLE_RUNTIME', 'PROOFCI_APPLE_KERNEL', 'PROOFCI_APPLE_KERNEL_SHA256']) {
       if (process.env[key]) env[key] = process.env[key];
     }
-    const child = spawn('python3', [dispatcher, '--store', input.store, '--repository', input.repository, '--head', candidate.head, '--base', candidate.base, '--baseline-digest', candidate.baseline, '--snapshot', input.snapshot, '--report', input.report], { env, detached: true, stdio: 'ignore' });
+    const child = spawn('python3', [dispatcher, '--store', input.store, '--repository', input.repository, '--head', candidate.head, '--base', candidate.base, '--baseline-digest', candidate.baseline, '--snapshot', input.snapshot, '--report', input.report, ...(input.bundle ? ['--bundle', input.bundle] : [])], { env, detached: true, stdio: 'ignore' });
     let killTimer: NodeJS.Timeout | undefined;
     const stop = () => {
       if (child.pid === undefined) return;
