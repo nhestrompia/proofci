@@ -147,7 +147,7 @@ def run(args):
         os.chmod(f"{tmp}/root/tmp", 0o1777)
         with open(f"{host_home}/sentinel", "w", encoding="utf-8") as sentinel:
             sentinel.write("dummy host home sentinel")
-        for name in ("credentials", "other-workspace"):
+        for name in ("credentials", "other-workspace", "other-repository-cache"):
             os.mkdir(f"{tmp}/{name}")
             with open(f"{tmp}/{name}/sentinel", "w", encoding="utf-8") as sentinel:
                 sentinel.write("dummy sentinel; no real credential")
@@ -206,7 +206,7 @@ def run(args):
             artifact = None
         expected = {
             "guest_boot": "passed", "cgroup_cpu": "available", "cgroup_memory": "available", "cgroup_pids": "available",
-            "host-home": "denied", "credentials": "denied", "other-workspace": "denied", "container_socket": "denied", "network": "denied",
+            "host-home": "denied", "credentials": "denied", "other-workspace": "denied", "other-repository-cache": "denied", "container_socket": "denied", "network": "denied",
             "cgroup_memory_limit": "observed", "cgroup_pids_limit": "observed", "cgroup_cpu_budget": "observed", "tmpfs_disk_limit": "observed",
             "limit_cpu": "observed", "limit_memory": "observed", "limit_disk": "observed", "limit_processes": "observed", "fresh_state": "absent",
         }

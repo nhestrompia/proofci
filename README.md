@@ -87,3 +87,64 @@ node src/run-cancel.ts INSTALLATION_ID REPOSITORY_ID RUN_ID
 These commands use `DATABASE_URL`. Limit access to the database and pilot
 configuration to trusted operators. Cancellation persists, and duplicate
 notifications do not restart a cancelled candidate.
+
+## Fork verification and assistance
+
+Subscribe the App to pull request events as well as push events. The service
+queues signed pull request observations for enrolled pilot repositories, then
+resolves the PR through the destination installation. It records the source and
+destination repository IDs and immutable head and base. It fetches the snapshot
+from the destination and runs the existing isolated verifier with no provider,
+installation, or signing credentials in the worker. Results are nonenforcing;
+this pilot does not publish a GitHub check. Reconciliation lists open PRs and
+revisits applicable runs every five minutes. Configure webhook redelivery for
+failures.
+
+Fork proof assistance is off. Hosted provider calls must remain disabled until
+durable request recovery and accounting have passed their release gate. The
+service never sends candidate source to a model provider. An operator can set
+`assistanceQuotaMicros` in the protected pilot configuration, in microdollars;
+it defaults to zero. With a positive quota, a signed-in current maintainer can
+review a fork run at `/fork-assistance?repository=INSTALLATION_ID:REPOSITORY_ID&number=PR_NUMBER`.
+The approval form shows the exact inputs and requests explicit source-transmission
+consent. Approval records are scoped to the selection, source and destination,
+head, base, baseline revision, resource policy and quota. For an existing store,
+run `python3 portable/baselines.py initialize --store /absolute/protected/baselines.db`
+as its trusted owner before recording approvals. Without revision tracking,
+fork assistance remains denied. A new PR notification or destination push,
+superseding candidate, explicit revocation or selection removal invalidates the
+record. A changed policy or current input does not match an old record. Approval
+only produces a deferred decision while the hosted provider gate is closed; it
+is not a broker reservation or a claim that quota accounting is ready.
+
+The dispatch boundary is the database transaction that checks the active run and
+selection and starts the isolated process. Cancellation, removal, and accepted
+PR updates lock or invalidate those records, so an update ordered before that
+boundary prevents process start. Work already started is aborted when its lease
+renewal notices cancellation or removal, and cannot publish a late completion.
+A GitHub change not yet observed by a webhook or reconciliation cannot be acted
+on; the executor also rechecks GitHub and the baseline before dispatch and
+before accepting a result. There are no in-flight hosted model calls in this
+pilot. A future broker must define and test its own in-flight revocation and
+durable quota reservation boundary before the provider gate can open.
+
+The opt-in fork acceptance tests require the pinned verifier image and a working
+VM runtime. Build the separate probe image with
+`docker buildx build --platform linux/arm64 -t proofci-ticket16-probe --load worker-probe`, then run
+`PROOFCI_TEST_FORK_ISOLATION=1 node --test test/fork-isolation-linux.test.ts`.
+The test submits an educational local Git fork containing proof code that
+attempts to read host, credential and other-repository cache sentinels and to
+reach 1.1.1.1 on port 443. The test first checks that endpoint from the host.
+The proof's checks run in the worker's construction sandbox, then intentionally
+fail with a test marker. The test also runs a separate fixed-guest probe that
+checks those access categories and the container socket. It is a different
+guest from the verifier.
+
+`PROOFCI_TEST_LIVE_FORK=1 node --test test/fork-live.test.ts` fetches a public
+GitHub fork PR and runs it against a temporary fixture baseline. The current
+fixture binds a JSON file, so the expected result is `unsupported_semantics` and
+the public result blocks. Set `PROOFCI_TEST_DATABASE_URL` to an isolated test
+database. The test signs a local webhook and uses the local `gh` authentication
+only for snapshot staging. It requires network access and an open test PR; its
+installation authorization is a test fixture, so it does not establish GitHub
+App installation authorization or merge-check enforcement.

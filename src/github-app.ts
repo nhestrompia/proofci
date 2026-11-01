@@ -101,6 +101,39 @@ export class GitHubApp {
 
   async checkInstallationAccess(scope: RepositoryScope): Promise<boolean> { return await this.installationAccess(scope) === 'allowed'; }
 
+  /** Reconciliation treats this list as observations; each PR is resolved separately. */
+  async *listOpenPullRequests(scope: RepositoryScope): AsyncGenerator<number[]> {
+    const repo = await this.repository(scope);
+    for (let page = 1; page <= 1000; page++) {
+      const numbers = new Set<number>();
+      const result = await this.api(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/pulls?state=open&per_page=100&page=${page}`, repo.token);
+      if (!Array.isArray(result)) throw new Error('Invalid pull request list');
+      for (const item of result) {
+        if (!object(item) || typeof item.number !== 'number' || !Number.isSafeInteger(item.number) || item.number < 1) throw new Error('Invalid pull request list');
+        numbers.add(item.number);
+      }
+      yield [...numbers];
+      if (result.length < 100) return;
+    }
+    throw new Error('Pull request list exceeds reconciliation limit');
+  }
+
+  /** Resolve the PR itself under the destination installation, not a check association. */
+  async resolvePullRequest(scope: RepositoryScope, number: number): Promise<{ number: number; sourceRepositoryId: number; destinationRepositoryId: number; head: string; base: string } | null> {
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid pull request number');
+    const repo = await this.repository(scope);
+    const result = await this.api(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/pulls/${number}`, repo.token);
+    if (!object(result) || result.number !== number || (result.state !== 'open' && result.state !== 'closed') ||
+        !object(result.base) || !object(result.base.repo) || result.base.repo.id !== scope.repositoryId) throw new Error('Invalid pull request identity');
+    if (result.state === 'closed') return null;
+    if (
+        !object(result.head) || !object(result.head.repo) || typeof result.head.repo.id !== 'number' ||
+        !Number.isSafeInteger(result.head.repo.id) || result.head.repo.id < 1 ||
+        typeof result.head.sha !== 'string' || !/^[a-f0-9]{40}$/.test(result.head.sha) ||
+        typeof result.base.sha !== 'string' || !/^[a-f0-9]{40}$/.test(result.base.sha)) throw new Error('Invalid pull request identity');
+    return { number, sourceRepositoryId: result.head.repo.id, destinationRepositoryId: scope.repositoryId, head: result.head.sha, base: result.base.sha };
+  }
+
   /** Resolve a branch through the installation-scoped GitHub API. */
   async resolveHead(scope: RepositoryScope, ref: string): Promise<string | null> {
     if (!ref.startsWith('refs/heads/') || ref.length > 512 || ref.length === 'refs/heads/'.length ||

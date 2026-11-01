@@ -14,7 +14,7 @@ test('durable runs deduplicate, recover leases, fence stale completions, and per
   try {
     const { EnrollmentStore } = await import('../src/enrollment-store.ts');
     const enrollment = new EnrollmentStore(pool);
-    await enrollment.initialize(); await store.initialize();
+    await enrollment.initialize(); await Promise.all([store.initialize(), new RunStore(pool).initialize()]);
     await enrollment.select({ installationId: 1, repositoryId: 2 });
     const candidate = { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'refs/heads/main', head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
     const first = await store.admit(candidate);
@@ -158,5 +158,122 @@ test('a signed delivery survives restart and reaches the authorized executor onc
     assert.equal(executions, 1);
     assert.equal(await executeNext({ store: restarted, authorize: async () => 'allowed', leaseMs: 60_000, execute: async () => { executions++; return {}; } }), false);
     assert.equal(await restarted.claimDelivery(60_000), null);
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+test('pull observations survive restart and fence superseded and closed fork runs', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const enrollment = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await enrollment.initialize(); await runs.initialize();
+    const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 5 };
+    await enrollment.select(event);
+    assert.equal(await runs.acceptPullDelivery(event), true);
+    assert.equal(await runs.acceptPullDelivery(event), true);
+    const delivery = await new RunStore(pool).claimPullDelivery(60_000);
+    assert.ok(delivery);
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/5', number: 5, sourceRepositoryId: 3, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    assert.equal(await runs.processPullDelivery(delivery, async () => candidate), true);
+    const lease = await runs.claim(60_000);
+    assert.ok(lease);
+    assert.deepEqual(lease.candidate, candidate);
+    assert.deepEqual(await runs.startDispatch(lease, async () => ({ started: true }), () => {}), { started: true });
+    assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }, false), true);
+    const missingBaseline = await runs.claimPullDelivery(60_000);
+    assert.ok(missingBaseline);
+    await runs.processPullDelivery(missingBaseline, async () => 'baseline-unavailable');
+    assert.equal(await runs.renew(lease, 60_000), false);
+    assert.equal(await runs.findPull(event, 5), null);
+    await runs.reconcilePulls(event, [5]);
+    await runs.reconcilePulls(event, [5]);
+    const pending = await pool.query("SELECT count(*)::int AS count FROM proofci_pull_deliveries WHERE pull_number=5 AND state IN ('queued','processing')");
+    assert.equal(pending.rows[0].count, 1);
+    const restored = await runs.claimPullDelivery(60_000);
+    assert.ok(restored);
+    await runs.processPullDelivery(restored, async () => candidate);
+    const restoredLease = await runs.claim(60_000);
+    assert.ok(restoredLease);
+    assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }), true);
+    assert.equal(await runs.renew(restoredLease, 60_000), false);
+    let oldStarted = false;
+    await assert.rejects(runs.startDispatch(restoredLease, async () => { oldStarted = true; return {}; }, () => {}));
+    assert.equal(oldStarted, false);
+    const updated = await runs.claimPullDelivery(60_000);
+    assert.ok(updated);
+    assert.equal(await runs.processPullDelivery(updated, async () => ({ ...candidate, head: 'd'.repeat(40) })), true);
+    assert.equal(await runs.renew(lease, 60_000), false);
+    const next = await runs.claim(60_000);
+    assert.ok(next);
+    assert.equal(next.candidate.head, 'd'.repeat(40));
+    assert.equal(await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() }), true);
+    const closed = await runs.claimPullDelivery(60_000);
+    assert.ok(closed);
+    await runs.processPullDelivery(closed, async () => 'closed');
+    assert.equal(await runs.renew(next, 60_000), false);
+    let started = false;
+    await assert.rejects(runs.startDispatch(next, async () => { started = true; return {}; }, () => {}));
+    assert.equal(started, false);
+    assert.equal(await runs.claim(60_000), null);
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+test('a close observed during PR resolution cannot resurrect the older candidate', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const selections = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await selections.initialize(); await runs.initialize();
+    const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 3 };
+    await selections.select(event); await runs.acceptPullDelivery(event);
+    const delivery = await runs.claimPullDelivery(60_000); assert.ok(delivery);
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    let resume: () => void = () => {}, resolved: () => void = () => {};
+    const waiting = new Promise<void>(resolve => { resume = resolve; });
+    const entered = new Promise<void>(resolve => { resolved = resolve; });
+    const processing = runs.processPullDelivery(delivery, async () => { resolved(); await waiting; return candidate; });
+    await entered;
+    await runs.acceptPullDelivery({ ...event, deliveryId: randomUUID() });
+    resume();
+    await processing;
+    assert.equal(await runs.claim(60_000), null);
+    const close = await runs.claimPullDelivery(60_000); assert.ok(close);
+    assert.equal(close.deliveryId, delivery.deliveryId);
+    await runs.processPullDelivery(close, async () => 'closed');
+    assert.equal(await runs.claim(60_000), null);
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});
+
+
+test('a destination push during the first PR lookup forces a fresh resolution', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const selections = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await selections.initialize(); await runs.initialize();
+    const event = { deliveryId: randomUUID(), installationId: 1, repositoryId: 2, number: 3 };
+    await selections.select(event); await runs.acceptPullDelivery(event);
+    const delivery = await runs.claimPullDelivery(60_000); assert.ok(delivery);
+    const candidate = { kind: 'pull-request' as const, installationId: 1, repositoryId: 2, lane: 'pull/3', number: 3, sourceRepositoryId: 4, head: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    let resume: () => void = () => {}, entered: () => void = () => {};
+    const waiting = new Promise<void>(resolve => { resume = resolve; });
+    const resolving = new Promise<void>(resolve => { entered = resolve; });
+    const processing = runs.processPullDelivery(delivery, async () => { entered(); await waiting; return candidate; });
+    await resolving;
+    await runs.acceptDelivery({ deliveryId: randomUUID(), installationId: 1, repositoryId: 2, ref: 'refs/heads/main', head: 'd'.repeat(40), deleted: false }, false);
+    resume(); await processing;
+    assert.equal(await runs.claim(60_000), null);
+    const retry = await runs.claimPullDelivery(60_000); assert.ok(retry);
+    await runs.processPullDelivery(retry, async () => ({ ...candidate, base: 'd'.repeat(40) }));
+    assert.equal((await runs.claim(60_000))?.candidate.base, 'd'.repeat(40));
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });

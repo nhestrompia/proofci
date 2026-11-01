@@ -1,4 +1,4 @@
-import { createPrivateKey } from 'node:crypto';
+import { createHash, createPrivateKey } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -8,8 +8,10 @@ import { EnrollmentService } from './enrollment-service.ts';
 import { GitHubApp } from './github-app.ts';
 import { OAuthSessions } from './oauth.ts';
 import { processInstallationEvent } from './installation-events.ts';
+import { processPullEvent } from './pull-events.ts';
 import { processPushEvent } from './push-events.ts';
 import { RunStore } from './run-store.ts';
+import { ForkPolicy, policyDigest } from './fork-policy.ts';
 import { ActiveBaselines } from './active-baselines.ts';
 import { RunService, type PilotConfiguration } from './run-service.ts';
 
@@ -31,6 +33,8 @@ await store.initialize();
 const enrollment = new EnrollmentService({ store, sessions, github });
 let runs: RunStore | undefined;
 let runService: RunService | undefined;
+let forkPolicy: ForkPolicy | undefined;
+let activeBaselines: ActiveBaselines | undefined;
 let pilotRepositories: PilotConfiguration[] = [];
 const pilotConfig = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
 if (pilotConfig) {
@@ -45,11 +49,16 @@ if (pilotConfig) {
         !('repositoryId' in entry) || typeof entry.repositoryId !== 'number' || !('store' in entry) || typeof entry.store !== 'string' ||
         !('repository' in entry) || typeof entry.repository !== 'string' || !('ref' in entry) || typeof entry.ref !== 'string' ||
         !entry.ref.startsWith('refs/heads/')) throw new Error('Invalid pilot configuration');
-    repositories.push({ installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref });
+    const assistanceQuotaMicros = 'assistanceQuotaMicros' in entry ? entry.assistanceQuotaMicros : 0;
+    if (typeof assistanceQuotaMicros !== 'number' || !Number.isSafeInteger(assistanceQuotaMicros) || assistanceQuotaMicros < 0) throw new Error('Invalid assistance quota');
+    repositories.push({ installationId: entry.installationId, repositoryId: entry.repositoryId, store: entry.store, repository: entry.repository, ref: entry.ref, assistanceQuotaMicros });
   }
   pilotRepositories = repositories;
   const baselines = new ActiveBaselines(repositories);
+  activeBaselines = baselines;
   runs = new RunStore(pool); await runs.initialize();
+  forkPolicy = new ForkPolicy({ pool, selections: store, github, sessions, baselines });
+  for (const repository of repositories) await forkPolicy.syncPolicy(repository, repository.assistanceQuotaMicros);
   runService = new RunService({ store: runs, selections: store, github, baselines, repositories });
   runService.start();
 }
@@ -122,9 +131,45 @@ const server = createServer(async (request, response) => {
       if (event === 'push') {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
-        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId && item.ref === delivery.ref) ? runStore.acceptDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+        if (!await processPushEvent({ body, signature, event, deliveryId, secret, store: { acceptDelivery: delivery => {
+          const config = pilotRepositories.find(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId);
+          return config ? runStore.acceptDelivery(delivery, config.ref === delivery.ref) : Promise.resolve(true);
+        } } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+      } else if (event === 'pull_request') {
+        const runStore = runs;
+        if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
+        if (!await processPullEvent({ body, signature, event, deliveryId, secret, store: { acceptPullDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId) ? runStore.acceptPullDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
       } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
+    }
+    if ((request.method === 'GET' || request.method === 'POST') && url.pathname === '/fork-assistance') {
+      const runStore = runs, policy = forkPolicy, baselines = activeBaselines;
+      if (!runStore || !policy || !baselines) return reply(response, 503, 'Run scheduling is not configured.');
+      if (request.method === 'POST' && request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');
+      const data = request.method === 'POST' ? await form(request) : url.searchParams;
+      const selection = data.get('repository') ?? '', numberText = data.get('number') ?? '';
+      if (!/^[1-9]\d*:[1-9]\d*$/.test(selection) || !/^[1-9]\d*$/.test(numberText)) return reply(response, 400, 'Invalid selection.');
+      const [installationId, repositoryId] = selection.split(':').map(Number), number = Number(numberText);
+      if (![installationId, repositoryId, number].every(Number.isSafeInteger)) return reply(response, 400, 'Invalid selection.');
+      const scope = { installationId, repositoryId }, session = cookie(request, 'proofci_session');
+      const config = pilotRepositories.find(item => item.installationId === installationId && item.repositoryId === repositoryId);
+      if (!config || await sessions.checkMaintainer({ session, scope, github }) === null || !await store.isSelected(scope)) return reply(response, 403, 'Request denied.');
+      const run = await runStore.findPull(scope, number);
+      if (request.method === 'POST' && data.get('action') === 'revoke') {
+        if (!await policy.revoke({ session, scope, number })) return reply(response, 403, 'Request denied.');
+        return reply(response, 200, 'Fork assistance approval revoked.');
+      }
+      if (!run || run.candidate.sourceRepositoryId === repositoryId) return reply(response, 404, 'No current fork run found.');
+      const baseline = await baselines.activeIdentity(scope);
+      if (!baseline || baseline.digest !== run.candidate.baseline || baseline.revision === null) return reply(response, 409, 'The active baseline is unavailable or needs revision tracking.');
+      const digest = createHash('sha256').update(JSON.stringify([run.id, run.candidate, baseline.revision, policyDigest(config.assistanceQuotaMicros)])).digest('hex');
+      if (request.method === 'POST') {
+        if (data.get('action') !== 'approve' || data.get('digest') !== digest || data.get('consent') !== 'yes') return reply(response, 409, 'The candidate or policy changed, or consent was not given. Review it again.');
+        if (!await policy.approve({ session, candidate: run.candidate, quotaMicros: config.assistanceQuotaMicros, baselineRevision: baseline.revision, consent: true })) return reply(response, 403, 'Approval denied or candidate changed.');
+        return reply(response, 200, 'Approval recorded. Hosted assistance remains deferred until durable request recovery is enabled.');
+      }
+      const c = run.candidate;
+      return reply(response, 200, `<h1>Fork assistance</h1><p>Source repository ID: ${c.sourceRepositoryId}. Destination repository ID: ${c.repositoryId}. Pull request: ${c.number}.</p><p>Head: ${c.head}<br>Base: ${c.base}<br>Baseline: ${c.baseline}<br>Baseline revision: ${baseline.revision}<br>Resource policy: ${policyDigest(config.assistanceQuotaMicros)}<br>Repository quota: ${config.assistanceQuotaMicros} microdollars.</p><p>Hosted assistance is deferred until durable request recovery is enabled.</p><form method="post"><input type="hidden" name="repository" value="${selection}"><input type="hidden" name="number" value="${number}"><input type="hidden" name="digest" value="${digest}"><label><input type="checkbox" name="consent" value="yes" required>Allow source transmission for these exact inputs</label><button name="action" value="approve">Approve</button><button name="action" value="revoke" formnovalidate>Revoke approval</button></form>`);
     }
     if (request.method === 'POST' && url.pathname === '/logout') {
       if (request.headers.origin !== origin.origin) return reply(response, 403, 'Request denied.');
