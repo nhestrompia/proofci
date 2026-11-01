@@ -3,10 +3,11 @@ import type { Pool, PoolClient } from 'pg';
 import type { RepositoryScope } from './enrollment-store.ts';
 import type { PushDelivery } from './push-events.ts';
 import type { PullDelivery } from './pull-events.ts';
+import type { RerunRequest } from './rerun-events.ts';
 
 type CandidateInputs = { installationId: number; repositoryId: number; lane: string; head: string; base: string; baseline: string; pullHead?: string | null; mergeHead?: string | null; authorityEpoch?: number };
 export type Candidate = CandidateInputs & ({ kind: 'head-snapshot' | 'resolved' } | { kind: 'pull-request'; sourceRepositoryId: number; number: number });
-export type PullLease = PullDelivery & { generation: number; selectionGeneration: string };
+export type PullLease = PullDelivery & { generation: number; selectionGeneration: string; rerunActor?: { id: number; login: string } | null };
 
 export type DeliveryLease = PushDelivery & { generation: number; selectionGeneration: string };
 export type Lease = { id: string; generation: number; candidate: Candidate };
@@ -22,10 +23,11 @@ function validateCandidate(candidate: Candidate): void {
       (candidate.kind === 'resolved' && /^pull\/[1-9]\d*$/.test(candidate.lane) && (typeof candidate.pullHead !== 'string' || !/^[a-f0-9]{40}$/.test(candidate.pullHead)))) throw new Error('Invalid immutable candidate');
 }
 
-async function insertCandidate(client: PoolClient, candidate: Candidate, selectionGeneration: string, authorityEpoch: number | null): Promise<string> {
+/** A rerun reuses only queued or running work; a finished attempt is superseded by a new one. */
+async function insertCandidate(client: PoolClient, candidate: Candidate, selectionGeneration: string, authorityEpoch: number | null, rerun = false): Promise<string> {
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${candidate.installationId}:${candidate.repositoryId}:${candidate.lane}`]);
   const params = [candidate.installationId, candidate.repositoryId, candidate.lane, candidate.head, candidate.base, candidate.baseline, candidate.kind, candidate.kind === 'pull-request' ? candidate.sourceRepositoryId : null, candidate.kind === 'pull-request' ? candidate.number : null, candidate.mergeHead ?? null, candidate.pullHead ?? null];
-  const existing = await client.query<{ id: string }>('SELECT id FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND head=$4 AND base=$5 AND baseline=$6 AND kind=$7 AND source_repository_id IS NOT DISTINCT FROM $8 AND pull_number IS NOT DISTINCT FROM $9 AND merge_head IS NOT DISTINCT FROM $10 AND pull_head IS NOT DISTINCT FROM $11 AND selection_generation=$12 AND authority_epoch IS NOT DISTINCT FROM $13 AND applicable', [...params, selectionGeneration, authorityEpoch]);
+  const existing = await client.query<{ id: string }>('SELECT id FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND head=$4 AND base=$5 AND baseline=$6 AND kind=$7 AND source_repository_id IS NOT DISTINCT FROM $8 AND pull_number IS NOT DISTINCT FROM $9 AND merge_head IS NOT DISTINCT FROM $10 AND pull_head IS NOT DISTINCT FROM $11 AND selection_generation=$12 AND authority_epoch IS NOT DISTINCT FROM $13 AND applicable AND (NOT $14::boolean OR state IN (\'queued\',\'running\'))', [...params, selectionGeneration, authorityEpoch, rerun]);
   if (existing.rows[0]) return existing.rows[0].id;
   if (candidate.kind === 'pull-request') {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`fork-policy:${candidate.installationId}:${candidate.repositoryId}:${candidate.number}`]);
@@ -159,6 +161,7 @@ export class RunStore {
       await migration.query('DROP TRIGGER IF EXISTS proofci_queue_run_change_trigger ON proofci_runs');
       await migration.query('CREATE TRIGGER proofci_queue_run_change_trigger AFTER UPDATE ON proofci_runs FOR EACH ROW EXECUTE FUNCTION proofci_queue_run_change()');
       await migration.query('ALTER TABLE proofci_pull_deliveries ADD COLUMN IF NOT EXISTS last_error TEXT');
+      await migration.query('ALTER TABLE proofci_pull_deliveries ADD COLUMN IF NOT EXISTS rerun_actor_id BIGINT, ADD COLUMN IF NOT EXISTS rerun_actor_login TEXT');
       await migration.query('COMMIT');
     } catch (error) { await migration.query('ROLLBACK'); throw error; }
     finally { migration.release(); }
@@ -244,6 +247,36 @@ export class RunStore {
     finally { client.release(); }
   }
 
+  /**
+   * Queue a rerun for the pull request that owns the referenced check in this repository.
+   * Acceptance changes no runs: the actor's authority is verified before any new attempt.
+   */
+  async acceptRerun(request: RerunRequest): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout='2s'");
+      await client.query("SET LOCAL statement_timeout='5s'");
+      await client.query('INSERT INTO proofci_installation_revisions (installation_id) VALUES ($1) ON CONFLICT DO NOTHING', [request.installationId]);
+      await client.query('SELECT revision FROM proofci_installation_revisions WHERE installation_id=$1 FOR UPDATE', [request.installationId]);
+      const selected = await client.query<{ generation: string }>('SELECT generation FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2', [request.installationId, request.repositoryId]);
+      if (!selected.rows[0]) { await client.query('COMMIT'); return false; }
+      const owner = await client.query<{ number: string }>(`SELECT pull_number AS number FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2
+        AND kind='pull-request' AND merge_head=$3 AND ($4::uuid IS NULL OR id=$4::uuid) ORDER BY created_at DESC LIMIT 1`, [request.installationId, request.repositoryId, request.sha, request.runId]);
+      if (!owner.rows[0]) { await client.query('COMMIT'); return false; }
+      const values = [request.deliveryId, request.installationId, request.repositoryId, owner.rows[0].number, selected.rows[0].generation, request.actorId, request.actorLogin];
+      const inserted = await client.query(`INSERT INTO proofci_pull_deliveries (delivery_id, installation_id, repository_id, pull_number, selection_generation, rerun_actor_id, rerun_actor_login)
+        VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`, values);
+      if (!inserted.rowCount) {
+        const prior = await client.query('SELECT 1 FROM proofci_pull_deliveries WHERE delivery_id=$1 AND installation_id=$2 AND repository_id=$3 AND pull_number=$4 AND selection_generation=$5 AND rerun_actor_id=$6 AND rerun_actor_login=$7', values);
+        if (!prior.rowCount) { await client.query('ROLLBACK'); return false; }
+      }
+      await client.query('COMMIT');
+      return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
   async reconcilePulls(scope: RepositoryScope, openNumbers: number[], includeKnown = true): Promise<void> {
     const known = includeKnown ? (await this.pool.query<{ number: number }>("SELECT pull_number::float8 AS number FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND kind='pull-request' AND applicable", [scope.installationId, scope.repositoryId])).rows.map(item => item.number) : [];
     for (const number of new Set([...openNumbers, ...known])) await this.acceptPullDelivery({ ...scope, number, deliveryId: randomUUID() }, false);
@@ -253,7 +286,8 @@ export class RunStore {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 3_600_000) throw new Error('Invalid lease');
     const result = await this.pool.query<PullLease>(`UPDATE proofci_pull_deliveries SET state='processing', generation=generation+1, lease_until=clock_timestamp()+($1 * interval '1 millisecond')
       WHERE delivery_id=(SELECT delivery_id FROM proofci_pull_deliveries WHERE state='queued' OR (state='processing' AND lease_until <= clock_timestamp()) ORDER BY created_at, delivery_id FOR UPDATE SKIP LOCKED LIMIT 1)
-      RETURNING delivery_id AS "deliveryId", installation_id::float8 AS "installationId", repository_id::float8 AS "repositoryId", pull_number::float8 AS number, generation, selection_generation AS "selectionGeneration"`, [leaseMs]);
+      RETURNING delivery_id AS "deliveryId", installation_id::float8 AS "installationId", repository_id::float8 AS "repositoryId", pull_number::float8 AS number, generation, selection_generation AS "selectionGeneration",
+      CASE WHEN rerun_actor_id IS NULL THEN NULL ELSE json_build_object('id', rerun_actor_id::float8, 'login', rerun_actor_login) END AS "rerunActor"`, [leaseMs]);
     return result.rows[0] ?? null;
   }
 
@@ -262,7 +296,7 @@ export class RunStore {
   }
 
   /** Resolve each notification under a per-PR lock and fence stale selections and leases. */
-  async processPullDelivery(delivery: PullLease, resolve: (delivery: PullLease) => Promise<Candidate | 'closed' | 'baseline-unavailable' | 'merge-conflict' | 'merge-unavailable' | null>): Promise<boolean> {
+  async processPullDelivery(delivery: PullLease, resolve: (delivery: PullLease) => Promise<Candidate | 'closed' | 'baseline-unavailable' | 'merge-conflict' | 'merge-unavailable' | 'rerun-denied' | null>): Promise<boolean> {
     const client = await this.pool.connect();
     const key = `pull:${delivery.installationId}:${delivery.repositoryId}:${delivery.number}`;
     try {
@@ -279,6 +313,12 @@ export class RunStore {
       await client.query('SELECT revision FROM proofci_installation_revisions WHERE installation_id=$1 FOR UPDATE', [delivery.installationId]);
       const current = await client.query<{ selection_generation: string }>("SELECT selection_generation FROM proofci_pull_deliveries WHERE delivery_id=$1 AND generation=$2 AND state='processing' AND lease_until > clock_timestamp() FOR UPDATE", [delivery.deliveryId, delivery.generation]);
       if (!current.rows[0]) { await client.query('ROLLBACK'); return false; }
+      if (candidate === 'rerun-denied') {
+        if (!delivery.rerunActor) throw new Error('Invalid rerun result');
+        await client.query("UPDATE proofci_pull_deliveries SET state='done', lease_until=NULL, last_error='rerun_denied' WHERE delivery_id=$1", [delivery.deliveryId]);
+        await client.query('COMMIT');
+        return true;
+      }
       const selected = await client.query('SELECT 1 FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2 AND generation=$3', [delivery.installationId, delivery.repositoryId, current.rows[0].selection_generation]);
       if (candidate && selected.rowCount === 1) {
         const lane = `pull/${delivery.number}`;
@@ -306,7 +346,7 @@ export class RunStore {
         } else {
           const epoch = await this.authority?.current(candidate) ?? null;
           if (this.authority && epoch === null) throw new Error('Repository authority unavailable');
-          const id = await insertCandidate(client, candidate, current.rows[0].selection_generation, epoch);
+          const id = await insertCandidate(client, candidate, current.rows[0].selection_generation, epoch, !!delivery.rerunActor);
           await client.query('UPDATE proofci_publications SET pending=true, revision=revision+1, needs_revalidation=false WHERE run_id=$1 AND needs_revalidation', [id]);
         }
       }

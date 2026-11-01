@@ -9,6 +9,7 @@ The verifier supports a restricted Lean source language and approved contracts.
 - [Feasibility, architecture, and CI integration](docs/research/ci-and-architecture.md)
 - [Verification trust model and language support](docs/research/verification-feasibility.md)
 - [MVP implementation spec](docs/specs/proofci-mvp.md)
+- [Pull request lifecycle and merge policy](docs/pull-request-lifecycle.md)
 
 ## GitHub enrollment
 
@@ -110,12 +111,15 @@ pinned verifier image.
 
 Set `PROOFCI_LOCAL_PILOT_CONFIG` to the absolute path of this file. Configure
 the GitHub App and service as described above, subscribe the App webhook to
-push and pull request events, and enroll the repository. Reconciliation checks
+push, pull request, check run, and check suite events, and enroll the repository. Reconciliation checks
 configured branches and open pull requests every five minutes. A missing active
 baseline or revoked installation cannot schedule a run. The check stays pending
 or fails unless the final validator accepts every required obligation. Configure
 the required `ProofCI` check from this App and require up-to-date branches before
-relying on it as a gate.
+relying on it as a gate. Merge queues are not supported yet. See
+[Pull request lifecycle](docs/pull-request-lifecycle.md) for how updates,
+retargeting, closure, reruns, and cancellation affect runs, and for the required
+merge policy and its administrator bypass limitations.
 
 The check links to `/runs/INSTALLATION_ID/REPOSITORY_ID/RUN_ID`. A signed-in
 maintainer can read the full report there and download its immutable replay
@@ -153,7 +157,9 @@ These commands use `DATABASE_URL`. Set `PROOFCI_LOCAL_PILOT_CONFIG` when
 inspecting managed runs so their authority revision can be checked. Without it,
 managed completed runs are reported as inapplicable. Limit access to the database
 and pilot configuration to trusted operators. Cancellation persists, and duplicate
-notifications do not restart a cancelled candidate.
+notifications do not restart a cancelled candidate. A rerun of the `ProofCI`
+check by an actor with current write access starts a new attempt for the PR's
+current inputs.
 
 ## Migrate a baseline
 

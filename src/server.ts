@@ -9,6 +9,7 @@ import { OAuthSessions } from './oauth.ts';
 import { processInstallationEvent } from './installation-events.ts';
 import { processPullEvent } from './pull-events.ts';
 import { processPushEvent } from './push-events.ts';
+import { processRerunEvent } from './rerun-events.ts';
 import { RunStore } from './run-store.ts';
 import { ForkPolicy, policyDigest } from './fork-policy.ts';
 import { ActiveBaselines } from './active-baselines.ts';
@@ -183,8 +184,11 @@ const server = createServer(async (request, response) => {
       } else if (event === 'pull_request') {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
-        if (!await processPullEvent({ body, signature, event, deliveryId, secret, store: { acceptPullDelivery: delivery => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId) ? runStore.acceptPullDelivery(delivery) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
-
+        if (!await processPullEvent({ body, signature, event, deliveryId, secret, store: { acceptPullDelivery: (delivery, invalidate) => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId) ? runStore.acceptPullDelivery(delivery, invalidate) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+      } else if (event === 'check_run' || event === 'check_suite') {
+        const runStore = runs;
+        if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
+        if (!await processRerunEvent({ body, signature, event, deliveryId, secret, appId, store: { acceptRerun: request => pilotRepositories.some(item => item.installationId === request.installationId && item.repositoryId === request.repositoryId) ? runStore.acceptRerun(request) : Promise.resolve(false) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
       } else if (!await processInstallationEvent({ body, signature, event, deliveryId, secret, store })) return reply(response, 401, 'Invalid webhook.');
       response.writeHead(204, { 'cache-control': 'no-store' }); return response.end();
     }
