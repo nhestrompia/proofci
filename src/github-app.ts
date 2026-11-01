@@ -247,6 +247,20 @@ export class GitHubApp {
     } catch { return 'unconfirmed'; }
   }
 
+  /**
+   * Check a rerun actor's current write-level authority in the destination repository.
+   * The login only locates the user; the numeric ID must also match.
+   */
+  async rerunAuthority(scope: RepositoryScope, actor: { id: number; login: string }): Promise<'allowed' | 'denied'> {
+    if (!Number.isSafeInteger(actor.id) || actor.id < 1 || !/^[A-Za-z0-9-]{1,39}(\[bot\])?$/.test(actor.login)) return 'denied';
+    const repo = await this.repository(scope);
+    let result: unknown;
+    try { result = await this.api(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/collaborators/${encodeURIComponent(actor.login)}/permission`, repo.token); }
+    catch (error) { if (error instanceof GitHubStatusError && error.status === 404) return 'denied'; throw error; }
+    if (!object(result) || !object(result.user) || result.user.id !== actor.id) return 'denied';
+    return result.permission === 'admin' || result.permission === 'write' ? 'allowed' : 'denied';
+  }
+
   /** The caller must supply a token from a trusted, authenticated GitHub App session. */
   async checkMaintainerAccess(scope: RepositoryScope, userToken: string): Promise<number | null> {
     try {
