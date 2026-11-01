@@ -84,6 +84,8 @@ The check links to `/runs/INSTALLATION_ID/REPOSITORY_ID/RUN_ID`. A signed-in
 maintainer can read the full report there and download its immutable replay
 bundle from the same URL with `/evidence` appended. The report records the bundle
 SHA-256; pass that digest to the replay command in the portable verifier guide.
+Snapshot fetching includes the history needed for replay and rejects a staged
+repository larger than 256 MiB. Evidence export rejects shallow repositories.
 Unresolved merge candidates are visible to maintainers at
 `/pulls/INSTALLATION_ID/REPOSITORY_ID/PULL_NUMBER`. Check publication retries
 from the database without rerunning proof work. PostgreSQL holds the bundle, so
