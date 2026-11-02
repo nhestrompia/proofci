@@ -383,4 +383,4 @@ itself is fenced by the authority and existing checks have been invalidated.
 
 ## License
 
-ProofCI is released under the [MIT License](LICENSE).
+The whole repository is released under the [MIT License](LICENSE). That covers the control service, the portable verifier, the source-binding validator, the deployment files, and the documentation. Third-party components such as Lean, the base images, and npm dependencies keep their own licenses.

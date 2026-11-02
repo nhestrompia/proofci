@@ -173,7 +173,7 @@ The implementation details and validation commands must follow the pinned toolch
 - Set CPU, memory, disk, process, log, and time limits. Terminate the whole task process tree on cancellation or timeout.
 - Repository output cannot choose executable paths or checker commands in the trusted validator. Reject candidate toolchain substitutions.
 - Use a 30-day default retention for hosted run evidence, configurable by the operator. Document what expiration removes and how it affects reproduction.
-- Publish deployment, backup, credential rotation, upgrade, and recovery instructions before calling the hosted pilot supported. Choose an explicit open-source license before distribution.
+- Publish deployment, backup, credential rotation, upgrade, and recovery instructions before calling the hosted pilot supported. Choose an explicit open-source license before distribution. Decided: the whole repository is MIT-licensed (see `LICENSE`).
 
 ### 10. GitHub integration
 

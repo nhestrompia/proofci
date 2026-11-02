@@ -5,8 +5,8 @@ It uses the fixed source-binding validator. Model assistance is optional. The
 supported Lean language and trust assumptions are documented in
 [the validator README](../experiments/source-binding/README.md). The baseline,
 the verifier checkout, the Docker host and the supplied toolchain must be
-protected from the candidate being checked. This local distribution is not
-licensed for public distribution; a maintainer license decision is still needed.
+protected from the candidate being checked. Like the rest of the repository, it
+is released under the [MIT License](../LICENSE).
 
 The input is a clean Git checkout at the exact full commit named by `head`.
 The origin URL must equal `repository`; `base` must be a full commit ID present

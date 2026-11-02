@@ -2,7 +2,7 @@
 
 This guide deploys the ProofCI control service on one Linux host. It also covers verification of real pull requests, evidence retrieval, backup and restoration, recovery after a crash, credential rotation, and upgrades. Every procedure here was run in the [operational exercise](exercise/README.md). The [recorded results](../docs/evidence/ticket-23/README.md) state what that run did and did not establish.
 
-> **License.** ProofCI is released under the [MIT License](../LICENSE), recorded as `"license": {"spdx": "MIT"}` in `deploy/release.json`. The control image carries the license at `/opt/proofci/LICENSE` and in its `org.opencontainers.image.licenses` label. Third-party components (the Node and Docker base images, Debian packages, npm dependencies, Lean, and the verifier image) keep their own licenses.
+> **License.** The whole ProofCI repository is released under the [MIT License](../LICENSE), recorded as `"license": {"spdx": "MIT"}` in `deploy/release.json`. The control image carries the license at `/opt/proofci/LICENSE` and in its `org.opencontainers.image.licenses` label. Third-party components (the Node and Docker base images, Debian packages, npm dependencies, Lean, and the verifier image) keep their own licenses.
 
 ## What runs where
 
