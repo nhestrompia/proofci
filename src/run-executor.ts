@@ -9,7 +9,7 @@ import { isolatedDispatch } from './isolated-dispatch.ts';
 import { RunFailure } from './run-failure.ts';
 
 /** Prepare a fresh snapshot and use the protected baseline and verifier. */
-export async function executeRun(options: { candidate: Candidate; signal: AbortSignal; github: Pick<GitHubApp, 'stageSnapshot' | 'resolveHead'> & Partial<Pick<GitHubApp, 'resolvePullRequest' | 'resolvePullMerge'>>; baselines: ActiveBaselines; ensureActive?: () => Promise<boolean>; dispatch?: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>> }): Promise<{ report: Record<string, unknown>; evidence: Buffer | null }> {
+export async function executeRun(options: { candidate: Candidate; signal: AbortSignal; github: Pick<GitHubApp, 'stageSnapshot' | 'resolveHead'> & Partial<Pick<GitHubApp, 'resolvePullRequest' | 'resolvePullMerge' | 'resolveMergeGroup'>>; baselines: ActiveBaselines; ensureActive?: () => Promise<boolean>; dispatch?: (start: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>> }): Promise<{ report: Record<string, unknown>; evidence: Buffer | null }> {
   const { candidate, signal, github, baselines } = options;
   const checkCurrent = async () => {
     if (signal.aborted || (options.ensureActive && !await options.ensureActive())) throw new RunFailure('cancelled');
@@ -19,6 +19,10 @@ export async function executeRun(options: { candidate: Candidate; signal: AbortS
       const merge = await github.resolvePullMerge?.(candidate, candidate.number);
       if (!merge || merge.kind !== 'resolved' || merge.merge !== candidate.mergeHead || merge.head !== candidate.head || merge.base !== candidate.base) throw new RunFailure('candidate_superseded');
       if (!pr || pr.sourceRepositoryId !== candidate.sourceRepositoryId || pr.destinationRepositoryId !== candidate.repositoryId || pr.head !== candidate.head || pr.base !== candidate.base) throw new RunFailure('candidate_superseded');
+    }
+    if (candidate.kind === 'merge-group') {
+      const group = await github.resolveMergeGroup?.(candidate, { headRef: candidate.lane, headSha: candidate.head, baseSha: candidate.base });
+      if (!group || group.kind !== 'resolved' || group.head !== candidate.head || group.base !== candidate.base) throw new RunFailure('candidate_superseded');
     }
     if (await baselines.active(candidate) !== candidate.baseline) throw new RunFailure('baseline_unavailable');
     if (signal.aborted || (options.ensureActive && !await options.ensureActive())) throw new RunFailure('cancelled');

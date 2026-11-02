@@ -4,9 +4,13 @@ import type { RepositoryScope } from './enrollment-store.ts';
 import type { PushDelivery } from './push-events.ts';
 import type { PullDelivery } from './pull-events.ts';
 import type { RerunRequest } from './rerun-events.ts';
+import type { MergeGroupDelivery, MergeGroupRetirement } from './merge-group-events.ts';
 
 type CandidateInputs = { installationId: number; repositoryId: number; lane: string; head: string; base: string; baseline: string; pullHead?: string | null; mergeHead?: string | null; authorityEpoch?: number };
-export type Candidate = CandidateInputs & ({ kind: 'head-snapshot' | 'resolved' } | { kind: 'pull-request'; sourceRepositoryId: number; number: number });
+export type Candidate = CandidateInputs & ({ kind: 'head-snapshot' | 'resolved' | 'merge-group' } | { kind: 'pull-request'; sourceRepositoryId: number; number: number });
+export type MergeGroupLease = MergeGroupDelivery & { generation: number; selectionGeneration: string };
+/** A merge group that cannot be resolved still receives an explicit, nonpassing result. */
+export const UNRESOLVED_BASELINE = '0'.repeat(64);
 export type PullLease = PullDelivery & { generation: number; selectionGeneration: string; rerunActor?: { id: number; login: string } | null };
 
 export type DeliveryLease = PushDelivery & { generation: number; selectionGeneration: string };
@@ -14,17 +18,18 @@ export type Lease = { id: string; generation: number; candidate: Candidate };
 export type Publication = { id: string; revision: number; leaseGeneration: number; runGeneration: number; candidate: Candidate; state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; applicable: boolean; report: unknown; evidenceSha256: string | null };
 
 function validateCandidate(candidate: Candidate): void {
-  if ((candidate.kind !== 'head-snapshot' && candidate.kind !== 'resolved' && candidate.kind !== 'pull-request') || !Number.isSafeInteger(candidate.installationId) || candidate.installationId < 1 ||
+  if ((candidate.kind !== 'head-snapshot' && candidate.kind !== 'resolved' && candidate.kind !== 'pull-request' && candidate.kind !== 'merge-group') || !Number.isSafeInteger(candidate.installationId) || candidate.installationId < 1 ||
       !Number.isSafeInteger(candidate.repositoryId) || candidate.repositoryId < 1 ||
       !candidate.lane || candidate.lane.length > 512 ||
       (candidate.kind === 'pull-request' && (!Number.isSafeInteger(candidate.sourceRepositoryId) || candidate.sourceRepositoryId < 1 || !Number.isSafeInteger(candidate.number) || candidate.number < 1 || candidate.lane !== `pull/${candidate.number}` || typeof candidate.mergeHead !== 'string' || !/^[a-f0-9]{40}$/.test(candidate.mergeHead))) ||
       !/^[a-f0-9]{40}$/.test(candidate.head) || !/^[a-f0-9]{40}$/.test(candidate.base) ||
       !/^[a-f0-9]{64}$/.test(candidate.baseline) ||
+      (candidate.kind === 'merge-group' && (!candidate.lane.startsWith('refs/heads/gh-readonly-queue/') || candidate.mergeHead !== candidate.head)) ||
       (candidate.kind === 'resolved' && /^pull\/[1-9]\d*$/.test(candidate.lane) && (typeof candidate.pullHead !== 'string' || !/^[a-f0-9]{40}$/.test(candidate.pullHead)))) throw new Error('Invalid immutable candidate');
 }
 
 /** A rerun reuses only queued or running work; a finished attempt is superseded by a new one. */
-async function insertCandidate(client: PoolClient, candidate: Candidate, selectionGeneration: string, authorityEpoch: number | null, rerun = false): Promise<string> {
+async function insertCandidate(client: PoolClient, candidate: Candidate, selectionGeneration: string, authorityEpoch: number | null, rerun = false, failure: string | null = null): Promise<string> {
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${candidate.installationId}:${candidate.repositoryId}:${candidate.lane}`]);
   const params = [candidate.installationId, candidate.repositoryId, candidate.lane, candidate.head, candidate.base, candidate.baseline, candidate.kind, candidate.kind === 'pull-request' ? candidate.sourceRepositoryId : null, candidate.kind === 'pull-request' ? candidate.number : null, candidate.mergeHead ?? null, candidate.pullHead ?? null];
   const existing = await client.query<{ id: string }>('SELECT id FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND head=$4 AND base=$5 AND baseline=$6 AND kind=$7 AND source_repository_id IS NOT DISTINCT FROM $8 AND pull_number IS NOT DISTINCT FROM $9 AND merge_head IS NOT DISTINCT FROM $10 AND pull_head IS NOT DISTINCT FROM $11 AND selection_generation=$12 AND authority_epoch IS NOT DISTINCT FROM $13 AND applicable AND (NOT $14::boolean OR state IN (\'queued\',\'running\'))', [...params, selectionGeneration, authorityEpoch, rerun]);
@@ -37,11 +42,18 @@ async function insertCandidate(client: PoolClient, candidate: Candidate, selecti
   }
   await client.query(`WITH changed AS (UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL, completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE installation_id=$1 AND repository_id=$2 AND lane=$3 AND applicable RETURNING id) UPDATE proofci_publications SET pending=true, revision=revision+1 WHERE run_id IN (SELECT id FROM changed)`, params.slice(0, 3));
   const id = randomUUID();
-  await client.query("INSERT INTO proofci_runs (id, installation_id, repository_id, lane, head, base, baseline, kind, source_repository_id, pull_number, merge_head, pull_head, selection_generation, authority_epoch, state) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued')", [id, ...params, selectionGeneration, authorityEpoch]);
-
-  if (candidate.kind === 'pull-request' || (candidate.kind === 'resolved' && /^pull\/[1-9]\d*$/.test(candidate.lane))) await client.query('INSERT INTO proofci_publications (run_id) VALUES ($1)', [id]);
+  if (failure === null) await client.query("INSERT INTO proofci_runs (id, installation_id, repository_id, lane, head, base, baseline, kind, source_repository_id, pull_number, merge_head, pull_head, selection_generation, authority_epoch, state) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued')", [id, ...params, selectionGeneration, authorityEpoch]);
+  else await client.query(`INSERT INTO proofci_runs (id, installation_id, repository_id, lane, head, base, baseline, kind, source_repository_id, pull_number, merge_head, pull_head, selection_generation, authority_epoch, state, report, completed_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'failed',jsonb_build_object('version',1,'status','error','reason',$15::text,'scheduler',jsonb_build_object('scope',$16::text)),clock_timestamp())`, [id, ...params, selectionGeneration, authorityEpoch, failure, scope(candidate.kind)]);
+  if (candidate.kind === 'pull-request' || candidate.kind === 'merge-group' || (candidate.kind === 'resolved' && /^pull\/[1-9]\d*$/.test(candidate.lane))) await client.query('INSERT INTO proofci_publications (run_id) VALUES ($1)', [id]);
   return id;
 }
+
+/** Reports name the candidate GitHub evaluates: a PR test merge and a merge group are distinct scopes. */
+function scope(kind: Candidate['kind']): string {
+  return kind === 'head-snapshot' ? 'head-snapshot-nonenforcing' : kind === 'pull-request' ? 'pull-request-test-merge' : kind === 'merge-group' ? 'merge-group' : 'resolved-candidate';
+}
+const SCOPE_SQL = "CASE kind WHEN 'head-snapshot' THEN 'head-snapshot-nonenforcing' WHEN 'pull-request' THEN 'pull-request-test-merge' WHEN 'merge-group' THEN 'merge-group' ELSE 'resolved-candidate' END";
 
 type Run = { id: string; applicable: boolean; state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; report: unknown };
 type StoredRun = Run & { authority_epoch: string | null };
@@ -73,7 +85,7 @@ export class RunStore {
       await migration.query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':proofci-runs-migration', 0))");
       await migration.query(`CREATE TABLE IF NOT EXISTS proofci_runs (
       id UUID PRIMARY KEY, installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL,
-      lane TEXT NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, baseline TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('head-snapshot','resolved','pull-request')), source_repository_id BIGINT, pull_number BIGINT, selection_generation TEXT NOT NULL,
+      lane TEXT NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, baseline TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('head-snapshot','resolved','pull-request','merge-group')), source_repository_id BIGINT, pull_number BIGINT, selection_generation TEXT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
       generation INTEGER NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ, report JSONB,
       applicable BOOLEAN NOT NULL DEFAULT true,
@@ -100,7 +112,7 @@ export class RunStore {
     await migration.query("CREATE UNIQUE INDEX IF NOT EXISTS proofci_evidence_ready_run ON proofci_evidence(run_id) WHERE state='ready'");
       await migration.query('ALTER TABLE proofci_runs ADD COLUMN IF NOT EXISTS source_repository_id BIGINT, ADD COLUMN IF NOT EXISTS pull_number BIGINT');
       await migration.query('ALTER TABLE proofci_runs DROP CONSTRAINT IF EXISTS proofci_runs_kind_check');
-      await migration.query("ALTER TABLE proofci_runs ADD CONSTRAINT proofci_runs_kind_check CHECK (kind IN ('head-snapshot','resolved','pull-request'))");
+      await migration.query("ALTER TABLE proofci_runs ADD CONSTRAINT proofci_runs_kind_check CHECK (kind IN ('head-snapshot','resolved','pull-request','merge-group'))");
       await migration.query('CREATE UNIQUE INDEX IF NOT EXISTS proofci_runs_applicable_lane ON proofci_runs (installation_id, repository_id, lane) WHERE applicable');
       await migration.query(`CREATE TABLE IF NOT EXISTS proofci_fork_decisions (
         installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL, pull_number BIGINT NOT NULL,
@@ -162,6 +174,15 @@ export class RunStore {
       await migration.query('CREATE TRIGGER proofci_queue_run_change_trigger AFTER UPDATE ON proofci_runs FOR EACH ROW EXECUTE FUNCTION proofci_queue_run_change()');
       await migration.query('ALTER TABLE proofci_pull_deliveries ADD COLUMN IF NOT EXISTS last_error TEXT');
       await migration.query('ALTER TABLE proofci_pull_deliveries ADD COLUMN IF NOT EXISTS rerun_actor_id BIGINT, ADD COLUMN IF NOT EXISTS rerun_actor_login TEXT');
+      await migration.query(`CREATE TABLE IF NOT EXISTS proofci_merge_group_deliveries (
+        delivery_id UUID PRIMARY KEY, installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL,
+        head_ref TEXT NOT NULL, head_sha TEXT NOT NULL, base_ref TEXT NOT NULL, base_sha TEXT NOT NULL, selection_generation TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','processing','done')), generation INTEGER NOT NULL DEFAULT 0,
+        lease_until TIMESTAMPTZ, last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())`);
+      await migration.query(`CREATE TABLE IF NOT EXISTS proofci_merge_group_retirements (
+        installation_id BIGINT NOT NULL, repository_id BIGINT NOT NULL, head_ref TEXT NOT NULL, head_sha TEXT NOT NULL,
+        reason TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (installation_id, repository_id, head_ref, head_sha))`);
       await migration.query('COMMIT');
     } catch (error) { await migration.query('ROLLBACK'); throw error; }
     finally { migration.release(); }
@@ -357,6 +378,121 @@ export class RunStore {
     finally { try { await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [key]); } finally { client.release(); } }
   }
 
+  /** Queue a group for resolution. Acceptance changes no runs: other groups in the queue stay valid. */
+  async acceptMergeGroup(event: MergeGroupDelivery): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout='2s'");
+      await client.query("SET LOCAL statement_timeout='5s'");
+      await client.query('INSERT INTO proofci_installation_revisions (installation_id) VALUES ($1) ON CONFLICT DO NOTHING', [event.installationId]);
+      await client.query('SELECT revision FROM proofci_installation_revisions WHERE installation_id=$1 FOR UPDATE', [event.installationId]);
+      const selected = await client.query<{ generation: string }>('SELECT generation FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2', [event.installationId, event.repositoryId]);
+      if (!selected.rows[0]) { await client.query('COMMIT'); return false; }
+      const values = [event.deliveryId, event.installationId, event.repositoryId, event.headRef, event.headSha, event.baseRef, event.baseSha, selected.rows[0].generation];
+      const inserted = await client.query(`INSERT INTO proofci_merge_group_deliveries (delivery_id, installation_id, repository_id, head_ref, head_sha, base_ref, base_sha, selection_generation)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`, values);
+      if (!inserted.rowCount) {
+        const prior = await client.query('SELECT 1 FROM proofci_merge_group_deliveries WHERE delivery_id=$1 AND installation_id=$2 AND repository_id=$3 AND head_ref=$4 AND head_sha=$5 AND base_ref=$6 AND base_sha=$7 AND selection_generation=$8', values);
+        if (!prior.rowCount) { await client.query('ROLLBACK'); return false; }
+      }
+      await client.query('COMMIT');
+      return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  /**
+   * Retire one exact group durably. Its active work is cancelled and no later delivery
+   * or completion for that group can become applicable. A merged group keeps its final
+   * published check; any other retirement republishes the run as stale.
+   */
+  async retireMergeGroup(event: MergeGroupRetirement): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout='2s'");
+      await client.query("SET LOCAL statement_timeout='5s'");
+      const selected = await client.query('SELECT 1 FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2', [event.installationId, event.repositoryId]);
+      if (!selected.rowCount) { await client.query('COMMIT'); return true; }
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${event.installationId}:${event.repositoryId}:${event.headRef}`]);
+      const values = [event.installationId, event.repositoryId, event.headRef, event.headSha];
+      await client.query('INSERT INTO proofci_merge_group_retirements (installation_id, repository_id, head_ref, head_sha, reason) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [...values, event.reason]);
+      const prior = await client.query<{ id: string; state: string }>("SELECT id, state FROM proofci_runs WHERE installation_id=$1 AND repository_id=$2 AND kind='merge-group' AND lane=$3 AND head=$4 AND applicable FOR UPDATE", values);
+      await client.query(`UPDATE proofci_runs SET applicable=false, state=CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END, lease_until=NULL,
+        completed_at=CASE WHEN state IN ('queued','running') THEN clock_timestamp() ELSE completed_at END WHERE id = ANY($1::uuid[])`, [prior.rows.map(row => row.id)]);
+      const finished = prior.rows.filter(row => row.state === 'completed' || row.state === 'failed').map(row => row.id);
+      if (event.reason === 'merged' && finished.length) await client.query('UPDATE proofci_publications SET pending=false WHERE run_id = ANY($1::uuid[])', [finished]);
+      await client.query("UPDATE proofci_merge_group_deliveries SET state='done', lease_until=NULL, last_error='merge_group_retired' WHERE installation_id=$1 AND repository_id=$2 AND head_ref=$3 AND head_sha=$4 AND state='queued'", values);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  async claimMergeGroupDelivery(leaseMs: number): Promise<MergeGroupLease | null> {
+    if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 3_600_000) throw new Error('Invalid lease');
+    const result = await this.pool.query<MergeGroupLease>(`UPDATE proofci_merge_group_deliveries SET state='processing', generation=generation+1, lease_until=clock_timestamp()+($1 * interval '1 millisecond')
+      WHERE delivery_id=(SELECT delivery_id FROM proofci_merge_group_deliveries WHERE state='queued' OR (state='processing' AND lease_until <= clock_timestamp()) ORDER BY created_at, delivery_id FOR UPDATE SKIP LOCKED LIMIT 1)
+      RETURNING delivery_id AS "deliveryId", installation_id::float8 AS "installationId", repository_id::float8 AS "repositoryId", head_ref AS "headRef", head_sha AS "headSha",
+      base_ref AS "baseRef", base_sha AS "baseSha", generation, selection_generation AS "selectionGeneration"`, [leaseMs]);
+    return result.rows[0] ?? null;
+  }
+
+  async recordMergeGroupFailure(delivery: MergeGroupLease): Promise<void> {
+    await this.pool.query("UPDATE proofci_merge_group_deliveries SET last_error='resolution_unavailable', lease_until=clock_timestamp()+interval '30 seconds' WHERE delivery_id=$1 AND generation=$2 AND state='processing'", [delivery.deliveryId, delivery.generation]);
+  }
+
+  async inspectMergeGroup(scope: RepositoryScope, headRef: string): Promise<{ state: string; lastError: string | null } | null> {
+    const result = await this.pool.query<{ state: string; lastError: string | null }>('SELECT state, last_error AS "lastError" FROM proofci_merge_group_deliveries WHERE installation_id=$1 AND repository_id=$2 AND head_ref=$3 ORDER BY created_at DESC LIMIT 1', [scope.installationId, scope.repositoryId, headRef]);
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Admit a resolved group as its own run generation, or record an explicit blocking result.
+   * A retired group, a stale lease, or a changed selection admits nothing.
+   */
+  async processMergeGroupDelivery(delivery: MergeGroupLease, resolve: (delivery: MergeGroupLease) => Promise<Candidate | { unavailable: string } | null>): Promise<boolean> {
+    const client = await this.pool.connect();
+    const key = `merge-group:${delivery.installationId}:${delivery.repositoryId}:${delivery.headRef}`;
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [key]);
+      const resolved = await resolve(delivery);
+      let candidate: Candidate | null = null, failure: string | null = null;
+      if (resolved && 'unavailable' in resolved) {
+        if (!/^[a-z][a-z0-9_]{0,127}$/.test(resolved.unavailable)) throw new Error('Invalid failure reason');
+        failure = resolved.unavailable;
+        candidate = { kind: 'merge-group', installationId: delivery.installationId, repositoryId: delivery.repositoryId, lane: delivery.headRef, head: delivery.headSha, mergeHead: delivery.headSha, base: delivery.baseSha, baseline: UNRESOLVED_BASELINE };
+      } else if (resolved) candidate = resolved;
+      if (candidate) {
+        validateCandidate(candidate);
+        if (candidate.kind !== 'merge-group' || candidate.installationId !== delivery.installationId || candidate.repositoryId !== delivery.repositoryId ||
+            candidate.lane !== delivery.headRef || candidate.head !== delivery.headSha || candidate.base !== delivery.baseSha) throw new Error('Resolved candidate does not match delivery');
+      }
+      await client.query('BEGIN');
+      await client.query('SELECT revision FROM proofci_installation_revisions WHERE installation_id=$1 FOR UPDATE', [delivery.installationId]);
+      const current = await client.query<{ selection_generation: string }>("SELECT selection_generation FROM proofci_merge_group_deliveries WHERE delivery_id=$1 AND generation=$2 AND state='processing' AND lease_until > clock_timestamp() FOR UPDATE", [delivery.deliveryId, delivery.generation]);
+      if (!current.rows[0]) { await client.query('ROLLBACK'); return false; }
+      const selected = await client.query('SELECT 1 FROM proofci_repository_selections WHERE installation_id=$1 AND repository_id=$2 AND generation=$3', [delivery.installationId, delivery.repositoryId, current.rows[0].selection_generation]);
+      let outcome: string | null = null;
+      if (candidate && selected.rowCount === 1) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${delivery.installationId}:${delivery.repositoryId}:${delivery.headRef}`]);
+        const retired = await client.query('SELECT 1 FROM proofci_merge_group_retirements WHERE installation_id=$1 AND repository_id=$2 AND head_ref=$3 AND head_sha=$4', [delivery.installationId, delivery.repositoryId, delivery.headRef, delivery.headSha]);
+        if (retired.rowCount) outcome = 'merge_group_retired';
+        else {
+          const epoch = await this.authority?.current(candidate) ?? null;
+          if (!failure && this.authority && epoch === null) throw new Error('Repository authority unavailable');
+          await insertCandidate(client, candidate, current.rows[0].selection_generation, epoch, false, failure);
+          outcome = failure;
+        }
+      }
+      await client.query("UPDATE proofci_merge_group_deliveries SET state='done', lease_until=NULL, last_error=$2 WHERE delivery_id=$1", [delivery.deliveryId, outcome]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { try { await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [key]); } finally { client.release(); } }
+  }
+
   async claimDelivery(leaseMs: number): Promise<DeliveryLease | null> {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 3_600_000) throw new Error('Invalid lease');
     const result = await this.pool.query<PushDelivery & { generation: number; selectionGeneration: string }>(`UPDATE proofci_push_deliveries SET state='processing', generation=generation+1, lease_until=clock_timestamp()+($1 * interval '1 millisecond')
@@ -386,7 +522,7 @@ export class RunStore {
     try {
       await client.query('BEGIN');
       await client.query(`UPDATE proofci_publications p SET pending=true, revision=revision+1, needs_revalidation=true
-        FROM proofci_runs r WHERE p.run_id=r.id AND r.installation_id=$1 AND r.repository_id=$2 AND r.applicable
+        FROM proofci_runs r WHERE p.run_id=r.id AND r.installation_id=$1 AND r.repository_id=$2 AND r.applicable AND NOT (r.kind='merge-group' AND r.baseline='${UNRESOLVED_BASELINE}')
         AND (r.baseline IS DISTINCT FROM $3 OR ($4::boolean AND ($5::bigint IS NULL OR r.authority_epoch IS DISTINCT FROM $5))) AND NOT p.needs_revalidation`, [scope.installationId, scope.repositoryId, baseline, !!this.authority, epoch]);
       const result = await client.query<{ number: number }>(`SELECT substring(r.lane FROM 6)::float8 AS number FROM proofci_runs r JOIN proofci_publications p ON p.run_id=r.id
         WHERE r.installation_id=$1 AND r.repository_id=$2 AND r.applicable AND p.needs_revalidation AND r.lane ~ '^pull/[1-9][0-9]*$'
@@ -516,7 +652,7 @@ export class RunStore {
       s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
       WHERE r.id=$1 FOR SHARE OF s)
       , changed AS (UPDATE proofci_runs SET state=CASE WHEN $3::jsonb->>'status'='error' THEN 'failed' ELSE 'completed' END, evidence=$4, evidence_sha256=$5, report=$3::jsonb || jsonb_build_object('evidence_bundle_sha256', $5::text, 'scheduler', jsonb_build_object(
-        'scope', CASE WHEN kind='head-snapshot' THEN 'head-snapshot-nonenforcing' ELSE 'resolved-candidate' END, 'pull_head', pull_head, 'queue_seconds', extract(epoch from first_started_at-created_at),
+        'scope', ${SCOPE_SQL}, 'pull_head', pull_head, 'queue_seconds', extract(epoch from first_started_at-created_at),
         'execution_seconds', extract(epoch from clock_timestamp()-started_at), 'recovery_seconds', recovery_seconds,
         'recoveries', generation-1)), lease_until=NULL, completed_at=clock_timestamp()
       WHERE id=$1 AND generation=$2 AND state='running' AND lease_until > clock_timestamp() AND EXISTS (SELECT 1 FROM selection) RETURNING id),
@@ -545,7 +681,7 @@ export class RunStore {
         s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
         WHERE r.id=$1 FOR SHARE OF s)
         UPDATE proofci_runs SET state=CASE WHEN $4::jsonb->>'status'='error' THEN 'failed' ELSE 'completed' END, report=$4::jsonb || jsonb_build_object('scheduler', jsonb_build_object(
-          'scope', CASE WHEN kind='head-snapshot' THEN 'head-snapshot-nonenforcing' ELSE 'resolved-candidate' END,
+          'scope', ${SCOPE_SQL},
           'queue_seconds', extract(epoch from first_started_at-created_at), 'execution_seconds', extract(epoch from clock_timestamp()-started_at),
           'recovery_seconds', recovery_seconds, 'recoveries', generation-1, 'pull_head', pull_head)) || jsonb_build_object('evidence_bundle_sha256', (SELECT sha256 FROM proofci_evidence WHERE id=$3)) || jsonb_build_object('evidence', jsonb_build_object(
           'sha256', (SELECT sha256 FROM proofci_evidence WHERE id=$3),
@@ -593,12 +729,13 @@ export class RunStore {
     return result.rows[0] ?? null;
   }
 
-  async publicationCurrent(item: Publication): Promise<boolean> {
+  /** A nonpassing result is safe to publish without a current authority revision. */
+  async publicationCurrent(item: Publication, nonpassing = false): Promise<boolean> {
     const result = await this.pool.query(`UPDATE proofci_publications p SET lease_until=clock_timestamp()+interval '5 minutes' FROM proofci_runs r
       JOIN proofci_repository_selections s ON s.installation_id=r.installation_id AND s.repository_id=r.repository_id AND s.generation=r.selection_generation
       WHERE r.id=p.run_id AND r.id=$1 AND p.generation=$2 AND p.revision=$3 AND p.lease_until > clock_timestamp() AND NOT p.needs_revalidation AND r.generation=$4 AND r.state=$5 AND r.applicable`, [item.id, item.leaseGeneration, item.revision, item.runGeneration, item.state]);
     if (result.rowCount !== 1) return false;
-    if (!this.authority) return true;
+    if (!this.authority || nonpassing) return true;
     return item.candidate.authorityEpoch != null && await this.authority.current(item.candidate) === item.candidate.authorityEpoch;
   }
 

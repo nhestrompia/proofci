@@ -6,6 +6,7 @@ type AppOptions = { appId: number; privateKey: KeyObject; request?: typeof fetch
 type RepositoryScope = { installationId: number; repositoryId: number };
 export type InstallationAccess = 'allowed' | 'revoked' | 'unavailable';
 export type PullMerge = { kind: 'resolved'; merge: string; head: string; base: string } | { kind: 'blocked'; reason: 'pull_unavailable' | 'merge_unresolved' | 'merge_conflict' | 'merge_ref_missing' | 'merge_ref_mismatch' | 'merge_parents_mismatch' };
+export type MergeGroup = { kind: 'resolved'; head: string; base: string } | { kind: 'blocked'; reason: 'merge_group_ref_missing' | 'merge_group_ref_mismatch' | 'merge_group_parents_mismatch' };
 class GitHubStatusError extends Error { readonly status: number; constructor(status: number) { super('GitHub access check failed'); this.status = status; } }
 class AccessRevoked extends Error {}
 type Repository = { id: number; name: string; owner: string; defaultBranch: string | null; token: string };
@@ -178,6 +179,24 @@ export class GitHubApp {
     const commit = await this.api(`${prefix}/git/commits/${merge}`, repo.token);
     if (!object(commit) || commit.sha !== merge || !Array.isArray(commit.parents) || commit.parents.length !== 2 || !object(commit.parents[0]) || !object(commit.parents[1]) || commit.parents[0].sha !== base || commit.parents[1].sha !== head) return { kind: 'blocked', reason: 'merge_parents_mismatch' };
     return { kind: 'resolved', merge, head, base };
+  }
+
+  /**
+   * Resolve GitHub's own merge-group commit. The temporary queue branch must still
+   * point at the notified commit, and that commit's first parent must be the group's base.
+   */
+  async resolveMergeGroup(scope: RepositoryScope, group: { headRef: string; headSha: string; baseSha: string }): Promise<MergeGroup> {
+    const sha = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+    if (!group.headRef.startsWith('refs/heads/gh-readonly-queue/') || !sha(group.headSha) || !sha(group.baseSha)) throw new Error('Invalid merge group identity');
+    const head = await this.resolveHead(scope, group.headRef);
+    if (head === null) return { kind: 'blocked', reason: 'merge_group_ref_missing' };
+    if (head !== group.headSha) return { kind: 'blocked', reason: 'merge_group_ref_mismatch' };
+    const repo = await this.repository(scope);
+    let commit: unknown;
+    try { commit = await this.api(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/commits/${group.headSha}`, repo.token); }
+    catch (error) { if (error instanceof GitHubStatusError && error.status === 404) return { kind: 'blocked', reason: 'merge_group_ref_missing' }; throw error; }
+    if (!object(commit) || commit.sha !== group.headSha || !Array.isArray(commit.parents) || commit.parents.length < 1 || !object(commit.parents[0]) || commit.parents[0].sha !== group.baseSha) return { kind: 'blocked', reason: 'merge_group_parents_mismatch' };
+    return { kind: 'resolved', head: group.headSha, base: group.baseSha };
   }
 
   /** Reconciliation treats this list as observations; each PR is resolved separately. */

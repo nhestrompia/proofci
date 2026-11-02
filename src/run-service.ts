@@ -3,6 +3,7 @@ import type { GitHubApp } from './github-app.ts';
 import type { ActiveBaselines, BaselineConfiguration } from './active-baselines.ts';
 import type { RunStore } from './run-store.ts';
 import { resolvePullDelivery } from './pull-delivery.ts';
+import { resolveMergeGroupDelivery } from './merge-group-delivery.ts';
 import { reconcileHead, resolveDelivery } from './delivery-worker.ts';
 import { executeNext } from './run-worker.ts';
 import type { ModelLedger } from './model-ledger.ts';
@@ -18,6 +19,7 @@ export class RunService {
   private readonly stopSignal = new AbortController();
   private deliveryBusy = false;
   private pullBusy = false;
+  private mergeGroupBusy = false;
   private publicationBusy = false;
   private baselineBusy = false;
   private workerBusy = false;
@@ -71,6 +73,18 @@ export class RunService {
           catch { await store.recordPullFailure(delivery); }
         }
       })().catch(() => {}).finally(() => { this.pullBusy = false; });
+    }
+    if (!this.mergeGroupBusy) {
+      this.mergeGroupBusy = true;
+      void (async () => {
+        while (!this.stopSignal.signal.aborted) {
+          const delivery = await store.claimMergeGroupDelivery(300_000);
+          if (!delivery) break;
+          const protectedRef = repositories.find(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId)?.ref ?? null;
+          try { await store.processMergeGroupDelivery(delivery, item => resolveMergeGroupDelivery({ delivery: item, protectedRef, selections, github, baselines })); }
+          catch { await store.recordMergeGroupFailure(delivery); }
+        }
+      })().catch(() => {}).finally(() => { this.mergeGroupBusy = false; });
     }
     if (!this.workerBusy) {
       this.workerBusy = true;

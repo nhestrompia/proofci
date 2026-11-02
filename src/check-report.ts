@@ -13,6 +13,7 @@ export type CheckOutput = { title: string; summary: string; conclusion: 'success
 export function checkReport(candidate: Candidate, report: unknown, evidenceSha256: string | null): CheckOutput {
   const failures: string[] = [];
   if (!object(report)) return { title: 'ProofCI blocked', summary: 'A validated report is unavailable.', conclusion: 'failure' };
+  if (report.status === 'error' && typeof report.reason === 'string' && /^[a-z][a-z0-9_]{0,127}$/.test(report.reason)) failures.push(`Execution reason: ${report.reason}`);
   const envelope = object(report.envelope) ? report.envelope : {};
   const dispatch = object(report.dispatch) ? report.dispatch : {};
   const support = object(report.support) ? report.support : {};

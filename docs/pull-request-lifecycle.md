@@ -79,9 +79,10 @@ branch policy on the target branch:
   this, GitHub can merge a PR whose `ProofCI` result was computed against an
   older target branch. An advance between the last check and the merge click is
   then unprotected.
-- Merge queues are not supported yet. ProofCI does not publish checks for
-  `merge_group` candidates, so a queue that requires `ProofCI` stalls. Use strict
-  up-to-date branches instead.
+- Alternatively, require a merge queue. ProofCI verifies each merge group
+  independently and publishes `ProofCI` on the group commit; see
+  [Merge queue candidates](merge-queue.md). A live queue demonstration is still
+  outstanding, so queue enforcement is not yet established.
 - Include administrators in enforcement. Do not grant bypass permission to any
   actor or ruleset bypass list.
 
@@ -102,7 +103,7 @@ branch policy on the target branch:
 ## GitHub App configuration
 
 Subscribe the App webhook to `push`, `pull_request`, `check_run`, and
-`check_suite`. The rerun authority check uses
+`check_suite`, and to `merge_group` when a merge queue is used. The rerun authority check uses
 `GET /repos/{owner}/{repo}/collaborators/{username}/permission`, which needs no
 permission beyond the existing metadata read.
 

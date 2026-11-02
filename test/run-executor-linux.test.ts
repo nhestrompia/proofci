@@ -27,8 +27,12 @@ test('the executor uses an approved baseline and the real isolated verifier', { 
     execFileSync('python3', ['-c', helper, store, join(snapshot, 'contracts.json'), repository, head, baselineOutput]);
     const { createHash } = await import('node:crypto');
     const digest = createHash('sha256').update(await readFile(join(baselineOutput, 'baseline.json'))).digest('hex');
-    const candidate = { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'refs/heads/main', head, base: head, baseline: digest };
-    const github = { resolveHead: async () => head, stageSnapshot: async (_scope: unknown, input: { root: string }) => {
+    // PROOFCI_TEST_MERGE_GROUP runs the same snapshot as GitHub merge-group candidate.
+    const mergeGroup = Boolean(process.env.PROOFCI_TEST_MERGE_GROUP);
+    const candidate = mergeGroup
+      ? { kind: 'merge-group' as const, installationId: 1, repositoryId: 2, lane: `refs/heads/gh-readonly-queue/main/pr-1-${head}`, head, mergeHead: head, base: head, baseline: digest }
+      : { kind: 'head-snapshot' as const, installationId: 1, repositoryId: 2, lane: 'refs/heads/main', head, base: head, baseline: digest };
+    const github = { resolveHead: async () => head, resolveMergeGroup: async () => ({ kind: 'resolved' as const, head, base: head }), stageSnapshot: async (_scope: unknown, input: { root: string }) => {
       const target = join(input.root, 'snapshot'); await cp(snapshot, target, { recursive: true }); return { snapshot: target, repository };
     } };
     const result = await executeRun({ candidate, signal: new AbortController().signal, github, baselines: new ActiveBaselines([{ installationId: 1, repositoryId: 2, store, repository }]) });
