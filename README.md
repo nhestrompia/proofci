@@ -11,8 +11,11 @@ The verifier supports a restricted Lean source language and approved contracts.
 - [MVP implementation spec](docs/specs/proofci-mvp.md)
 - [Pull request lifecycle and merge policy](docs/pull-request-lifecycle.md)
 - [Evaluation corpus and runner](evaluation/README.md)
+- [Self-hosted pilot deployment, backup, recovery, rotation, and upgrade](deploy/README.md)
 
 ## GitHub enrollment
+
+For a packaged Linux deployment with PostgreSQL, S3-compatible evidence storage, credential files, backups, and upgrades, follow [the deployment guide](deploy/README.md). The settings below also accept `NAME_FILE` in place of `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_SECRET`, and `DATABASE_URL`; set `PROOFCI_LISTEN_HOST` to listen on an address other than 127.0.0.1.
 
 The Node.js 24 control service stores selected installation and repository IDs in PostgreSQL. The scheduler checks the stored selection and live App access before dispatch. Maintainers select a repository after signing in; enrollment, removal, and policy inspection recheck their current repository authority. GitHub App and user tokens remain in the control process. Sessions are held in memory and expire on restart.
 

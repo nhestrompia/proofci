@@ -1,0 +1,80 @@
+# ProofCI self-hosted pilot. See deploy/README.md before use.
+# Every image is pinned by digest. deploy/release.json records the same digests.
+name: proofci
+
+x-control: &control
+  image: ${PROOFCI_CONTROL_IMAGE:-proofci-control:0.23.0}
+  build: { context: .., dockerfile: deploy/Dockerfile }
+  user: "1000:1000"
+  group_add: ["${PROOFCI_DOCKER_GID:?set PROOFCI_DOCKER_GID to the group that owns the Docker socket}"]
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:size=64m]
+  environment: &control-env
+    PROOFCI_ORIGIN: ${PROOFCI_ORIGIN:?}
+    GITHUB_APP_ID: ${GITHUB_APP_ID:?}
+    GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?}
+    # The credential directory is mounted, not single files, so an atomic replacement on the host is visible.
+    GITHUB_PRIVATE_KEY_FILE: /run/proofci-secrets/github-app.pem
+    GITHUB_CLIENT_SECRET_FILE: /run/proofci-secrets/github-client-secret
+    GITHUB_WEBHOOK_SECRET_FILE: /run/proofci-secrets/github-webhook-secret
+    DATABASE_URL_FILE: /run/proofci-secrets/database-url
+    AWS_SHARED_CREDENTIALS_FILE: /run/proofci-secrets/s3-credentials
+    PROOFCI_S3_ENDPOINT: http://objects:7070
+    PROOFCI_S3_REGION: us-east-1
+    PROOFCI_S3_BUCKET: ${PROOFCI_S3_BUCKET:-proofci-evidence}
+    PROOFCI_EVIDENCE_RETENTION_DAYS: ${PROOFCI_EVIDENCE_RETENTION_DAYS:-30}
+    PROOFCI_LOCAL_PILOT_CONFIG: ${PROOFCI_STATE_DIR:?}/pilot.json
+    # The verifier VM bind-mounts staged inputs by host path, so the work directory has the same path on both sides.
+    TMPDIR: ${PROOFCI_WORK_DIR:?}
+    PORT: "3000"
+  volumes:
+    - ${PROOFCI_SECRETS_DIR:?}:/run/proofci-secrets:ro
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ${PROOFCI_WORK_DIR}:${PROOFCI_WORK_DIR}
+    - ${PROOFCI_STATE_DIR}:${PROOFCI_STATE_DIR}
+
+services:
+  postgres:
+    image: postgres@sha256:a2420e9555e2224583fe84d0bb3f0b967e69354ae3a0be55a9c14e251388c4eb # 16.11-bookworm
+    environment:
+      POSTGRES_USER: proofci
+      POSTGRES_DB: proofci
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "proofci", "-d", "proofci"], interval: 2s, timeout: 3s, retries: 30 }
+    restart: unless-stopped
+
+  objects:
+    image: versity/versitygw@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316 # v1.10.0
+    command: ["posix", "/data"]
+    environment:
+      ROOT_ACCESS_KEY: ${PROOFCI_S3_ACCESS_KEY:?}
+      ROOT_SECRET_KEY: ${PROOFCI_S3_SECRET_KEY:?}
+    volumes: [objects:/data]
+    restart: unless-stopped
+
+  bucket-init:
+    <<: *control
+    command: ["node", "deploy/bucket.ts"]
+    depends_on: { objects: { condition: service_started } }
+    restart: "no"
+
+  control:
+    <<: *control
+    command: ["node", "src/server.ts"]
+    ports: ["127.0.0.1:${PROOFCI_PORT:-3000}:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      bucket-init: { condition: service_completed_successfully }
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+secrets:
+  postgres_password: { file: "${PROOFCI_SECRETS_DIR:?}/postgres-password" }
+
+volumes:
+  postgres:
+  objects:

@@ -1,0 +1,28 @@
+{
+  "release": "0.23.0",
+  "schema_version": 2,
+  "report_version": 1,
+  "status": "pilot",
+  "license": {
+    "spdx": null,
+    "approved_by": null,
+    "note": "Distribution is blocked until a maintainer approves an open-source license and adds LICENSE. Do not publish images or archives before then."
+  },
+  "images": {
+    "node": "node@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c",
+    "docker_cli": "docker@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d",
+    "postgres": "postgres@sha256:a2420e9555e2224583fe84d0bb3f0b967e69354ae3a0be55a9c14e251388c4eb",
+    "object_store": "versity/versitygw@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316",
+    "verifier_vm": "sha256:166f221ee92c8e38ca0a211fe10d057d919216216c21e661b48cf73859a6acce",
+    "validator_container": "sha256:0768934aa3f0d7d40edb6bbe879c97ef66f2fd825549861ee8bc2598adda4054"
+  },
+  "debian_snapshot": "20261101T000000Z",
+  "verifier": {
+    "lean_toolchain_sha256": "ad4f844f85ce90b22e30efee3a1028ea99d15724fe72de7dc4e16ceda971da00",
+    "trust_policy_sha256": "02e74282b49b351ce16ef0c39a948edf7586a528ea8e75afec79b85baad2b7ef",
+    "core_dependencies_sha256": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
+    "resource_limits_sha256": "1635cbfa0510cc646e9c06fb27db86c10af27ab5bc3853da3e3d5db2928ec895"
+  },
+  "npm_lockfile_sha256": "220efa088e536a53df377ad917ec32e28f76106e318b0661e3ed96eae0e6849d",
+  "platforms": ["linux/arm64"]
+}

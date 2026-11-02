@@ -1,0 +1,12 @@
+node_modules
+.git
+.scratch
+docs
+evaluation
+examples
+test
+worker-probe
+**/__pycache__
+deploy/exercise/state
+deploy/.env
+deploy/secrets

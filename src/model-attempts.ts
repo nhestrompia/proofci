@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
+import { credential } from './credentials.ts';
 import { ModelLedger } from './model-ledger.ts';
 import { RunStore } from './run-store.ts';
 
@@ -14,9 +15,9 @@ const usage = `Usage: DATABASE_URL=... node src/model-attempts.ts COMMAND INSTAL
 const [command, installation, repository, ...rest] = process.argv.slice(2);
 const installationId = Number(installation);
 const repositoryId = Number(repository);
-if (!command || !Number.isSafeInteger(installationId) || installationId < 1 || !Number.isSafeInteger(repositoryId) || repositoryId < 1 || !process.env.DATABASE_URL) throw new Error(usage);
+if (!command || !Number.isSafeInteger(installationId) || installationId < 1 || !Number.isSafeInteger(repositoryId) || repositoryId < 1 || !credential(process.env, 'DATABASE_URL')) throw new Error(usage);
 const scope = { installationId, repositoryId };
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ connectionString: credential(process.env, 'DATABASE_URL') });
 const ledger = new ModelLedger(pool);
 const tokens = (value: string | undefined) => { const number = Number(value); if (!value || !/^\d+$/.test(value) || !Number.isSafeInteger(number)) throw new Error(usage); return number; };
 try {

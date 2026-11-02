@@ -1,0 +1,22 @@
+# Exercise-only overrides: publish service ports on loopback, route GitHub to the simulator,
+# and mount the exercise Git and backup directories. Never use this file in a deployment.
+services:
+  postgres:
+    ports: ["127.0.0.1:${EX_PG_PORT:?}:5432"]
+  objects:
+    ports: ["127.0.0.1:${EX_S3_PORT:?}:7070"]
+  control:
+    command: ["node", "deploy/exercise/control-sim.ts"]
+    environment:
+      PROOFCI_EXERCISE_GITHUB_URL: ${EX_GITHUB_URL:?}
+      PROOFCI_EXERCISE_GIT_ROOT: ${EX_GIT_DIR:?}
+      PROOFCI_EXERCISE_REPOSITORY_9001: proofci-pilot/ledger
+      PROOFCI_EXERCISE_REPOSITORY_9002: proofci-pilot/registry
+    volumes:
+      - ${EX_GIT_DIR}:${EX_GIT_DIR}:ro
+      - ${EX_BACKUP_DIR:?}:${EX_BACKUP_DIR}
+    networks: [default, github]
+networks:
+  github:
+    external: true
+    name: ${EX_GITHUB_NETWORK:?}
