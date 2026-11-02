@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "name": "collections",
+  "domain": "collections",
+  "description": "Flattened grid buffer: x rows of x + 1 cells (one terminator cell per row) plus a two-cell header.",
+  "model": "target x is the length of the flattened collection for x rows.",
+  "candidates": {
+    "base": "def target (x : Nat) : Nat := x * (x + 1) + 2\n",
+    "equivalent": "def target (x : Nat) : Nat := x * x + x + 2\n",
+    "violating": "def target (x : Nat) : Nat := x * x + 2\n",
+    "shadow": "def target (x : Nat) : Nat := x * x + x + 1 + 1\n"
+  },
+  "companion": {
+    "path": "Grid.lean",
+    "explanation": "List-of-lists flattening; real Lean outside the admitted single-target subset."
+  },
+  "properties": [
+    {
+      "id": "size-definition",
+      "explanation": "Each of x rows has x + 1 cells, plus a two-cell header.",
+      "contract": {
+        "rhs": "x * (x + 1) + 2"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-expanded",
+      "explanation": "Payload cells, then one terminator per row, then the header.",
+      "contract": {
+        "rhs": "x * x + x + 2"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-split-header",
+      "explanation": "The header is two single cells.",
+      "contract": {
+        "rhs": "x * (x + 1) + 1 + 1"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-expanded-split",
+      "explanation": "Expanded size with the header counted cell by cell.",
+      "contract": {
+        "rhs": "x * x + x + 1 + 1"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-explicit-width",
+      "explanation": "The row width is the payload width plus zero padding plus one terminator.",
+      "contract": {
+        "rhs": "x * (x + 0 + 1) + 2"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-empty",
+      "explanation": "An empty grid contains only the header.",
+      "contract": {
+        "rhs": "2",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "0"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": true
+      }
+    },
+    {
+      "id": "size-one-row",
+      "explanation": "One row holds one cell and its terminator.",
+      "contract": {
+        "rhs": "4",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "1"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-two-rows",
+      "explanation": "Two rows of three cells plus the header.",
+      "contract": {
+        "rhs": "8",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "2"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-three-rows",
+      "explanation": "Three rows of four cells plus the header.",
+      "contract": {
+        "rhs": "14",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "3"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "size-small-linear",
+      "explanation": "Below two rows the size grows by two per row.",
+      "contract": {
+        "rhs": "x * 2 + 2",
+        "precondition": {
+          "lhs": "x",
+          "op": "<",
+          "rhs": "2"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    }
+  ]
+}

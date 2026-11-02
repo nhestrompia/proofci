@@ -1,0 +1,17 @@
+{
+  "corpus_sha256": "45046d66920cf11467ff2cd05a70c019b46a70f344e4bb4ecaf62f453426f9fc",
+  "files": {
+    "REVIEW.md": "1c012b6edeb7fc9895a306b1abe869ad25831efddf7d330b6e75fb504f692930",
+    "packages/arithmetic/Ledger.lean": "c571e683fab8807e7d5984c6936a5b8dcfa7a6533d35d3dba4bce2400ecc875f",
+    "packages/arithmetic/package.json": "877a7ba686b77aa56a06fc5b2461ed7602f9fed92572f0df8ccde02f1e572910",
+    "packages/collections/Grid.lean": "dbb80939f607467975291a775abd9a365718b9fa882b8260538060a09d4a5856",
+    "packages/collections/package.json": "4c283e60a28cfb5b48260f76506540cf54ae4c4ba0b5daac67cdfea0d70e9ddf",
+    "packages/state/Machine.lean": "01d872b6b40c1bd2d9916e0540f80b6e87f3db4c2e2e68f42f8ca2c323eb2db7",
+    "packages/state/package.json": "e771db69d0086fd6385b02c423451c1c369745b1884bd6922a8f253db23660a8",
+    "scenarios.json": "1aefe5c29d2ae34f0357cd8f54c34d96cb520eea3bcbf2350515ecd176a517c1"
+  },
+  "frozen_at": "2026-11-02",
+  "reviewer": "Claude Opus 5.5 (oracle-checked; awaiting maintainer review)",
+  "statement": "Frozen before any assisted measurement. Changing a property, scenario or expectation requires a new lock and invalidates comparisons with earlier runs.",
+  "version": 1
+}

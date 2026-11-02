@@ -10,6 +10,7 @@ The verifier supports a restricted Lean source language and approved contracts.
 - [Verification trust model and language support](docs/research/verification-feasibility.md)
 - [MVP implementation spec](docs/specs/proofci-mvp.md)
 - [Pull request lifecycle and merge policy](docs/pull-request-lifecycle.md)
+- [Evaluation corpus and runner](evaluation/README.md)
 
 ## GitHub enrollment
 

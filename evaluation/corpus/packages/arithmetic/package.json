@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "name": "arithmetic",
+  "domain": "arithmetic",
+  "description": "Metered fee schedule: three fee units per item plus a fixed charge of two.",
+  "model": "target x is the fee for x items.",
+  "candidates": {
+    "base": "def target (x : Nat) : Nat := x * 3 + 2\n",
+    "equivalent": "def target (x : Nat) : Nat := x * 2 + x + 1 + 1\n",
+    "violating": "def target (x : Nat) : Nat := x * x + 2 * x + 2\n",
+    "shadow": "def target (x : Nat) : Nat := x * 2 + x + 2\n"
+  },
+  "companion": {
+    "path": "Ledger.lean",
+    "explanation": "List-based ledger totals; real Lean outside the admitted single-target subset."
+  },
+  "properties": [
+    {
+      "id": "fee-definition",
+      "explanation": "The fee is three units per item plus two.",
+      "contract": {
+        "rhs": "x * 3 + 2"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "fee-unrolled",
+      "explanation": "Charging two units per item and then one more unit per item gives the same fee.",
+      "contract": {
+        "rhs": "x * 2 + x + 2"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "fee-split-charge",
+      "explanation": "The fixed charge is two single units.",
+      "contract": {
+        "rhs": "x * 3 + 1 + 1"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "fee-unit-steps",
+      "explanation": "Charging one unit per item three times gives the same fee.",
+      "contract": {
+        "rhs": "x * 1 + x + x + 2"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "fee-grouped",
+      "explanation": "Two units, one unit, then two single charge units.",
+      "contract": {
+        "rhs": "x * 2 + x + 1 + 1"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "fee-empty-order",
+      "explanation": "An empty order costs only the fixed charge.",
+      "contract": {
+        "rhs": "2",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "0"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": true
+      }
+    },
+    {
+      "id": "fee-single-item",
+      "explanation": "One item costs five.",
+      "contract": {
+        "rhs": "5",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "1"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": true
+      }
+    },
+    {
+      "id": "fee-four-items",
+      "explanation": "Four items cost fourteen.",
+      "contract": {
+        "rhs": "14",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "4"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "fee-small-orders",
+      "explanation": "Below two items the fee agrees with the legacy quadratic schedule.",
+      "contract": {
+        "rhs": "x * x + 2 * x + 2",
+        "precondition": {
+          "lhs": "x",
+          "op": "<",
+          "rhs": "2"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": true
+      }
+    },
+    {
+      "id": "fee-up-to-three",
+      "explanation": "Orders of at most three items follow the schedule.",
+      "contract": {
+        "rhs": "x * 3 + 2",
+        "precondition": {
+          "lhs": "x",
+          "op": "≤",
+          "rhs": "3"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    }
+  ]
+}
