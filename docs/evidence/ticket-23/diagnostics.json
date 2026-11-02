@@ -1,0 +1,230 @@
+{
+  "totals": {
+    "passed": 0,
+    "proof_failure": 3,
+    "infrastructure_failure": 1,
+    "superseded": 10,
+    "in_progress": 0,
+    "uncertain_model_attempts": 0,
+    "pending_publications": 0
+  },
+  "runs": [
+    {
+      "run": "419b3bf4-236b-4ac7-87fc-076dec4b1b98",
+      "state": "failed",
+      "applicable": true,
+      "outcome": "infrastructure_failure",
+      "reason": "worker_execution_failed",
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:52:27.109Z"
+      }
+    },
+    {
+      "run": "c13af5f0-5f9f-40fc-a1b2-802dd8010c31",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:49.834Z"
+      }
+    },
+    {
+      "run": "ebbf2233-cfb5-443d-86b6-60dca2dcfee4",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:44.818Z"
+      }
+    },
+    {
+      "run": "8df16c9f-f84b-4162-a4bf-22eababcb79d",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:39.813Z"
+      }
+    },
+    {
+      "run": "17397df7-d049-4a1e-9b94-146645b3c541",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:34.790Z"
+      }
+    },
+    {
+      "run": "5c5a28b9-e27f-4974-b1eb-d360bd271a33",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:29.775Z"
+      }
+    },
+    {
+      "run": "2ae150a4-7289-4170-9a95-499ad4ab973f",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:24.764Z"
+      }
+    },
+    {
+      "run": "07771dc9-e866-491a-bdff-ba8a1ac49f8f",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:51:21.750Z"
+      }
+    },
+    {
+      "run": "e03427b3-e1a9-4355-ac9c-63dd3a08150e",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": {
+        "uncertain": [],
+        "unknown_usage": 0,
+        "action": null
+      },
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:49:41.909Z"
+      }
+    },
+    {
+      "run": "9052ed40-39af-4042-8a0c-dadec00ba684",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:49:17.867Z"
+      }
+    },
+    {
+      "run": "063f382a-f062-46f3-8e19-dfd8a52f5dd3",
+      "state": "completed",
+      "applicable": true,
+      "outcome": "proof_failure",
+      "reason": null,
+      "properties": [
+        {
+          "id": "increment",
+          "policy": "required",
+          "decision": "unproven",
+          "reason": "obligation_budget_exhausted"
+        }
+      ],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:49:31.221Z"
+      }
+    },
+    {
+      "run": "70936a5a-69ac-4bb2-a650-7524480833b5",
+      "state": "completed",
+      "applicable": true,
+      "outcome": "proof_failure",
+      "reason": null,
+      "properties": [
+        {
+          "id": "increment",
+          "policy": "required",
+          "decision": "unproven",
+          "reason": "obligation_budget_exhausted"
+        }
+      ],
+      "model": null,
+      "publication": null
+    },
+    {
+      "run": "93b1ae03-d14a-43b8-9465-3554ce3a5753",
+      "state": "completed",
+      "applicable": true,
+      "outcome": "proof_failure",
+      "reason": null,
+      "properties": [
+        {
+          "id": "increment",
+          "policy": "required",
+          "decision": "unproven",
+          "reason": "obligation_budget_exhausted"
+        }
+      ],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:35:27.569Z"
+      }
+    },
+    {
+      "run": "23661221-5d37-44f4-82e2-3df46bd574b1",
+      "state": "cancelled",
+      "applicable": false,
+      "outcome": "superseded",
+      "reason": null,
+      "properties": [],
+      "model": null,
+      "publication": {
+        "pending": false,
+        "last_error": null,
+        "published_at": "2026-11-02T17:31:31.763Z"
+      }
+    }
+  ]
+}

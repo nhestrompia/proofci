@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { credential } from './credentials.ts';
 import { RunStore } from './run-store.ts';
 import { LocalAuthority } from './local-authority.ts';
 import { readPilotConfiguration } from './pilot-configuration.ts';
@@ -7,10 +8,10 @@ const [installation, repository, id] = process.argv.slice(2);
 const installationId = Number(installation);
 const repositoryId = Number(repository);
 if (!Number.isSafeInteger(installationId) || installationId < 1 || !Number.isSafeInteger(repositoryId) || repositoryId < 1 ||
-    (id !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || !process.env.DATABASE_URL) {
+    (id !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || !credential(process.env, 'DATABASE_URL')) {
   throw new Error('Usage: DATABASE_URL=... node src/run-inspect.ts INSTALLATION_ID REPOSITORY_ID [RUN_ID]');
 }
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ connectionString: credential(process.env, 'DATABASE_URL') });
 try {
   const configuration = process.env.PROOFCI_LOCAL_PILOT_CONFIG;
   const store = new RunStore(pool, configuration ? new LocalAuthority(readPilotConfiguration(configuration)) : undefined);

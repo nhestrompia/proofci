@@ -214,6 +214,24 @@ def run(*, envelope_path, baseline_path, snapshot, report_path, artifacts, broke
         return status
 
 
+def model_api_key(environ):
+    """Read the provider key from a protected file when one is configured, so rotation needs no restart.
+
+    The key stays in this broker process. Candidate construction runs in the isolated worker,
+    which receives neither the key nor its path.
+    """
+    path = environ.get("PROOFCI_OPENAI_API_KEY_FILE")
+    if not path:
+        return environ.get("PROOFCI_OPENAI_API_KEY")
+    key_path = Path(path)
+    if not key_path.is_absolute() or key_path.is_symlink() or not key_path.is_file() or key_path.stat().st_mode & 0o022:
+        raise ValueError("invalid model credential file")
+    value = proofci.bounded_read(key_path, 4096).decode().strip()
+    if not value or any(character.isspace() for character in value):
+        raise ValueError("invalid model credential file")
+    return value
+
+
 def main():
     import argparse
     from broker import Broker, Limits
@@ -244,7 +262,7 @@ def main():
                    ("repository", "run_id", "head", "baseline_sha256", "model")):
                 raise ValueError("invalid model configuration identity")
             limits = Limits(**config["limits"])
-            provider = OpenAIProvider(api_key=os.environ.get("PROOFCI_OPENAI_API_KEY"), model=config["model"])
+            provider = OpenAIProvider(api_key=model_api_key(os.environ), model=config["model"])
             envelope = proofci.parse_json(proofci.bounded_read(args.envelope, 1024 * 1024))
             baseline_raw = proofci.bounded_read(args.baseline, 1024 * 1024)
             baseline = proofci.parse_json(baseline_raw)

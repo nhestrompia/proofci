@@ -13,6 +13,8 @@ export async function isolatedDispatch(candidate: Candidate, input: Inputs, sign
   const code = await new Promise<number>((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/tmp', PYTHONDONTWRITEBYTECODE: '1' };
     if (process.env.DOCKER_HOST) env.DOCKER_HOST = process.env.DOCKER_HOST;
+    // A containerized control service shares its work directory with the Docker host at the same path.
+    if (process.env.TMPDIR) env.TMPDIR = process.env.TMPDIR;
     for (const key of ['PROOFCI_APPLE_RUNTIME', 'PROOFCI_APPLE_KERNEL', 'PROOFCI_APPLE_KERNEL_SHA256']) {
       if (process.env[key]) env[key] = process.env[key];
     }
