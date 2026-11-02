@@ -38,7 +38,8 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
     await options.store.withPublicationLock(item.id, async () => {
       if (!await options.store.ownsPublication(item)) return;
       if (!await fresh()) {
-        await options.store.markPublicationUnresolved(item);
+        // A superseded revision is left to its successor instead of invalidating the check.
+        if (!await options.store.markPublicationUnresolved(item)) return;
         await options.github.invalidateCheck(scope, { runId: item.id, sha: mergeHead });
         await options.store.finishPublication(item);
         return;

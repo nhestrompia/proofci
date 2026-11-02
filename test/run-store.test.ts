@@ -356,3 +356,42 @@ test('migration backfills valid pull publications and retires old unresolved can
     assert.equal(row.rows[0].state, 'cancelled');
   } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
 });
+
+test('a run starting during publication does not trigger revalidation or cancel the run', { skip: !url }, async () => {
+  const schema = `run_test_${randomUUID().replaceAll('-', '')}`;
+  const admin = new Pool({ connectionString: url }); await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` });
+  try {
+    const { EnrollmentStore } = await import('../src/enrollment-store.ts');
+    const { publishNext } = await import('../src/publication-worker.ts');
+    const enrollment = new EnrollmentStore(pool), runs = new RunStore(pool);
+    await enrollment.initialize(); await runs.initialize();
+    const candidate = { kind: 'pull-request' as const, installationId: 71, repositoryId: 72, number: 4, sourceRepositoryId: 72, lane: 'pull/4', head: '1'.repeat(40), mergeHead: 'a'.repeat(40), base: 'b'.repeat(40), baseline: 'c'.repeat(64) };
+    await enrollment.select(candidate); const id = await runs.admit(candidate);
+    let invalidated = 0;
+    const published: Array<string | undefined> = [];
+    const github = {
+      resolvePullMerge: async () => ({ kind: 'resolved' as const, head: candidate.head, base: candidate.base, merge: candidate.mergeHead }),
+      invalidateCheck: async () => { invalidated++; },
+      publishCheck: async (_scope: unknown, input: { output: { title: string } | null; fresh(): Promise<boolean> }) => { if (await input.fresh()) published.push(input.output?.title ?? 'in_progress'); },
+    };
+    // The worker claims the queued revision, then the run starts before the freshness check.
+    const claim = runs.claimPublication.bind(runs);
+    const store = Object.assign(Object.create(runs) as RunStore, { claimPublication: async (leaseMs: number) => {
+      const item = await claim(leaseMs); assert.equal(item?.state, 'queued');
+      assert.ok(await runs.claim(60_000));
+      return item;
+    } });
+    assert.equal(await publishNext({ store, github, baselines: { active: async () => candidate.baseline }, origin: 'https://example.com' }), true);
+    assert.equal(invalidated, 0);
+    assert.equal((await pool.query('SELECT needs_revalidation FROM proofci_publications WHERE run_id=$1', [id])).rows[0].needs_revalidation, false);
+    assert.deepEqual(await runs.reconcileBaseline(candidate, candidate.baseline), []);
+    const [run] = await runs.list(candidate);
+    assert.equal(run.id, id); assert.equal(run.state, 'running'); assert.equal(run.applicable, true);
+    // The running revision is still published once its retry delay passes.
+    await pool.query("UPDATE proofci_publications SET lease_until=now()-interval '1 second'");
+    assert.equal(await publishNext({ store: runs, github, baselines: { active: async () => candidate.baseline }, origin: 'https://example.com' }), true);
+    assert.equal(published.length, 1); assert.equal(invalidated, 0);
+    assert.equal((await pool.query('SELECT pending FROM proofci_publications WHERE run_id=$1', [id])).rows[0].pending, false);
+  } finally { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
+});

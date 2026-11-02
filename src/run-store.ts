@@ -744,8 +744,14 @@ export class RunStore {
     return result.rowCount === 1;
   }
 
-  async markPublicationUnresolved(item: Publication): Promise<void> {
-    await this.pool.query('UPDATE proofci_publications SET needs_revalidation=true WHERE run_id=$1 AND generation=$2 AND lease_until > clock_timestamp()', [item.id, item.leaseGeneration]);
+  /**
+   * Mark the candidate for revalidation only while this claim still holds the latest revision.
+   * A newer revision means the run itself changed (for example queued to running); that revision
+   * is published separately and must not be mistaken for a stale candidate, which would cancel the run.
+   */
+  async markPublicationUnresolved(item: Publication): Promise<boolean> {
+    const result = await this.pool.query('UPDATE proofci_publications SET needs_revalidation=true WHERE run_id=$1 AND generation=$2 AND revision=$3 AND lease_until > clock_timestamp()', [item.id, item.leaseGeneration, item.revision]);
+    return result.rowCount === 1;
   }
 
   async finishPublication(item: Publication): Promise<boolean> {
