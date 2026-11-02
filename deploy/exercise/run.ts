@@ -246,6 +246,8 @@ async function main(): Promise<void> {
   const restored: Deployment = { project: `proofci-ex-${stamp}-restored`, envFile: envFile('restored', { state: dirs.state2, controlPort: ports.control2, pgPort: ports.pg2, s3Port: ports.s3b }),
     state: dirs.state2, pool: new Pool({ host: '127.0.0.1', port: ports.pg2, user: 'proofci', password: secrets.postgres, database: 'proofci', max: 4 }),
     controlPort: ports.control2, origin: `http://127.0.0.1:${ports.control2}`, secrets: dirs.secrets };
+  // Teardown terminates server connections; idle pool clients must not crash the driver.
+  for (const pool of [primary.pool, restored.pool]) pool.on('error', () => {});
   const environment: Record<string, unknown> = {
     host: sh('uname', ['-srm']).stdout.trim(), docker: sh('docker', ['version', '--format', '{{.Server.Os}}/{{.Server.Arch}} {{.Server.Version}}']).stdout.trim(),
     kvm: sh('docker', ['run', '--rm', '--device', '/dev/kvm', 'alpine:3.22', 'true'], { allowFailure: true }).code === 0,
@@ -556,6 +558,7 @@ async function main(): Promise<void> {
       passed: log.filter(step => step.ok).length, failed: log.filter(step => !step.ok).length, steps: log };
     writeFileSync(join(output, 'exercise.json'), JSON.stringify(summary, null, 2) + '\n');
     writeFileSync(join(output, 'exercise.md'), markdown(summary));
+    await Promise.all([primary.pool.end(), restored.pool.end()].map(item => item.catch(() => {})));
     await primary_cleanup();
   }
 }
