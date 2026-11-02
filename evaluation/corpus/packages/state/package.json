@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "name": "state",
+  "domain": "state transitions",
+  "description": "Two-phase counter transition: increment the state, double it, then settle by three.",
+  "model": "target x is the successor state of state x.",
+  "candidates": {
+    "base": "def target (x : Nat) : Nat := (x + 1) * 2 + 3\n",
+    "equivalent": "def target (x : Nat) : Nat := (x + 1) * 1 + (x + 1) + 2 + 1\n",
+    "violating": "def target (x : Nat) : Nat := (x + 1) * 2 + 1\n",
+    "shadow": "def target (x : Nat) : Nat := (x + 1) * 2 + 1 + 2\n"
+  },
+  "companion": {
+    "path": "Machine.lean",
+    "explanation": "Inductive state machine; real Lean outside the admitted single-target subset."
+  },
+  "properties": [
+    {
+      "id": "step-definition",
+      "explanation": "Increment, double, then settle by three.",
+      "contract": {
+        "rhs": "(x + 1) * 2 + 3"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-unrolled",
+      "explanation": "Doubling the incremented state is adding it twice.",
+      "contract": {
+        "rhs": "(x + 1) * 1 + (x + 1) + 3"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-settle-split",
+      "explanation": "The settle is two steps then one.",
+      "contract": {
+        "rhs": "(x + 1) * 2 + 2 + 1"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-settle-unit",
+      "explanation": "The settle is three single steps.",
+      "contract": {
+        "rhs": "(x + 1) * 2 + 1 + 1 + 1"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-literal-factor",
+      "explanation": "The doubling factor may be written as one plus one.",
+      "contract": {
+        "rhs": "(x + 1) * (1 + 1) + 3"
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-initial",
+      "explanation": "The initial state steps to five.",
+      "contract": {
+        "rhs": "5",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "0"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-from-five",
+      "explanation": "State five steps to fifteen.",
+      "contract": {
+        "rhs": "15",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "5"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-from-fifteen",
+      "explanation": "State fifteen steps to thirty-five.",
+      "contract": {
+        "rhs": "35",
+        "precondition": {
+          "lhs": "x",
+          "op": "=",
+          "rhs": "15"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-early-states",
+      "explanation": "States below three double and add five.",
+      "contract": {
+        "rhs": "x * 2 + 5",
+        "precondition": {
+          "lhs": "x",
+          "op": "<",
+          "rhs": "3"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    },
+    {
+      "id": "step-boolean-states",
+      "explanation": "On states zero and one, the step equals the squared form.",
+      "contract": {
+        "rhs": "x * x * 2 + 5",
+        "precondition": {
+          "lhs": "x",
+          "op": "≤",
+          "rhs": "1"
+        }
+      },
+      "truth": {
+        "base": true,
+        "equivalent": true,
+        "violating": false
+      }
+    }
+  ]
+}
