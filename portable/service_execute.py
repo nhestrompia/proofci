@@ -32,7 +32,7 @@ def execute(*, store, repository, head, base, baseline_digest, snapshot, report,
         raise ValueError('choose one evidence output')
     evidence = evidence if evidence is not None else bundle
     try:
-        if candidate_kind not in ('head-snapshot', 'resolved', 'pull-request'):
+        if candidate_kind not in ('head-snapshot', 'resolved', 'pull-request', 'merge-group'):
             raise ValueError('invalid candidate kind')
         if not re.fullmatch(r'[a-f0-9]{40}', head) or not re.fullmatch(r'[a-f0-9]{40}', base):
             raise ValueError('invalid candidate identity')
@@ -110,7 +110,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('store', 'repository', 'head', 'base', 'baseline-digest', 'snapshot', 'report'):
         parser.add_argument('--' + name, required=True)
-    parser.add_argument('--candidate-kind', choices=('head-snapshot', 'resolved', 'pull-request'), default='head-snapshot')
+    parser.add_argument('--candidate-kind', choices=('head-snapshot', 'resolved', 'pull-request', 'merge-group'), default='head-snapshot')
     parser.add_argument('--candidate-lane')
     parser.add_argument('--evidence')
     parser.add_argument('--bundle')

@@ -7,19 +7,29 @@ import type { RunStore } from './run-store.ts';
 function object(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 
 /** Publish one durable outbox entry without dispatching verification again. */
-export async function publishNext(options: { store: Pick<RunStore, 'claimPublication' | 'publicationCurrent' | 'ownsPublication' | 'markPublicationUnresolved' | 'finishPublication' | 'retryPublication' | 'withPublicationLock'>; github: Pick<GitHubApp, 'resolvePullMerge' | 'publishCheck' | 'invalidateCheck'>; baselines: Pick<ActiveBaselines, 'active'>; origin: string }): Promise<boolean> {
+export async function publishNext(options: { store: Pick<RunStore, 'claimPublication' | 'publicationCurrent' | 'ownsPublication' | 'markPublicationUnresolved' | 'finishPublication' | 'retryPublication' | 'withPublicationLock'>; github: Pick<GitHubApp, 'resolvePullMerge' | 'publishCheck' | 'invalidateCheck'> & Partial<Pick<GitHubApp, 'resolveMergeGroup'>>; baselines: Pick<ActiveBaselines, 'active'>; origin: string }): Promise<boolean> {
   const item = await options.store.claimPublication(300_000);
   if (!item) return false;
-  const number = Number(item.candidate.lane.slice('pull/'.length));
   const scope = { installationId: item.candidate.installationId, repositoryId: item.candidate.repositoryId };
-  if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid pull request lane');
+  const group = item.candidate.kind === 'merge-group';
+  const number = group ? null : Number(item.candidate.lane.slice('pull/'.length));
+  if (number !== null && (!Number.isSafeInteger(number) || number < 1)) throw new Error('Invalid pull request lane');
+  if (group && (!item.candidate.lane.startsWith('refs/heads/gh-readonly-queue/') || item.candidate.mergeHead !== item.candidate.head)) throw new Error('Invalid merge group lane');
   const mergeHead = item.candidate.kind === 'pull-request' ? item.candidate.mergeHead : item.candidate.head;
   const pullHead = item.candidate.kind === 'pull-request' ? item.candidate.head : item.candidate.pullHead;
   if (!mergeHead) throw new Error('Missing merge commit');
+  // A failed or cancelled run cannot satisfy the check, so it is published even when the candidate is gone.
+  const nonpassing = item.state === 'failed' || item.state === 'cancelled';
   let currentHead: string | null = null;
   const fresh = async () => {
-    if (!await options.store.publicationCurrent(item)) return false;
-    const merge = await options.github.resolvePullMerge(scope, number);
+    if (!await options.store.publicationCurrent(item, nonpassing)) return false;
+    if (group) {
+      if (nonpassing) return true;
+      const resolved = await options.github.resolveMergeGroup?.(scope, { headRef: item.candidate.lane, headSha: mergeHead, baseSha: item.candidate.base });
+      if (resolved?.kind !== 'resolved' || resolved.head !== mergeHead || resolved.base !== item.candidate.base || await options.baselines.active(scope) !== item.candidate.baseline) return false;
+      return await options.store.publicationCurrent(item);
+    }
+    const merge = await options.github.resolvePullMerge(scope, number!);
     if (merge.kind !== 'resolved' || merge.merge !== mergeHead || merge.head !== pullHead || merge.base !== item.candidate.base || await options.baselines.active(scope) !== item.candidate.baseline) return false;
     currentHead = merge.head;
     return await options.store.publicationCurrent(item);
@@ -35,7 +45,9 @@ export async function publishNext(options: { store: Pick<RunStore, 'claimPublica
       }
       const report = item.report;
       const output = (item.state === 'completed' || item.state === 'failed') ? checkReport({ ...item.candidate, head: mergeHead }, report, item.evidenceSha256) : item.state === 'cancelled' ? { title: 'ProofCI cancelled', summary: 'Verification was cancelled.', conclusion: 'failure' as const } : null;
-      if (output) output.summary = `Pull request head: ${currentHead}\n${output.summary}`;
+      if (output) output.summary = group
+        ? `Candidate scope: merge group (verified independently of pull request checks)\nMerge group ref: ${item.candidate.lane}\nMerge group commit: ${mergeHead}\n${output.summary}`
+        : `Candidate scope: pull request test merge\nPull request head: ${currentHead}\n${output.summary}`;
       const annotations: Array<{ path: string; start_line: number; end_line: number; annotation_level: 'notice' | 'failure'; message: string }> = [];
       if (object(report) && object(report.support) && typeof report.support.admitted_candidate === 'string' && Array.isArray(report.results)) {
         const path = report.support.admitted_candidate;

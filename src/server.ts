@@ -11,6 +11,7 @@ import { processPullEvent } from './pull-events.ts';
 import { processPushEvent } from './push-events.ts';
 import { processRerunEvent } from './rerun-events.ts';
 import { ModelLedger } from './model-ledger.ts';
+import { processMergeGroupEvent } from './merge-group-events.ts';
 import { RunStore } from './run-store.ts';
 import { ForkPolicy, policyDigest } from './fork-policy.ts';
 import { ActiveBaselines } from './active-baselines.ts';
@@ -188,6 +189,14 @@ const server = createServer(async (request, response) => {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
         if (!await processPullEvent({ body, signature, event, deliveryId, secret, store: { acceptPullDelivery: (delivery, invalidate) => pilotRepositories.some(item => item.installationId === delivery.installationId && item.repositoryId === delivery.repositoryId) ? runStore.acceptPullDelivery(delivery, invalidate) : Promise.resolve(true) } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
+      } else if (event === 'merge_group') {
+        const runStore = runs;
+        if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
+        const enrolled = (scope: { installationId: number; repositoryId: number }) => pilotRepositories.some(item => item.installationId === scope.installationId && item.repositoryId === scope.repositoryId);
+        if (!await processMergeGroupEvent({ body, signature, event, deliveryId, secret, store: {
+          acceptMergeGroup: delivery => enrolled(delivery) ? runStore.acceptMergeGroup(delivery) : Promise.resolve(true),
+          retireMergeGroup: retirement => enrolled(retirement) ? runStore.retireMergeGroup(retirement) : Promise.resolve(true),
+        } })) return reply(response, 401, 'Invalid or unauthorized webhook.');
       } else if (event === 'check_run' || event === 'check_suite') {
         const runStore = runs;
         if (!runStore) return reply(response, 503, 'Run scheduling is not configured.');
