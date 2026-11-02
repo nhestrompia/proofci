@@ -20,6 +20,12 @@ test('the release manifest matches the deployment files and code it pins', () =>
   // Every image reference in the deployment is pinned by digest.
   for (const line of [...compose.split('\n'), ...dockerfile.split('\n')].filter(line => /^\s*(image:|FROM )/.test(line) && !line.includes('PROOFCI_CONTROL_IMAGE'))) assert.match(line, /@sha256:[a-f0-9]{64}/, line);
   assert.equal(sha('package-lock.json'), release.npm_lockfile_sha256);
+  // The approved license is shipped in the repository, the package metadata, and the image.
+  assert.equal(release.license.spdx, 'MIT');
+  assert.match(readFileSync(release.license.file, 'utf8'), /^MIT License\n/);
+  assert.equal(JSON.parse(readFileSync('package.json', 'utf8')).license, release.license.spdx);
+  assert.ok(dockerfile.includes('COPY LICENSE ./LICENSE') && dockerfile.includes(`org.opencontainers.image.licenses="${release.license.spdx}"`));
+  assert.ok(dockerfile.includes(`org.opencontainers.image.version="${release.release}"`));
   assert.equal(sha('portable/resource_limits.json'), release.verifier.resource_limits_sha256);
   const pinned = JSON.parse(execFileSync('python3', ['-c', `import sys, json, hashlib; sys.path.insert(0, 'portable'); import proofci, vm_container, container
 print(json.dumps({'toolchain': proofci.TOOLCHAIN_SHA256, 'policy': proofci.policy_digest(), 'dependency': hashlib.sha256((proofci.VALIDATOR / 'core-dependencies.json').read_bytes()).hexdigest(), 'vm': vm_container.VM_IMAGE_ID, 'validator': container.IMAGE_ID}))`], { encoding: 'utf8' }));

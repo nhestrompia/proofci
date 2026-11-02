@@ -380,3 +380,7 @@ are not atomic with a GitHub API request: an in-flight or previously published
 success can remain visible after a revision change. Do not rely on the published
 check as an enforcing merge gate for managed migrations until the merge path
 itself is fenced by the authority and existing checks have been invalidated.
+
+## License
+
+ProofCI is released under the [MIT License](LICENSE).

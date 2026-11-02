@@ -4,9 +4,9 @@
   "report_version": 1,
   "status": "pilot",
   "license": {
-    "spdx": null,
-    "approved_by": null,
-    "note": "Distribution is blocked until a maintainer approves an open-source license and adds LICENSE. Do not publish images or archives before then."
+    "spdx": "MIT",
+    "file": "LICENSE",
+    "approved_by": "nhestrompia"
   },
   "images": {
     "node": "node@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c",
@@ -23,6 +23,6 @@
     "core_dependencies_sha256": "4ae5bab7fd60b94093e26cda5a631c67ddd4a8fab3595ec3bec81e8752975fdd",
     "resource_limits_sha256": "1635cbfa0510cc646e9c06fb27db86c10af27ab5bc3853da3e3d5db2928ec895"
   },
-  "npm_lockfile_sha256": "220efa088e536a53df377ad917ec32e28f76106e318b0661e3ed96eae0e6849d",
+  "npm_lockfile_sha256": "1e21e74c2cbe43d5103d9442b69f0df49acce418043db43bae05350af9cc9ad2",
   "platforms": ["linux/arm64"]
 }

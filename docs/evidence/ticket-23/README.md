@@ -83,17 +83,21 @@ Established:
 - Support limits.
 - Release pinning ([`deploy/release.json`](../../../deploy/release.json), checked by `test/release.test.ts`).
 
-Not established: **No license has been approved.** `release.json` records `license: null`, and distribution is blocked until a maintainer approves one.
+License: the maintainer approved the MIT License after the exercise ran. It is in [`LICENSE`](../../../LICENSE), recorded in `release.json` and `package.json`, and shipped in the control image. `test/release.test.ts` checks all of these.
 
-## Defect found: duplicate runs from the publication freshness race
+## Defect found and fixed: duplicate runs from the publication freshness race
 
-The exercise counted runs that were cancelled and then re-admitted with identical inputs (see `known defect` in `exercise.json`). The sequence:
+The exercise counted runs that were cancelled and then re-admitted with identical inputs (see `known defect` in `exercise.json`, count 8). The sequence:
 
 1. The publication worker claims a new run's publication while the run is `queued`.
-2. The run moves to `running` before the freshness check, so `publicationCurrent` fails and `markPublicationUnresolved` sets `needs_revalidation`.
+2. The run moves to `running` before the freshness check. The run-change trigger bumps the publication revision, so `publicationCurrent` fails, and `markPublicationUnresolved` sets `needs_revalidation`.
 3. Within 5 s, baseline reconciliation re-delivers the pull request with `invalidate=true`.
 4. That cancels the in-flight run and admits a new one.
 
-On fast-failing runs this repeats until a run finishes between reconciliation ticks. Each cancelled run discards its verification work. It does not produce a wrong result, because only the final applicable run publishes.
+On fast-failing runs this repeated until a run finished between reconciliation ticks. Each cancelled run discarded its verification work. It did not produce a wrong result, because only the final applicable run publishes.
 
-The code is in `src/run-store.ts` (`publicationCurrent`, `reconcileBaseline`) and `src/run-service.ts`. These belong to the pull request lifecycle work (ticket 14), so this ticket does not change them.
+Fix (in `src/run-store.ts` and `src/publication-worker.ts`): `markPublicationUnresolved` now marks only a claim that still holds the latest revision, and reports whether it did. A superseded claim leaves the check alone and lets the newer revision publish. A candidate that really is stale (a different merge commit, baseline, or authority revision) is still marked and invalidated as before.
+
+Regression tests: `test/run-store.test.ts` ("a run starting during publication…", against PostgreSQL) fails without the fix, because the check was invalidated and the run re-delivered. `test/publication-worker.test.ts` covers the superseded-revision path.
+
+The recorded exercise ran before the fix, so its count of 8 describes the old behavior. The exercise was not re-run after the fix.

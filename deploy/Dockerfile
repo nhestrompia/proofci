@@ -17,10 +17,12 @@ COPY src ./src
 COPY portable ./portable
 COPY experiments/source-binding ./experiments/source-binding
 COPY deploy ./deploy
+COPY LICENSE ./LICENSE
 RUN rm -rf portable/test_* experiments/source-binding/test_* experiments/source-binding/evidence deploy/exercise/state \
  && find . -name __pycache__ -prune -exec rm -rf {} + \
  && python3 -c 'import sys; assert sys.version_info >= (3, 11)'
 ENV NODE_ENV=production PYTHONDONTWRITEBYTECODE=1 PROOFCI_LISTEN_HOST=0.0.0.0
+LABEL org.opencontainers.image.licenses="MIT" org.opencontainers.image.version="0.23.0"
 USER node
 EXPOSE 3000
 ENTRYPOINT ["/usr/bin/tini", "--"]
