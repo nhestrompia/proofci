@@ -33,6 +33,20 @@ RUN curl -fsSL --retry 3 -o /tmp/rustup-init \
       --component rustc-dev,llvm-tools,rust-src \
  && rm /tmp/rustup-init
 
+# Runtime copy of the same toolchain: charon-driver links librustc_driver from
+# `rustc`; rustc-dev, rust-src and llvm-tools are only needed to build Charon.
+FROM base AS rust-run
+ARG RUSTUP_VERSION=1.28.2
+ARG RUSTUP_SHA256_ARM64=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c
+ARG RUST_TOOLCHAIN=nightly-2026-09-17
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -fsSL --retry 3 -o /tmp/rustup-init \
+      "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/aarch64-unknown-linux-gnu/rustup-init" \
+ && echo "${RUSTUP_SHA256_ARM64}  /tmp/rustup-init" | sha256sum -c - \
+ && chmod +x /tmp/rustup-init \
+ && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+ && rm -rf /tmp/rustup-init /opt/rustup/toolchains/*/share/doc /opt/rustup/downloads /opt/rustup/tmp
+
 # ------------------------------------------- Charon at the commit Aeneas pins
 FROM rust AS charon
 ARG CHARON_COMMIT=7b462d9159db2ed3015162352183906a30bfafc6
@@ -62,22 +76,31 @@ WORKDIR /opt/aeneas/backends/lean
 # prebuilt cache, then build (or unpack) the Aeneas library itself.
 # The workspace ProofCI assembles refers to these packages by path, so their
 # Git metadata is not needed once the build is known to be up to date.
+COPY toolchain/prune.py /tmp/prune.py
 RUN lake exe cache get && lake build Aeneas && lake build --no-build Aeneas \
  && find .lake/packages -name .git -type d -prune -exec rm -rf {} + \
  && rm -rf .lake/*.tar.gz \
+ && python3 /tmp/prune.py /opt/aeneas/backends/lean \
  && chmod -R a+rX /opt/aeneas
+
+# Checking proofs needs the Lean binaries, shared libraries and .olean files,
+# not the static libraries used to compile Lean programs.
+FROM lean AS lean-run
+RUN find /opt/lean/lib -name '*.a' -delete
 
 # ----------------------------------------------------------------- final image
 FROM base
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo \
     PATH=/opt/charon/bin:/opt/aeneas:/opt/lean/bin:/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
     PROOFCI_AENEAS_LEAN=/opt/aeneas/backends/lean PYTHONPATH=/opt/proofci
-COPY --from=rust /opt/rustup /opt/rustup
-COPY --from=rust /opt/cargo /opt/cargo
+COPY --from=rust-run /opt/rustup /opt/rustup
+COPY --from=rust-run /opt/cargo /opt/cargo
 COPY --from=charon /opt/charon /opt/charon
-COPY --from=lean /opt/lean /opt/lean
+COPY --from=lean-run /opt/lean /opt/lean
 COPY --from=aeneas /opt/aeneas /opt/aeneas
 COPY proofci /opt/proofci/proofci
+# bubblewrap (used by ProofCI and lake comparator) mounts a tmpfs here.
+RUN mkdir -p /run/user && chmod 1777 /run/user
 ENV HOME=/tmp
 USER 1000:1000
 WORKDIR /work

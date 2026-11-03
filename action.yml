@@ -1,0 +1,107 @@
+name: ProofCI
+description: Check that a pull request keeps its declared, Lean-proved guarantees about Rust code.
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  path:
+    description: Directory (relative to the repository root) that contains proofci.yaml.
+    default: "."
+  image:
+    description: Pinned ProofCI toolchain image (by digest).
+    default: ghcr.io/nhestrompia/proofci-toolchain@sha256:REPLACE_WITH_RELEASE_DIGEST
+  base:
+    description: >-
+      Override the commit whose policy is enforced. Leave empty in real use (the
+      pull request base, merge-group base, or pushed commit is used). Only for
+      testing an example whose policy is not yet on the base branch.
+    default: ""
+  token:
+    description: Token used only to read pull request reviews when the policy changes.
+    default: ${{ github.token }}
+
+outputs:
+  passed:
+    description: "'true' when every required guarantee is verified."
+    value: ${{ steps.check.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Select base and candidate commits
+      id: refs
+      shell: bash
+      env:
+        EVENT: ${{ github.event_name }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        MQ_BASE: ${{ github.event.merge_group.base_sha }}
+        MQ_HEAD: ${{ github.event.merge_group.head_sha }}
+        SHA: ${{ github.sha }}
+        BASE_OVERRIDE: ${{ inputs.base }}
+      run: |
+        case "$EVENT" in
+          pull_request|pull_request_target) base="$PR_BASE"; head="$PR_HEAD" ;;
+          merge_group) base="$MQ_BASE"; head="$MQ_HEAD" ;;
+          *) base="$SHA"; head="$SHA" ;;
+        esac
+        if [ -n "$BASE_OVERRIDE" ]; then
+          echo "::warning::ProofCI base overridden to $BASE_OVERRIDE (testing only)."
+          base="$BASE_OVERRIDE"
+        fi
+        if [ "$EVENT" = pull_request ]; then
+          echo "::warning::ProofCI runs under 'pull_request', so the pull request controls this workflow. Use 'pull_request_target' to enforce the base branch policy."
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        echo "head=$head" >> "$GITHUB_OUTPUT"
+
+    # Both commits are checked out as data: no credentials are persisted and
+    # nothing from them is executed on the runner.
+    - name: Check out the protected base
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ steps.refs.outputs.base }}
+        path: .proofci/base
+        persist-credentials: false
+    - name: Check out the candidate
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ steps.refs.outputs.head }}
+        path: .proofci/head
+        persist-credentials: false
+
+    - name: Allow nested sandboxes on this disposable runner
+      shell: bash
+      run: sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+    - name: Pull the pinned toolchain
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        start=$(date +%s)
+        docker image inspect "$IMAGE" >/dev/null 2>&1 || docker pull -q "$IMAGE"
+        echo "Pulled toolchain in $(( $(date +%s) - start ))s"
+
+    - name: Verify guarantees
+      id: check
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        PROOFCI_PATH: ${{ inputs.path }}
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        HEAD_SHA: ${{ steps.refs.outputs.head }}
+        REPOSITORY: ${{ github.repository }}
+        API_URL: ${{ github.api_url }}
+      run: python3 "$GITHUB_ACTION_PATH/action/run.py"
+
+    - name: Keep the report
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: proofci-report-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .proofci/out/
+        if-no-files-found: ignore
