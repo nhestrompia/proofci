@@ -32,6 +32,18 @@ def markdown(report):
         for g in details:
             lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {g['status']}</summary>")
             lines += ["", "```", g["reason"].strip()[:4000], "```", "", "</details>"]
+    assumed = sorted({m for g in report["guarantees"] if g["status"] == "verified" for m in g.get("assumes", [])})
+    if assumed:
+        lines += ["", "### Trusted models", "",
+                  "Some verified guarantees rely on ProofCI's models of these library functions "
+                  "(checked against `rustc`, see SECURITY.md):", ""]
+        lines += [f"- `{m}`" for m in assumed]
+    warned = [g for g in report["guarantees"] if g.get("warnings")]
+    if warned:
+        lines += ["", "### Contract warnings", "",
+                  "These statements may not constrain the code as intended. Review the contract:", ""]
+        for g in warned:
+            lines += [f"- `{g['target']}/{g['guarantee']}`: {w}" for w in g["warnings"]]
     lines += ["", "Verified means the Lean kernel (and nanoda) accepted a proof of the exact protected "
               "statement about the Rust code as translated by the pinned Charon/Aeneas toolchain. "
               "It covers only the listed guarantees."]

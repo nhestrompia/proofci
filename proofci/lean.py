@@ -190,29 +190,83 @@ def build_contract(ws):
         raise ContractError(_errors(result.output))
 
 
-def audit(ws, checks):
-    """For each (theorem, lean_function) report existence and binding.
+AUDIT_LEAN = r"""
+import Contract
+open Lean Meta
+
+/-- Constants reachable from `root` through definitions of the same module
+    (the extracted crate), so the walk never descends into the libraries. -/
+partial def proofciReach (env : Environment) (root : Name) : NameSet := Id.run do
+  let modIdx := env.getModuleIdxFor? root
+  let mut seen : NameSet := {}
+  let mut todo := [root]
+  while !todo.isEmpty do
+    let n := todo.head!
+    todo := todo.tail!
+    if seen.contains n then continue
+    seen := seen.insert n
+    if env.getModuleIdxFor? n != modIdx then continue
+    match env.find? n with
+    | some (.defnInfo d) => todo := d.value.getUsedConstants.toList ++ todo
+    | some (.opaqueInfo d) => todo := d.value.getUsedConstants.toList ++ todo
+    | _ => pure ()
+  return seen
+
+/-- Does the postcondition of a `WP.spec` triple ignore the result? -/
+def proofciPostIgnoresResult (e : Expr) : Bool :=
+  if e.isAppOf ``Aeneas.Std.WP.spec then
+    match e.getAppArgs.back? with
+    | some (.lam _ _ body _) => !body.hasLooseBVars
+    | _ => false
+  else false
+
+def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
+  let env ← getEnv
+  let fnFound := env.contains fn
+  let mut kind := "missing"
+  let mut conclusion := false
+  let mut hypothesis := false
+  let mut trivial := false
+  let mut ignores := false
+  match env.find? thm with
+  | some (.thmInfo info) =>
+    kind := "theorem"
+    let r ← forallTelescope info.type fun xs body => do
+      let mut hyp := false
+      for x in xs do
+        let ty ← inferType x
+        if (← isProp ty) && ty.getUsedConstants.contains fn then hyp := true
+      let refl := body.isAppOfArity ``Eq 3 && body.appFn!.appArg! == body.appArg!
+      pure (body.getUsedConstants.contains fn, hyp, body.isConstOf ``True || refl,
+            proofciPostIgnoresResult body)
+    (conclusion, hypothesis, trivial, ignores) := r
+  | some _ => kind := "other"
+  | none => pure ()
+  let axioms ← if fnFound then collectAxioms fn else pure #[]
+  let reach := if fnFound then proofciReach env fn else {}
+  let used := models.filter reach.contains
+  IO.println ("PROOFCI_AUDIT " ++ (Json.mkObj [
+    ("theorem", Json.str thm.toString), ("function", Json.str fn.toString),
+    ("kind", Json.str kind), ("function_found", Json.bool fnFound),
+    ("conclusion_mentions_function", Json.bool conclusion),
+    ("hypothesis_mentions_function", Json.bool hypothesis),
+    ("trivial_conclusion", Json.bool trivial), ("post_ignores_result", Json.bool ignores),
+    ("models", Json.arr (used.map (fun n => Json.str n.toString)).toArray),
+    ("function_axioms", Json.arr (axioms.map (fun a => Json.str a.toString)))]).compress)
+"""
+
+
+def audit(ws, checks, models=()):
+    """For each (theorem, lean_function): existence, how the statement uses
+    the function, the function's axioms, and which ProofCI models it uses.
 
     Runs only over trusted inputs: the protected contract and the extracted
     model. Proof modules are never loaded here.
     """
-    lines = ["import Contract", "open Lean Meta", "",
-             "def proofciAudit (thm fn : Name) : MetaM Unit := do",
-             "  let env ← getEnv",
-             "  let fnFound := env.contains fn",
-             "  let (kind, mentions) := match env.find? thm with",
-             "    | some (.thmInfo info) => (\"theorem\", info.type.getUsedConstants.contains fn)",
-             "    | some _ => (\"other\", false)",
-             "    | none => (\"missing\", false)",
-             "  let axioms ← if fnFound then collectAxioms fn else pure #[]",
-             "  let axs := axioms.toList.map (fun a => Json.str a.toString)",
-             "  IO.println (\"" + AUDIT_MARKER + "\" ++ (Json.mkObj [",
-             "    (\"theorem\", Json.str thm.toString), (\"function\", Json.str fn.toString),",
-             "    (\"kind\", Json.str kind), (\"function_found\", Json.bool fnFound),",
-             "    (\"mentions_function\", Json.bool mentions), (\"function_axioms\", Json.arr axs.toArray)]).compress)",
-             ""]
+    model_list = "[" + ", ".join(f"`{name}" for name in models) + "]"
+    lines = [AUDIT_LEAN.strip(), ""]
     for theorem, function in checks:
-        lines.append(f"#eval proofciAudit `{theorem} `{function}")
+        lines.append(f"#eval proofciAudit `{theorem} `{function} {model_list}")
     (ws.root / "ProofciAudit.lean").write_text("\n".join(lines) + "\n")
     result = _lake(ws, ["env", "lean", "ProofciAudit.lean"])
     found = {}

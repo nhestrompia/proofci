@@ -97,7 +97,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/scenarios" && chmod 777 "$RUNNER_TEMP/scenarios"
           docker run --rm --network none \
-            --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+            --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:exec,mode=1777 --security-opt seccomp=action/seccomp.json --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
             -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
             -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios \
@@ -106,7 +106,7 @@ jobs:
         if: matrix.shard == 1
         run: >-
           docker run --rm --network none
-          --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+          --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:exec,mode=1777 --security-opt seccomp=action/seccomp.json --security-opt apparmor=unconfined --security-opt systempaths=unconfined
           -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 -e PROOFCI_TOOLCHAIN=1
           --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models -v
       - name: Scenario reports
@@ -163,14 +163,14 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/scenarios" && chmod 777 "$RUNNER_TEMP/scenarios"
           docker run --rm --network none \
-            --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+            --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:exec,mode=1777 --security-opt seccomp=action/seccomp.json --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
             -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
             -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios --jobs 4 --output /scenarios
       - name: Standard-library models agree with Rust
         run: >-
           docker run --rm --network none
-          --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+          --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:exec,mode=1777 --security-opt seccomp=action/seccomp.json --security-opt apparmor=unconfined --security-opt systempaths=unconfined
           -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 -e PROOFCI_TOOLCHAIN=1
           --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models -v
       - name: Scenario reports

@@ -260,6 +260,38 @@ def dependency_rewrites_source(head):
     (dep / ".cargo-checksum.json").write_text(json.dumps({"files": {}, "package": FAKE_CHECKSUM}))
 
 
+ZERO_CONTRACT = ("theorem zero_amount_no_fee (fee_bps : Std.U64) :\n"
+                 "    calculate_fee 0#u64 fee_bps ⦃ fee => fee.val = 0 ⦄ := by sorry")
+
+
+def contract_only_assumes(checkout):
+    # The function appears only in a hypothesis: the statement constrains nothing.
+    edit(checkout / "proofci/Contract.lean", ZERO_CONTRACT,
+         "theorem zero_amount_no_fee (fee_bps : Std.U64) (h : calculate_fee 0#u64 fee_bps = ok 0#u64) :\n"
+         "    True := by sorry")
+
+
+def contract_assumes_result(checkout):
+    # The claim is smuggled in as a hypothesis; ProofCI warns.
+    edit(checkout / "proofci/Contract.lean", ZERO_CONTRACT,
+         "theorem zero_amount_no_fee (fee_bps : Std.U64) (h : calculate_fee 0#u64 fee_bps = ok 0#u64) :\n"
+         "    calculate_fee 0#u64 fee_bps ⦃ fee => fee.val = 0 ⦄ := by sorry")
+
+
+def weak_contract_only_assumes(head):
+    contract_only_assumes(head)
+
+
+weak_contract_only_assumes.also_base = contract_only_assumes
+
+
+def weak_contract_assumes_result(head):
+    contract_assumes_result(head)
+
+
+weak_contract_assumes_result.also_base = contract_assumes_result
+
+
 SCENARIOS = {
     "baseline": (None, dict.fromkeys(GUARANTEES, V), 0),
     "buggy-fee-rounds-up": (buggy_fee_rounds_up, {
@@ -299,6 +331,10 @@ SCENARIOS = {
     "workspace-member": (workspace_member, dict.fromkeys(GUARANTEES, V), 0),
     "dependency-rewrites-source": (dependency_rewrites_source, {
         "fees/fee-capped": U, "fees/zero-amount": U, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "contract-only-assumes": (weak_contract_only_assumes, {
+        "fees/fee-capped": V, "fees/zero-amount": S, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "contract-assumes-result": (weak_contract_assumes_result, {
+        "fees/fee-capped": V, "fees/zero-amount": U, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
 }
 
 
@@ -333,6 +369,10 @@ def run_scenario(name, out_dir=None):
         problems.append(f"exit {done.returncode} != expected {expected_exit}")
     if name == "weaken-policy" and not data["policy_changes"]:
         problems.append("policy change not reported")
+    if name == "contract-assumes-result":
+        warned = {f"{g['target']}/{g['guarantee']}" for g in data["guarantees"] if g.get("warnings")}
+        if warned != {"fees/zero-amount"}:
+            problems.append(f"expected a contract warning on fees/zero-amount only, got {warned}")
     if problems:
         problems.append(done.stdout[-4000:])
     return problems

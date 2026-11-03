@@ -92,7 +92,7 @@ class ApplyTests(unittest.TestCase):
             "axiom core.num.U64.leading_zeros : Std.U64 → Result Std.U32\n\n"
             "axiom unrelated : False\n")
         out, applied = models.apply(source)
-        self.assertEqual(applied, ["core::num::{u64}::abs_diff"])
+        self.assertEqual(applied, [("core::num::{u64}::abs_diff", "core.num.U64.abs_diff")])
         self.assertIn("def core.num.U64.abs_diff : Std.U64 → Std.U64 → Result Std.U64 :=", out)
         self.assertIn("axiom core.num.U64.leading_zeros", out)
         self.assertIn("axiom unrelated : False", out)

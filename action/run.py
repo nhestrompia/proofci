@@ -26,10 +26,17 @@ def subdir(root, rel):
     return path
 
 
+SECCOMP = Path(__file__).resolve().parent / "seccomp.json"
 SANDBOX_OPTS = [
-    # bubblewrap inside the container needs these to create its sandboxes
-    "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
-    "--security-opt", "systempaths=unconfined",
+    # No capabilities, no privilege escalation, read-only filesystem except /tmp.
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    "--read-only", "--tmpfs", "/tmp:exec,mode=1777",
+    # Docker's default seccomp profile plus only the namespace syscalls that
+    # bubblewrap needs to build the inner sandboxes (see SECURITY.md).
+    "--security-opt", f"seccomp={SECCOMP}",
+    # Docker's AppArmor profile forbids the mounts bubblewrap makes, and the
+    # masked /proc paths stop it mounting a fresh /proc for each sandbox.
+    "--security-opt", "apparmor=unconfined", "--security-opt", "systempaths=unconfined",
 ]
 
 

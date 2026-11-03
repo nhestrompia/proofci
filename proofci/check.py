@@ -41,6 +41,8 @@ class Outcome:
     required: bool
     status: str
     reason: str = ""
+    assumes: list = field(default_factory=list)    # ProofCI models the function relies on
+    warnings: list = field(default_factory=list)   # contract shape warnings
 
 
 @dataclass
@@ -201,7 +203,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         t0 = time.monotonic()
         try:
             lean.build_contract(ws)
-            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in pending])
+            model_names = {f"{extraction.crate_name}.{name}": path for path, name in (extraction.modelled or [])}
+            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in pending], list(model_names))
         except lean.ContractError as error:
             names = {o.theorem for o in pending}
             mark(CONTRACT_STALE, "the protected contract no longer elaborates against this code; "
@@ -213,13 +216,21 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         candidates = []
         for o in pending:
             item = audit[o.theorem]
+            o.assumes = [model_names[n] for n in item.get("models", []) if n in model_names]
+            if item.get("hypothesis_mentions_function"):
+                o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
+                                  "may assume what it should prove")
+            if item.get("trivial_conclusion"):
+                o.warnings.append(f"the conclusion of `{o.theorem}` is trivially true")
+            if item.get("post_ignores_result"):
+                o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result")
             if not item["function_found"]:
                 o.status, o.reason = UNSUPPORTED, f"`{o.function}` is not in the translated code"
             elif item["kind"] != "theorem":
                 o.status, o.reason = CONTRACT_STALE, f"`{o.theorem}` is not a theorem in the contract"
-            elif not item["mentions_function"]:
+            elif not item["conclusion_mentions_function"]:
                 o.status, o.reason = CONTRACT_STALE, (
-                    f"the statement of `{o.theorem}` does not mention `{o.function}`, "
+                    f"the conclusion of `{o.theorem}` does not mention `{o.function}`, "
                     "so it would not constrain the implementation")
             elif set(item["function_axioms"]) - set(lean.PERMITTED_AXIOMS):
                 extra = sorted(set(item["function_axioms"]) - set(lean.PERMITTED_AXIOMS))

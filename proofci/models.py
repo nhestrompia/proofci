@@ -128,7 +128,7 @@ DECLARATION = re.compile(
 
 
 def apply(lean_source: str):
-    """Replace modelled axioms with definitions. Returns (source, applied paths)."""
+    """Replace modelled axioms with definitions. Returns (source, [(rust path, Lean name)])."""
     applied = []
 
     def replace(match):
@@ -140,9 +140,10 @@ def apply(lean_source: str):
                     body = model.body(found, decl)
                 except ValueError:
                     return match.group(0)
-                applied.append(path)
+                name = decl.split()[0]
+                applied.append((path, name))
                 definition = f"{match.group('attr')}def{decl.rstrip()} :=\n  {body}"
-                spec = model.spec(found, decl.split()[0]) if model.spec else None
+                spec = model.spec(found, name) if model.spec else None
                 return definition + (f"\n\n{spec}" if spec else "")
         return match.group(0)
 
