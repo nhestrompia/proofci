@@ -32,11 +32,12 @@ def bwrap():
     return path
 
 
-def run(argv, *, writable, cwd, readable=(), env=None, timeout=600):
+def run(argv, *, writable, cwd, readable=(), env=None, timeout=600, network=False):
     """Run `argv` with only `writable` directories writable and no network.
 
     `readable` paths are re-bound read-only (needed for paths under /tmp,
-    which the sandbox replaces with an empty tmpfs)."""
+    which the sandbox replaces with an empty tmpfs). `network` keeps the
+    host network (only for downloading dependencies)."""
     base_env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": "/tmp/home",
@@ -47,6 +48,7 @@ def run(argv, *, writable, cwd, readable=(), env=None, timeout=600):
     base_env.update(env or {})
     args = [
         bwrap(), "--die-with-parent", "--new-session", "--unshare-all",
+        *(["--share-net"] if network else []),
         "--ro-bind", "/", "/",
         "--tmpfs", "/tmp", "--dir", "/tmp/home",
         "--dev", "/dev", "--proc", "/proc",
