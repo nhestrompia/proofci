@@ -91,6 +91,91 @@ def adds_dependency(head):
     edit(head / "Cargo.toml", "[dependencies]\n", "[dependencies]\nserde = \"1\"\n")
 
 
+def _replace_proof(head, theorem, replacement):
+    """Replace the declaration of `theorem` in Proofs.lean with `replacement`."""
+    proofs = head / "proofci/Proofs.lean"
+    text = proofs.read_text()
+    start = text.index(f"theorem {theorem}")
+    nxt = text.find("\ntheorem ", start + 1)
+    proofs.write_text(text[:start] + replacement + ("\n" + text[nxt + 1:] if nxt != -1 else "\n"))
+
+
+FEE_CAPPED = ("theorem fee_capped (amount fee_bps : Std.U64) :\n"
+              "    calculate_fee amount fee_bps ⦃ fee => fee.val ≤ amount.val ⦄ := ")
+
+
+def proof_adds_axiom(head):
+    _replace_proof(head, "fee_capped", "axiom cheat : False\n\n" + FEE_CAPPED + "cheat.elim\n")
+
+
+def proof_uses_native_decide(head):
+    # native_decide trusts compiled code through the Lean.ofReduceBool axiom;
+    # the otherwise valid proof now depends on it.
+    proofs = head / "proofci/Proofs.lean"
+    text = proofs.read_text()
+    text = text.replace(FEE_CAPPED + "by\n",
+                        "theorem big : 2 ^ 20 % 7 = 4 := by native_decide\n\n" + FEE_CAPPED + "by\n  have := big\n", 1)
+    assert "native_decide" in text
+    proofs.write_text(text)
+
+
+def proof_bypasses_kernel(head):
+    # Add a proof of False without kernel checking, then use it.
+    _replace_proof(head, "fee_capped",
+                   "open Lean in\nrun_cmd Lean.Elab.Command.liftCoreM do\n"
+                   "  let decl : Declaration := .thmDecl ⟨⟨`bogus, [], mkConst ``False⟩, mkConst ``Nat.zero, [`bogus]⟩\n"
+                   "  withOptions (fun o => o.setBool `debug.skipKernelTC true) (addDecl decl)\n\n"
+                   + FEE_CAPPED + "(bogus).elim\n")
+
+
+def proof_reuses_contract(head):
+    # Importing the contract would let a proof cite the `sorry`ed statement.
+    proofs = head / "proofci/Proofs.lean"
+    text = proofs.read_text().replace("import Ledger\n", "import Ledger\nimport Contract\n", 1)
+    proofs.write_text(text)
+    _replace_proof(head, "fee_capped", "theorem fee_capped' (amount fee_bps : Std.U64) :\n"
+                   "    calculate_fee amount fee_bps ⦃ fee => fee.val ≤ amount.val ⦄ := fee_capped amount fee_bps\n")
+
+
+TAMPER = r"""
+-- While the proofs build, recompile the contract with a weaker statement into
+-- the build directory, then prove the weaker statement.
+#eval show IO Unit from do
+  IO.FS.writeFile ".lake/Contract.lean" "import Ledger\nopen Aeneas Aeneas.Std Result ledger\ntheorem fee_capped (amount fee_bps : Std.U64) : True := by sorry\n"
+  let r ← IO.Process.output { cmd := "lean", args := #["--root=.lake", "-o", ".lake/build/lib/lean/Contract.olean", ".lake/Contract.lean"] }
+  if r.exitCode != 0 then throw (IO.userError r.stderr)
+
+theorem fee_capped (amount fee_bps : Std.U64) : True := trivial
+"""
+
+
+def proof_tampers_with_build(head):
+    _replace_proof(head, "fee_capped", TAMPER)
+
+
+def proof_writes_sources(head):
+    # Elaboration-time code cannot change the contract or the extracted model.
+    _replace_proof(head, "fee_capped",
+                   "#eval show IO Unit from do\n"
+                   "  IO.FS.writeFile \"Contract.lean\" \"import Ledger\\ntheorem fee_capped : True := trivial\\n\"\n"
+                   "  IO.FS.writeFile \"Ledger.lean\" \"\"\n\n"
+                   "theorem fee_capped : True := trivial\n")
+
+
+def proof_import_broken(head):
+    edit(head / "proofci/Proofs.lean", "import Ledger\n", "import Ledger\nimport Proofs.Missing\n")
+
+
+def function_renamed(head):
+    edit(head / "src/lib.rs", "pub fn calculate_fee(", "pub fn compute_fee(")
+
+
+def calls_unmodelled_std(head):
+    # Aeneas has no model for this standard library function.
+    edit(head / "src/lib.rs", "    let bps = if fee_bps",
+         "    let _ = amount.reverse_bits();\n    let bps = if fee_bps")
+
+
 SCENARIOS = {
     "baseline": (None, dict.fromkeys(GUARANTEES, V), 0),
     "buggy-fee-rounds-up": (buggy_fee_rounds_up, {
@@ -108,6 +193,23 @@ SCENARIOS = {
         "fees/fee-capped": S, "fees/zero-amount": S, "transfer/conservation": S, "transfer/rejects-overdraft": S}, 1),
     "unsafe-code": (unsafe_code, dict.fromkeys(GUARANTEES, X), 1),
     "adds-dependency": (adds_dependency, dict.fromkeys(GUARANTEES, X), 1),
+    "proof-adds-axiom": (proof_adds_axiom, {
+        "fees/fee-capped": U, "fees/zero-amount": V, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "proof-uses-native-decide": (proof_uses_native_decide, {
+        "fees/fee-capped": U, "fees/zero-amount": V, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "proof-bypasses-kernel": (proof_bypasses_kernel, {
+        "fees/fee-capped": U, "fees/zero-amount": V, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    # Importing the contract makes every restated theorem a duplicate.
+    "proof-reuses-contract": (proof_reuses_contract, dict.fromkeys(GUARANTEES, U), 1),
+    "proof-tampers-with-build": (proof_tampers_with_build, {
+        "fees/fee-capped": U, "fees/zero-amount": V, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "proof-writes-sources": (proof_writes_sources, {
+        "fees/fee-capped": U, "fees/zero-amount": V, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "proof-import-broken": (proof_import_broken, dict.fromkeys(GUARANTEES, U), 1),
+    "function-renamed": (function_renamed, {
+        "fees/fee-capped": S, "fees/zero-amount": S, "transfer/conservation": S, "transfer/rejects-overdraft": S}, 1),
+    "calls-unmodelled-std": (calls_unmodelled_std, {
+        "fees/fee-capped": X, "fees/zero-amount": X, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
 }
 
 

@@ -206,18 +206,20 @@ docker run --rm --network none \
 ```
 
 [`tests/test_scenarios.py`](tests/test_scenarios.py) runs the real toolchain
-against adversarial changes to the example:
+against 20 adversarial changes to the example and checks every resulting
+status:
 
-- a buggy fee
-- an overflowing transfer
-- a `sorry`
-- a weakened statement
-- a fake model
-- a committed fake translation
-- a weakened policy
-- a signature change
-- `unsafe` code
-- a new dependency
+- **Wrong code:** a buggy fee, an overflowing transfer, a renamed function, a
+  changed signature, a call into standard-library code Aeneas does not model
+- **Fake proofs:** `sorry`, a weakened statement, a fake model of the code, a
+  committed fake translation, an extra `axiom`, `native_decide`, a theorem
+  added with kernel checking switched off, citing the contract's own `sorry`
+- **Attacks on the checker:** proof code that writes to the contract and model
+  sources, or recompiles a weaker contract into the build directory while it
+  builds (both rejected: proof code only ever runs in a disposable copy of
+  the workspace)
+- **Policy and scope:** a weakened policy, `unsafe` code, a new dependency, a
+  broken import
 
 ## License
 

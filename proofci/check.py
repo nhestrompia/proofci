@@ -188,9 +188,11 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 candidates.append(o)
 
         # 4. Judge the proofs: once for everything, then one by one to attribute.
+        # `ws` has only built trusted code so far. Proof code runs in copies.
         t0 = time.monotonic()
+        trial = lean.clone(ws, work / "proofs-build")
         if candidates:
-            removed = lean.build_proofs(ws)
+            removed = lean.build_proofs(trial)
             if removed is None:
                 for o in candidates:
                     o.status, o.reason = UNPROVEN, "the proofs do not build (see the job log)"
@@ -203,14 +205,19 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 if removed:
                     report.notes.append("removed failing declarations from Proofs.lean: "
                                         + ", ".join(sorted(removed)))
+        runs = iter(range(1, 1000))
+
+        def judge(theorems):
+            return lean.comparator(lean.clone(ws, work / f"judge-{next(runs)}", proofs_from=trial), theorems)
+
         if candidates:
-            verdict = lean.comparator(ws, [o.theorem for o in candidates])
+            verdict = judge([o.theorem for o in candidates])
             if verdict.accepted:
                 for o in candidates:
                     o.status, o.reason = VERIFIED, ""
             else:
                 for o in candidates:
-                    single = lean.comparator(ws, [o.theorem])
+                    single = judge([o.theorem])
                     o.status = VERIFIED if single.accepted else UNPROVEN
                     o.reason = single.reason
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
