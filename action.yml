@@ -9,8 +9,11 @@ inputs:
     description: Directory (relative to the repository root) that contains proofci.yaml.
     default: "."
   image:
-    description: Pinned ProofCI toolchain image (by digest).
-    default: ghcr.io/nhestrompia/proofci-toolchain@sha256:REPLACE_WITH_RELEASE_DIGEST
+    description: >-
+      Toolchain image. Leave empty to use the image published for the commit this
+      action is pinned to (`uses: owner/proofci@<commit sha>`); set it to pin a
+      digest explicitly.
+    default: ""
   base:
     description: >-
       Override the commit whose policy is enforced. Leave empty in real use (the
@@ -79,19 +82,37 @@ runs:
       run: sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
     - name: Pull the pinned toolchain
+      id: image
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
       run: |
+        if [ -z "$IMAGE" ]; then
+          if ! [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Pin ProofCI to a commit SHA (uses: ${ACTION_REPOSITORY:-owner/proofci}@<40-character sha>) or set the 'image' input."
+            exit 1
+          fi
+          owner="${ACTION_REPOSITORY%%/*}"
+          IMAGE="ghcr.io/${owner,,}/proofci-toolchain:${ACTION_REF}"
+        fi
         start=$(date +%s)
-        docker image inspect "$IMAGE" >/dev/null 2>&1 || docker pull -q "$IMAGE"
+        if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && ! docker pull -q "$IMAGE"; then
+          echo "::error::Could not pull $IMAGE. Images are published for commits on the ProofCI main branch."
+          exit 1
+        fi
         echo "Pulled toolchain in $(( $(date +%s) - start ))s"
+        digest=$(docker image inspect "$IMAGE" --format '{{join .RepoDigests " "}}')
+        echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+        echo "digest=${digest:-$IMAGE}" >> "$GITHUB_OUTPUT"
 
     - name: Verify guarantees
       id: check
       shell: bash
       env:
-        IMAGE: ${{ inputs.image }}
+        IMAGE: ${{ steps.image.outputs.image }}
+        IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         PROOFCI_PATH: ${{ inputs.path }}
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}

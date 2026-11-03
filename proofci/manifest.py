@@ -18,6 +18,7 @@ PROOFS_MODULE = "Proofs"
 MAX_MANIFEST_BYTES = 64 * 1024
 ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 RUST_PATH = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$")
+LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 LEAN_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$")
 
 
@@ -44,6 +45,10 @@ class Manifest:
     crate: str
     lean: str
     targets: tuple
+    # GitHub logins allowed to approve policy changes. None: any repository
+    # owner, member or collaborator other than the author; (): nobody, so the
+    # policy can only change through a commit to the protected branch.
+    approvers: tuple = None
 
     @property
     def contract(self):
@@ -63,6 +68,7 @@ class Manifest:
         return {
             "crate": self.crate,
             "lean": self.lean,
+            "approvers": None if self.approvers is None else sorted(self.approvers),
             "guarantees": {
                 f"{t.id}/{g.id}": {"function": t.function, "theorem": g.theorem, "required": g.required}
                 for t, g in self.guarantees()
@@ -114,7 +120,7 @@ def parse(data: bytes) -> Manifest:
         raw = yaml.load(data.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as error:
         raise ManifestError(f"manifest is not valid YAML: {error}") from None
-    _keys(raw, ("version", "crate", "lean", "targets"), ("version", "targets"), "manifest")
+    _keys(raw, ("version", "crate", "lean", "targets", "policy"), ("version", "targets"), "manifest")
     if raw["version"] != 1:
         raise ManifestError("only manifest version 1 is supported")
     crate = _relative_path(raw.get("crate", "."), "crate")
@@ -156,4 +162,11 @@ def parse(data: bytes) -> Manifest:
         targets.append(Target(entry["id"], entry["function"], tuple(guarantees)))
     if not any(g.required for t in targets for g in t.guarantees):
         raise ManifestError("at least one guarantee must be required")
-    return Manifest(crate, lean, tuple(targets))
+    approvers = None
+    if "policy" in raw:
+        _keys(raw["policy"], ("approvers",), ("approvers",), "policy")
+        logins = raw["policy"]["approvers"]
+        if not isinstance(logins, list) or not all(isinstance(x, str) and LOGIN.match(x) for x in logins):
+            raise ManifestError("policy.approvers must be a list of GitHub logins (may be empty)")
+        approvers = tuple(sorted({x.lower() for x in logins}))
+    return Manifest(crate, lean, tuple(targets), approvers)

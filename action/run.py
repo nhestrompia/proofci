@@ -66,7 +66,13 @@ def run_image(base, head, policy, out):
     return status, (json.loads(report.read_text()) if report.exists() else None)
 
 
-def approved_on(head_sha):
+def approved_on(head_sha, approvers):
+    """Login of a reviewer who may approve policy changes and approved
+    exactly `head_sha`, or None. `approvers` comes from the protected base
+    policy: None means any owner, member or collaborator other than the
+    author; an empty list means policy changes cannot be approved in a PR."""
+    if approvers is not None and not approvers:
+        return None
     number, token = os.environ.get("PR_NUMBER"), os.environ.get("GH_TOKEN")
     if not number or not token:
         return None
@@ -83,10 +89,14 @@ def approved_on(head_sha):
     for review in reviews:  # chronological; keep each reviewer's latest decision
         if review.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
             latest[review["user"]["login"]] = review
+    author = (os.environ.get("PR_AUTHOR") or "").lower()
     for login, review in latest.items():
-        if (review["state"] == "APPROVED" and review.get("commit_id") == head_sha
-                and login != os.environ.get("PR_AUTHOR")
-                and review.get("author_association") in TRUSTED_ASSOCIATIONS):
+        if review["state"] != "APPROVED" or review.get("commit_id") != head_sha or login.lower() == author:
+            continue
+        if approvers is None:
+            if review.get("author_association") in TRUSTED_ASSOCIATIONS:
+                return login
+        elif login.lower() in approvers:
             return login
     return None
 
@@ -99,7 +109,7 @@ def main():
     status, report = run_image(base, head, "base", out)
     approver = None
     if report and report["policy_changes"]:
-        approver = approved_on(os.environ["HEAD_SHA"])
+        approver = approved_on(os.environ["HEAD_SHA"], report.get("policy_approvers"))
         if approver:
             print(f"Policy change approved by {approver} on {os.environ['HEAD_SHA']}; "
                   "checking the candidate against its own policy.")
@@ -107,8 +117,14 @@ def main():
     summary = out / "summary.md"
     text = summary.read_text() if summary.exists() else "## ProofCI\n\nNo report was produced.\n"
     if report and report["policy_changes"] and not approver:
-        text += ("\nTo accept the policy change, a maintainer approves this pull request on the "
-                 "current commit and re-runs this job.\n")
+        allowed = report.get("policy_approvers")
+        if allowed is not None and not allowed:
+            text += ("\nThis repository's policy cannot be changed in a pull request (`policy.approvers` is "
+                     "empty); change it with a commit to the protected branch.\n")
+        else:
+            who = ", ".join(f"@{a}" for a in allowed) if allowed else "a maintainer other than the author"
+            text += (f"\nTo accept the policy change, {who} approves this pull request on the "
+                     "current commit and someone re-runs this job.\n")
     if approver:
         text += f"\nPolicy change approved by @{approver} on `{os.environ['HEAD_SHA'][:12]}`.\n"
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")

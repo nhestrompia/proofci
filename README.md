@@ -126,9 +126,11 @@ jobs:
     runs-on: ubuntu-latest      # any Linux runner, x86_64 or arm64
     timeout-minutes: 30
     steps:
-      - uses: nhestrompia/proofci@COMMIT_SHA   # pin a release commit
+      - uses: nhestrompia/proofci@COMMIT_SHA   # a commit on ProofCI's main branch
         with:
           path: .                              # directory containing proofci.yaml
+          # The toolchain image published for that commit is used automatically;
+          # set `image:` to pin a digest instead.
 ```
 
 Then make `ProofCI / proofci` a required status check in your branch
@@ -152,14 +154,24 @@ committed in the repository is ignored, because ProofCI regenerates it from
 the pull request's Rust.
 
 If a pull request removes a guarantee, makes it optional or edits the
-contract, the check is blocked and lists the change. It can pass only after
-two things happen:
+contract, the check is blocked and lists the change. Who can then accept it is
+itself part of the protected policy:
 
-1. A repository owner, member or collaborator who is not the author
-   **approves the pull request on that exact commit**.
-2. Someone re-runs the job.
+```yaml
+policy:
+  approvers: [alice, bob]   # only these people may approve policy changes
+```
 
-A later push needs a new approval.
+- **No `policy` section:** a repository owner, member or collaborator who is
+  not the author approves the pull request **on that exact commit**, and
+  someone re-runs the job.
+- **`approvers: [...]`:** only the listed people count (still never the
+  author, still on the exact commit).
+- **`approvers: []`:** the policy can't be changed in a pull request at all;
+  it changes only through a commit to the protected branch.
+
+A later push needs a new approval. Changing `policy.approvers` is itself a
+policy change.
 
 ## Results
 

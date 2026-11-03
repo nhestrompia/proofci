@@ -48,6 +48,7 @@ class Report:
     outcomes: list = field(default_factory=list)
     policy_source: str = "base"
     policy_changes: list = field(default_factory=list)
+    policy_approvers: object = None   # from the protected base policy
     notes: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)
 
@@ -63,6 +64,7 @@ class Report:
             "passed": self.passed,
             "policy_source": self.policy_source,
             "policy_changes": self.policy_changes,
+            "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
             "guarantees": [o.__dict__ for o in self.outcomes],
             "notes": self.notes,
             "timings_seconds": self.timings,
@@ -99,6 +101,8 @@ def policy_changes(base_checkout, base, head_checkout, head):
     for key in ("crate", "lean"):
         if old[key] != new[key]:
             changes.append(f"`{key}` changed from `{old[key]}` to `{new[key]}`")
+    if old["approvers"] != new["approvers"]:
+        changes.append("`policy.approvers` changed")
     for gid, spec in old["guarantees"].items():
         if gid not in new["guarantees"]:
             changes.append(f"guarantee `{gid}` was removed")
@@ -125,6 +129,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
     except (ConfigError, manifest_mod.ManifestError):
         head = None
     report.policy_changes = policy_changes(base_checkout, base, head_checkout, head)
+    report.policy_approvers = base.approvers
     if policy == "head":
         if head is None:
             raise ConfigError("the candidate has no valid proofci.yaml")

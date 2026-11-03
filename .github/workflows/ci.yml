@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - run: python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user --quiet pyyaml
       - run: python3 -m compileall -q proofci action tests
-      - run: python3 -m unittest tests.test_manifest tests.test_models -v
+      - run: python3 -m unittest tests.test_manifest tests.test_models tests.test_action -v
 
   plan:
     runs-on: ubuntu-24.04
