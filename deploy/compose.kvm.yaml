@@ -1,5 +1,0 @@
-# Add on hosts with KVM: docker compose -f deploy/compose.yaml -f deploy/compose.kvm.yaml up -d
-# The launcher passes /dev/kvm to the verifier VM only when the control process can see it.
-services:
-  control:
-    devices: ["/dev/kvm:/dev/kvm"]

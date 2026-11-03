@@ -1,0 +1,22 @@
+# Which guarantees ProofCI enforces on every pull request.
+# Their exact meaning is the Lean statement in proofci/Contract.lean.
+version: 1
+crate: .
+lean: proofci
+
+targets:
+  - id: fees
+    function: ledger::calculate_fee
+    guarantees:
+      - id: fee-capped
+        theorem: fee_capped           # never panics; fee <= amount
+      - id: zero-amount
+        theorem: zero_amount_no_fee   # no fee on a zero amount
+
+  - id: transfer
+    function: ledger::transfer
+    guarantees:
+      - id: conservation
+        theorem: transfer_conserves   # never panics; balances are conserved
+      - id: rejects-overdraft
+        theorem: transfer_rejects_overdraft

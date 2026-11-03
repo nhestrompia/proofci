@@ -1,0 +1,88 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  toolchain:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the pinned toolchain image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: toolchain/Dockerfile
+          platforms: linux/arm64
+          tags: proofci-toolchain:ci
+          load: true
+          cache-from: type=gha,scope=toolchain
+          cache-to: type=gha,scope=toolchain,mode=max
+      - name: Unit tests
+        run: >-
+          docker run --rm -v "$PWD:/src:ro" -w /src -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python3
+          proofci-toolchain:ci -m unittest discover -s tests -p 'test_manifest.py' -v
+      - name: Allow nested sandboxes on this disposable runner
+        run: sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Adversarial scenarios against the real toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/scenarios" && chmod 777 "$RUNNER_TEMP/scenarios"
+          docker run --rm --network none \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
+            -e PROOFCI_TOOLCHAIN=1 -e PROOFCI_SCENARIO_OUTPUT=/scenarios -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_scenarios -v
+      - name: Scenario reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scenario-reports
+          path: ${{ runner.temp }}/scenarios/
+          if-no-files-found: ignore
+      - name: Run the action on the example (policy from this commit)
+        uses: ./
+        with:
+          path: examples/ledger
+          image: proofci-toolchain:ci
+          base: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: toolchain
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the toolchain image
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: toolchain/Dockerfile
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ghcr.io/${{ github.repository_owner }}/proofci-toolchain:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=toolchain
+      - name: Record the digest
+        run: |
+          echo "Image: ghcr.io/${{ github.repository_owner }}/proofci-toolchain@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
