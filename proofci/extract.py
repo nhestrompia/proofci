@@ -28,7 +28,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import sandbox
+from . import models, sandbox
 
 MAX_STAGED_BYTES = 64 * 1024 * 1024
 MAX_STAGED_FILES = 5000
@@ -48,6 +48,7 @@ class Extraction:
     lean_file: Path      # generated Lean source
     crate_name: str
     log: str
+    modelled: list = None   # library functions given ProofCI models
 
 
 @dataclass
@@ -338,7 +339,10 @@ def extract(checkout: Path, crate_rel: str, work: Path, start_from=(), vendor_di
     lean_file = out / f"{module}.lean"
     if aeneas.status != 0 or not lean_file.is_file():
         raise Unsupported("Aeneas could not translate the code:\n" + _tail(aeneas.output))
-    return Extraction(module, lean_file, staged.crate_name, charon.output + aeneas.output)
+    # Library functions Aeneas left as axioms get ProofCI's trusted models.
+    source, modelled = models.apply(lean_file.read_text())
+    lean_file.write_text(source)
+    return Extraction(module, lean_file, staged.crate_name, charon.output + aeneas.output, modelled)
 
 
 PROGRESS = re.compile(r"\[[#-]{5,}\]|^\s*$|cargo miri setup|rustup component add miri|"

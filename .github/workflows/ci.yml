@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - run: python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user --quiet pyyaml
       - run: python3 -m compileall -q proofci action tests
-      - run: python3 -m unittest discover -s tests -p 'test_manifest.py' -v
+      - run: python3 -m unittest tests.test_manifest tests.test_models -v
 
   plan:
     runs-on: ubuntu-24.04
@@ -102,6 +102,13 @@ jobs:
             -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios \
             --shard ${{ matrix.shard }}/5 --jobs 4 --output /scenarios
+      - name: Standard-library models agree with Rust
+        if: matrix.shard == 1
+        run: >-
+          docker run --rm --network none
+          --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+          -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 -e PROOFCI_TOOLCHAIN=1
+          --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models -v
       - name: Scenario reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -160,6 +167,12 @@ jobs:
             -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
             -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios --jobs 4 --output /scenarios
+      - name: Standard-library models agree with Rust
+        run: >-
+          docker run --rm --network none
+          --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+          -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 -e PROOFCI_TOOLCHAIN=1
+          --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models -v
       - name: Scenario reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
