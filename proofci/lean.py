@@ -112,6 +112,32 @@ def assemble(root: Path, extracted_file: Path, crate_module: str, contract_dir: 
     return Workspace(root, crate_module)
 
 
+def clone(ws, dest: Path, proofs_from=None):
+    """Copy a workspace, including its build directory.
+
+    Proof code runs while proofs are built, and that build can write to
+    `.lake`. Every step that runs proof code therefore gets its own copy of a
+    workspace in which only trusted code (the extracted model and the
+    contract) has ever been built. In particular, a compiled contract that a
+    proof overwrote is never shown to the comparator. With `proofs_from`, the
+    proof sources are taken from that workspace instead.
+    """
+    shutil.copytree(ws.root, dest, symlinks=True)
+    if proofs_from is not None:
+        for name in ("Proofs.lean", "Proofs"):
+            target = dest / name
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+            source = proofs_from.root / name
+            if source.is_dir():
+                shutil.copytree(source, target, symlinks=True)
+            elif source.is_file():
+                shutil.copyfile(source, target)
+    return Workspace(dest, ws.crate_module, list(ws.theorems))
+
+
 def _lake(ws, args, timeout=900):
     return sandbox.run(["lake", *args], readable=[ws.root], writable=[ws.root / ".lake"],
                        cwd=ws.root, timeout=timeout)
@@ -187,9 +213,10 @@ def _blocks(lines):
 def build_proofs(ws, max_rounds=8):
     """Build the proof module, deleting declarations that fail to elaborate.
 
-    Returns {theorem name: Lean error} for removed declarations. Removing a
-    declaration can only make fewer theorems provable, so the comparator's
-    verdict on what remains is still sound. Returns None when the proofs
+    Returns {theorem name: Lean error} for removed declarations. This only
+    decides which proofs reach the comparator; the comparator re-checks
+    everything that remains against the protected statements, so removal
+    cannot make a false guarantee pass. Returns None when the proofs
     cannot be built even after removals (e.g. an error in an import).
     """
     removed = {}
@@ -202,8 +229,11 @@ def build_proofs(ws, max_rounds=8):
         error_lines = sorted({int(a or b) - 1 for a, b in ERROR_LINE.findall(text)})
         lines = path.read_text().splitlines()
         doomed = []
-        for start, end, is_decl in _blocks(lines):
-            if is_decl and any(start <= n < end for n in error_lines):
+        for start, end, _ in _blocks(lines):
+            # Any failing top-level block (declaration or command such as
+            # `#eval`) is removed; imports are not, as removing one changes
+            # what every later declaration means.
+            if not lines[start].startswith("import ") and any(start <= n < end for n in error_lines):
                 doomed.append((start, end))
         if not doomed:
             return None
@@ -268,6 +298,12 @@ def _comparator_run(ws, timeout):
 
 def classify(output):
     text = output
+    if "kernel rejected the solution" in text:
+        return "the Lean kernel rejects the proof"
+    if "statement do not match" in text or "statements do not match" in text:
+        match = re.search(r"do not match: '([^']+)'", text)
+        name = f" `{match.group(1)}`" if match else ""
+        return f"the proof of{name} states something different from the contract"
     if "Building Proofs" in text and re.search(r"error: .*Proofs", text) and "Exporting" not in text.split("Building Proofs", 1)[1]:
         return "the proofs do not build:\n" + _errors(text.split("Building Proofs", 1)[1])
     if "sorryAx" in text or "uses `sorry`" in text.split("Building Proofs", 1)[-1]:
