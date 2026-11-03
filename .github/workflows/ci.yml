@@ -246,6 +246,8 @@ jobs:
 
   release-image:
     needs: publish
+    # always(): otherwise the skipped fast- or slow-path jobs upstream skip this too.
+    if: always() && needs.publish.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

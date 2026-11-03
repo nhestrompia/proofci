@@ -35,7 +35,22 @@ def main(argv=None):
     f.add_argument("--head", type=Path, required=True)
     f.add_argument("--policy", choices=("base", "head"), default="base")
     f.add_argument("--out", type=Path, required=True, help="directory to vendor the dependencies into")
+    d = sub.add_parser("dev", help="rebuild the proofs quickly and show Lean's messages (for authors)")
+    d.add_argument("--repo", type=Path, default=Path("."), help="checkout with proofci.yaml")
+    d.add_argument("--work-dir", type=Path, default=Path("/tmp/proofci-dev"))
+    d.add_argument("--vendor", type=Path, help="crates.io dependencies downloaded by `proofci fetch`")
+    d.add_argument("--judge", action="store_true", help="also run the comparator on each guarantee")
     args = parser.parse_args(argv)
+
+    if args.command == "dev":
+        from . import dev
+        try:
+            return dev.run(args.repo, args.work_dir.resolve(),
+                           args.vendor.resolve() if args.vendor else None, args.judge)
+        except (check_mod.ConfigError, manifest.ManifestError, sandbox.SandboxUnavailable,
+                FileNotFoundError, ValueError) as error:
+            print(f"proofci: {error}", file=sys.stderr)
+            return 2
 
     if args.command == "fetch":
         try:
