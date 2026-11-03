@@ -202,9 +202,17 @@ users pull it.
 docker buildx build -f toolchain/Dockerfile -t proofci-toolchain:dev --load .
 docker run --rm --network none \
   --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-  -v "$PWD:/src:ro" -w /src -e PROOFCI_TOOLCHAIN=1 -e PYTHONPATH=/src \
-  --entrypoint python3 proofci-toolchain:dev -m unittest discover -s tests -v
+  -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src \
+  --entrypoint python3 proofci-toolchain:dev -m tests.run_scenarios --jobs 4
 ```
+
+The image is built in two parts. The **toolchain base** (`--target toolchain`)
+holds Rust, Charon, Lean, Mathlib and Aeneas and changes only when a pin in
+`toolchain/` changes. `main` publishes it under a hash of `toolchain/`.
+[`toolchain/Release.Dockerfile`](toolchain/Release.Dockerfile) adds ProofCI's
+code on top in seconds. Pull requests that leave `toolchain/` alone pull the
+published base and run the scenarios as 5 parallel shards per architecture.
+Pull requests that change a pin rebuild the base, which takes about 20 minutes.
 
 [`tests/test_scenarios.py`](tests/test_scenarios.py) runs the real toolchain
 against 20 adversarial changes to the example and checks every resulting

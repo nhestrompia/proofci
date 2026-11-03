@@ -117,8 +117,10 @@ RUN lake exe cache get && lake build Aeneas && lake build --no-build Aeneas \
 FROM lean AS lean-run
 RUN find /opt/lean/lib -name '*.a' -delete
 
-# ----------------------------------------------------------------- final image
-FROM base
+# ------------------------------------------------------------ toolchain base
+# Everything except ProofCI's own code. It changes only when a pin changes, so
+# CI publishes it under a hash of toolchain/ and pull requests reuse it.
+FROM base AS toolchain
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo \
     PATH=/opt/charon/bin:/opt/aeneas:/opt/lean/bin:/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
     PROOFCI_AENEAS_LEAN=/opt/aeneas/backends/lean PYTHONPATH=/opt/proofci
@@ -127,10 +129,15 @@ COPY --from=rust-run /opt/cargo /opt/cargo
 COPY --from=charon /opt/charon /opt/charon
 COPY --from=lean-run /opt/lean /opt/lean
 COPY --from=aeneas /opt/aeneas /opt/aeneas
-COPY proofci /opt/proofci/proofci
 # bubblewrap (used by ProofCI and lake comparator) mounts a tmpfs here.
 RUN mkdir -p /run/user && chmod 1777 /run/user
 ENV HOME=/tmp
 USER 1000:1000
 WORKDIR /work
 ENTRYPOINT ["python3", "-m", "proofci"]
+
+# --------------------------------------------------------------- final image
+# The released image: the toolchain plus ProofCI. toolchain/Release.Dockerfile
+# adds the same layer on top of a published toolchain base.
+FROM toolchain
+COPY proofci /opt/proofci/proofci

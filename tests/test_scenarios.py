@@ -213,47 +213,83 @@ SCENARIOS = {
 }
 
 
+def run_scenario(name, out_dir=None):
+    """Run one scenario. Returns a list of mismatches (empty when it passed)."""
+    mutate, expected, expected_exit = SCENARIOS[name]
+    with tempfile.TemporaryDirectory() as tmp:
+        base, head = Path(tmp) / "base", Path(tmp) / "head"
+        shutil.copytree(EXAMPLE, base)
+        shutil.copytree(EXAMPLE, head)
+        if mutate:
+            mutate(head)
+        report = Path(tmp) / "report.json"
+        done = subprocess.run(
+            [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report],
+            cwd=ROOT, capture_output=True, text=True, timeout=3600)
+        if not report.exists():
+            return [f"no report:\n{done.stdout}{done.stderr}"]
+        data = json.loads(report.read_text())
+        if out_dir:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(report, Path(out_dir) / f"{name}.json")
+    statuses = {f"{g['target']}/{g['guarantee']}": g["status"] for g in data["guarantees"]}
+    problems = []
+    if statuses != expected:
+        problems.append(f"statuses {statuses} != expected {expected}")
+    if done.returncode != expected_exit:
+        problems.append(f"exit {done.returncode} != expected {expected_exit}")
+    if name == "weaken-policy" and not data["policy_changes"]:
+        problems.append("policy change not reported")
+    if problems:
+        problems.append(done.stdout[-4000:])
+    return problems
+
+
 @unittest.skipUnless(os.environ.get("PROOFCI_TOOLCHAIN"), "needs the ProofCI toolchain image")
 class Scenarios(unittest.TestCase):
-    results = {}
-
-    def run_scenario(self, name):
-        mutate, expected, expected_exit = SCENARIOS[name]
-        with tempfile.TemporaryDirectory() as tmp:
-            base, head = Path(tmp) / "base", Path(tmp) / "head"
-            shutil.copytree(EXAMPLE, base)
-            shutil.copytree(EXAMPLE, head)
-            if mutate:
-                mutate(head)
-            report = Path(tmp) / "report.json"
-            done = subprocess.run(
-                [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report],
-                cwd=ROOT, capture_output=True, text=True, timeout=3600)
-            self.assertTrue(report.exists(), done.stdout + done.stderr)
-            data = json.loads(report.read_text())
-            statuses = {f"{g['target']}/{g['guarantee']}": g["status"] for g in data["guarantees"]}
-            self.results[name] = {"exit": done.returncode, "statuses": statuses,
-                                  "policy_changes": data["policy_changes"], "timings": data["timings_seconds"]}
-            out_dir = os.environ.get("PROOFCI_SCENARIO_OUTPUT")
-            if out_dir:
-                Path(out_dir).mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(report, Path(out_dir) / f"{name}.json")
-            self.assertEqual(statuses, expected, done.stdout)
-            self.assertEqual(done.returncode, expected_exit, done.stdout)
-            if name == "weaken-policy":
-                self.assertTrue(data["policy_changes"])
-            return data
+    pass
 
 
 def _make(name):
     def test(self):
-        self.run_scenario(name)
+        problems = run_scenario(name, os.environ.get("PROOFCI_SCENARIO_OUTPUT"))
+        self.assertFalse(problems, "\n".join(problems))
     test.__name__ = "test_" + name.replace("-", "_")
     return test
 
 
 for _name in SCENARIOS:
     setattr(Scenarios, "test_" + _name.replace("-", "_"), _make(_name))
+
+
+def main(argv=None):
+    """Run scenarios in parallel (see tests/run_scenarios.py)."""
+    import argparse
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--shard", default="1/1", help="run the i-th of n interleaved shards")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
+    parser.add_argument("--output", default=os.environ.get("PROOFCI_SCENARIO_OUTPUT"))
+    parser.add_argument("names", nargs="*")
+    args = parser.parse_args(argv)
+    index, count = map(int, args.shard.split("/"))
+    names = args.names or list(SCENARIOS)
+    names = names[index - 1::count]
+
+    def one(name):
+        started = time.monotonic()
+        return name, run_scenario(name, args.output), time.monotonic() - started
+
+    failed = 0
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        for name, problems, seconds in pool.map(one, names):
+            print(f"{'ok  ' if not problems else 'FAIL'} {name} ({seconds:.0f}s)", flush=True)
+            if problems:
+                failed += 1
+                print("\n".join("     " + line for line in "\n".join(problems).splitlines()), flush=True)
+    print(f"{len(names) - failed}/{len(names)} scenarios passed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -9,8 +9,11 @@ caller re-runs with `policy="head"`.
 """
 
 import hashlib
+import itertools
+import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +24,8 @@ UNPROVEN = "unproven"
 UNSUPPORTED = "unsupported"
 CONTRACT_STALE = "contract-stale"
 ERROR = "error"
+
+PARALLEL_JUDGES = int(os.environ.get("PROOFCI_PARALLEL_JUDGES") or max(1, (os.cpu_count() or 2) // 2))
 
 
 class ConfigError(Exception):
@@ -187,11 +192,34 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             else:
                 candidates.append(o)
 
-        # 4. Judge the proofs: once for everything, then one by one to attribute.
-        # `ws` has only built trusted code so far. Proof code runs in copies.
+        # 4. Judge the proofs. `ws` has only built trusted code; proof code
+        # only ever runs in disposable copies of it.
+        #   a. The comparator judges the proofs as submitted. If it accepts,
+        #      every candidate is verified (the common case: one proof build).
+        #   b. Otherwise, remove declarations that do not elaborate, judge what
+        #      remains, and if that is rejected too, judge each theorem alone
+        #      (in parallel) to attribute the failure.
         t0 = time.monotonic()
-        trial = lean.clone(ws, work / "proofs-build")
+        runs = itertools.count(1)
+
+        def judge(theorems, proofs_from=None):
+            return lean.comparator(
+                lean.clone(ws, work / f"judge-{next(runs)}", proofs_from=proofs_from), theorems)
+
+        def judge_each(items, proofs_from):
+            with ThreadPoolExecutor(max_workers=min(len(items), PARALLEL_JUDGES)) as pool:
+                names = [[o.theorem] for o in items]
+                for o, single in zip(items, list(pool.map(lambda n: judge(n, proofs_from), names))):
+                    o.status = VERIFIED if single.accepted else UNPROVEN
+                    o.reason = single.reason
+
+        first = judge([o.theorem for o in candidates]) if candidates else None
+        if first and first.accepted:
+            for o in candidates:
+                o.status, o.reason = VERIFIED, ""
+            candidates = []
         if candidates:
+            trial = lean.clone(ws, work / "proofs-build")
             removed = lean.build_proofs(trial)
             if removed is None:
                 for o in candidates:
@@ -205,21 +233,22 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 if removed:
                     report.notes.append("removed failing declarations from Proofs.lean: "
                                         + ", ".join(sorted(removed)))
-        runs = iter(range(1, 1000))
-
-        def judge(theorems):
-            return lean.comparator(lean.clone(ws, work / f"judge-{next(runs)}", proofs_from=trial), theorems)
-
-        if candidates:
-            verdict = judge([o.theorem for o in candidates])
-            if verdict.accepted:
-                for o in candidates:
-                    o.status, o.reason = VERIFIED, ""
-            else:
-                for o in candidates:
-                    single = judge([o.theorem])
-                    o.status = VERIFIED if single.accepted else UNPROVEN
-                    o.reason = single.reason
+            if candidates and not removed:
+                # The proofs build as submitted, so the first verdict stands
+                # for the set; judge each theorem to attribute it.
+                if len(candidates) == 1:
+                    candidates[0].status, candidates[0].reason = UNPROVEN, first.reason
+                else:
+                    judge_each(candidates, trial)
+            elif candidates:
+                verdict = judge([o.theorem for o in candidates], trial)
+                if verdict.accepted:
+                    for o in candidates:
+                        o.status, o.reason = VERIFIED, ""
+                elif len(candidates) == 1:
+                    candidates[0].status, candidates[0].reason = UNPROVEN, verdict.reason
+                else:
+                    judge_each(candidates, trial)
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report

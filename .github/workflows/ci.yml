@@ -5,49 +5,161 @@ on:
     branches: [main]
 permissions:
   contents: read
+  packages: read
   pull-requests: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  REPO: ghcr.io/${{ github.repository_owner }}/proofci-toolchain
+
+# The toolchain image is split in two:
+#   base     Rust, Charon, Lean, Mathlib, Aeneas. Changes only with a pin in
+#            toolchain/, so it is tagged `base-<hash of toolchain/>-<arch>`.
+#            Only pushes to main publish it, built from main's own sources.
+#   release  ProofCI's code on top of the base (toolchain/Release.Dockerfile),
+#            built in seconds.
+# Pull requests that leave toolchain/ alone pull the published base and run
+# the scenarios in parallel shards. Pull requests that change it (and the
+# first main run after a pin bump) build the base themselves: the slow path.
 jobs:
-  toolchain:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    name: toolchain (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 150
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build the pinned toolchain image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - run: python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user --quiet pyyaml
+      - run: python3 -m compileall -q proofci action tests
+      - run: python3 -m unittest discover -s tests -p 'test_manifest.py' -v
+
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+      cached: ${{ steps.cached.outputs.cached }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          context: .
-          file: toolchain/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          tags: proofci-toolchain:ci
-          load: true
-          cache-from: type=gha,scope=toolchain-${{ matrix.arch }}
-          cache-to: type=gha,scope=toolchain-${{ matrix.arch }},mode=max
-      - name: Unit tests
-        run: >-
-          docker run --rm -v "$PWD:/src:ro" -w /src -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python3
-          proofci-toolchain:ci -m unittest discover -s tests -p 'test_manifest.py' -v
+          persist-credentials: false
+      - id: hash
+        run: echo "hash=$(cat toolchain/Dockerfile toolchain/prune.py .dockerignore | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: cached
+        env:
+          HASH: ${{ steps.hash.outputs.hash }}
+        run: |
+          cached=true
+          for arch in amd64 arm64; do
+            docker manifest inspect "$REPO:base-$HASH-$arch" >/dev/null 2>&1 || cached=false
+          done
+          echo "Toolchain base $HASH published: $cached"
+          echo "cached=$cached" >> "$GITHUB_OUTPUT"
+
+  # Fast path: published base, scenarios split over 5 parallel jobs per arch.
+  scenarios:
+    needs: plan
+    if: needs.plan.outputs.cached == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        shard: [1, 2, 3, 4, 5]
+    name: scenarios (${{ matrix.arch }} ${{ matrix.shard }}/5)
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the toolchain base and add ProofCI
+        env:
+          BASE: ${{ env.REPO }}:base-${{ needs.plan.outputs.hash }}-${{ matrix.arch }}
+        run: |
+          start=$(date +%s)
+          docker pull -q "$BASE"
+          echo "pulled in $(( $(date +%s) - start ))s"
+          docker build -q -f toolchain/Release.Dockerfile --build-arg BASE="$BASE" -t proofci-toolchain:ci .
       - name: Allow nested sandboxes on this disposable runner
         run: sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Adversarial scenarios against the real toolchain
+      - name: Scenarios (shard ${{ matrix.shard }} of 5)
         run: |
           mkdir -p "$RUNNER_TEMP/scenarios" && chmod 777 "$RUNNER_TEMP/scenarios"
           docker run --rm --network none \
             --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
             -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
-            -e PROOFCI_TOOLCHAIN=1 -e PROOFCI_SCENARIO_OUTPUT=/scenarios -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
-            --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_scenarios -v
+            -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios \
+            --shard ${{ matrix.shard }}/5 --jobs 4 --output /scenarios
+      - name: Scenario reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scenario-reports-${{ matrix.arch }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/scenarios/
+          if-no-files-found: ignore
+      - name: Run the action on the example (policy from this commit)
+        if: matrix.shard == 1
+        uses: ./
+        with:
+          path: examples/ledger
+          image: proofci-toolchain:ci
+          base: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  # Slow path: build the base (a pin changed or it is not published yet).
+  toolchain:
+    needs: plan
+    if: needs.plan.outputs.cached != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    name: toolchain (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the toolchain base
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: toolchain/Dockerfile
+          target: toolchain
+          platforms: linux/${{ matrix.arch }}
+          tags: proofci-toolchain:base
+          load: true
+          cache-from: type=gha,scope=toolchain-${{ matrix.arch }}
+          cache-to: type=gha,scope=toolchain-${{ matrix.arch }},mode=max
+      - name: Add ProofCI
+        run: docker build -q -f toolchain/Release.Dockerfile --build-arg BASE=proofci-toolchain:base -t proofci-toolchain:ci .
+      - name: Allow nested sandboxes on this disposable runner
+        run: sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Scenarios
+        run: |
+          mkdir -p "$RUNNER_TEMP/scenarios" && chmod 777 "$RUNNER_TEMP/scenarios"
+          docker run --rm --network none \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
+            -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios --jobs 4 --output /scenarios
       - name: Scenario reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -61,20 +173,40 @@ jobs:
           path: examples/ledger
           image: proofci-toolchain:ci
           base: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Log in to publish the toolchain base (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the toolchain base (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: toolchain/Dockerfile
+          target: toolchain
+          platforms: linux/${{ matrix.arch }}
+          provenance: false
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          # zstd layers decompress several times faster than gzip on pull.
+          outputs: type=image,name=${{ env.REPO }}:base-${{ needs.plan.outputs.hash }}-${{ matrix.arch }},push=true,compression=zstd,compression-level=3,force-compression=true
+          cache-from: type=gha,scope=toolchain-${{ matrix.arch }}
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: toolchain
+    needs: [unit, plan, scenarios, toolchain]
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.unit.result == 'success'
+      && (needs.scenarios.result == 'success' || needs.toolchain.result == 'success')
+      && needs.scenarios.result != 'failure' && needs.toolchain.result != 'failure'
     strategy:
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        arch: [amd64, arm64]
     name: publish (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 150
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -88,21 +220,21 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish the toolchain image for this architecture
+      - name: Publish ProofCI on top of the published base
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: toolchain/Dockerfile
+          file: toolchain/Release.Dockerfile
+          build-args: BASE=${{ env.REPO }}:base-${{ needs.plan.outputs.hash }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
-          push: true
           provenance: false
-          tags: ghcr.io/${{ github.repository_owner }}/proofci-toolchain:${{ github.sha }}-${{ matrix.arch }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=toolchain-${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REPO }}:${{ github.sha }}-${{ matrix.arch }},push=true,compression=zstd
 
   release-image:
     needs: publish
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: write
@@ -115,7 +247,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Combine both architectures under one tag
         env:
-          REPO: ghcr.io/${{ github.repository_owner }}/proofci-toolchain
           SHA: ${{ github.sha }}
         run: |
           docker buildx imagetools create -t "$REPO:$SHA" "$REPO:$SHA-amd64" "$REPO:$SHA-arm64"
