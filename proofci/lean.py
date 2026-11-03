@@ -82,6 +82,45 @@ def _copy_lean_tree(source_dir: Path, module: str, dest: Path, required=True):
         target.write_bytes(data)
 
 
+FROM_PAIRS = [  # lossless conversions Aeneas defines, with their `from_val_eq` lemmas
+    ("U16", "U8"), ("U32", "U8"), ("U32", "U16"), ("U64", "U8"), ("U64", "U16"), ("U64", "U32"),
+    ("U128", "U8"), ("U128", "U16"), ("U128", "U32"), ("U128", "U64"),
+    ("Usize", "U8"), ("Usize", "U16"), ("Usize", "U32"),
+    ("I16", "I8"), ("I32", "I8"), ("I32", "I16"), ("I64", "I8"), ("I64", "I16"), ("I64", "I32"),
+    ("I128", "I8"), ("I128", "I16"), ("I128", "I32"), ("I128", "I64"),
+    ("Isize", "I8"), ("Isize", "I16"), ("Isize", "I32"),
+]
+SCALARS = ["U8", "U16", "U32", "U64", "U128", "Usize", "I8", "I16", "I32", "I64", "I128", "Isize"]
+
+
+def specs_module():
+    """`ProofciSpecs`: step lemmas for common library calls that Aeneas
+    defines but gives no `@[step]` spec. Proof modules may `import ProofciSpecs`.
+    Every lemma is proved, so importing it adds nothing to what is trusted."""
+    lines = ["import Aeneas", "open Aeneas Aeneas.Std Result", "", "namespace ProofciSpecs", ""]
+    for dst, src in FROM_PAIRS:
+        f = f"core.convert.num.From{dst}{src}.from"
+        lines += [f"@[step] theorem from_{dst.lower()}_{src.lower()} (x : Std.{src}) :",
+                  f"    lift ({f} x) ⦃ y => y.val = x.val ⦄ := by",
+                  f"  simp [lift, WP.spec_ok, core.convert.num.From{dst}{src}.from_val_eq]", ""]
+    for ty in SCALARS:
+        lines += [f"@[step] theorem cmp_{ty.lower()} (a b : Std.{ty}) :",
+                  f"    lift (core.cmp.impls.Ord{ty}.cmp a b) ⦃ o => o = compare a.val b.val ⦄ := by",
+                  f"  simp [lift, WP.spec_ok, core.cmp.impls.Ord{ty}.cmp]", ""]
+    lines += [
+        "@[step] theorem ok_or_some {T E : Type _} (v : T) (e : E) :",
+        "    core.option.Option.ok_or (some v) e ⦃ r => r = .Ok v ⦄ := by",
+        "  simp [core.option.Option.ok_or, WP.spec_ok]", "",
+        "@[step] theorem ok_or_none {T E : Type _} (e : E) :",
+        "    core.option.Option.ok_or (none : Option T) e ⦃ r => r = .Err e ⦄ := by",
+        "  simp [core.option.Option.ok_or, WP.spec_ok]", "",
+        "@[step] theorem map_err_ok {T E F O : Type _} (fnOnce : core.ops.function.FnOnce O E F) (v : T) (f : O) :",
+        "    core.result.Result.map_err fnOnce (.Ok v) f ⦃ r => r = .Ok v ⦄ := by",
+        "  simp [core.result.Result.map_err, WP.spec_ok]", "",
+        "end ProofciSpecs", ""]
+    return "\n".join(lines)
+
+
 def _lib(module, root):
     if (root / module).is_dir():
         return f"lean_lib {module} where\n  globs := #[.andSubmodules `{module}]\n"
@@ -100,11 +139,13 @@ def assemble(root: Path, extracted_file: Path, crate_module: str, contract_dir: 
     shutil.copyfile(extracted_file, root / f"{crate_module}.lean")
     _copy_lean_tree(contract_dir, "Contract", root)
     _copy_lean_tree(proofs_dir, "Proofs", root, required=False)
+    (root / "ProofciSpecs.lean").write_text(specs_module())
     (root / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\n"
         "package proofci_check\n"
         f'require aeneas from "{aeneas_lean_dir()}"\n'
         f"lean_lib {crate_module}\n"
+        "lean_lib ProofciSpecs\n"
         + _lib("Contract", root) + _lib("Proofs", root)
     )
     (root / "lake-manifest.json").write_text(json.dumps(_lake_manifest("proofci_check"), indent=1))
