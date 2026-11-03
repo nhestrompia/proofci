@@ -42,6 +42,51 @@ CASES = [
     ("question_mark", ["u64", "bool"], "o", [(1, True), (9, False)]),
 ]
 
+# Exhaustive checks: every input of the 8- and 16-bit instances. A model's
+# Lean code is the same template for every width, so this is strong evidence
+# for the wider types, which the boundary cases above cover.
+EXHAUSTIVE = ["abs_diff_u8", "unsigned_abs_i8", "is_negative_i8", "i8_to_u8", "u8_to_i8", "u16_to_u8", "i16_to_i8"]
+
+EXHAUSTIVE_RUST = r"""
+    for a in 0..=255u8 {
+        let row: Vec<String> = (0..=255u8).map(|b| abs_diff_u8(a, b).to_string()).collect();
+        println!("EX abs_diff_u8 {}: {}", a, row.join(" "));
+    }
+    let row: Vec<String> = (-128..=127i8).map(|x| unsigned_abs_i8(x).to_string()).collect();
+    println!("EX unsigned_abs_i8: {}", row.join(" "));
+    let row: Vec<String> = (-128..=127i8).map(|x| is_negative_i8(x).to_string()).collect();
+    println!("EX is_negative_i8: {}", row.join(" "));
+    let row: Vec<String> = (-128..=127i8).map(|x| format!("{:?}", i8_to_u8(x))).collect();
+    println!("EX i8_to_u8: {}", row.join(" "));
+    let row: Vec<String> = (0..=255u8).map(|x| format!("{:?}", u8_to_i8(x))).collect();
+    println!("EX u8_to_i8: {}", row.join(" "));
+    for hi in 0..256i32 {
+        let row: Vec<String> = (0..256i32).map(|lo| format!("{:?}", u16_to_u8((hi * 256 + lo) as u16))).collect();
+        println!("EX u16_to_u8 {}: {}", hi, row.join(" "));
+        let row: Vec<String> = (0..256i32).map(|lo| format!("{:?}", i16_to_i8((hi * 256 + lo - 32768) as i16))).collect();
+        println!("EX i16_to_i8 {}: {}", hi, row.join(" "));
+    }
+"""
+
+EXHAUSTIVE_LEAN = r"""
+def u8 (n : Nat) : Std.U8 := ⟨BitVec.ofNat 8 n⟩
+def i8 (n : Int) : Std.I8 := ⟨BitVec.ofInt 8 n⟩
+def u16 (n : Nat) : Std.U16 := ⟨BitVec.ofNat 16 n⟩
+def i16 (n : Int) : Std.I16 := ⟨BitVec.ofInt 16 n⟩
+def row (xs : List String) : String := String.intercalate " " xs
+def all256 : List Nat := List.range 256
+#eval show IO Unit from do
+  for a in all256 do
+    IO.println s!"EX abs_diff_u8 {a}: {row (all256.map fun b => showU (abs_diff_u8 (u8 a) (u8 b)))}"
+  IO.println s!"EX unsigned_abs_i8: {row (all256.map fun k => showU (unsigned_abs_i8 (i8 ((k : Int) - 128))))}"
+  IO.println s!"EX is_negative_i8: {row (all256.map fun k => showB (is_negative_i8 (i8 ((k : Int) - 128))))}"
+  IO.println s!"EX i8_to_u8: {row (all256.map fun k => showOU (i8_to_u8 (i8 ((k : Int) - 128))))}"
+  IO.println s!"EX u8_to_i8: {row (all256.map fun k => showOI (u8_to_i8 (u8 k)))}"
+  for hi in all256 do
+    IO.println s!"EX u16_to_u8 {hi}: {row (all256.map fun lo => showOU (u16_to_u8 (u16 (hi * 256 + lo))))}"
+    IO.println s!"EX i16_to_i8 {hi}: {row (all256.map fun lo => showOI (i16_to_i8 (i16 ((hi * 256 + lo : Nat) - 32768))))}"
+"""
+
 RUST_LIB = """
 pub fn abs_diff_u64(a: u64, b: u64) -> u64 { a.abs_diff(b) }
 pub fn abs_diff_u8(a: u8, b: u8) -> u8 { a.abs_diff(b) }
@@ -60,6 +105,11 @@ pub fn u64_try_into_i128(x: u64) -> i128 {
     let r: Result<i128, core::convert::Infallible> = <i128 as TryFrom<i128>>::try_from(i128::from(x));
     match r { Ok(v) => v, Err(_) => 0 }
 }
+pub fn is_negative_i8(x: i8) -> bool { x.is_negative() }
+pub fn i8_to_u8(x: i8) -> Option<u8> { match u8::try_from(x) { Ok(v) => Some(v), Err(_) => None } }
+pub fn u8_to_i8(x: u8) -> Option<i8> { match i8::try_from(x) { Ok(v) => Some(v), Err(_) => None } }
+pub fn u16_to_u8(x: u16) -> Option<u8> { match u8::try_from(x) { Ok(v) => Some(v), Err(_) => None } }
+pub fn i16_to_i8(x: i16) -> Option<i8> { match i8::try_from(x) { Ok(v) => Some(v), Err(_) => None } }
 pub fn and_then_incr(x: u64, present: bool) -> Option<u64> {
     let o = if present { Some(x) } else { None };
     o.and_then(|v| v.checked_add(1))
@@ -121,6 +171,7 @@ class DifferentialTests(unittest.TestCase):
                     call = f"{name}({', '.join(_rust_literal(a, t) if t != 'bool' else str(a).lower() for a, t in zip(args, types))})"
                     fmt = {"u": "{}", "i": "{}", "b": "{}", "o": "{:?}"}[kind]
                     main.append(f'    println!("{name} {args!r} = {fmt}", {call});')
+            main.append(EXHAUSTIVE_RUST)
             main.append("}")
             (tmp / "main.rs").write_text("\n".join(main) + "\n")
             subprocess.run(["rustc", "--edition", "2021", "-O", "-o", tmp / "main", tmp / "main.rs"],
@@ -130,7 +181,7 @@ class DifferentialTests(unittest.TestCase):
             # Lean: translate with ProofCI (models applied) and evaluate.
             work = tmp / "work"
             work.mkdir()
-            names = [f"models::{name}" for name, *_ in CASES]
+            names = [f"models::{name}" for name, *_ in CASES] + [f"models::{name}" for name in EXHAUSTIVE]
             ex = extract.extract(crate, ".", work, start_from=names)
             contract = tmp / "contract"
             contract.mkdir()
@@ -153,12 +204,19 @@ class DifferentialTests(unittest.TestCase):
                     lean_args = " ".join(_lean_literal(a, t) if t != "bool" else str(a).lower()
                                          for a, t in zip(args, types))
                     lines.append(f'#eval IO.println ("{name} {args!r} = " ++ {show} ({name} {lean_args}))')
+            lines.append(EXHAUSTIVE_LEAN)
             (ws.root / "Eval.lean").write_text("\n".join(lines) + "\n")
             result = lean._lake(ws, ["env", "lean", "Eval.lean"])
             errors = [l for l in result.output.splitlines() if "error" in l and "sorry" not in l]
             self.assertEqual(result.status, 0, "\n".join(errors[:20]) or result.output[-3000:])
             got = [l for l in result.output.splitlines() if " = " in l and l.split(" ")[0] in {c[0] for c in CASES}]
-            self.assertEqual(got, rust.splitlines())
+            self.assertEqual(got, [l for l in rust.splitlines() if not l.startswith("EX ")])
+            exhaustive_lean = [l for l in result.output.splitlines() if l.startswith("EX ")]
+            exhaustive_rust = [l for l in rust.splitlines() if l.startswith("EX ")]
+            self.assertEqual(len(exhaustive_rust), 256 + 4 + 512)
+            for lean_line, rust_line in zip(exhaustive_lean, exhaustive_rust):
+                self.assertEqual(lean_line, rust_line)
+            self.assertEqual(len(exhaustive_lean), len(exhaustive_rust))
             self.assertGreaterEqual(len(ex.modelled), 8, ex.modelled)
 
 

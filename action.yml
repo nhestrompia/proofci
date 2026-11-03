@@ -83,31 +83,53 @@ runs:
       shell: bash
       run: sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
-    - name: Pull the pinned toolchain
+    - name: Resolve, verify and pull the toolchain
       id: image
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
         ACTION_REF: ${{ github.action_ref }}
         ACTION_REPOSITORY: ${{ github.action_repository }}
+        GH_TOKEN: ${{ inputs.token }}
       run: |
-        if [ -z "$IMAGE" ]; then
-          if ! [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ || "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Pin ProofCI to a release (uses: ${ACTION_REPOSITORY:-owner/proofci}@v0.1.0) or a commit SHA, or set the 'image' input."
+        set -euo pipefail
+        if [ -n "$IMAGE" ]; then
+          echo "::notice::Using the toolchain image given in the 'image' input ($IMAGE); its provenance is not checked."
+          ref="$IMAGE"
+        else
+          if [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            commit="$ACTION_REF"
+          elif [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            commit=$(gh api "repos/$ACTION_REPOSITORY/commits/$ACTION_REF" --jq .sha)
+          else
+            echo "::error::Pin ProofCI to a release (uses: ${ACTION_REPOSITORY:-owner/proofci}@v0.1.1) or a commit SHA, or set the 'image' input."
             exit 1
           fi
           owner="${ACTION_REPOSITORY%%/*}"
-          IMAGE="ghcr.io/${owner,,}/proofci-toolchain:${ACTION_REF}"
+          repo="ghcr.io/${owner,,}/proofci-toolchain"
+          # Resolve the tag to an immutable digest once, verify that digest,
+          # and from then on use only the digest.
+          if ! digest=$(docker buildx imagetools inspect "$repo:$commit" --format '{{json .Manifest}}' \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])'); then
+            echo "::error::No toolchain image is published for $ACTION_REPOSITORY@$commit (images exist for commits on its main branch)."
+            exit 1
+          fi
+          # The signed provenance must say this digest was built by this
+          # repository's CI workflow, from main, at exactly this commit.
+          if ! gh attestation verify "oci://$repo@$digest" --repo "$ACTION_REPOSITORY" \
+                --signer-workflow "$ACTION_REPOSITORY/.github/workflows/ci.yml" \
+                --source-ref refs/heads/main --source-digest "$commit" >/dev/null; then
+            echo "::error::The toolchain image $repo@$digest has no valid provenance for $ACTION_REPOSITORY@$commit; refusing to run it."
+            exit 1
+          fi
+          echo "Verified provenance of $repo@$digest ($ACTION_REPOSITORY@$commit, CI workflow, main)"
+          ref="$repo@$digest"
         fi
         start=$(date +%s)
-        if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && ! docker pull -q "$IMAGE"; then
-          echo "::error::Could not pull $IMAGE. Images are published for commits on the ProofCI main branch."
-          exit 1
-        fi
+        docker image inspect "$ref" >/dev/null 2>&1 || docker pull -q "$ref"
         echo "Pulled toolchain in $(( $(date +%s) - start ))s"
-        digest=$(docker image inspect "$IMAGE" --format '{{join .RepoDigests " "}}')
-        echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-        echo "digest=${digest:-$IMAGE}" >> "$GITHUB_OUTPUT"
+        echo "image=$ref" >> "$GITHUB_OUTPUT"
+        echo "digest=$ref" >> "$GITHUB_OUTPUT"
 
     - name: Verify guarantees
       id: check
