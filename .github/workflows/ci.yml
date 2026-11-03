@@ -256,6 +256,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write       # sign the build provenance (Sigstore)
+      attestations: write
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -264,12 +266,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Combine both architectures under one tag
+        id: combine
         env:
           SHA: ${{ github.sha }}
         run: |
           docker buildx imagetools create -t "$REPO:$SHA" "$REPO:$SHA-amd64" "$REPO:$SHA-arm64"
           digest=$(docker buildx imagetools inspect "$REPO:$SHA" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "Image (linux/amd64 + linux/arm64): \`$REPO@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+      # Binds the image digest to this repository, this workflow and this
+      # commit. The action verifies it before running the toolchain.
+      - name: Sign the image's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REPO }}
+          subject-digest: ${{ steps.combine.outputs.digest }}
+          push-to-registry: true
 
   # A release tag names a commit that main already built, tested and
   # published; give its image the version tag too. Nothing is rebuilt.

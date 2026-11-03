@@ -2,7 +2,8 @@
 
 Exit status: 0 every required guarantee is verified and the policy is
 unchanged (or approved); 1 a guarantee is not verified or the policy changed
-without approval; 2 configuration or infrastructure error.
+without approval; 2 configuration or infrastructure error; 3 (`fetch` only)
+dependencies could not be downloaded.
 """
 
 import argparse
@@ -59,6 +60,9 @@ def main(argv=None):
                 FileNotFoundError, ValueError) as error:
             print(f"proofci: {error}", file=sys.stderr)
             return 2
+        except check_mod.extract.FetchError as error:
+            print(f"proofci: {error}", file=sys.stderr)
+            return 3
         except check_mod.extract.Unsupported as error:
             # Reported by `check`, which marks the guarantees unsupported.
             print(f"proofci: {error}", file=sys.stderr)
@@ -70,6 +74,9 @@ def main(argv=None):
             vendor = Path(tempfile.mkdtemp(prefix="proofci-vendor-"))
             try:
                 check_mod.fetch(args.base.resolve(), args.head.resolve(), vendor, args.policy)
+            except check_mod.extract.FetchError as error:
+                print(f"proofci: {error}", file=sys.stderr)
+                return 2
             except check_mod.extract.Unsupported as error:
                 print(f"proofci: {error}", file=sys.stderr)
         report = check_mod.check(args.base.resolve(), args.head.resolve(), args.policy, args.work_dir,

@@ -60,9 +60,9 @@ A "verified" result is only as good as these components:
 | Lean 4 kernel and nanoda | Both independently accept every proof |
 | `lake comparator` (Lean's own) | Statement and axiom comparison |
 | `rustc` frontend, Charon, Aeneas | That the Lean model faithfully describes the Rust code. A bug here can make a proof about the model not hold for the program. |
-| ProofCI's standard-library models ([`proofci/models.py`](proofci/models.py)) | Rust behaviour of library functions Aeneas leaves undefined. Each model is checked against `rustc` on boundary values ([`tests/test_models.py`](tests/test_models.py)). The models a guarantee depends on are listed next to its result. |
+| ProofCI's standard-library models ([`proofci/models.py`](proofci/models.py)) | Rust behaviour of library functions Aeneas leaves undefined. Each model is checked against `rustc`: on boundary values for every width, and on every possible input for the 8- and 16-bit instances (a model's Lean code is the same template for every width) ([`tests/test_models.py`](tests/test_models.py)). They are tested, not proved. The models a guarantee depends on are listed next to its result. |
 | ProofCI itself (Python) | Orchestration, policy comparison, the contract audit |
-| The toolchain image | Pinned by version and SHA-256 and built by this repository's CI; the action resolves the image published for the commit it is pinned to |
+| The toolchain image | Every download in it is pinned by version and SHA-256, and it is built by this repository's CI. CI signs build provenance (a Sigstore attestation) binding the image digest to this repository, the CI workflow, `main` and the exact commit. The action resolves the digest for the commit it is pinned to, verifies that attestation, and runs the image by digest, so a moved tag cannot substitute another image. Check an image yourself with `gh attestation verify oci://ghcr.io/nhestrompia/proofci-toolchain@<digest> --repo nhestrompia/proofci`. An explicit `image:` input is used as given, without this check. |
 | GitHub | `pull_request_target` semantics, review records, branch protection |
 | Linux kernel, Docker, bubblewrap | Isolation |
 

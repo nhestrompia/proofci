@@ -9,6 +9,7 @@ then is the candidate's own policy used.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,7 +53,21 @@ def fetch(base, head, policy, vendor):
         "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{vendor}:/vendor",
         os.environ["IMAGE"], "fetch", "--base", "/base", "--head", "/head", "--policy", policy, "--out", "/vendor",
     ]
-    subprocess.run(command)
+    status = subprocess.run(command).returncode
+    if status != 0:
+        reason = ("the crates.io dependencies pinned by Cargo.lock could not be downloaded"
+                  if status == 3 else f"the dependency download step failed (exit {status})")
+        fail(f"{reason}. This is a download problem, not a verdict about the code; re-run the job.")
+
+
+def fail(message):
+    """Stop with an error that is not a verdict about the code."""
+    print(f"::error::ProofCI: {message}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as handle:
+            handle.write(f"## ProofCI\n\n**Error:** {message}\n")
+    sys.exit(2)
 
 
 def run_image(base, head, policy, out):
@@ -73,6 +88,32 @@ def run_image(base, head, policy, out):
     return status, (json.loads(report.read_text()) if report.exists() else None)
 
 
+MAX_REVIEW_PAGES = 50
+
+
+def fetch_reviews(number, token):
+    """Every review of the pull request, oldest first (follows pagination).
+    None if they cannot all be read, in which case nothing counts as approved."""
+    url = f"{os.environ['API_URL']}/repos/{os.environ['REPOSITORY']}/pulls/{number}/reviews?per_page=100"
+    reviews = []
+    for _ in range(MAX_REVIEW_PAGES):
+        request = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                reviews += json.load(response)
+                links = response.headers.get("Link", "") if hasattr(response, "headers") else ""
+        except OSError as error:
+            print(f"::warning::could not read reviews: {error}")
+            return None
+        match = re.search(r'<([^>]+)>;\s*rel="next"', links or "")
+        if not match:
+            return reviews
+        url = match.group(1)
+    print("::warning::too many reviews to read; not treating any as an approval")
+    return None
+
+
 def approved_on(head_sha, approvers):
     """Login of a reviewer who may approve policy changes and approved
     exactly `head_sha`, or None. `approvers` comes from the protected base
@@ -83,14 +124,8 @@ def approved_on(head_sha, approvers):
     number, token = os.environ.get("PR_NUMBER"), os.environ.get("GH_TOKEN")
     if not number or not token:
         return None
-    url = f"{os.environ['API_URL']}/repos/{os.environ['REPOSITORY']}/pulls/{number}/reviews?per_page=100"
-    request = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            reviews = json.load(response)
-    except OSError as error:
-        print(f"::warning::could not read reviews: {error}")
+    reviews = fetch_reviews(number, token)
+    if reviews is None:
         return None
     latest = {}
     for review in reviews:  # chronological; keep each reviewer's latest decision
