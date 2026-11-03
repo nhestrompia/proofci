@@ -134,7 +134,7 @@ jobs:
     runs-on: ubuntu-latest      # any Linux runner, x86_64 or arm64
     timeout-minutes: 30
     steps:
-      - uses: nhestrompia/proofci@v0.1.0       # or a commit SHA from main
+      - uses: nhestrompia/proofci@v0.1.1       # or a commit SHA from main
         with:
           path: .                              # directory containing proofci.yaml
           # The toolchain image published for that release is used automatically;
@@ -197,7 +197,7 @@ only reject more, never accept more. The job summary shows the Lean error.
 ## Run it locally
 
 ```sh
-IMAGE=ghcr.io/nhestrompia/proofci-toolchain:v0.1.0
+IMAGE=ghcr.io/nhestrompia/proofci-toolchain:v0.1.1
 OPTS="--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined"
 
 # Crates with crates.io dependencies: download them once (needs network).

@@ -52,7 +52,7 @@ If the crate has crates.io dependencies, download them once (this step needs
 network; everything else runs offline):
 
 ```sh
-IMAGE=ghcr.io/nhestrompia/proofci-toolchain:v0.1.0
+IMAGE=ghcr.io/nhestrompia/proofci-toolchain:v0.1.1
 OPTS="--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined"
 docker run --rm $OPTS -v "$PWD:/repo:ro" -v "$PWD/.proofci-vendor:/vendor" \
   $IMAGE fetch --base /repo --head /repo --out /vendor
@@ -161,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: nhestrompia/proofci@v0.1.0
+      - uses: nhestrompia/proofci@v0.1.1
         with:
           path: .
 ```
