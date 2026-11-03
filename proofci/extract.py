@@ -42,6 +42,10 @@ class Unsupported(Exception):
     """The code is outside what ProofCI can translate."""
 
 
+class FetchError(Exception):
+    """Dependencies could not be downloaded (network or registry problem)."""
+
+
 @dataclass
 class Extraction:
     module: str          # Lean module name, e.g. "Ledger"
@@ -289,7 +293,7 @@ def fetch(checkout: Path, crate_rel: str, vendor_dir: Path, work: Path):
         writable=[staged.root, vendor_dir, home], cwd=staged.root, network=True,
         env={"CARGO_HOME": str(home), "CARGO_TERM_COLOR": "never"}, timeout=900)
     if result.status != 0:
-        raise Unsupported("dependencies could not be downloaded:\n" + _tail(result.output))
+        raise FetchError("dependencies could not be downloaded:\n" + _tail(result.output))
     return staged
 
 
