@@ -104,7 +104,15 @@ ProofCI adds two things to what Aeneas provides:
   (integer conversions, comparisons, `ok_or`, `map_err`), so `step*` gets
   through typical checked arithmetic without hand-written helpers.
 
-See [`examples/ledger`](examples/ledger) for a complete, verified example.
+See [`examples/ledger`](examples/ledger) and [`examples/bank`](examples/bank)
+for complete, verified examples.
+
+**New here?** [Getting started](docs/getting-started.md) goes from an empty
+repository to a required check. [Writing proofs](docs/writing-proofs.md)
+collects the proof patterns that come up in practice, and is worth giving to
+your coding agent. [SECURITY.md](SECURITY.md) explains what ProofCI defends
+against and what it trusts. The [demo repository](https://github.com/nhestrompia/proofci-demo/pulls)
+shows passing and blocked pull requests.
 
 ## Add it to a repository
 
@@ -126,10 +134,10 @@ jobs:
     runs-on: ubuntu-latest      # any Linux runner, x86_64 or arm64
     timeout-minutes: 30
     steps:
-      - uses: nhestrompia/proofci@COMMIT_SHA   # a commit on ProofCI's main branch
+      - uses: nhestrompia/proofci@v0.1.0       # or a commit SHA from main
         with:
           path: .                              # directory containing proofci.yaml
-          # The toolchain image published for that commit is used automatically;
+          # The toolchain image published for that release is used automatically;
           # set `image:` to pin a digest instead.
 ```
 
@@ -189,7 +197,7 @@ only reject more, never accept more. The job summary shows the Lean error.
 ## Run it locally
 
 ```sh
-IMAGE=ghcr.io/nhestrompia/proofci-toolchain:TAG
+IMAGE=ghcr.io/nhestrompia/proofci-toolchain:v0.1.0
 OPTS="--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined"
 
 # Crates with crates.io dependencies: download them once (needs network).

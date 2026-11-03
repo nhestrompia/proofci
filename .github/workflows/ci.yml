@@ -3,6 +3,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ["v*.*.*"]
 permissions:
   contents: read
   packages: read
@@ -24,6 +25,7 @@ env:
 # first main run after a pin bump) build the base themselves: the slow path.
 jobs:
   unit:
+    if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -32,9 +34,10 @@ jobs:
           persist-credentials: false
       - run: python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user --quiet pyyaml
       - run: python3 -m compileall -q proofci action tests
-      - run: python3 -m unittest tests.test_manifest tests.test_models tests.test_action -v
+      - run: python3 -m unittest tests.test_manifest tests.test_models tests.test_action tests.test_examples -v
 
   plan:
+    if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -102,13 +105,13 @@ jobs:
             -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios \
             --shard ${{ matrix.shard }}/5 --jobs 4 --output /scenarios
-      - name: Standard-library models agree with Rust
+      - name: Models agree with Rust; examples verify
         if: matrix.shard == 1
         run: >-
           docker run --rm --network none
           --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:exec,mode=1777 --security-opt seccomp=action/seccomp.json --security-opt apparmor=unconfined --security-opt systempaths=unconfined
           -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 -e PROOFCI_TOOLCHAIN=1
-          --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models -v
+          --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models tests.test_examples -v
       - name: Scenario reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -167,12 +170,12 @@ jobs:
             -v "$PWD:/src:ro" -v "$RUNNER_TEMP/scenarios:/scenarios" -w /src \
             -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python3 proofci-toolchain:ci -m tests.run_scenarios --jobs 4 --output /scenarios
-      - name: Standard-library models agree with Rust
+      - name: Models agree with Rust; examples verify
         run: >-
           docker run --rm --network none
           --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:exec,mode=1777 --security-opt seccomp=action/seccomp.json --security-opt apparmor=unconfined --security-opt systempaths=unconfined
           -v "$PWD:/src:ro" -w /src -e PYTHONPATH=/src -e PYTHONDONTWRITEBYTECODE=1 -e PROOFCI_TOOLCHAIN=1
-          --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models -v
+          --entrypoint python3 proofci-toolchain:ci -m unittest tests.test_models tests.test_examples -v
       - name: Scenario reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -267,3 +270,32 @@ jobs:
           docker buildx imagetools create -t "$REPO:$SHA" "$REPO:$SHA-amd64" "$REPO:$SHA-arm64"
           digest=$(docker buildx imagetools inspect "$REPO:$SHA" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
           echo "Image (linux/amd64 + linux/arm64): \`$REPO@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # A release tag names a commit that main already built, tested and
+  # published; give its image the version tag too. Nothing is rebuilt.
+  tag-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the published image with the version
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ! docker buildx imagetools inspect "$REPO:$SHA" >/dev/null 2>&1; then
+            echo "::error::No image was published for $SHA; tag a commit that has gone through main."
+            exit 1
+          fi
+          docker buildx imagetools create -t "$REPO:$TAG" "$REPO:$SHA"
+          digest=$(docker buildx imagetools inspect "$REPO:$TAG" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
+          echo "Release $TAG: \`$REPO@$digest\`" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,16 @@
+version: 1
+crate: .              # directory of the Cargo package (a workspace member is fine)
+lean: proofci         # where Contract.lean and Proofs.lean live
+
+targets:
+  - id: withdraw
+    function: bank::withdraw          # crate name (with _ for -) :: path
+    guarantees:
+      - id: rejects-overdraft
+        theorem: withdraw_rejects_overdraft
+      - id: exact
+        theorem: withdraw_exact
+
+# Optional: who may approve a pull request that changes this file or the contract.
+policy:
+  approvers: [your-github-login]
