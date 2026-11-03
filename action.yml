@@ -11,7 +11,7 @@ inputs:
   image:
     description: >-
       Toolchain image. Leave empty to use the image published for the release or
-      commit this action is pinned to (`uses: owner/proofci@v0.1.0` or
+      commit this action is pinned to (`uses: owner/proofci@v0.1.1` or
       `@<commit sha>`); set it to pin a digest explicitly.
     default: ""
   base:
