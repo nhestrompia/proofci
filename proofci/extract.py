@@ -32,7 +32,7 @@ from . import models, sandbox
 
 MAX_STAGED_BYTES = 64 * 1024 * 1024
 MAX_STAGED_FILES = 5000
-RESERVED_MODULES = {"Contract", "Proofs", "ProofciAudit"}
+RESERVED_MODULES = {"Contract", "Proofs", "ProofciAudit", "ProofciSpecs"}
 SKIP_DIRS = {"target", "node_modules"}
 DEP_TABLES = ("dependencies", "build-dependencies")
 CARGO_ENV = {"CARGO_NET_OFFLINE": "true", "CARGO_TERM_COLOR": "never"}

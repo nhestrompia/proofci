@@ -32,6 +32,27 @@ def _digest(paths):
     return h.hexdigest()
 
 
+def _report(output, limit=60000):
+    """Lean's messages, errors first (in full), then infos; warnings only counted."""
+    blocks, current = [], None
+    for line in output.splitlines():
+        if line.startswith(("error:", "warning:", "info:")):
+            current = [line]
+            blocks.append(current)
+        elif line.startswith(("trace:", "✔", "ℹ [", "⚠ [", "✖ [", "Build completed", "Some required", "- ")):
+            current = None
+        elif current is not None:
+            current.append(line)
+    errors = [b for b in blocks if b[0].startswith("error:") and b[0] != "error: build failed"]
+    infos = [b for b in blocks if b[0].startswith("info:")]
+    warnings = [b for b in blocks if b[0].startswith("warning:")]
+    text = "\n\n".join("\n".join(b) for b in errors + infos)
+    if len(text) > limit:
+        text = text[:limit] + "\n… (truncated)"
+    summary = f"{len(errors)} error(s), {len(warnings)} warning(s)"
+    return (text + "\n\n" if text else "") + summary
+
+
 def run(repo: Path, work: Path, vendor=None, judge=False, out=print):
     repo = repo.resolve()
     manifest = load_manifest(repo)
@@ -77,9 +98,7 @@ def run(repo: Path, work: Path, vendor=None, judge=False, out=print):
         out(f"no {manifest.proofs} yet")
         return 1
     proofs = lean._lake(ws, ["build", "Proofs"])
-    messages = [line for line in proofs.output.splitlines()
-                if not line.startswith(("trace:", "✔", "ℹ [", "⚠ [", "✖ [", "Build completed", "Some required"))]
-    out("\n".join(messages[-400:]).strip() or "no messages")
+    out(_report(proofs.output))
     out(f"proofs {'build' if proofs.status == 0 else 'do not build'} ({time.monotonic() - t1:.1f}s)")
     if proofs.status != 0 or not judge:
         return 0 if proofs.status == 0 else 1

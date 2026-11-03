@@ -32,6 +32,7 @@ class Model:
     pattern: str        # regex for the full rust_fun path
     body: object        # callable(match, declaration) -> Lean term
     description: str
+    spec: object = None  # callable(match, name) -> a proved @[step] theorem, or None
 
 
 def _binder(declaration, cls):
@@ -68,10 +69,35 @@ def _from(m, _):
     raise ValueError(f"no lossless From<{dst}, {src}>")
 
 
+def _abs_diff_spec(m, name):
+    ty = "Std." + UNSIGNED[m.group(1)]
+    return (f"@[step] theorem {name}.spec (a b : {ty}) :\n"
+            f"    {name} a b ⦃ r => r.val = if b.val ≤ a.val then a.val - b.val else b.val - a.val ⦄ := by\n"
+            f"  unfold {name}\n"
+            f"  split <;> step*")
+
+
+def _try_from_spec(m, name):
+    dst, src = m.group(1), m.group(2)
+    if not (dst in UNSIGNED and src in UNSIGNED):
+        return None
+    d, s = UNSIGNED[dst], UNSIGNED[src]
+    return (f"@[step] theorem {name}.spec (x : Std.{s}) :\n"
+            f"    {name} x ⦃ r => (x.val ≤ {d}.max → ∃ y : Std.{d}, r = .Ok y ∧ y.val = x.val) ∧\n"
+            f"      ({d}.max < x.val → r = .Err ()) ⦄ := by\n"
+            f"  unfold {name} core.num.tryFromUScalar\n"
+            f"  split <;> rename_i hb <;> simp only [WP.spec_ok]\n"
+            f"  · refine ⟨fun _ => ⟨_, rfl, ?_⟩, fun habsurd => by scalar_tac⟩\n"
+            f"    have hcast := (UScalar.cast_inBounds_spec (src_ty := .{s}) (tgt_ty := .{d}) x (by scalar_tac))\n"
+            f"    simp only [lift, WP.spec_ok] at hcast\n"
+            f"    exact hcast\n"
+            f"  · exact ⟨fun habsurd => by scalar_tac, fun _ => by simp⟩")
+
+
 MODELS = (
     Model(r"core::num::\{(u8|u16|u32|u64|u128|usize)\}::abs_diff",
           lambda m, d: "fun a b => if b.val ≤ a.val then a - b else b - a",
-          "|a - b| for unsigned integers; never overflows"),
+          "|a - b| for unsigned integers; never overflows", _abs_diff_spec),
     Model(r"core::num::\{(i8|i16|i32|i64|i128|isize)\}::is_negative",
           lambda m, d: "fun x => ok (decide (x.val < 0))", "x < 0"),
     Model(r"core::num::\{(i8|i16|i32|i64|i128|isize)\}::is_positive",
@@ -80,7 +106,7 @@ MODELS = (
           lambda m, d: "fun x => ok ⟨BitVec.ofNat _ x.val.natAbs⟩",
           "|x| as the unsigned type of the same width; never overflows"),
     Model(rf"core::convert::num::\{{core::convert::TryFrom<({INT}), ({INT}), core::num::error::TryFromIntError>\}}::try_from",
-          _try_from, "integer conversion that fails when the value does not fit"),
+          _try_from, "integer conversion that fails when the value does not fit", _try_from_spec),
     Model(rf"core::convert::num::\{{core::convert::From<({INT}), ({INT})>\}}::from",
           _from, "lossless integer conversion"),
     Model(r"core::convert::\{core::convert::TryFrom<@T, @U, !>\}::try_from",
@@ -115,7 +141,9 @@ def apply(lean_source: str):
                 except ValueError:
                     return match.group(0)
                 applied.append(path)
-                return f"{match.group('attr')}def{decl.rstrip()} :=\n  {body}"
+                definition = f"{match.group('attr')}def{decl.rstrip()} :=\n  {body}"
+                spec = model.spec(found, decl.split()[0]) if model.spec else None
+                return definition + (f"\n\n{spec}" if spec else "")
         return match.group(0)
 
     return DECLARATION.sub(replace, lean_source), applied
