@@ -1,4 +1,4 @@
-name: ProofCI
+name: ProofCI Check
 description: Check that a pull request keeps its declared, Lean-proved guarantees about Rust code.
 branding:
   icon: check-circle
