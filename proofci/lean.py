@@ -82,6 +82,45 @@ def _copy_lean_tree(source_dir: Path, module: str, dest: Path, required=True):
         target.write_bytes(data)
 
 
+FROM_PAIRS = [  # lossless conversions Aeneas defines, with their `from_val_eq` lemmas
+    ("U16", "U8"), ("U32", "U8"), ("U32", "U16"), ("U64", "U8"), ("U64", "U16"), ("U64", "U32"),
+    ("U128", "U8"), ("U128", "U16"), ("U128", "U32"), ("U128", "U64"),
+    ("Usize", "U8"), ("Usize", "U16"), ("Usize", "U32"),
+    ("I16", "I8"), ("I32", "I8"), ("I32", "I16"), ("I64", "I8"), ("I64", "I16"), ("I64", "I32"),
+    ("I128", "I8"), ("I128", "I16"), ("I128", "I32"), ("I128", "I64"),
+    ("Isize", "I8"), ("Isize", "I16"), ("Isize", "I32"),
+]
+SCALARS = ["U8", "U16", "U32", "U64", "U128", "Usize", "I8", "I16", "I32", "I64", "I128", "Isize"]
+
+
+def specs_module():
+    """`ProofciSpecs`: step lemmas for common library calls that Aeneas
+    defines but gives no `@[step]` spec. Proof modules may `import ProofciSpecs`.
+    Every lemma is proved, so importing it adds nothing to what is trusted."""
+    lines = ["import Aeneas", "open Aeneas Aeneas.Std Result", "", "namespace ProofciSpecs", ""]
+    for dst, src in FROM_PAIRS:
+        f = f"core.convert.num.From{dst}{src}.from"
+        lines += [f"@[step] theorem from_{dst.lower()}_{src.lower()} (x : Std.{src}) :",
+                  f"    lift ({f} x) ⦃ y => y.val = x.val ⦄ := by",
+                  f"  simp [lift, WP.spec_ok, core.convert.num.From{dst}{src}.from_val_eq]", ""]
+    for ty in SCALARS:
+        lines += [f"@[step] theorem cmp_{ty.lower()} (a b : Std.{ty}) :",
+                  f"    lift (core.cmp.impls.Ord{ty}.cmp a b) ⦃ o => o = compare a.val b.val ⦄ := by",
+                  f"  simp [lift, WP.spec_ok, core.cmp.impls.Ord{ty}.cmp]", ""]
+    lines += [
+        "@[step] theorem ok_or_some {T E : Type _} (v : T) (e : E) :",
+        "    core.option.Option.ok_or (some v) e ⦃ r => r = .Ok v ⦄ := by",
+        "  simp [core.option.Option.ok_or, WP.spec_ok]", "",
+        "@[step] theorem ok_or_none {T E : Type _} (e : E) :",
+        "    core.option.Option.ok_or (none : Option T) e ⦃ r => r = .Err e ⦄ := by",
+        "  simp [core.option.Option.ok_or, WP.spec_ok]", "",
+        "@[step] theorem map_err_ok {T E F O : Type _} (fnOnce : core.ops.function.FnOnce O E F) (v : T) (f : O) :",
+        "    core.result.Result.map_err fnOnce (.Ok v) f ⦃ r => r = .Ok v ⦄ := by",
+        "  simp [core.result.Result.map_err, WP.spec_ok]", "",
+        "end ProofciSpecs", ""]
+    return "\n".join(lines)
+
+
 def _lib(module, root):
     if (root / module).is_dir():
         return f"lean_lib {module} where\n  globs := #[.andSubmodules `{module}]\n"
@@ -100,11 +139,13 @@ def assemble(root: Path, extracted_file: Path, crate_module: str, contract_dir: 
     shutil.copyfile(extracted_file, root / f"{crate_module}.lean")
     _copy_lean_tree(contract_dir, "Contract", root)
     _copy_lean_tree(proofs_dir, "Proofs", root, required=False)
+    (root / "ProofciSpecs.lean").write_text(specs_module())
     (root / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\n"
         "package proofci_check\n"
         f'require aeneas from "{aeneas_lean_dir()}"\n'
         f"lean_lib {crate_module}\n"
+        "lean_lib ProofciSpecs\n"
         + _lib("Contract", root) + _lib("Proofs", root)
     )
     (root / "lake-manifest.json").write_text(json.dumps(_lake_manifest("proofci_check"), indent=1))
@@ -149,29 +190,85 @@ def build_contract(ws):
         raise ContractError(_errors(result.output))
 
 
-def audit(ws, checks):
-    """For each (theorem, lean_function) report existence and binding.
+AUDIT_LEAN = r"""
+import Contract
+open Lean Meta
+
+/-- Constants reachable from `root` through definitions of the same module
+    (the extracted crate), so the walk never descends into the libraries. -/
+partial def proofciReach (env : Environment) (root : Name) : NameSet := Id.run do
+  let modIdx := env.getModuleIdxFor? root
+  let mut seen : NameSet := {}
+  let mut todo := [root]
+  while !todo.isEmpty do
+    let n := todo.head!
+    todo := todo.tail!
+    if seen.contains n then continue
+    seen := seen.insert n
+    if env.getModuleIdxFor? n != modIdx then continue
+    match env.find? n with
+    | some (.defnInfo d) => todo := d.value.getUsedConstants.toList ++ todo
+    | some (.opaqueInfo d) => todo := d.value.getUsedConstants.toList ++ todo
+    | _ => pure ()
+  return seen
+
+/-- Does the postcondition of a `WP.spec` triple ignore the result while
+    still claiming something? (`f x ⦃ _ => True ⦄`, "never panics or
+    overflows", is a meaningful guarantee and is not flagged.) -/
+def proofciPostIgnoresResult (e : Expr) : Bool :=
+  if e.isAppOf ``Aeneas.Std.WP.spec then
+    match e.getAppArgs.back? with
+    | some (.lam _ _ body _) => !body.hasLooseBVars && !body.isConstOf ``True
+    | _ => false
+  else false
+
+def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
+  let env ← getEnv
+  let fnFound := env.contains fn
+  let mut kind := "missing"
+  let mut conclusion := false
+  let mut hypothesis := false
+  let mut trivial := false
+  let mut ignores := false
+  match env.find? thm with
+  | some (.thmInfo info) =>
+    kind := "theorem"
+    let r ← forallTelescope info.type fun xs body => do
+      let mut hyp := false
+      for x in xs do
+        let ty ← inferType x
+        if (← isProp ty) && ty.getUsedConstants.contains fn then hyp := true
+      let refl := body.isAppOfArity ``Eq 3 && body.appFn!.appArg! == body.appArg!
+      pure (body.getUsedConstants.contains fn, hyp, body.isConstOf ``True || refl,
+            proofciPostIgnoresResult body)
+    (conclusion, hypothesis, trivial, ignores) := r
+  | some _ => kind := "other"
+  | none => pure ()
+  let axioms ← if fnFound then collectAxioms fn else pure #[]
+  let reach := if fnFound then proofciReach env fn else {}
+  let used := models.filter reach.contains
+  IO.println ("PROOFCI_AUDIT " ++ (Json.mkObj [
+    ("theorem", Json.str thm.toString), ("function", Json.str fn.toString),
+    ("kind", Json.str kind), ("function_found", Json.bool fnFound),
+    ("conclusion_mentions_function", Json.bool conclusion),
+    ("hypothesis_mentions_function", Json.bool hypothesis),
+    ("trivial_conclusion", Json.bool trivial), ("post_ignores_result", Json.bool ignores),
+    ("models", Json.arr (used.map (fun n => Json.str n.toString)).toArray),
+    ("function_axioms", Json.arr (axioms.map (fun a => Json.str a.toString)))]).compress)
+"""
+
+
+def audit(ws, checks, models=()):
+    """For each (theorem, lean_function): existence, how the statement uses
+    the function, the function's axioms, and which ProofCI models it uses.
 
     Runs only over trusted inputs: the protected contract and the extracted
     model. Proof modules are never loaded here.
     """
-    lines = ["import Contract", "open Lean Meta", "",
-             "def proofciAudit (thm fn : Name) : MetaM Unit := do",
-             "  let env ← getEnv",
-             "  let fnFound := env.contains fn",
-             "  let (kind, mentions) := match env.find? thm with",
-             "    | some (.thmInfo info) => (\"theorem\", info.type.getUsedConstants.contains fn)",
-             "    | some _ => (\"other\", false)",
-             "    | none => (\"missing\", false)",
-             "  let axioms ← if fnFound then collectAxioms fn else pure #[]",
-             "  let axs := axioms.toList.map (fun a => Json.str a.toString)",
-             "  IO.println (\"" + AUDIT_MARKER + "\" ++ (Json.mkObj [",
-             "    (\"theorem\", Json.str thm.toString), (\"function\", Json.str fn.toString),",
-             "    (\"kind\", Json.str kind), (\"function_found\", Json.bool fnFound),",
-             "    (\"mentions_function\", Json.bool mentions), (\"function_axioms\", Json.arr axs.toArray)]).compress)",
-             ""]
+    model_list = "[" + ", ".join(f"`{name}" for name in models) + "]"
+    lines = [AUDIT_LEAN.strip(), ""]
     for theorem, function in checks:
-        lines.append(f"#eval proofciAudit `{theorem} `{function}")
+        lines.append(f"#eval proofciAudit `{theorem} `{function} {model_list}")
     (ws.root / "ProofciAudit.lean").write_text("\n".join(lines) + "\n")
     result = _lake(ws, ["env", "lean", "ProofciAudit.lean"])
     found = {}

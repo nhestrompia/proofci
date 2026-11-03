@@ -54,6 +54,14 @@ class ManifestTests(unittest.TestCase):
         self.assertRejected(GOOD.replace(b"fee_capped", b"fee capped; #eval"), "Lean declaration name")
         self.assertRejected(GOOD.replace(b"required: false", b"required: maybe"), "true or false")
 
+    def test_policy_approvers(self):
+        self.assertIsNone(manifest.parse(GOOD).approvers)
+        m = manifest.parse(GOOD + b"policy:\n  approvers: [Alice, bob]\n")
+        self.assertEqual(m.approvers, ("alice", "bob"))
+        self.assertEqual(manifest.parse(GOOD + b"policy:\n  approvers: []\n").approvers, ())
+        self.assertRejected(GOOD + b"policy:\n  approvers: alice\n", "GitHub logins")
+        self.assertRejected(GOOD + b"policy:\n  owners: [alice]\n", "unknown keys")
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 
@@ -90,6 +98,7 @@ class PolicyChangeTests(unittest.TestCase):
         self.assertEqual(self.changes(GOOD, contract="theorem fee_capped : True := trivial\n"),
                          ["the contract `proofci/Contract.lean` changed"])
         self.assertEqual(self.changes(None), ["proofci.yaml was removed or is invalid in the pull request"])
+        self.assertIn("`policy.approvers` changed", self.changes(GOOD + b"policy:\n  approvers: [mallory]\n"))
 
 
 if __name__ == "__main__":

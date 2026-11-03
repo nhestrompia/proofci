@@ -41,6 +41,8 @@ class Outcome:
     required: bool
     status: str
     reason: str = ""
+    assumes: list = field(default_factory=list)    # ProofCI models the function relies on
+    warnings: list = field(default_factory=list)   # contract shape warnings
 
 
 @dataclass
@@ -48,6 +50,7 @@ class Report:
     outcomes: list = field(default_factory=list)
     policy_source: str = "base"
     policy_changes: list = field(default_factory=list)
+    policy_approvers: object = None   # from the protected base policy
     notes: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)
 
@@ -63,6 +66,7 @@ class Report:
             "passed": self.passed,
             "policy_source": self.policy_source,
             "policy_changes": self.policy_changes,
+            "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
             "guarantees": [o.__dict__ for o in self.outcomes],
             "notes": self.notes,
             "timings_seconds": self.timings,
@@ -99,6 +103,8 @@ def policy_changes(base_checkout, base, head_checkout, head):
     for key in ("crate", "lean"):
         if old[key] != new[key]:
             changes.append(f"`{key}` changed from `{old[key]}` to `{new[key]}`")
+    if old["approvers"] != new["approvers"]:
+        changes.append("`policy.approvers` changed")
     for gid, spec in old["guarantees"].items():
         if gid not in new["guarantees"]:
             changes.append(f"guarantee `{gid}` was removed")
@@ -116,7 +122,7 @@ def policy_changes(base_checkout, base, head_checkout, head):
     return changes
 
 
-def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None):
+def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None, vendor_dir=None):
     started = time.monotonic()
     report = Report(policy_source=policy)
     base = load_manifest(base_checkout)
@@ -125,6 +131,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
     except (ConfigError, manifest_mod.ManifestError):
         head = None
     report.policy_changes = policy_changes(base_checkout, base, head_checkout, head)
+    report.policy_approvers = base.approvers
     if policy == "head":
         if head is None:
             raise ConfigError("the candidate has no valid proofci.yaml")
@@ -145,45 +152,86 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
 
     with tempfile.TemporaryDirectory(prefix="proofci-", dir=work_dir) as tmp:
         work = Path(tmp)
-        # 1. Trusted translation of the candidate's Rust code.
+        # 1. Trusted translation of the candidate's Rust code: only what the
+        # target functions reach. If that fails, find out which targets
+        # reach untranslatable code and translate the others without them.
         t0 = time.monotonic()
+        functions = sorted({o.function for o in report.outcomes})
+        attempts = itertools.count(1)
+
+        def translate(paths, opaque=()):
+            sub = work / f"translate-{next(attempts)}"
+            sub.mkdir()
+            return extract.extract(head_checkout, active.crate, sub, start_from=paths,
+                                   vendor_dir=vendor_dir, opaque=opaque)
+
+        extraction, failures = None, {}
         try:
-            extraction = extract.extract(head_checkout / active.crate, work)
+            extraction = translate(functions)
         except extract.Unsupported as error:
-            mark(UNSUPPORTED, str(error))
-            report.timings["extract"] = round(time.monotonic() - t0, 1)
-            return report
+            if len(functions) > 1:
+                for function in functions:
+                    try:
+                        translate([function])
+                    except extract.Unsupported as single:
+                        failures[function] = str(single)
+            if failures and len(failures) < len(functions):
+                # Keep the failing functions as bare declarations so the
+                # contract still elaborates and the other targets are judged.
+                try:
+                    extraction = translate(functions, opaque=sorted(failures))
+                except extract.Unsupported:
+                    extraction = None
+            if extraction is None and len(failures) != len(functions):
+                failures = dict.fromkeys(functions, str(error))
+        for o in report.outcomes:
+            if o.function in failures:
+                o.status, o.reason = UNSUPPORTED, failures[o.function]
         report.timings["extract"] = round(time.monotonic() - t0, 1)
+        if extraction is None:
+            return report
+        pending = [o for o in report.outcomes if o.function not in failures]
 
         # 2. Workspace: extracted model + protected contract + candidate proofs.
         ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
                            policy_checkout / active.lean, head_checkout / active.lean)
         if not (ws.root / "Proofs.lean").is_file():
-            mark(UNPROVEN, f"no proofs found at `{active.proofs}`")
+            mark(UNPROVEN, f"no proofs found at `{active.proofs}`", only={o.theorem for o in pending})
             return report
 
         # 3. The contract must still elaborate against the new code.
         t0 = time.monotonic()
         try:
             lean.build_contract(ws)
-            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in report.outcomes])
+            model_names = {f"{extraction.crate_name}.{name}": path for path, name in (extraction.modelled or [])}
+            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in pending], list(model_names))
         except lean.ContractError as error:
+            names = {o.theorem for o in pending}
             mark(CONTRACT_STALE, "the protected contract no longer elaborates against this code; "
-                 "a maintainer must update it:\n" + str(error))
+                 "a maintainer must update it:\n" + str(error), only=names)
             report.timings["contract"] = round(time.monotonic() - t0, 1)
             return report
         report.timings["contract"] = round(time.monotonic() - t0, 1)
 
         candidates = []
-        for o in report.outcomes:
+        for o in pending:
             item = audit[o.theorem]
+            o.assumes = [model_names[n] for n in item.get("models", []) if n in model_names]
+            if item.get("hypothesis_mentions_function"):
+                o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
+                                  "may assume what it should prove")
+            if item.get("trivial_conclusion"):
+                o.warnings.append(f"the conclusion of `{o.theorem}` is trivially true")
+            if item.get("post_ignores_result"):
+                o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result, "
+                                  "so it only restates facts about the inputs")
             if not item["function_found"]:
                 o.status, o.reason = UNSUPPORTED, f"`{o.function}` is not in the translated code"
             elif item["kind"] != "theorem":
                 o.status, o.reason = CONTRACT_STALE, f"`{o.theorem}` is not a theorem in the contract"
-            elif not item["mentions_function"]:
+            elif not item["conclusion_mentions_function"]:
                 o.status, o.reason = CONTRACT_STALE, (
-                    f"the statement of `{o.theorem}` does not mention `{o.function}`, "
+                    f"the conclusion of `{o.theorem}` does not mention `{o.function}`, "
                     "so it would not constrain the implementation")
             elif set(item["function_axioms"]) - set(lean.PERMITTED_AXIOMS):
                 extra = sorted(set(item["function_axioms"]) - set(lean.PERMITTED_AXIOMS))
@@ -252,6 +300,13 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
+
+
+def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
+    """Vendor the candidate's crates.io dependencies (the step with network)."""
+    active = load_manifest(head_checkout if policy == "head" else base_checkout)
+    with tempfile.TemporaryDirectory(prefix="proofci-fetch-") as tmp:
+        extract.fetch(head_checkout, active.crate, vendor_dir, Path(tmp))
 
 
 def lean_function(rust_path: str):

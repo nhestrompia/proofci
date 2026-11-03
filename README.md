@@ -30,8 +30,8 @@ every pull request. It does not claim to prove the whole application correct.
 
 | | Supported now | Out of scope |
 |---|---|---|
-| Language | A safe, self-contained Rust crate (no dependencies, build scripts, proc macros or `unsafe`) | Other languages; crates with dependencies |
-| Code | Functions Aeneas can translate: pure functions and deterministic state transitions over integers, structs, enums, `Option`/`Result`, loops, `Vec` and borrows | Threads, I/O, FFI, constructs Aeneas rejects |
+| Language | Rust: a package on its own or in a Cargo workspace, with path and crates.io dependencies pinned by `Cargo.lock`, build scripts and proc macros. Only what the declared functions reach is translated, so `unsafe`, async or FFI code elsewhere does not matter | Other languages; git dependencies; `[patch]` |
+| Code | Functions Aeneas can translate: pure functions and deterministic state transitions over integers (up to 128 bits), structs, enums, `Option`/`Result`, `?`, closures, loops, `Vec` and borrows | Threads, I/O, FFI, raw pointers, constructs Aeneas rejects |
 | Properties | Any Lean statement: pre/postconditions, invariants, "never panics or overflows", equivalence | Informal claims such as "secure" |
 | Evidence | Lean proofs accepted by the Lean kernel **and** nanoda, using only `propext`, `Quot.sound` and `Classical.choice` | Tests, `sorry`, extra axioms, `native_decide` |
 
@@ -92,6 +92,18 @@ theorem transfer_conserves (a : Accounts) (amount : Std.U64) :
 and proves it. Helper modules can live under `proofci/Proofs/`. Proofs may
 import `Aeneas` and anything it imports, which includes much of Mathlib.
 
+ProofCI adds two things to what Aeneas provides:
+
+- **Standard-library models.** When translated code calls a library function
+  Aeneas leaves undefined (`abs_diff`, integer `TryFrom`/`From`,
+  `unsigned_abs`, `Option::and_then`, `?` on `Option`, ...), ProofCI supplies
+  its Rust behaviour, checked against `rustc` on boundary values
+  ([`proofci/models.py`](proofci/models.py)). Any other undefined function
+  makes the guarantees that reach it `unsupported`.
+- **`import ProofciSpecs`.** Proved `@[step]` lemmas for common calls
+  (integer conversions, comparisons, `ok_or`, `map_err`), so `step*` gets
+  through typical checked arithmetic without hand-written helpers.
+
 See [`examples/ledger`](examples/ledger) for a complete, verified example.
 
 ## Add it to a repository
@@ -114,9 +126,11 @@ jobs:
     runs-on: ubuntu-latest      # any Linux runner, x86_64 or arm64
     timeout-minutes: 30
     steps:
-      - uses: nhestrompia/proofci@COMMIT_SHA   # pin a release commit
+      - uses: nhestrompia/proofci@COMMIT_SHA   # a commit on ProofCI's main branch
         with:
           path: .                              # directory containing proofci.yaml
+          # The toolchain image published for that commit is used automatically;
+          # set `image:` to pin a digest instead.
 ```
 
 Then make `ProofCI / proofci` a required status check in your branch
@@ -140,14 +154,24 @@ committed in the repository is ignored, because ProofCI regenerates it from
 the pull request's Rust.
 
 If a pull request removes a guarantee, makes it optional or edits the
-contract, the check is blocked and lists the change. It can pass only after
-two things happen:
+contract, the check is blocked and lists the change. Who can then accept it is
+itself part of the protected policy:
 
-1. A repository owner, member or collaborator who is not the author
-   **approves the pull request on that exact commit**.
-2. Someone re-runs the job.
+```yaml
+policy:
+  approvers: [alice, bob]   # only these people may approve policy changes
+```
 
-A later push needs a new approval.
+- **No `policy` section:** a repository owner, member or collaborator who is
+  not the author approves the pull request **on that exact commit**, and
+  someone re-runs the job.
+- **`approvers: [...]`:** only the listed people count (still never the
+  author, still on the exact commit).
+- **`approvers: []`:** the policy can't be changed in a pull request at all;
+  it changes only through a commit to the protected branch.
+
+A later push needs a new approval. Changing `policy.approvers` is itself a
+policy change.
 
 ## Results
 
@@ -165,10 +189,21 @@ only reject more, never accept more. The job summary shows the Lean error.
 ## Run it locally
 
 ```sh
-docker run --rm --network none \
-  --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-  -v "$PWD:/base:ro" -v "$PWD:/head:ro" \
-  ghcr.io/nhestrompia/proofci-toolchain:TAG check --base /base --head /head
+IMAGE=ghcr.io/nhestrompia/proofci-toolchain:TAG
+OPTS="--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined"
+
+# Crates with crates.io dependencies: download them once (needs network).
+docker run --rm $OPTS -v "$PWD:/repo:ro" -v "$PWD/.proofci-vendor:/vendor" \
+  $IMAGE fetch --base /repo --head /repo --out /vendor
+
+# While writing proofs: re-checks only what changed and prints Lean's
+# errors and unsolved goals (seconds per run). --judge runs the final check.
+docker run --rm --network none $OPTS -v "$PWD:/repo:ro" -v "$PWD/.proofci-vendor:/vendor:ro" \
+  -v proofci-dev:/tmp/proofci-dev $IMAGE dev --repo /repo --vendor /vendor
+
+# The exact check CI runs.
+docker run --rm --network none $OPTS -v "$PWD:/base:ro" -v "$PWD:/head:ro" \
+  -v "$PWD/.proofci-vendor:/vendor:ro" $IMAGE check --base /base --head /head --vendor /vendor
 ```
 
 To compare a branch against its base, use two checkouts (`git worktree add`).

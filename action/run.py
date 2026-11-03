@@ -9,6 +9,7 @@ then is the candidate's own policy used.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -25,17 +26,46 @@ def subdir(root, rel):
     return path
 
 
+SECCOMP = Path(__file__).resolve().parent / "seccomp.json"
+SANDBOX_OPTS = [
+    # No capabilities, no privilege escalation, read-only filesystem except /tmp.
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    "--read-only", "--tmpfs", "/tmp:exec,mode=1777",
+    # Docker's default seccomp profile plus only the namespace syscalls that
+    # bubblewrap needs to build the inner sandboxes (see SECURITY.md).
+    "--security-opt", f"seccomp={SECCOMP}",
+    # Docker's AppArmor profile forbids the mounts bubblewrap makes, and the
+    # masked /proc paths stop it mounting a fresh /proc for each sandbox.
+    "--security-opt", "apparmor=unconfined", "--security-opt", "systempaths=unconfined",
+]
+
+
+def fetch(base, head, policy, vendor):
+    """Download crates.io dependencies. The only step with network access:
+    `cargo vendor` downloads and checksums sources but runs none of them."""
+    if vendor.exists():
+        shutil.rmtree(vendor)
+    vendor.mkdir(parents=True)
+    os.chmod(vendor, 0o777)
+    command = [
+        "docker", "run", "--rm", *SANDBOX_OPTS, "--memory", "4g", "--pids-limit", "1024",
+        "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{vendor}:/vendor",
+        os.environ["IMAGE"], "fetch", "--base", "/base", "--head", "/head", "--policy", policy, "--out", "/vendor",
+    ]
+    subprocess.run(command)
+
+
 def run_image(base, head, policy, out):
     out.mkdir(parents=True, exist_ok=True)
     os.chmod(out, 0o777)
+    vendor = WORK / f"vendor-{policy}"
+    fetch(base, head, policy, vendor)
     command = [
-        "docker", "run", "--rm", "--network", "none",
-        # bubblewrap inside the container needs these to create its sandboxes
-        "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
-        "--security-opt", "systempaths=unconfined",
+        "docker", "run", "--rm", "--network", "none", *SANDBOX_OPTS,
         "--cpus", str(os.cpu_count() or 2), "--memory", "8g", "--pids-limit", "4096",
         "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{out}:/out",
-        os.environ["IMAGE"], "check", "--base", "/base", "--head", "/head",
+        "-v", f"{vendor}:/vendor:ro",
+        os.environ["IMAGE"], "check", "--base", "/base", "--head", "/head", "--vendor", "/vendor",
         "--policy", policy, "--report", "/out/report.json", "--summary", "/out/summary.md",
     ]
     status = subprocess.run(command).returncode
@@ -43,7 +73,13 @@ def run_image(base, head, policy, out):
     return status, (json.loads(report.read_text()) if report.exists() else None)
 
 
-def approved_on(head_sha):
+def approved_on(head_sha, approvers):
+    """Login of a reviewer who may approve policy changes and approved
+    exactly `head_sha`, or None. `approvers` comes from the protected base
+    policy: None means any owner, member or collaborator other than the
+    author; an empty list means policy changes cannot be approved in a PR."""
+    if approvers is not None and not approvers:
+        return None
     number, token = os.environ.get("PR_NUMBER"), os.environ.get("GH_TOKEN")
     if not number or not token:
         return None
@@ -60,10 +96,14 @@ def approved_on(head_sha):
     for review in reviews:  # chronological; keep each reviewer's latest decision
         if review.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
             latest[review["user"]["login"]] = review
+    author = (os.environ.get("PR_AUTHOR") or "").lower()
     for login, review in latest.items():
-        if (review["state"] == "APPROVED" and review.get("commit_id") == head_sha
-                and login != os.environ.get("PR_AUTHOR")
-                and review.get("author_association") in TRUSTED_ASSOCIATIONS):
+        if review["state"] != "APPROVED" or review.get("commit_id") != head_sha or login.lower() == author:
+            continue
+        if approvers is None:
+            if review.get("author_association") in TRUSTED_ASSOCIATIONS:
+                return login
+        elif login.lower() in approvers:
             return login
     return None
 
@@ -76,7 +116,7 @@ def main():
     status, report = run_image(base, head, "base", out)
     approver = None
     if report and report["policy_changes"]:
-        approver = approved_on(os.environ["HEAD_SHA"])
+        approver = approved_on(os.environ["HEAD_SHA"], report.get("policy_approvers"))
         if approver:
             print(f"Policy change approved by {approver} on {os.environ['HEAD_SHA']}; "
                   "checking the candidate against its own policy.")
@@ -84,8 +124,14 @@ def main():
     summary = out / "summary.md"
     text = summary.read_text() if summary.exists() else "## ProofCI\n\nNo report was produced.\n"
     if report and report["policy_changes"] and not approver:
-        text += ("\nTo accept the policy change, a maintainer approves this pull request on the "
-                 "current commit and re-runs this job.\n")
+        allowed = report.get("policy_approvers")
+        if allowed is not None and not allowed:
+            text += ("\nThis repository's policy cannot be changed in a pull request (`policy.approvers` is "
+                     "empty); change it with a commit to the protected branch.\n")
+        else:
+            who = ", ".join(f"@{a}" for a in allowed) if allowed else "a maintainer other than the author"
+            text += (f"\nTo accept the policy change, {who} approves this pull request on the "
+                     "current commit and someone re-runs this job.\n")
     if approver:
         text += f"\nPolicy change approved by @{approver} on `{os.environ['HEAD_SHA'][:12]}`.\n"
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
