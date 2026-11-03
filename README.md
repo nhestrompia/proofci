@@ -189,8 +189,11 @@ and SHA-256:
 Mathlib is pruned to the modules Aeneas imports. The image is 1.7 GB
 compressed and Linux arm64 only for now. CI publishes it to GHCR from `main`.
 
-Once the image is pulled, the example takes about 13 seconds to check:
-translation under 1 s, contract 4–5 s, proofs 7–8 s.
+Measured on a free `ubuntu-24.04-arm` GitHub runner, the example takes 26 s
+to check once the image is available: translation 1.6 s, contract 8.1 s,
+proofs 16.1 s. On a 10-core arm64 machine it takes 13 s. Building the image
+from scratch takes about 17 minutes, which is why CI publishes it once and
+users pull it.
 
 ## Development
 
