@@ -1,0 +1,84 @@
+# ProofCI verifier toolchain: Rust nightly + Charon + Aeneas + Lean + Mathlib.
+# Every download is pinned by version and SHA-256. Build once per release and
+# publish by digest; CI jobs pull the image instead of rebuilding it.
+ARG DEBIAN=debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+
+FROM ${DEBIAN} AS base
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl git zstd xz-utils \
+      gcc libc6-dev libgmp10 python3 python3-yaml bubblewrap \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------- Lean 4.35.0
+FROM base AS lean
+ARG LEAN_VERSION=4.35.0
+ARG LEAN_SHA256_ARM64=c8f0f8a3920e839718b1343e6781fd80a3e9b1024fbcd7078eb30f54e806b028
+RUN curl -fsSL --retry 3 -o /tmp/lean.tar.zst \
+      "https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-linux_aarch64.tar.zst" \
+ && echo "${LEAN_SHA256_ARM64}  /tmp/lean.tar.zst" | sha256sum -c - \
+ && mkdir -p /opt && tar --zstd -xf /tmp/lean.tar.zst -C /opt \
+ && mv /opt/lean-${LEAN_VERSION}-linux_aarch64 /opt/lean && rm /tmp/lean.tar.zst
+
+# ------------------------------------------------- Rust nightly pinned by Charon
+FROM base AS rust
+ARG RUSTUP_VERSION=1.28.2
+ARG RUSTUP_SHA256_ARM64=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c
+ARG RUST_TOOLCHAIN=nightly-2026-09-17
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -fsSL --retry 3 -o /tmp/rustup-init \
+      "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/aarch64-unknown-linux-gnu/rustup-init" \
+ && echo "${RUSTUP_SHA256_ARM64}  /tmp/rustup-init" | sha256sum -c - \
+ && chmod +x /tmp/rustup-init \
+ && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+      --component rustc-dev,llvm-tools,rust-src \
+ && rm /tmp/rustup-init
+
+# ------------------------------------------- Charon at the commit Aeneas pins
+FROM rust AS charon
+ARG CHARON_COMMIT=7b462d9159db2ed3015162352183906a30bfafc6
+# Use the toolchain installed above rather than every target in rust-toolchain.
+ENV RUSTUP_TOOLCHAIN=nightly-2026-09-17
+RUN git init -q /src/charon && cd /src/charon \
+ && git fetch -q --depth 1 https://github.com/AeneasVerif/charon "${CHARON_COMMIT}" \
+ && git checkout -q FETCH_HEAD \
+ && git submodule update -q --init --depth 1 \
+ && cd charon && cargo build --release --locked --bins \
+ && mkdir -p /opt/charon/bin \
+ && cp target/release/charon target/release/charon-driver /opt/charon/bin/ \
+ && cp ../rust-toolchain /opt/charon/rust-toolchain
+
+# ------------------------------------- Aeneas binary + Lean library + Mathlib
+FROM lean AS aeneas
+ARG AENEAS_RELEASE=nightly-2026.11.02-ab34bd2
+ARG AENEAS_SHA256_ARM64=34c6771a6bac6513df71a79adfbd8c1275c86802165da92547065c1af4cc962f
+ENV PATH=/opt/lean/bin:$PATH
+RUN curl -fsSL --retry 3 -o /tmp/aeneas.tar.gz \
+      "https://github.com/AeneasVerif/aeneas/releases/download/${AENEAS_RELEASE}/aeneas-linux-aarch64.tar.gz" \
+ && echo "${AENEAS_SHA256_ARM64}  /tmp/aeneas.tar.gz" | sha256sum -c - \
+ && mkdir -p /opt/aeneas && tar -xzf /tmp/aeneas.tar.gz -C /opt/aeneas && rm /tmp/aeneas.tar.gz \
+ && rm -rf /opt/aeneas/backends/fstar /opt/aeneas/backends/hol4 /opt/aeneas/backends/coq
+WORKDIR /opt/aeneas/backends/lean
+# Fetch the dependencies pinned by Aeneas' lake-manifest, then Mathlib's
+# prebuilt cache, then build (or unpack) the Aeneas library itself.
+# The workspace ProofCI assembles refers to these packages by path, so their
+# Git metadata is not needed once the build is known to be up to date.
+RUN lake exe cache get && lake build Aeneas && lake build --no-build Aeneas \
+ && find .lake/packages -name .git -type d -prune -exec rm -rf {} + \
+ && rm -rf .lake/*.tar.gz \
+ && chmod -R a+rX /opt/aeneas
+
+# ----------------------------------------------------------------- final image
+FROM base
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo \
+    PATH=/opt/charon/bin:/opt/aeneas:/opt/lean/bin:/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
+    PROOFCI_AENEAS_LEAN=/opt/aeneas/backends/lean PYTHONPATH=/opt/proofci
+COPY --from=rust /opt/rustup /opt/rustup
+COPY --from=rust /opt/cargo /opt/cargo
+COPY --from=charon /opt/charon /opt/charon
+COPY --from=lean /opt/lean /opt/lean
+COPY --from=aeneas /opt/aeneas /opt/aeneas
+COPY proofci /opt/proofci/proofci
+ENV HOME=/tmp
+USER 1000:1000
+WORKDIR /work
+ENTRYPOINT ["python3", "-m", "proofci"]
