@@ -212,11 +212,13 @@ partial def proofciReach (env : Environment) (root : Name) : NameSet := Id.run d
     | _ => pure ()
   return seen
 
-/-- Does the postcondition of a `WP.spec` triple ignore the result? -/
+/-- Does the postcondition of a `WP.spec` triple ignore the result while
+    still claiming something? (`f x ⦃ _ => True ⦄`, "never panics or
+    overflows", is a meaningful guarantee and is not flagged.) -/
 def proofciPostIgnoresResult (e : Expr) : Bool :=
   if e.isAppOf ``Aeneas.Std.WP.spec then
     match e.getAppArgs.back? with
-    | some (.lam _ _ body _) => !body.hasLooseBVars
+    | some (.lam _ _ body _) => !body.hasLooseBVars && !body.isConstOf ``True
     | _ => false
   else false
 

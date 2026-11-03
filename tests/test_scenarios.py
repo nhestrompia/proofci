@@ -292,6 +292,24 @@ def weak_contract_assumes_result(head):
 weak_contract_assumes_result.also_base = contract_assumes_result
 
 
+def no_panic_contract(checkout):
+    # "never panics or overflows": a meaningful guarantee, no warning expected.
+    edit(checkout / "proofci/Contract.lean", ZERO_CONTRACT,
+         "theorem zero_amount_no_fee (fee_bps : Std.U64) :\n"
+         "    calculate_fee 0#u64 fee_bps ⦃ _ => True ⦄ := by sorry")
+    edit(checkout / "proofci/Proofs.lean", "theorem zero_amount_no_fee (fee_bps : Std.U64) :\n"
+         "    calculate_fee 0#u64 fee_bps ⦃ fee => fee.val = 0 ⦄ := by",
+         "theorem zero_amount_no_fee (fee_bps : Std.U64) :\n"
+         "    calculate_fee 0#u64 fee_bps ⦃ _ => True ⦄ := by")
+
+
+def contract_no_panic(head):
+    no_panic_contract(head)
+
+
+contract_no_panic.also_base = no_panic_contract
+
+
 SCENARIOS = {
     "baseline": (None, dict.fromkeys(GUARANTEES, V), 0),
     "buggy-fee-rounds-up": (buggy_fee_rounds_up, {
@@ -335,6 +353,7 @@ SCENARIOS = {
         "fees/fee-capped": V, "fees/zero-amount": S, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
     "contract-assumes-result": (weak_contract_assumes_result, {
         "fees/fee-capped": V, "fees/zero-amount": U, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "contract-no-panic": (contract_no_panic, dict.fromkeys(GUARANTEES, V), 0),
 }
 
 
@@ -369,6 +388,8 @@ def run_scenario(name, out_dir=None):
         problems.append(f"exit {done.returncode} != expected {expected_exit}")
     if name == "weaken-policy" and not data["policy_changes"]:
         problems.append("policy change not reported")
+    if name == "contract-no-panic" and any(g.get("warnings") for g in data["guarantees"]):
+        problems.append("a no-panic guarantee was warned about")
     if name == "contract-assumes-result":
         warned = {f"{g['target']}/{g['guarantee']}" for g in data["guarantees"] if g.get("warnings")}
         if warned != {"fees/zero-amount"}:

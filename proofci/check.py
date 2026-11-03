@@ -223,7 +223,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             if item.get("trivial_conclusion"):
                 o.warnings.append(f"the conclusion of `{o.theorem}` is trivially true")
             if item.get("post_ignores_result"):
-                o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result")
+                o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result, "
+                                  "so it only restates facts about the inputs")
             if not item["function_found"]:
                 o.status, o.reason = UNSUPPORTED, f"`{o.function}` is not in the translated code"
             elif item["kind"] != "theorem":
