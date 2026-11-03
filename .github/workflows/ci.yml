@@ -8,8 +8,17 @@ permissions:
   pull-requests: read
 jobs:
   toolchain:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: toolchain (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -20,11 +29,11 @@ jobs:
         with:
           context: .
           file: toolchain/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/${{ matrix.arch }}
           tags: proofci-toolchain:ci
           load: true
-          cache-from: type=gha,scope=toolchain
-          cache-to: type=gha,scope=toolchain,mode=max
+          cache-from: type=gha,scope=toolchain-${{ matrix.arch }}
+          cache-to: type=gha,scope=toolchain-${{ matrix.arch }},mode=max
       - name: Unit tests
         run: >-
           docker run --rm -v "$PWD:/src:ro" -w /src -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python3
@@ -43,7 +52,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: scenario-reports
+          name: scenario-reports-${{ matrix.arch }}
           path: ${{ runner.temp }}/scenarios/
           if-no-files-found: ignore
       - name: Run the action on the example (policy from this commit)
@@ -56,8 +65,16 @@ jobs:
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: toolchain
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: publish (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
     permissions:
       contents: read
       packages: write
@@ -71,18 +88,36 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish the toolchain image
-        id: push
+      - name: Publish the toolchain image for this architecture
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: toolchain/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: true
           provenance: false
-          tags: ghcr.io/${{ github.repository_owner }}/proofci-toolchain:${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/proofci-toolchain:${{ github.sha }}-${{ matrix.arch }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=toolchain
-      - name: Record the digest
+          cache-from: type=gha,scope=toolchain-${{ matrix.arch }}
+
+  release-image:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Combine both architectures under one tag
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/proofci-toolchain
+          SHA: ${{ github.sha }}
         run: |
-          echo "Image: ghcr.io/${{ github.repository_owner }}/proofci-toolchain@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools create -t "$REPO:$SHA" "$REPO:$SHA-amd64" "$REPO:$SHA-arm64"
+          digest=$(docker buildx imagetools inspect "$REPO:$SHA" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
+          echo "Image (linux/amd64 + linux/arm64): \`$REPO@$digest\`" >> "$GITHUB_STEP_SUMMARY"

@@ -111,7 +111,7 @@ permissions:
   pull-requests: read           # only to read approvals of policy changes
 jobs:
   proofci:
-    runs-on: ubuntu-24.04-arm   # free for public repositories
+    runs-on: ubuntu-latest      # any Linux runner, x86_64 or arm64
     timeout-minutes: 30
     steps:
       - uses: nhestrompia/proofci@COMMIT_SHA   # pin a release commit
@@ -187,7 +187,8 @@ and SHA-256:
 - Rust nightly-2026-09-17
 
 Mathlib is pruned to the modules Aeneas imports. The image is 1.7 GB
-compressed and Linux arm64 only for now. CI publishes it to GHCR from `main`.
+compressed and built for Linux x86_64 and arm64; Docker picks the right one.
+CI publishes it to GHCR from `main`.
 
 Measured on a free `ubuntu-24.04-arm` GitHub runner, the example takes 26 s
 to check once the image is available: translation 1.6 s, contract 8.1 s,
@@ -198,7 +199,7 @@ users pull it.
 ## Development
 
 ```sh
-docker buildx build --platform linux/arm64 -f toolchain/Dockerfile -t proofci-toolchain:dev --load .
+docker buildx build -f toolchain/Dockerfile -t proofci-toolchain:dev --load .
 docker run --rm --network none \
   --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
   -v "$PWD:/src:ro" -w /src -e PROOFCI_TOOLCHAIN=1 -e PYTHONPATH=/src \

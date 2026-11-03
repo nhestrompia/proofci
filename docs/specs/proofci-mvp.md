@@ -64,7 +64,7 @@ configuration or infrastructure error.
 
 ## Acceptance
 
-- The example crate verifies end to end on a GitHub-hosted arm64 runner.
+- The example crate verifies end to end on GitHub-hosted x86_64 and arm64 runners.
 - The scenario suite (`tests/test_scenarios.py`) passes against the real
   toolchain. It covers a buggy implementation, a new overflow, `sorry`, a
   weakened statement, a replaced model, a committed fake translation, a
@@ -74,7 +74,7 @@ configuration or infrastructure error.
 
 ## Later
 
-- An x86_64 image; crates with vendored, pinned dependencies.
+- Crates with vendored, pinned dependencies.
 - Only re-checking guarantees whose dependencies changed.
 - A local `proofci dev` command for editing proofs against the generated model.
 - Starter examples for parsers and state machines.

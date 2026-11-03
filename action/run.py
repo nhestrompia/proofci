@@ -33,7 +33,7 @@ def run_image(base, head, policy, out):
         # bubblewrap inside the container needs these to create its sandboxes
         "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
         "--security-opt", "systempaths=unconfined",
-        "--cpus", "2", "--memory", "6g", "--pids-limit", "4096",
+        "--cpus", str(os.cpu_count() or 2), "--memory", "8g", "--pids-limit", "4096",
         "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{out}:/out",
         os.environ["IMAGE"], "check", "--base", "/base", "--head", "/head",
         "--policy", policy, "--report", "/out/report.json", "--summary", "/out/summary.md",
