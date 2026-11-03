@@ -9,6 +9,7 @@ then is the candidate's own policy used.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -25,17 +26,39 @@ def subdir(root, rel):
     return path
 
 
+SANDBOX_OPTS = [
+    # bubblewrap inside the container needs these to create its sandboxes
+    "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
+    "--security-opt", "systempaths=unconfined",
+]
+
+
+def fetch(base, head, policy, vendor):
+    """Download crates.io dependencies. The only step with network access:
+    `cargo vendor` downloads and checksums sources but runs none of them."""
+    if vendor.exists():
+        shutil.rmtree(vendor)
+    vendor.mkdir(parents=True)
+    os.chmod(vendor, 0o777)
+    command = [
+        "docker", "run", "--rm", *SANDBOX_OPTS, "--memory", "4g", "--pids-limit", "1024",
+        "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{vendor}:/vendor",
+        os.environ["IMAGE"], "fetch", "--base", "/base", "--head", "/head", "--policy", policy, "--out", "/vendor",
+    ]
+    subprocess.run(command)
+
+
 def run_image(base, head, policy, out):
     out.mkdir(parents=True, exist_ok=True)
     os.chmod(out, 0o777)
+    vendor = WORK / f"vendor-{policy}"
+    fetch(base, head, policy, vendor)
     command = [
-        "docker", "run", "--rm", "--network", "none",
-        # bubblewrap inside the container needs these to create its sandboxes
-        "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
-        "--security-opt", "systempaths=unconfined",
+        "docker", "run", "--rm", "--network", "none", *SANDBOX_OPTS,
         "--cpus", str(os.cpu_count() or 2), "--memory", "8g", "--pids-limit", "4096",
         "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{out}:/out",
-        os.environ["IMAGE"], "check", "--base", "/base", "--head", "/head",
+        "-v", f"{vendor}:/vendor:ro",
+        os.environ["IMAGE"], "check", "--base", "/base", "--head", "/head", "--vendor", "/vendor",
         "--policy", policy, "--report", "/out/report.json", "--summary", "/out/summary.md",
     ]
     status = subprocess.run(command).returncode

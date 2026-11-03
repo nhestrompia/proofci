@@ -84,7 +84,16 @@ def contract_signature_change(head):
 
 
 def unsafe_code(head):
+    # Only code the targets reach is translated; `unsafe` elsewhere is fine.
     edit(head / "src/lib.rs", "pub struct Accounts", "pub fn peek(x: &u64) -> u64 { unsafe { *(x as *const u64) } }\n\npub struct Accounts")
+
+
+def target_reaches_unsafe(head):
+    # `transfer` now reads through a raw pointer, which Aeneas cannot model;
+    # the fee guarantees are still judged.
+    edit(head / "src/lib.rs", "pub struct Accounts",
+         "fn peek(x: &u64) -> u64 { unsafe { *(x as *const u64) } }\n\npub struct Accounts")
+    edit(head / "src/lib.rs", "    if amount > accounts.from {", "    if amount > peek(&accounts.from) {")
 
 
 def adds_dependency(head):
@@ -176,6 +185,81 @@ def calls_unmodelled_std(head):
          "    let _ = amount.reverse_bits();\n    let bps = if fee_bps")
 
 
+def as_workspace(checkout):
+    """Turn the example into a Cargo workspace: the ledger becomes a member
+    with inherited settings, next to a service whose dependencies are not
+    available (and not needed: unrelated members are left out)."""
+    member = checkout / "ledger"
+    member.mkdir()
+    shutil.move(checkout / "src", member / "src")
+    (checkout / "Cargo.toml").unlink()
+    (member / "Cargo.toml").write_text(
+        '[package]\nname = "ledger"\nversion.workspace = true\nedition.workspace = true\n\n'
+        '[dev-dependencies]\nproptest = "1"\n')
+    app = checkout / "services" / "app"
+    (app / "src").mkdir(parents=True)
+    (app / "Cargo.toml").write_text(
+        '[package]\nname = "app"\nversion.workspace = true\nedition.workspace = true\n\n'
+        '[dependencies]\ntokio.workspace = true\nledger = { path = "../../ledger" }\n')
+    (app / "src" / "main.rs").write_text("fn main() {}\n")
+    (checkout / "Cargo.toml").write_text(
+        '[workspace]\nresolver = "2"\nmembers = ["ledger", "services/app"]\n\n'
+        '[workspace.package]\nversion = "0.1.0"\nedition = "2021"\n\n'
+        '[workspace.dependencies]\ntokio = { version = "1", features = ["full"] }\n')
+    edit(checkout / "proofci.yaml", "crate: .", "crate: ledger")
+
+
+def workspace_member(head):
+    as_workspace(head)
+
+
+workspace_member.also_base = as_workspace
+
+FAKE_CHECKSUM = "ab" * 32
+MALICIOUS_BUILD_RS = r"""
+// Tries to replace the buggy fee in the crate being verified with a correct
+// one before ProofCI translates it, so that the bug would pass.
+use std::{fs, path::Path};
+fn visit(dir: &Path, depth: u32) {
+    if depth > 8 { return; }
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() { visit(&path, depth + 1); continue; }
+        if path.file_name().map_or(false, |n| n == "lib.rs") {
+            if let Ok(text) = fs::read_to_string(&path) {
+                if text.contains("+ BPS_DENOMINATOR - 1) / BPS_DENOMINATOR + 1") {
+                    let fixed = text.replace("(amount % BPS_DENOMINATOR * bps + BPS_DENOMINATOR - 1) / BPS_DENOMINATOR + 1",
+                                             "amount % BPS_DENOMINATOR * bps / BPS_DENOMINATOR");
+                    let result = fs::write(&path, fixed);
+                    println!("cargo:warning=rewrite {}: {:?}", path.display(), result);
+                }
+            }
+        }
+    }
+}
+fn main() { visit(Path::new("/tmp"), 0); }
+"""
+
+
+def dependency_rewrites_source(head):
+    """A crates.io dependency (served from a local vendor directory) whose
+    build script rewrites the buggy code into correct code before translation."""
+    buggy_fee_rounds_up(head)
+    edit(head / "Cargo.toml", "[dependencies]\n", '[dependencies]\ntinydep = "0.1.0"\n')
+    (head / "Cargo.lock").write_text(
+        "version = 4\n\n[[package]]\nname = \"ledger\"\nversion = \"0.1.0\"\ndependencies = [\n \"tinydep\",\n]\n\n"
+        "[[package]]\nname = \"tinydep\"\nversion = \"0.1.0\"\n"
+        "source = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+        f"checksum = \"{FAKE_CHECKSUM}\"\n")
+    dep = head.parent / "vendor" / "tinydep-0.1.0"
+    (dep / "src").mkdir(parents=True)
+    (dep / "Cargo.toml").write_text('[package]\nname = "tinydep"\nversion = "0.1.0"\nedition = "2021"\nbuild = "build.rs"\n')
+    (dep / "src" / "lib.rs").write_text("pub fn unused() {}\n")
+    (dep / "build.rs").write_text(MALICIOUS_BUILD_RS)
+    (dep / ".cargo-checksum.json").write_text(json.dumps({"files": {}, "package": FAKE_CHECKSUM}))
+
+
 SCENARIOS = {
     "baseline": (None, dict.fromkeys(GUARANTEES, V), 0),
     "buggy-fee-rounds-up": (buggy_fee_rounds_up, {
@@ -191,7 +275,9 @@ SCENARIOS = {
     "weaken-policy": (weaken_policy, dict.fromkeys(GUARANTEES, V), 1),
     "contract-signature-change": (contract_signature_change, {
         "fees/fee-capped": S, "fees/zero-amount": S, "transfer/conservation": S, "transfer/rejects-overdraft": S}, 1),
-    "unsafe-code": (unsafe_code, dict.fromkeys(GUARANTEES, X), 1),
+    "unsafe-code": (unsafe_code, dict.fromkeys(GUARANTEES, V), 0),
+    "target-reaches-unsafe": (target_reaches_unsafe, {
+        "fees/fee-capped": V, "fees/zero-amount": V, "transfer/conservation": X, "transfer/rejects-overdraft": X}, 1),
     "adds-dependency": (adds_dependency, dict.fromkeys(GUARANTEES, X), 1),
     "proof-adds-axiom": (proof_adds_axiom, {
         "fees/fee-capped": U, "fees/zero-amount": V, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
@@ -210,6 +296,9 @@ SCENARIOS = {
         "fees/fee-capped": S, "fees/zero-amount": S, "transfer/conservation": S, "transfer/rejects-overdraft": S}, 1),
     "calls-unmodelled-std": (calls_unmodelled_std, {
         "fees/fee-capped": X, "fees/zero-amount": X, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
+    "workspace-member": (workspace_member, dict.fromkeys(GUARANTEES, V), 0),
+    "dependency-rewrites-source": (dependency_rewrites_source, {
+        "fees/fee-capped": U, "fees/zero-amount": U, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
 }
 
 
@@ -222,9 +311,13 @@ def run_scenario(name, out_dir=None):
         shutil.copytree(EXAMPLE, head)
         if mutate:
             mutate(head)
+            if hasattr(mutate, "also_base"):
+                mutate.also_base(base)
         report = Path(tmp) / "report.json"
+        vendor = Path(tmp) / "vendor"
         done = subprocess.run(
-            [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report],
+            [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report,
+             *(["--vendor", vendor] if vendor.is_dir() else [])],
             cwd=ROOT, capture_output=True, text=True, timeout=3600)
         if not report.exists():
             return [f"no report:\n{done.stdout}{done.stderr}"]

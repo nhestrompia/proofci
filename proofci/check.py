@@ -116,7 +116,7 @@ def policy_changes(base_checkout, base, head_checkout, head):
     return changes
 
 
-def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None):
+def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None, vendor_dir=None):
     started = time.monotonic()
     report = Report(policy_source=policy)
     base = load_manifest(base_checkout)
@@ -145,37 +145,68 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
 
     with tempfile.TemporaryDirectory(prefix="proofci-", dir=work_dir) as tmp:
         work = Path(tmp)
-        # 1. Trusted translation of the candidate's Rust code.
+        # 1. Trusted translation of the candidate's Rust code: only what the
+        # target functions reach. If that fails, find out which targets
+        # reach untranslatable code and translate the others without them.
         t0 = time.monotonic()
+        functions = sorted({o.function for o in report.outcomes})
+        attempts = itertools.count(1)
+
+        def translate(paths, opaque=()):
+            sub = work / f"translate-{next(attempts)}"
+            sub.mkdir()
+            return extract.extract(head_checkout, active.crate, sub, start_from=paths,
+                                   vendor_dir=vendor_dir, opaque=opaque)
+
+        extraction, failures = None, {}
         try:
-            extraction = extract.extract(head_checkout / active.crate, work)
+            extraction = translate(functions)
         except extract.Unsupported as error:
-            mark(UNSUPPORTED, str(error))
-            report.timings["extract"] = round(time.monotonic() - t0, 1)
-            return report
+            if len(functions) > 1:
+                for function in functions:
+                    try:
+                        translate([function])
+                    except extract.Unsupported as single:
+                        failures[function] = str(single)
+            if failures and len(failures) < len(functions):
+                # Keep the failing functions as bare declarations so the
+                # contract still elaborates and the other targets are judged.
+                try:
+                    extraction = translate(functions, opaque=sorted(failures))
+                except extract.Unsupported:
+                    extraction = None
+            if extraction is None and len(failures) != len(functions):
+                failures = dict.fromkeys(functions, str(error))
+        for o in report.outcomes:
+            if o.function in failures:
+                o.status, o.reason = UNSUPPORTED, failures[o.function]
         report.timings["extract"] = round(time.monotonic() - t0, 1)
+        if extraction is None:
+            return report
+        pending = [o for o in report.outcomes if o.function not in failures]
 
         # 2. Workspace: extracted model + protected contract + candidate proofs.
         ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
                            policy_checkout / active.lean, head_checkout / active.lean)
         if not (ws.root / "Proofs.lean").is_file():
-            mark(UNPROVEN, f"no proofs found at `{active.proofs}`")
+            mark(UNPROVEN, f"no proofs found at `{active.proofs}`", only={o.theorem for o in pending})
             return report
 
         # 3. The contract must still elaborate against the new code.
         t0 = time.monotonic()
         try:
             lean.build_contract(ws)
-            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in report.outcomes])
+            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in pending])
         except lean.ContractError as error:
+            names = {o.theorem for o in pending}
             mark(CONTRACT_STALE, "the protected contract no longer elaborates against this code; "
-                 "a maintainer must update it:\n" + str(error))
+                 "a maintainer must update it:\n" + str(error), only=names)
             report.timings["contract"] = round(time.monotonic() - t0, 1)
             return report
         report.timings["contract"] = round(time.monotonic() - t0, 1)
 
         candidates = []
-        for o in report.outcomes:
+        for o in pending:
             item = audit[o.theorem]
             if not item["function_found"]:
                 o.status, o.reason = UNSUPPORTED, f"`{o.function}` is not in the translated code"
@@ -252,6 +283,13 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
+
+
+def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
+    """Vendor the candidate's crates.io dependencies (the step with network)."""
+    active = load_manifest(head_checkout if policy == "head" else base_checkout)
+    with tempfile.TemporaryDirectory(prefix="proofci-fetch-") as tmp:
+        extract.fetch(head_checkout, active.crate, vendor_dir, Path(tmp))
 
 
 def lean_function(rust_path: str):
