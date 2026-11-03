@@ -10,9 +10,9 @@ inputs:
     default: "."
   image:
     description: >-
-      Toolchain image. Leave empty to use the image published for the commit this
-      action is pinned to (`uses: owner/proofci@<commit sha>`); set it to pin a
-      digest explicitly.
+      Toolchain image. Leave empty to use the image published for the release or
+      commit this action is pinned to (`uses: owner/proofci@v0.1.0` or
+      `@<commit sha>`); set it to pin a digest explicitly.
     default: ""
   base:
     description: >-
@@ -73,6 +73,8 @@ runs:
     - name: Check out the candidate
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        # Pull requests from forks: fetch the commit from the fork itself.
+        repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
         ref: ${{ steps.refs.outputs.head }}
         path: .proofci/head
         persist-credentials: false
@@ -90,8 +92,8 @@ runs:
         ACTION_REPOSITORY: ${{ github.action_repository }}
       run: |
         if [ -z "$IMAGE" ]; then
-          if ! [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Pin ProofCI to a commit SHA (uses: ${ACTION_REPOSITORY:-owner/proofci}@<40-character sha>) or set the 'image' input."
+          if ! [[ "$ACTION_REF" =~ ^[0-9a-f]{40}$ || "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Pin ProofCI to a release (uses: ${ACTION_REPOSITORY:-owner/proofci}@v0.1.0) or a commit SHA, or set the 'image' input."
             exit 1
           fi
           owner="${ACTION_REPOSITORY%%/*}"
