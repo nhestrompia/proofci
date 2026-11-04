@@ -36,6 +36,7 @@ function generator(seed) {
       case "boolean": return next() < 0.5;
       case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
       case "void": return undefined;
+      case "array": return Array.from({ length: Math.floor(next() * 7) }, () => value(type.item));
       case "optional": return next() < 0.3 ? (type.nothing === "null" ? null : undefined) : value(type.inner);
       case "enum": return pick(type.tags).tag;
       case "record": return Object.fromEntries(type.fields.map(f => [f.name, value(f.type)]));
@@ -61,6 +62,11 @@ export function term(type, value) {
       return typeof value === "bigint" ? `(${value} : Int)` : undefined;
     case "void":
       return value === undefined ? "()" : undefined;
+    case "array": {
+      if (!Array.isArray(value)) return undefined;
+      const parts = value.map(item => term(type.item, item));
+      return parts.includes(undefined) ? undefined : `[${parts.join(", ")}]`;
+    }
     case "optional": {
       if (value === (type.nothing === "null" ? null : undefined)) return "none";
       const inner = term(type.inner, value);

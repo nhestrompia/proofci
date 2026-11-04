@@ -67,7 +67,7 @@ test("a null test on the wrong nullish value is rejected, not treated as null", 
 test("types the model can't represent exactly are rejected", () => {
   const cases = [
     ["export function f(a: string) { return 1; }", /type `string`/],
-    ["export function f(a: number[]) { return 1; }", /not supported/],
+    ["export function f(a: [number, number]) { return 1; }", /not supported/],
     ["export function f(a: { x: number }) { return a.x; }", /not supported/],
     ["interface A { x?: number } export function f(a: A) { return 1; }", /optional/],
     ["interface A { x: number; g(): void } export function f(a: A) { return 1; }", /plain field/],
@@ -163,7 +163,7 @@ test("only what can be modelled can be thrown", () => {
 });
 
 test("writes that could reach shared state are rejected", () => {
-  rejects("interface A { x: number } export function f(a: A) { a.x = 1; return a; }", /field or element/);
+  rejects("interface A { x: number } export function f(a: A) { a.x = 1; return a; }", /shared with the caller/);
   rejects("let c = 0; export function f(a: number) { c = a; return a; }", /module-level/);
   rejects("export function f(a: number) { var b = a; return b; }", /var/);
   rejects("export function f(a: number) { let b = 0; [1].length; const g = () => { b = 1; }; return b; }", /nested function/);
@@ -171,6 +171,64 @@ test("writes that could reach shared state are rejected", () => {
   rejects("export function f(a: number) { let b = 0; const c = (b = 1); return c; }", /not supported/);
   rejects("export function f(a: number) { let b = 0; return b++; }", /not supported/);
   rejects("export function f(a: number) { let b = 1; b **= 2; return b; }", /operator/);
+});
+
+test("arrays are lists, and reading past the end is undefined", () => {
+  emits("export function f(xs: number[]) { return xs[0]; }", "Js.at_ xs", "Option");
+  emits("export function f(xs: readonly number[]) { return xs.length; }", "Js.len xs");
+  emits("export function f(xs: number[]) { return [...xs, 1]; }", "xs ++ [");
+  emits("export function f(xs: number[], i: number) { return xs[i] === 3; }", "= some");
+  emits("export function f(xs: number[]) { return xs[0]!; }", "Js.unwrap");
+});
+
+test("for...of walks a copy of the list it started with", () => {
+  emits("export function f(xs: number[]) { let s = 0; for (const x of xs) { s += x; } return s; }", "| [] =>", "| x :: tmp");
+});
+
+test("callbacks become functions, in the order JavaScript runs them", () => {
+  emits("export function f(xs: number[]) { return xs.map(x => x + 1); }", "Js.map (fun (x : Js.Num) => do");
+  emits("export function f(xs: number[]) { return xs.filter(x => { if (x > 0) return true; return false; }); }", "Js.filter");
+  emits("export function f(xs: number[]) { return xs.reduce((a, b) => a + b, 0); }", "Js.reduce");
+});
+
+test("callbacks that would see more than the model passes are rejected", () => {
+  rejects("export function f(xs: number[]) { return xs.map((x, i) => x + i); }", /exactly 1/);
+  rejects("function g(x: number) { return x; } export function f(xs: number[]) { return xs.map(g); }", /inline function/);
+  rejects("export function f(xs: number[]) { return xs.reduce((a, b) => a + b); }", /initial value/);
+  rejects("export function f(xs: number[]) { let s = 0; xs.forEach(x => { s += x; }); return s; }", /nested function/);
+});
+
+test("an in-place change needs a value nobody else can see", () => {
+  const shared = [
+    ["the caller's array", "export function f(xs: number[]) { xs.push(1); return xs; }", /shared with the caller/],
+    ["an alias of a parameter", "export function f(xs: number[]) { const y = xs; y.push(1); return y; }", /must start as a new/],
+    ["a second name", "export function f() { const a: number[] = []; const b = a; a.push(1); return b; }", /passed around or stored/],
+    ["storing it", "interface B { a: number[] } export function f() { const a: number[] = []; const b: B = { a }; a.push(1); return b; }", /passed around or stored/],
+    ["passing it on", "function g(a: number[]) { return a; } export function f() { const a: number[] = []; const b = g(a); a.push(1); return b; }", /passed around or stored/],
+    ["an element", "interface L { n: number } export function f(xs: L[]) { for (const x of xs) { x.n = 1; } return xs; }", /element of an array|shared/],
+    ["a field holding an array", "interface B { a: number[] } export function f(b: B) { const a = b.a; a.push(1); return b; }", /must start as a new/],
+    ["a nested field", "interface B { a: number[] } export function f() { const b: B = { a: [] }; b.a.push(1); return b; }", /nested/],
+    ["reassigned from outside", "export function f(xs: number[]) { let a: number[] = []; a = xs; a.push(1); return xs; }", /must start as a new/],
+    ["while looping over it", "export function f() { const a = [1]; for (const x of a) { a.push(x); } return a; }", /looping over/],
+    ["a result that can't be used yet", "export function f() { const a = [1]; return a.push(2); }", /own statement/],
+  ];
+  for (const [what, source, pattern] of shared) {
+    const reason = failure(source);
+    assert.ok(reason, `accepted ${what}`);
+    assert.match(reason, pattern, what);
+  }
+});
+
+test("a new array can change freely", () => {
+  emits("export function f(xs: number[]) { const a = xs.slice(); a.push(1); return a; }", "a ++ [");
+  emits("export function f() { const a = [1, 2]; a[0] = 5; return a; }", "Js.setAt");
+  emits("interface P { x: number } export function f() { const p: P = { x: 1 }; p.x = 2; return p; }", "with x :=");
+  emits("export function f(n: number) { const a: number[] = []; for (let i = 0; i < n; i++) { a.push(i); } return a.length; }", "a_2");
+});
+
+test("identity comparison isn't approximated", () => {
+  rejects("interface L { n: number } export function f(xs: L[], x: L) { return xs.includes(x); }", /identity/);
+  rejects("export function f(a: number[], b: number[]) { return a === b; }", /only supported on/);
 });
 
 test("switch handles grouped cases, default and a final break", () => {

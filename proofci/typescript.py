@@ -77,7 +77,7 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
         "signatures": extraction.signatures, "files": extraction.files}))
     program = translator().parent / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
-                       writable=[out], cwd=out, timeout=120)
+                       writable=[out], cwd=out, timeout=60)
     if node.status != 0:
         return [], ["the comparison with Node did not run: " + node.output[-600:]]
     notes = [f"not compared with Node: {item}" for item in json.loads(node.output.splitlines()[-1])["skipped"]]

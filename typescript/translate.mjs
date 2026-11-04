@@ -53,11 +53,26 @@ const ONE = ts.factory.createNumericLiteral(1); // the step of `++` and `--`
 
 const isUpdate = node => node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken;
 
-// What `node` writes to, if it is a write.
+const MUTATING = new Set(["push", "pop", "shift", "unshift", "reverse", "sort", "splice", "fill", "copyWithin", "set", "add", "delete", "clear"]);
+
+// What `node` writes to, if it is a write. A method call writes to its receiver.
 const writeTarget = node => {
   if (ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind)) return node.left;
   if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && isUpdate(node)) return node.operand;
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))) {
+    const callee = unwrap(node.expression);
+    if (MUTATING.has(callee.name.text)) return callee.expression;
+  }
   return undefined;
+};
+
+// The variable a write lands in: `x` for `x`, `x.y` and `x[i]`.
+const rootOf = node => {
+  node = unwrap(node);
+  while (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node) || ts.isNonNullExpression(node)) {
+    node = unwrap(node.expression);
+  }
+  return node;
 };
 
 const name = text => {
@@ -186,6 +201,7 @@ class Translator {
     if (type.flags & TypeFlags.BooleanLike) return "Bool";
     if (type.flags & TypeFlags.BigIntLike) return "Int";
     if (type.flags & TypeFlags.Void) return "Unit";
+    if (this.checker.isArrayType(type)) return `(List ${this.type(this.checker.getTypeArguments(type)[0], node)})`;
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (type.isUnion()) {
@@ -272,6 +288,7 @@ class Translator {
     if (lean === "Bool") return { kind: "boolean" };
     if (lean === "Int") return { kind: "bigint" };
     if (lean === "Unit") return { kind: "void" };
+    if (this.checker.isArrayType(type)) return { kind: "array", item: this.describe(this.checker.getTypeArguments(type)[0], node) };
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
       return { kind: "optional", nothing, inner: this.describe(this.checker.getNonNullableType(type), node) };
@@ -429,18 +446,95 @@ class Scope {
     const walk = (node, nested) => {
       if (ts.isIdentifier(node)) this.names.add(node.text);
       const write = writeTarget(node);
-      if (write) this.noteWrite(write, nested);
+      if (write && !this.isBuiltinReceiver(node, write)) this.noteWrite(write, nested, ts.isCallExpression(node));
       ts.forEachChild(node, child => walk(child, nested || (ts.isFunctionLike(node) && node !== fn)));
     };
+    this.owned = new Set();
     walk(fn, false);
+    this.checkOwnership();
   }
 
-  noteWrite(target, nested) {
+  // A method that merely shares a name with a mutating one, such as a call to
+  // a user's own `set`, is judged as a call, not as a write.
+  isBuiltinReceiver(node, write) {
+    if (!ts.isCallExpression(node)) return false;
+    return !this.isArray(write);
+  }
+
+  isArray(node) {
+    return this.checker.isArrayType(this.checker.getApparentType(this.typeOf(node)));
+  }
+
+  // Writing through a name is only safe if no other name can see the value, so
+  // that a value in Lean behaves like the object in JavaScript. A changed object
+  // must start as a new value, and may only be read, returned or copied.
+  checkOwnership() {
+    for (const symbol of this.owned) {
+      const declaration = symbol.valueDeclaration;
+      if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) {
+        throw this.t.fail(declaration, `\`${symbol.name}\` is changed in place, but it may be shared with the caller`);
+      }
+      if (ts.isForOfStatement(declaration.parent.parent)) {
+        throw this.t.fail(declaration, `\`${symbol.name}\` is an element of an array that is changed in place`);
+      }
+      this.requireFresh(declaration.initializer, symbol);
+    }
+    const walk = node => {
+      if (ts.isIdentifier(node)) {
+        const symbol = this.symbol(node);
+        if (this.owned.has(symbol) && symbol.valueDeclaration !== node.parent) this.checkOwnedUse(node, symbol);
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(unwrap(node.left))) {
+        const symbol = this.symbol(unwrap(node.left));
+        if (this.owned.has(symbol)) this.requireFresh(node.right, symbol);
+      }
+      if (ts.isForOfStatement(node)) {
+        const iterated = rootOf(node.expression);
+        if (ts.isIdentifier(iterated) && this.owned.has(this.symbol(iterated)) && this.assignedIn([node.statement]).includes(this.symbol(iterated))) {
+          throw this.t.fail(node, "changing an array while looping over it is not supported");
+        }
+      }
+      ts.forEachChild(node, walk);
+    };
+    walk(this.fn);
+  }
+
+  requireFresh(node, symbol) {
+    node = unwrap(node);
+    const fresh = ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)
+      || (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))
+        && ["slice", "map", "filter", "concat"].includes(unwrap(node.expression).name.text) && this.isArray(unwrap(node.expression).expression));
+    if (!fresh) throw this.t.fail(node, `\`${symbol.name}\` is changed in place, so it must start as a new array or object`);
+  }
+
+  checkOwnedUse(node, symbol) {
+    const parent = node.parent;
+    const read = (ts.isPropertyAccessExpression(parent) && parent.expression === node)
+      || (ts.isElementAccessExpression(parent) && parent.expression === node)
+      || (ts.isElementAccessExpression(parent) && parent.argumentExpression === node)
+      || (ts.isForOfStatement(parent) && parent.expression === node)
+      || ts.isReturnStatement(parent) || ts.isSpreadElement(parent)
+      || (ts.isBinaryExpression(parent) && parent.left === node && ts.isAssignmentOperator(parent.operatorToken.kind));
+    if (read) return;
+    // Primitive values aren't shared, so reading them is always fine.
+    if (!(this.typeOf(node).flags & ts.TypeFlags.Object)) return;
+    throw this.t.fail(node, `\`${symbol.name}\` is changed in place, so it can't be passed around or stored here`);
+  }
+
+  noteWrite(target, nested, method) {
     target = unwrap(target);
+    const root = rootOf(target);
     if (nested) throw this.t.fail(target, "assignment inside a nested function is not supported yet");
-    if (!ts.isIdentifier(target)) throw this.t.fail(target, "assigning to a field or element is not supported yet");
-    const declaration = this.symbol(target)?.valueDeclaration;
+    if (!ts.isIdentifier(root)) throw this.t.fail(target, "this write is not supported yet");
+    const symbol = this.symbol(root);
+    const declaration = symbol?.valueDeclaration;
     if (!declaration || this.isModuleLevel(declaration)) throw this.t.fail(target, "assignment to module-level state");
+    if (method && !ts.isIdentifier(target)) throw this.t.fail(target, "changing a nested array is not supported yet");
+    if (root !== target || method) {
+      if (ts.isPropertyAccessExpression(target) && !ts.isIdentifier(unwrap(target.expression))) throw this.t.fail(target, "writing to a nested field is not supported yet");
+      if (ts.isElementAccessExpression(target) && !ts.isIdentifier(unwrap(target.expression))) throw this.t.fail(target, "writing to a nested element is not supported yet");
+      this.owned.add(symbol);
+    }
   }
 
   functionFlow(returns, result) {
@@ -498,7 +592,7 @@ class Scope {
 
   tupleType(vars, node) {
     if (!vars.length) return "Unit";
-    return vars.map(v => this.t.type(this.declaredType(v, node), node)).join(" × ");
+    return vars.map(v => v.leanType ?? this.t.type(this.declaredType(v, node), node)).join(" × ");
   }
 
   // Variables declared outside `nodes` and written inside them, in a stable order.
@@ -507,8 +601,8 @@ class Scope {
     const walk = node => {
       if (ts.isFunctionLike(node)) return;
       const write = writeTarget(node);
-      if (write) {
-        const symbol = this.symbol(unwrap(write));
+      if (write && !this.isBuiltinReceiver(node, write)) {
+        const symbol = this.symbol(rootOf(write));
         if (symbol && !this.isWithin(symbol, nodes) && !declaredInside(symbol)) found.set(symbol.name, symbol);
       }
       ts.forEachChild(node, walk);
@@ -549,7 +643,10 @@ class Scope {
   }
 
   symbol(node) {
-    const symbol = this.checker.getSymbolAtLocation(node);
+    // In `{ a }`, the name is both a property and a read of the variable `a`.
+    const symbol = node.parent && ts.isShorthandPropertyAssignment(node.parent)
+      ? this.checker.getShorthandAssignmentValueSymbol(node.parent)
+      : this.checker.getSymbolAtLocation(node);
     return symbol && symbol.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(symbol) : symbol;
   }
 
@@ -685,16 +782,58 @@ class Scope {
       const op = node.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
       this.update(target, op, ONE, next, lines);
     } else if (ts.isCallExpression(node)) {
-      this.expression(node, next, lines);
+      if (!this.mutation(node, next, lines)) this.expression(node, next, lines);
     } else {
       throw this.t.fail(node, "this statement is not supported yet");
     }
     return [...lines, ...this.block(rest, flow, next)];
   }
 
+  // `xs.push(v)` and friends, used as statements on an owned array.
+  mutation(node, env, lines) {
+    const callee = unwrap(node.expression);
+    if (!ts.isPropertyAccessExpression(callee) || !MUTATING.has(callee.name.text) || !this.isArray(callee.expression)) return false;
+    const receiver = unwrap(callee.expression);
+    const symbol = this.symbol(receiver);
+    const list = this.current(symbol, env);
+    const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(receiver)))[0];
+    const items = () => `[${node.arguments.map(a => this.convert(a, item, env, lines)).join(", ")}]`;
+    let value;
+    switch (callee.name.text) {
+      case "push": value = `${list} ++ ${items()}`; break;
+      case "unshift": value = `${items()} ++ ${list}`; break;
+      case "pop": value = `${list}.dropLast`; break;
+      case "shift": value = `${list}.tail`; break;
+      case "reverse": value = `${list}.reverse`; break;
+      default: throw this.t.fail(node, `\`${callee.name.text}\` is not supported yet`);
+    }
+    lines.push(`let ${this.rebind(symbol, env)} ← Result.ok (${value})`);
+    return true;
+  }
+
+  // `x.field = v` and `xs[i] = v` on an owned value.
+  writeInto(node, env, lines) {
+    const target = unwrap(node.left);
+    if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) throw this.t.fail(node, "only `=` is supported on a field or element for now");
+    const owner = unwrap(target.expression);
+    const symbol = this.symbol(owner);
+    const current = this.current(symbol, env);
+    if (ts.isElementAccessExpression(target)) {
+      const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(owner)))[0];
+      const value = this.convert(node.right, item, env, lines);
+      const index = this.numeric(target.argumentExpression, env, lines);
+      lines.push(`let ${this.rebind(symbol, env)} ← Js.setAt ${current} ${index} ${value}`);
+      return;
+    }
+    const property = this.checker.getPropertyOfType(this.typeOf(owner), target.name.text);
+    const slot = this.checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration);
+    const value = this.convert(node.right, slot, env, lines);
+    lines.push(`let ${this.rebind(symbol, env)} ← Result.ok ({ ${current} with ${name(target.name.text)} := ${value} } : ${this.t.type(this.typeOf(owner), owner)})`);
+  }
+
   assign(node, env, lines) {
     const target = unwrap(node.left);
-    if (!ts.isIdentifier(target)) throw this.t.fail(target, "assigning to a field or element is not supported yet");
+    if (!ts.isIdentifier(target)) return this.writeInto(node, env, lines);
     const symbol = this.symbol(target);
     if (env.get(symbol)?.present) throw this.t.fail(node, "assigning to a variable inside its own null check is not supported yet");
     const op = node.operatorToken.kind;
@@ -897,7 +1036,7 @@ class Scope {
     let found = false;
     const walk = current => {
       const write = writeTarget(current);
-      if (write && this.symbol(unwrap(write)) === symbol) found = true;
+      if (write && this.symbol(rootOf(write)) === symbol) found = true;
       ts.forEachChild(current, walk);
     };
     walk(node);
@@ -905,7 +1044,28 @@ class Scope {
   }
 
   forOf(statement, rest, flow, env) {
-    throw this.t.fail(statement, "`for...of` needs arrays, which are not supported yet");
+    if (statement.awaitModifier) throw this.t.fail(statement, "`for await` is not supported");
+    if (!this.isArray(statement.expression)) throw this.t.fail(statement.expression, "`for...of` is only supported on arrays for now");
+    const declaration = statement.initializer.declarations?.[0];
+    if (!declaration || !ts.isIdentifier(declaration.name)) throw this.t.fail(statement, "`for...of` needs a plain variable for now");
+    const lines = [];
+    const start = new Map(env);
+    const iterated = this.expression(statement.expression, start, lines);
+    const remaining = { name: this.fresh(), leanType: this.t.type(this.typeOf(statement.expression), statement) };
+    start.set(remaining, { lean: remaining.name });
+    this.taken.add(remaining.name);
+    lines.push(`let ${remaining.name} ← Result.ok (${iterated})`);
+    const outer = this.assignedIn([statement]);
+    const element = this.symbol(declaration.name);
+    const code = this.emitLoop(statement, [remaining, ...outer], rest, flow, start, (body, inside, leave, again) => {
+      const next = new Map(inside);
+      const head = this.rebind(element, next);
+      const tail = this.fresh();
+      next.set(remaining, { lean: tail });
+      const inner = this.block([statement.statement], { ...body, fall: again, cont: again }, next);
+      return [`match ${this.current(remaining, inside)} with`, `| [] =>`, `  ${leave(inside)}`, `| ${head} :: ${tail} =>`, ...this.indent(inner)];
+    }, outer);
+    return [...lines, ...code];
   }
 
   indent(lines) { return lines.map(l => `  ${l}`); }
@@ -1025,12 +1185,35 @@ class Scope {
       return "none";
     }
     if (ts.isObjectLiteralExpression(node)) return this.wrapIf(target, this.record(node, target, env, lines), node);
+    if (ts.isArrayLiteralExpression(node)) return this.wrapIf(target, this.arrayLiteral(node, target, env, lines), node);
     const value = this.expression(node, env, lines);
     const from = this.t.type(this.narrowedType(node, env), node);
     const to = this.t.type(target, node);
     if (from === to) return value;
     if (to === `(Option ${from})`) return `(some ${value})`;
     throw this.t.fail(node, `a \`${this.checker.typeToString(this.typeOf(node))}\` is used as a \`${this.checker.typeToString(target)}\`, which is not supported yet`);
+  }
+
+  arrayLiteral(node, target, env, lines) {
+    const type = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
+    if (!this.checker.isArrayType(type)) throw this.t.fail(node, "tuples are not supported yet");
+    const item = this.checker.getTypeArguments(type)[0];
+    const parts = [];
+    let run = [];
+    const flush = () => { if (run.length) parts.push(`[${run.join(", ")}]`); run = []; };
+    for (const element of node.elements) {
+      if (ts.isOmittedExpression(element)) throw this.t.fail(element, "arrays with holes are not supported");
+      if (ts.isSpreadElement(element)) {
+        flush();
+        if (!this.isArray(element.expression)) throw this.t.fail(element, "only arrays can be spread for now");
+        parts.push(this.convert(element.expression, type, env, lines));
+      } else {
+        run.push(this.convert(element, item, env, lines));
+      }
+    }
+    flush();
+    if (!parts.length) return `([] : ${this.t.type(type, node)})`;
+    return `(${parts.join(" ++ ")})`;
   }
 
   // The type of what `node` reads, given the branch it is in.
@@ -1079,7 +1262,8 @@ class Scope {
         const slot = this.checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration);
         parts.push(`${name(property.name)} := ${this.convert(value, slot, env, lines)}`);
       }
-      return base ? `{ ${base} with ${parts.join(", ")} }` : `{ ${parts.join(", ")} }`;
+      const leanType = this.t.type(type, node);
+      return base ? `({ ${base} with ${parts.join(", ")} } : ${leanType})` : `({ ${parts.join(", ")} } : ${leanType})`;
     }
     if (shape.kind !== "tagged" || base) throw this.t.fail(node, "this object literal is not supported yet");
     const tagNode = fields.get("kind");
@@ -1103,6 +1287,12 @@ class Scope {
     if (node.kind === ts.SyntaxKind.FalseKeyword) return "false";
     if (ts.isIdentifier(node)) return this.identifier(node, env);
     if (ts.isPropertyAccessExpression(node)) return this.property(node, env, lines);
+    if (ts.isArrayLiteralExpression(node)) return this.arrayLiteral(node, this.typeOf(node), env, lines);
+    if (ts.isElementAccessExpression(node)) {
+      if (!this.isArray(node.expression)) throw this.t.fail(node, "`[]` is only supported on arrays for now");
+      if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
+      return `(Js.at_ ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
+    }
     if (ts.isNonNullExpression(node)) return this.nonNull(node, env, lines);
     if (ts.isCallExpression(node)) return this.call(node, env, lines);
     if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines);
@@ -1197,6 +1387,9 @@ class Scope {
       if (!bound) throw this.t.fail(node, "this field isn't available in this case");
       return bound;
     }
+    if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
+    if (this.isArray(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
+    if (this.isArray(object)) throw this.t.fail(node, `\`.${node.name.text}\` is not supported on arrays yet`);
     const type = this.typeOf(object);
     if (type.isUnion()) throw this.t.fail(node, "reading a field of a union outside a `switch` is not supported yet");
     return `${this.expression(object, env, lines)}.${name(node.name.text)}`;
@@ -1238,6 +1431,7 @@ class Scope {
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Math" && !this.isLocal(callee.expression)) {
       return this.math(callee.name.text, node, env, lines);
     }
+    if (ts.isPropertyAccessExpression(callee) && this.isArray(callee.expression)) return this.arrayMethod(callee, node, env, lines);
     const signature = this.checker.getResolvedSignature(node);
     let declaration = signature?.declaration;
     if (declaration && !ts.isFunctionDeclaration(declaration)) declaration = declaration.parent;
@@ -1252,6 +1446,63 @@ class Scope {
     // A function can't name itself through `_root_` while it is being defined.
     const callee_ = this.t.functions.get(declaration)?.pending ? lean : `_root_.${lean}`;
     return this.bind(`${callee_} ${args.join(" ")}`, lines);
+  }
+
+  arrayMethod(callee, node, env, lines) {
+    const method = callee.name.text;
+    if (MUTATING.has(method)) throw this.t.fail(node, `\`${method}\` is only supported as its own statement, and its result can't be used yet`);
+    const list = this.expression(callee.expression, env, lines);
+    const args = node.arguments;
+    const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(callee.expression)))[0];
+    const comparable = () => {
+      if (item.flags & ts.TypeFlags.Object) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported`);
+    };
+    switch (method) {
+      case "includes": comparable(); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
+      case "indexOf": comparable(); return this.bind(`Js.indexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
+      case "slice":
+        if (args.length === 0) return list;
+        if (args.length === 1) return `(Js.sliceFrom ${list} ${this.numeric(args[0], env, lines)})`;
+        return `(Js.slice ${list} ${this.numeric(args[0], env, lines)} ${this.numeric(args[1], env, lines)})`;
+      case "concat":
+        if (args.length !== 1 || !this.isArray(args[0])) throw this.t.fail(node, "only `concat` of one array is supported for now");
+        return `(${list} ++ ${this.expression(args[0], env, lines)})`;
+      case "map": case "filter": case "some": case "every": case "find":
+        return this.bindCallback(method === "some" ? "some_" : method, this.callback(args, 1, node, env), list, lines);
+      case "reduce": {
+        if (args.length !== 2) throw this.t.fail(node, "`reduce` needs an initial value");
+        const signature = this.checker.getResolvedSignature(node);
+        const start = this.convert(args[1], signature.getReturnType(), env, lines);
+        return this.bindCallback("reduce", this.callback(args, 2, node, env), `${start} ${list}`, lines);
+      }
+      default: throw this.t.fail(node, `\`.${method}\` is not supported on arrays yet`);
+    }
+  }
+
+  bindCallback(method, callback, rest, lines) {
+    const fresh = this.fresh();
+    lines.push(`let ${fresh} ← Js.${method} (${callback[0]}`, ...callback.slice(1), `  ) ${rest}`);
+    return fresh;
+  }
+
+  // An inline function, as lines of a Lean `fun`. JavaScript also passes the
+  // index and the array, so taking more parameters than `count` isn't supported.
+  callback(args, count, node, env) {
+    const fn = args[0] && unwrap(args[0]);
+    if (!fn || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) throw this.t.fail(node, "only an inline function is supported here for now");
+    if (fn.parameters.length !== count) throw this.t.fail(fn, `this function must take exactly ${count} parameter${count === 1 ? "" : "s"} for now`);
+    if (fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) throw this.t.fail(fn, "`async` is not supported yet");
+    const inner = new Map(env);
+    const params = fn.parameters.map(p => {
+      if (!ts.isIdentifier(p.name) || p.initializer || p.dotDotDotToken) throw this.t.fail(p, "only plain parameters are supported for now");
+      const lean = this.rebind(this.symbol(p.name), inner);
+      return `(${lean} : ${this.t.type(this.checker.getTypeAtLocation(p), p)})`;
+    });
+    const signature = this.checker.getSignatureFromDeclaration(fn);
+    const returns = this.checker.getReturnTypeOfSignature(signature);
+    const flow = this.functionFlow(returns, this.t.type(returns, fn));
+    const body = ts.isBlock(fn.body) ? this.block([...fn.body.statements], flow, inner) : this.returning(fn.body, flow, inner);
+    return [`fun ${params.join(" ")} => do`, ...this.indent(this.indent(body))];
   }
 
   math(method, node, env, lines) {
@@ -1332,6 +1583,12 @@ class Scope {
     }
     if ((this.isBoolean(left) && this.isBoolean(right)) || (this.isBigInt(left) && this.isBigInt(right))) {
       return `${this.expression(left, env, lines)} = ${this.expression(right, env, lines)}`;
+    }
+    // `undefined === 5` is false, so a possibly missing number compares as an Option.
+    for (const [maybe, plain] of [[left, right], [right, left]]) {
+      if (this.nullable(this.typeOf(maybe)) && this.isNumber(plain)) {
+        return `${this.expression(maybe, env, lines)} = some ${this.expression(plain, env, lines)}`;
+      }
     }
     const literal = [left, right].find(ts.isStringLiteralLike);
     const other = left === literal ? right : left;

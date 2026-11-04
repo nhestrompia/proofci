@@ -153,6 +153,90 @@ def attempt {α} (body handler : Result α) : Result α :=
 @[simp] theorem attempt_panic {α} (h : Result α) : attempt (fail .panic) h = h := by
   simp [attempt]
 
+/-! ## Arrays
+
+An array is a `List`. Translated code never shares one between two names while
+changing it: the translator's ownership check rejects that, so a value is enough. -/
+
+/-- `xs.length` -/
+def len {α} (xs : List α) : Result Num := mk xs.length
+
+/-- `xs[i]`. A negative or out-of-range index reads `undefined`. -/
+def at_ {α} (xs : List α) (i : Num) : Option α :=
+  if i.val < 0 then none else xs[i.val.toNat]?
+
+/-- `xs[i] = v` for an index inside the array. Writing past the end would make
+    holes, so the model stops there. -/
+def setAt {α} (xs : List α) (i : Num) (v : α) : Result (List α) :=
+  if 0 ≤ i.val ∧ i.val < xs.length then ok (xs.set i.val.toNat v) else fail .undef
+
+/-- A `slice` bound: negative counts from the end, and it is clamped to the array. -/
+def bound (n : Nat) (i : Num) : Nat :=
+  if i.val < 0 then (Max.max (n + i.val) 0).toNat else Min.min i.val.toNat n
+
+/-- `xs.slice(a, b)` -/
+def slice {α} (xs : List α) (a b : Num) : List α :=
+  let from_ := bound xs.length a
+  (xs.take (bound xs.length b)).drop from_
+
+/-- `xs.slice(a)` -/
+def sliceFrom {α} (xs : List α) (a : Num) : List α := xs.drop (bound xs.length a)
+
+/-- `xs.includes(v)`, for values compared by value. -/
+def includes {α} [DecidableEq α] (xs : List α) (v : α) : Bool := xs.contains v
+
+/-- `xs.indexOf(v)`, for values compared by value. -/
+def indexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Num :=
+  match xs.idxOf? v with
+  | some i => mk i
+  | none => mk (-1)
+
+def map {α β} (f : α → Result β) : List α → Result (List β)
+  | [] => ok []
+  | x :: rest => do
+    let y ← f x
+    let ys ← map f rest
+    ok (y :: ys)
+
+def filter {α} (f : α → Result Bool) : List α → Result (List α)
+  | [] => ok []
+  | x :: rest => do
+    let keep ← f x
+    let ys ← filter f rest
+    ok (if keep then x :: ys else ys)
+
+def some_ {α} (f : α → Result Bool) : List α → Result Bool
+  | [] => ok false
+  | x :: rest => do
+    let hit ← f x
+    if hit then ok true else some_ f rest
+
+def every {α} (f : α → Result Bool) : List α → Result Bool
+  | [] => ok true
+  | x :: rest => do
+    let hit ← f x
+    if hit then every f rest else ok false
+
+def find {α} (f : α → Result Bool) : List α → Result (Option α)
+  | [] => ok none
+  | x :: rest => do
+    let hit ← f x
+    if hit then ok (some x) else find f rest
+
+def reduce {α β} (f : β → α → Result β) (acc : β) : List α → Result β
+  | [] => ok acc
+  | x :: rest => do
+    let next ← f acc x
+    reduce f next rest
+
+@[simp] theorem map_nil {α β} (f : α → Result β) : map f [] = ok [] := rfl
+@[simp] theorem filter_nil {α} (f : α → Result Bool) : filter f [] = ok [] := rfl
+@[simp] theorem reduce_nil {α β} (f : β → α → Result β) (acc : β) : reduce f acc [] = ok acc := rfl
+
+@[step] theorem len_spec {α} (xs : List α) (h : xs.length ≤ 9007199254740991) :
+    len xs ⦃ r => r.val = xs.length ⦄ :=
+  mk_spec _ (by omega) (by omega)
+
 /-- A number for the differential test. Inputs are always safe integers. -/
 def lit (v : Int) : Num :=
   if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default

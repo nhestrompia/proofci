@@ -474,6 +474,24 @@ def ts_function_removed(head):
     edit(head / TS_LEDGER, "export function transfer(", "export function move(")
 
 
+def ts_mutates_callers_array(head):
+    edit(head / TS_LEDGER, "export function transfer(", """export function audit(log: number[]): number {
+  log.push(1);
+  return log.length;
+}
+
+export function transfer(""")
+    edit(head / TS_LEDGER, "if (amount <= 0 ||", "if (audit([]) < 0 || amount <= 0 ||")
+
+
+def ts_alias_hides_a_write(head):
+    edit(head / TS_LEDGER, "  if (amount <= 0 ||", """  const seen = [amount];
+  const same = seen;
+  seen[0] = 0;
+  if (same[0] === 0) return null;
+  if (amount <= 0 ||""")
+
+
 def ts_contract_weakened(head):
     edit(head / "proofci/Contract.lean", "fee.val ≤ 500", "fee.val ≤ 5000")
 
@@ -494,6 +512,8 @@ SCENARIOS.update({
     "ts-declaration-file-lies": (ts_declaration_file_lies, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-proof-uses-sorry": (ts_proof_uses_sorry, {**ts_results(), TS_CONSERVES: U}, 1),
     "ts-function-removed": (ts_function_removed, {TS_FEE: S, TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-mutates-callers-array": (ts_mutates_callers_array, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-alias-hides-a-write": (ts_alias_hides_a_write, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-contract-weakened": (ts_contract_weakened, ts_results(), 1),
 })
 
@@ -501,7 +521,7 @@ SCENARIOS.update({
 # A crash in the translator also reports `unsupported`, so these check the cause.
 TS_REASONS = {
     "ts-fractional-fee": "not a safe integer",
-    "ts-cast-hides-a-type": "type assertions",
+    "ts-cast-hides-a-type": "only `number` operands",
     "ts-javascript-beside-source": "sits beside",
     "ts-compiler-error-silenced": "@ts-",
     "ts-compiler-error": "TypeScript error",
@@ -510,6 +530,8 @@ TS_REASONS = {
     "ts-import-for-side-effects": "side effects",
     "ts-declaration-file-lies": "no source",
     "ts-function-removed": "not a top-level function",
+    "ts-mutates-callers-array": "shared with the caller",
+    "ts-alias-hides-a-write": "passed around or stored",
 }
 
 

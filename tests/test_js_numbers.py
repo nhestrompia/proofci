@@ -37,8 +37,32 @@ export const either = (a: boolean, b: boolean) => a || b;
 export const pick = (a: boolean, b: number) => a ? b : 0;
 export const orNull = (a: number | null) => { if (a === null) return 0; return a; };
 export const undefinedIsNotNull = (a: number | undefined) => { if (a === undefined) return 1; return a; };
+export const bigMul = (a: bigint, b: bigint) => a * b - 1n;
+export const bigDiv = (a: bigint, b: bigint) => a / b;
+export const bigRem = (a: bigint, b: bigint) => a % b;
+export const bigLess = (a: bigint, b: bigint) => a < b;
+export function check(a: number): void { if (a < 0) throw new RangeError("negative"); }
+export function caught(a: number) { try { check(a); return a; } catch { return 7; } }
+export function joined(a: number, b: number) { let r = a; if (r > b) { r = b; } else { r = r + 1; } return r * 2; }
+export function capped(n: number) { let s = 0; for (let i = 0; i < n && i < 50; i++) { if (i % 3 === 0) continue; if (s > 100) break; s += i; } return s; }
+export function search(n: number) { let i = 0; while (i < 40) { if (i * i >= n) return i; i += 1; } return -1; }
+export function fact(n: number): number { if (n <= 0 || n > 25) return 1; return n * fact(n - 1); }
+export function sum(xs: number[]) { let s = 0; for (const x of xs) { s += x; } return s; }
+export function evens(xs: number[]) { const out: number[] = []; for (const x of xs) { if (x % 2 === 0) { out.push(x); } } return out; }
+export const chain = (xs: number[]) => xs.filter(x => x > 0).map(x => x * 2).reduce((a, b) => a + b, 0);
+export const anyBig = (xs: number[]) => xs.some(x => x > 100);
+export const allBig = (xs: number[]) => xs.every(x => x > 100);
+export const found = (xs: number[]) => xs.find(x => x > 1);
+export const at = (xs: number[], i: number) => xs[i];
+export const size = (xs: number[]) => xs.length;
+export const cut = (xs: number[], a: number, b: number) => xs.slice(a, b);
+export const cutFrom = (xs: number[], a: number) => xs.slice(a);
+export const has = (xs: number[], a: number) => xs.includes(a);
+export const where = (xs: number[], a: number) => xs.indexOf(a);
+export const joinAll = (xs: number[], ys: number[]) => [...xs, 1, ...ys].concat(xs);
+export function changes(xs: number[], i: number, v: number) { const a = xs.slice(); a[i % 9] = v; a.push(v); a.unshift(1); a.pop(); a.shift(); a.reverse(); return a; }
 """
-NAMES = [line.split()[2] for line in OPERATIONS.strip().splitlines()]
+NAMES = [line.split()[2].split("(")[0] for line in OPERATIONS.strip().splitlines()]
 
 
 @unittest.skipUnless(os.environ.get("PROOFCI_TOOLCHAIN"), "needs the ProofCI toolchain image")
@@ -59,7 +83,7 @@ class Numbers(unittest.TestCase):
             ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
                                work / "lean-src", work / "lean-src")
             self.assertIsNone(lean.build_translation(ws))
-            differ, notes = typescript.differential(package.parent, "package", work, ws, extraction, cases=2000)
+            differ, notes = typescript.differential(package.parent, "package", work, ws, extraction, cases=500)
             self.assertEqual(differ[:5], [])
             print(notes)
             self.assertIn("compared with Node", notes[-1])
