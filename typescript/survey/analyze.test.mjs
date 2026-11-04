@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { analyze, programFor, summarize, tierOf } from "./analyze.mjs";
+import { adoptionOrder, analyze, programFor, summarize, tierOf, workspacePaths } from "./analyze.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "survey-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -68,7 +68,8 @@ test("coercion and reflection", () => {
   clean(`export function f(a: number | null) { return a == null; }`);
   has(`export function f(a: string, b: number) { return a + b; }`, "coercion");
   has(`export function f(a: object) { return Object.keys(a); }`, "reflection");
-  has(`export function f(a: { [k: string]: number }, k: string) { return a[k]; }`, "dynamic-key");
+  has(`export function f(a: { [k: string]: number }, k: string) { return a[k]; }`, "record-key");
+  has(`export function f<T extends object, K extends keyof T>(a: T, k: K) { return a[k]; }`, "dynamic-key");
   clean(`export function f(a: number[], i: number) { return a[i]; }`);
 });
 
@@ -96,10 +97,29 @@ test("blockers propagate through calls, including cycles", () => {
     export function f(n: number): number { return n > 9 ? h() : g(n); }`, "date");
 });
 
-test("calls with no visible body are external", () => {
-  has(`declare function g(a: number): number; export function f(a: number) { return g(a); }`, "external-call");
-  has(`export function f(g: (a: number) => number) { return g(1); }`, "external-call");
-  has(`interface S { get(): number } export function f(s: S) { return s.get(); }`, "external-call");
+test("callers' callbacks are told apart from third-party code", () => {
+  has(`declare function g(a: number): number; export function f(a: number) { return g(a); }`, "package-call");
+  has(`import { g } from "some-package"; export function f(a: number) { return g(a); }`, "package-call");
+  has(`export function f(g: (a: number) => number) { return g(1); }`, "callback");
+  has(`interface S { get(): number } export function f(s: S) { return s.get(); }`, "callback");
+});
+
+test("dictionaries are told apart from reflection on records", () => {
+  has(`export function f(a: Record<string, number>, k: string) { return a[k]; }`, "record-key");
+  has(`export function f(a: Record<string, number>) { return Object.keys(a); }`, "record-key");
+  has(`interface A { n: number } export function f(a: A) { return Object.keys(a); }`, "reflection");
+});
+
+test("workspace packages resolve to their source", () => {
+  const repo = join(dir, "repo");
+  mkdirSync(join(repo, "packages/core/src"), { recursive: true });
+  mkdirSync(join(repo, "packages/app/src"), { recursive: true });
+  writeFileSync(join(repo, "packages/core/package.json"), JSON.stringify({ name: "@acme/core" }));
+  writeFileSync(join(repo, "packages/core/src/index.ts"), "export function g(a: number) { return a / 3; }");
+  const app = join(repo, "packages/app/src/index.ts");
+  writeFileSync(app, `import { g } from "@acme/core"; export function f(a: number) { return g(a); }`);
+  const found = analyze(programFor([app], workspacePaths(repo))).find(r => r.name === "f");
+  assert.deepEqual(found.features, ["fractional"]);
 });
 
 test("tiers", () => {
@@ -116,6 +136,18 @@ test("summary counts only functions that decide something", () => {
     { logic: true, tier: 9, features: ["regex", "date"] },
     { logic: false, tier: 9, features: ["regex"] },
   ]);
-  assert.deepEqual(summary, { functions: 5, logic: 4, m2: 1, m3: 2,
+  assert.deepEqual(summary, { functions: 5, logic: 4, m2: 1, m3: 2, models: 2, pure: 2, pureM2: 1, pureM3: 1,
     blockers: { regex: 2, date: 1 }, sole: { regex: 1 } });
+});
+
+test("adoption order picks whatever unlocks the most next", () => {
+  const order = adoptionOrder([
+    { logic: true, features: [] },
+    { logic: true, features: ["regex"] },
+    { logic: true, features: ["regex"] },
+    { logic: true, features: ["date"] },
+    { logic: true, features: ["date", "regex"] },
+  ]);
+  assert.deepEqual(order.map(o => [o.feature, o.covered]),
+    [["(planned subset)", 1], ["regex", 3], ["date", 5]]);
 });

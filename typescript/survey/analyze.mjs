@@ -5,15 +5,17 @@
 // parses and type-checks; it never runs code from the repository it reads.
 
 import { createHash } from "node:crypto";
-import { readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import ts from "typescript";
 
 // Which milestone can handle a feature. Features not listed are always fine.
 export const TIER = {
   // Milestone 3
-  "param-mutation": 3, "this-state": 3, "async": 3, "external-call": 3,
+  "param-mutation": 3, "this-state": 3, "async": 3, "callback": 3,
   "ambient-effect": 3, "closure-mutation": 3,
+  // Possible, but each library needs a model or a useful proof has nothing to go on
+  "package-call": 4, "record-key": 4,
   // Beyond the plan
   "fractional": 9, "alias-risk": 9, "module-state": 9, "dynamic": 9,
   "reflection": 9, "dynamic-key": 9, "regex": 9, "date": 9, "generator": 9,
@@ -41,6 +43,13 @@ const SIMPLE_NUMBER = new Set(["isInteger", "isSafeInteger", "isNaN", "isFinite"
 const FRESH = new Set([ts.SyntaxKind.ObjectLiteralExpression, ts.SyntaxKind.ArrayLiteralExpression,
   ts.SyntaxKind.NewExpression]);
 
+// How often each specific construct triggered a feature, across a run.
+export const details = {};
+const note = (feature, what) => {
+  const entry = (details[feature] ??= {});
+  entry[what] = (entry[what] ?? 0) + 1;
+};
+
 export function listFiles(root, { limit = 1500 } = {}) {
   const found = [];
   const walk = dir => {
@@ -59,8 +68,43 @@ export function listFiles(root, { limit = 1500 } = {}) {
   return found.sort((a, b) => key(a).localeCompare(key(b))).slice(0, limit);
 }
 
-export function programFor(files) {
+const ENTRIES = ["src/index.ts", "index.ts", "src/main.ts", "lib/index.ts", "src/index.tsx"];
+
+// Imports between workspace packages and tsconfig aliases, which would
+// otherwise look like third-party code because nothing is installed.
+export function workspacePaths(root) {
+  const paths = {};
+  const walk = (dir, depth) => {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const path = join(dir, name);
+      let stat;
+      try { stat = statSync(path); } catch { continue; }
+      if (stat.isDirectory()) { if (depth < 5) walk(path, depth + 1); continue; }
+      if (name !== "package.json") continue;
+      let manifest;
+      try { manifest = JSON.parse(readFileSync(path, "utf8")); } catch { continue; }
+      if (typeof manifest.name !== "string") continue;
+      const entry = ENTRIES.map(e => join(dir, e)).find(existsSync);
+      if (entry) paths[manifest.name] = [entry];
+      paths[`${manifest.name}/*`] = [join(dir, "src/*"), join(dir, "*")];
+    }
+  };
+  walk(root, 0);
+  for (const name of readdirSync(root)) {
+    if (!/^tsconfig.*\.json$/.test(name)) continue;
+    const config = ts.readConfigFile(join(root, name), p => readFileSync(p, "utf8")).config;
+    const base = join(root, config?.compilerOptions?.baseUrl ?? ".");
+    for (const [alias, targets] of Object.entries(config?.compilerOptions?.paths ?? {})) {
+      paths[alias] ??= targets.map(target => join(base, target));
+    }
+  }
+  return paths;
+}
+
+export function programFor(files, paths = {}) {
   return ts.createProgram(files, {
+    paths,
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler, strict: true, noEmit: true,
     skipLibCheck: true, allowJs: false, types: [], experimentalDecorators: true,
@@ -154,18 +198,21 @@ export function inspect(program, checker, fn) {
     if (ts.isIdentifier(callee) && DYNAMIC.has(callee.text)) features.add("dynamic");
     const signature = checker.getResolvedSignature(call);
     const declaration = signature?.declaration ?? symbolOf(callee)?.valueDeclaration;
-    if (!declaration || ts.isJSDocSignature(declaration)) return features.add("external-call");
+    if (!declaration || ts.isJSDocSignature(declaration)) return features.add("package-call");
 
     if (isLibrary(program, declaration)) return onLibraryCall(call, callee, within);
     const target = functionLike(declaration);
     if (target) return void callees.add(target);
-    // A callback from the caller or an interface method: its body is unknown.
-    features.add("external-call");
+    // Declared without a body in a declaration file: third-party code.
+    if (declaration.getSourceFile().isDeclarationFile || declaration.flags & ts.NodeFlags.Ambient) return features.add("package-call");
+    // A callback from the caller or an interface method: a proof can quantify over it.
+    features.add("callback");
   };
 
   const onLibraryCall = (call, callee, within) => {
     if (!ts.isPropertyAccessExpression(callee)) {
       const name = ts.isIdentifier(callee) ? callee.text : "";
+      note("library", name);
       if (FRACTIONAL_API.has(name)) features.add("fractional");
       else if (AMBIENT.has(name)) features.add("ambient-effect");
       else if (!["parseInt", "Number", "String", "Boolean", "BigInt", "Array"].includes(name)) features.add("unmodeled-builtin");
@@ -173,6 +220,8 @@ export function inspect(program, checker, fn) {
     }
     const method = callee.name.text;
     const receiver = unwrap(callee.expression);
+    const label = checker.getApparentType(checker.getTypeAtLocation(receiver)).symbol?.name;
+    note("library", `${ts.isIdentifier(receiver) && /^[A-Z]/.test(receiver.text) ? receiver.text : label}.${method}`);
     if (ts.isIdentifier(receiver)) {
       const name = receiver.text;
       if (name === "Math") {
@@ -180,7 +229,12 @@ export function inspect(program, checker, fn) {
         if (!INTEGER_MATH.has(method)) features.add("fractional");
         return;
       }
-      if (name === "Object") { if (REFLECTION.has(method)) features.add("reflection"); return; }
+      if (name === "Object") {
+        if (["keys", "values", "entries"].includes(method) && call.arguments[0]
+          && checker.getIndexInfosOfType(checker.getApparentType(checker.getTypeAtLocation(call.arguments[0]))).length) return features.add("record-key");
+        if (REFLECTION.has(method)) features.add("reflection");
+        return;
+      }
       if (name === "JSON" || name === "Reflect") return features.add(name === "JSON" ? "reflection" : "dynamic");
       if (name === "Date") return features.add("date");
       if (name === "Promise") return features.add("async");
@@ -214,7 +268,7 @@ export function inspect(program, checker, fn) {
       case ts.SyntaxKind.ForStatement: case ts.SyntaxKind.ForOfStatement: case ts.SyntaxKind.ForInStatement:
       case ts.SyntaxKind.WhileStatement: case ts.SyntaxKind.DoStatement:
         decisions += 1; break;
-      case ts.SyntaxKind.AnyKeyword: features.add("unchecked-cast"); break;
+      case ts.SyntaxKind.AnyKeyword: note("cast", "any-keyword"); features.add("unchecked-cast"); break;
       case ts.SyntaxKind.AwaitExpression: features.add("async"); break;
       case ts.SyntaxKind.YieldExpression: features.add("generator"); break;
       case ts.SyntaxKind.RegularExpressionLiteral: features.add("regex"); break;
@@ -260,7 +314,14 @@ export function inspect(program, checker, fn) {
     if (ts.isConstTypeReference(node.type)) return;
     const from = checker.getTypeAtLocation(node.expression);
     const to = checker.getTypeFromTypeNode(node.type);
-    if (!checker.isTypeAssignableTo(from, to) || (from.flags & ts.TypeFlags.Any)) features.add("unchecked-cast");
+    if (from.flags & ts.TypeFlags.Any) {
+      // Without installed dependencies this may be an unresolved type.
+      note("cast", node.expression.kind === ts.SyntaxKind.AsExpression ? "double" : "from-any");
+      features.add("unchecked-cast");
+    } else if (!checker.isTypeAssignableTo(from, to)) {
+      note("cast", "downcast");
+      features.add("unchecked-cast");
+    }
   };
 
   const onBinary = (node, scope) => {
@@ -311,7 +372,7 @@ export function inspect(program, checker, fn) {
     }
     const symbol = symbolOf(callee)?.valueDeclaration;
     if (symbol && !isLibrary(program, symbol)) return; // a class with no constructor
-    features.add(symbol ? "unmodeled-builtin" : "external-call");
+    features.add(symbol ? "unmodeled-builtin" : "package-call");
   };
 
   const onElementAccess = node => {
@@ -320,7 +381,7 @@ export function inspect(program, checker, fn) {
     const object = checker.getApparentType(checker.getTypeAtLocation(node.expression));
     if (checker.isTupleType?.(object) || checker.isArrayType?.(object)) return;
     if (index.flags & ts.TypeFlags.StringLiteral) return;
-    features.add("dynamic-key");
+    features.add(checker.getIndexInfosOfType(object).length ? "record-key" : "dynamic-key");
   };
 
   if (fn.body) ts.forEachChild(fn, child => visit(child, fn));
@@ -367,6 +428,8 @@ function cone(start, table) {
   return { features, size: seen.size };
 }
 
+const IMPURE = new Set(["async", "ambient-effect", "package-call", "this-state", "module-state", "date", "generator"]);
+
 export function tierOf(features) {
   let tier = 2;
   for (const feature of features) tier = Math.max(tier, TIER[feature] ?? 2);
@@ -402,5 +465,29 @@ export function summarize(results) {
     for (const feature of hard) blockers[feature] = (blockers[feature] ?? 0) + 1;
     if (hard.length === 1) sole[hard[0]] = (sole[hard[0]] ?? 0) + 1;
   }
-  return { functions: results.length, logic: logic.length, m2: within(2), m3: within(3), blockers, sole };
+  // Functions that compute a result from their inputs, the natural proof targets.
+  const pure = logic.filter(r => !r.features.some(f => IMPURE.has(f)));
+  return { functions: results.length, logic: logic.length, m2: within(2), m3: within(3), models: within(4),
+    pure: pure.length, pureM2: pure.filter(r => r.tier <= 2).length, pureM3: pure.filter(r => r.tier <= 3).length,
+    blockers, sole };
+}
+
+// Which features to add, in order, and how many functions each one unlocks.
+export function adoptionOrder(results, steps = 8) {
+  let pending = results.filter(r => r.logic).map(r => new Set(r.features.filter(f => TIER[f] === 9)));
+  const covered = () => pending.filter(set => set.size === 0).length;
+  const total = pending.length;
+  const order = [{ feature: "(planned subset)", covered: covered(), total }];
+  for (let step = 0; step < steps; step += 1) {
+    const candidates = new Set(pending.flatMap(set => [...set]));
+    if (!candidates.size) break;
+    let best, bestCovered = -1;
+    for (const feature of [...candidates].sort()) {
+      const count = pending.filter(set => set.size === 0 || (set.size === 1 && set.has(feature))).length;
+      if (count > bestCovered) { best = feature; bestCovered = count; }
+    }
+    pending = pending.map(set => { const next = new Set(set); next.delete(best); return next; });
+    order.push({ feature: best, covered: bestCovered, total });
+  }
+  return order;
 }
