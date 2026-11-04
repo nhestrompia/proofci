@@ -161,4 +161,4 @@ ENTRYPOINT ["python3", "-m", "proofci"]
 # adds the same layer on top of a published toolchain base.
 FROM toolchain
 COPY proofci /opt/proofci/proofci
-COPY typescript/translate.mjs typescript/differential.mjs typescript/paths.mjs /opt/proofci/typescript/
+COPY typescript/translate.mjs typescript/differential.mjs typescript/paths.mjs typescript/lean-tokens.json /opt/proofci/typescript/

@@ -144,6 +144,12 @@ def bdiv (a b : Int) : Result Int := if b = 0 then fail .panic else ok (Int.tdiv
 /-- `a % b` on `bigint`: takes the sign of `a`, and throws on zero. -/
 def brem (a b : Int) : Result Int := if b = 0 then fail .panic else ok (Int.tmod a b)
 
+@[step] theorem bdiv_spec (a b : Int) (h : b ≠ 0) : bdiv a b ⦃ r => r = Int.tdiv a b ⦄ := by
+  simp [bdiv, h, WP.spec_ok]
+
+@[step] theorem brem_spec (a b : Int) (h : b ≠ 0) : brem a b ⦃ r => r = Int.tmod a b ⦄ := by
+  simp [brem, h, WP.spec_ok]
+
 /-- `try { body } catch { handler }`. `.panic` is only produced by `throw`, so
     the handler runs for exceptions and never for leaving the model. -/
 def attempt {α} (body handler : Result α) : Result α :=

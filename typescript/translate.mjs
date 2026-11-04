@@ -17,7 +17,12 @@ import { protectedPaths } from "./paths.mjs";
 
 export class Unsupported extends Error {}
 
-const LEAN_KEYWORDS = new Set(["at", "by", "calc", "class", "deriving", "do", "else", "end", "export", "extends",
+// Every word Lean reads as syntax once Aeneas is imported, so that `name` can still
+// be a field. `lean-tokens.json` is Lean's token table; regenerate it when Aeneas
+// changes (see docs/development.md). Words listed below it aren't all tokens, but
+// would change what the generated code means.
+const LEAN_TOKENS = JSON.parse(readFileSync(new URL("./lean-tokens.json", import.meta.url), "utf8"));
+const LEAN_KEYWORDS = new Set([...LEAN_TOKENS, "at", "by", "calc", "class", "deriving", "do", "else", "end", "export", "extends",
   "fun", "from", "have", "if", "import", "in", "infix", "instance", "let", "macro", "match", "mut", "namespace",
   "notation", "of", "open", "prefix", "private", "protected", "public", "section", "set_option", "show", "structure",
   "syntax", "then", "theorem", "this", "to", "try", "universe", "unless", "using", "variable", "where", "with",
@@ -2086,8 +2091,23 @@ export function translate({ root, module, targets, paths, repository, policyRoot
     }
   }
   const header = ["import Aeneas", "import ProofciJs", "", "open Aeneas Aeneas.Std Result", ""];
+  const reached = [...translator.fileChecks.keys()];
+  const local = file => relative(translator.root, realpathSync(file));
   return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures,
-    files: [...translator.fileChecks.keys()].map(f => relative(translator.root, realpathSync(f.fileName))) };
+    files: reached.map(f => local(f.fileName)),
+    imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
+}
+
+// Where each import of a file leads, resolved the way the translation resolved it.
+function imports(file, program) {
+  const found = {};
+  for (const statement of file.statements) {
+    if (!statement.moduleSpecifier) continue;
+    const specifier = statement.moduleSpecifier.text;
+    const { resolvedModule } = ts.resolveModuleName(specifier, file.fileName, program.getCompilerOptions(), ts.sys);
+    if (resolvedModule) found[specifier] = realpathSync(resolvedModule.resolvedFileName);
+  }
+  return found;
 }
 
 if (process.argv[1]?.endsWith("translate.mjs")) {

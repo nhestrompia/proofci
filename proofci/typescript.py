@@ -67,6 +67,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction = Extraction(module, lean_file, crate_name, result.output, [], outcome["names"], outcome["failures"])
     extraction.signatures = outcome["signatures"]
     extraction.files = outcome["files"]
+    extraction.imports = outcome["imports"]
     return extraction
 
 
@@ -83,12 +84,13 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     config = out / "config.json"
     config.write_text(json.dumps({
         "root": str(checkout / package_rel), "out": str(out), "module": extraction.module, "cases": cases,
-        "signatures": extraction.signatures, "files": extraction.files}))
+        "signatures": extraction.signatures, "files": extraction.files,
+        "imports": extraction.imports}))
     program = translator().parent / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
                        writable=[out], cwd=out, timeout=60)
     if node.status != 0:
-        return [], ["the comparison with Node did not run: " + node.output[-600:]]
+        return ["the comparison with Node did not run: " + node.output[-600:]], []
     notes = [f"not compared with Node: {item}" for item in json.loads(node.output.splitlines()[-1])["skipped"]]
     replay = sandbox.run(["lake", "env", "lean", str(out / "Differential.lean")], readable=[ws.root, out],
                          writable=[ws.root / ".lake"], cwd=ws.root, timeout=timeout)

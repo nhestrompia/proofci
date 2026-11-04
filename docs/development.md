@@ -31,6 +31,10 @@ The image has two parts:
 - **Toolchain base** (`--target toolchain`): Rust, Charon, Lean, Mathlib and Aeneas. It changes only when a pin in `toolchain/` changes, and `main` publishes it under a hash of `toolchain/`.
 - **Release image** ([`toolchain/Release.Dockerfile`](../toolchain/Release.Dockerfile)): adds ProofCI's code on top in seconds.
 
+When Aeneas or Lean changes, regenerate `typescript/lean-tokens.json` from
+`Lean.Parser.getTokenTable`, keeping the identifier-shaped entries. Generated code
+puts `«»` around those words, so a field called `name` still compiles.
+
 ## CI
 
 Pull requests that leave `toolchain/` alone pull the published base and run the

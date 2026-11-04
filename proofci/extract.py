@@ -57,6 +57,7 @@ class Extraction:
     failures: dict = None   # function in the manifest -> why it can't be translated
     signatures: dict = None # TypeScript: the shape of each translated function
     files: list = None      # TypeScript: the source files translated
+    imports: dict = None    # TypeScript: where each of those files' imports resolve
 
 
 @dataclass

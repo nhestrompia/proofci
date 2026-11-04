@@ -6,4 +6,5 @@
 !typescript/translate.mjs
 !typescript/differential.mjs
 !typescript/paths.mjs
+!typescript/lean-tokens.json
 **/__pycache__

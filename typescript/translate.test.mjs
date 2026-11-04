@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { differential } from "./differential.mjs";
 import { translate } from "./translate.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "translate-"));
@@ -432,4 +433,33 @@ test("calls cross files through their own namespaces", () => {
     { "b.ts": "export function g(a: number) { return a + 1; }" });
   assert.deepEqual(result.failures, {});
   assert.ok(result.source.includes("_root_.b.g a"));
+});
+
+test("a field named after a Lean token is quoted", () => {
+  const { source } = run(`export type P = { name: string; to: number };\nexport function f(p: P): number {\n  return p.to;\n}`);
+  assert.match(source, /«name» : Js\.Str/);
+});
+
+test("the Node comparison stands in for imports the target doesn't reach", async () => {
+  const repo = join(dir, "standins");
+  mkdirSync(join(repo, "src/lib"), { recursive: true });
+  writeFileSync(join(repo, "src/lib/errors.ts"), `throw new Error("must not load");\nexport class Oops extends Error {}\n`);
+  writeFileSync(join(repo, "src/lib/index.ts"), "export const STEP = 2n;\n");
+  writeFileSync(join(repo, "src/a.ts"), `import { STEP } from "./lib";
+import { Oops } from "./lib/errors";
+import { thing } from "some-package";
+const made = thing({ a: 1 });
+export class Late extends Oops {}
+export function unrelated() { return made; }
+export function twice(a: bigint): bigint {
+  return a * STEP;
+}
+`);
+  const result = translate({ root: repo, module: "M", targets: ["src/a.ts::twice"] });
+  assert.deepEqual(result.failures, {});
+  const out = join(dir, "standins-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 3 });
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 3);
 });

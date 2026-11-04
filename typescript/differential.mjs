@@ -3,10 +3,10 @@
 // returns a value. A disagreement means the translator or the runtime is wrong.
 //
 // Usage: node differential.mjs <config.json>
-//   config: { root, out, module, signatures, files, cases }
+//   config: { root, out, module, signatures, files, imports, cases }
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, posix, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
@@ -121,20 +121,66 @@ const show = value => JSON.stringify(value, (_, v) => {
   return v;
 });
 
-function compile(root, files, out) {
+// Stands in for code the targets don't reach. Those modules may only be loaded by
+// something else in the file, so a stand-in has to survive any use at load time.
+const STAND_IN = `const stub = new Proxy(function () {}, {
+  get: (_, key) => (key === Symbol.toPrimitive ? () => 0 : stub),
+  apply: () => stub,
+  construct: () => stub,
+});
+export default stub;
+`;
+
+const module_ = file => file.replace(/\.tsx?$/, ".mjs");
+
+function importedNames(statement) {
+  const names = new Set();
+  const bindings = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : statement.exportClause;
+  if (bindings && (ts.isNamedImports(bindings) || ts.isNamedExports(bindings))) {
+    for (const element of bindings.elements) names.add((element.propertyName ?? element.name).text);
+  }
+  names.delete("default");
+  return [...names];
+}
+
+// Files reached by a target run for real. Anything else they import is replaced,
+// so the comparison runs only code that was translated, and doesn't depend on
+// packages being installed.
+function compile(root, files, imports, out) {
+  const realRoot = realpathSync(root);
+  const reached = new Set(files);
+  let stubs = 0;
   for (const file of files) {
     const js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-    }).outputText.replace(/(from\s+["'])(\.{1,2}\/[^"']+?)(?:\.[cm]?[jt]s)?(["'])/g, "$1$2.mjs$3");
-    const path = join(out, file.replace(/\.ts$/, ".mjs"));
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
+    }).outputText;
+    const parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+    const path = join(out, module_(file));
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, js);
+    let rewritten = js;
+    const statements = parsed.statements.filter(s => s.moduleSpecifier).reverse();
+    for (const statement of statements) {
+      const specifier = statement.moduleSpecifier;
+      const resolved = imports[file]?.[specifier.text];
+      const target = resolved && relative(realRoot, resolved);
+      let replacement;
+      if (target && reached.has(target)) {
+        replacement = posix.relative(dirname(module_(file)), module_(target));
+      } else {
+        const stub = `__stand_in_${stubs += 1}.mjs`;
+        writeFileSync(join(out, stub), STAND_IN + importedNames(statement).map(n => `export { stub as ${n} };\n`).join(""));
+        replacement = posix.relative(dirname(module_(file)), stub);
+      }
+      if (!replacement.startsWith(".")) replacement = `./${replacement}`;
+      rewritten = `${rewritten.slice(0, specifier.getStart(parsed))}${JSON.stringify(replacement)}${rewritten.slice(specifier.end)}`;
+    }
+    writeFileSync(path, rewritten);
   }
 }
 
-export async function differential({ root, out, module, signatures, files, cases = 200 }) {
+export async function differential({ root, out, module, signatures, files, imports = {}, cases = 200 }) {
   const compiled = join(out, "js");
-  compile(root, files, compiled);
+  compile(root, files, imports, compiled);
   const lines = [`import ${module}`, "open Aeneas Aeneas.Std Result", ""];
   const skipped = [];
   const labels = [];
@@ -142,7 +188,7 @@ export async function differential({ root, out, module, signatures, files, cases
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
     if (JSON.stringify(signature).includes('"generic"')) { skipped.push(`${target}: generic`); continue; }
-    const loaded = await import(pathToFileURL(join(compiled, signature.file.replace(/\.ts$/, ".mjs"))));
+    const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
     const fn = loaded[signature.name];
     const value = generator(seed++);
     for (let index = 0; index < cases; index += 1) {

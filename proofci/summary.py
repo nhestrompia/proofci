@@ -49,6 +49,9 @@ def markdown(report):
                   "These statements may not constrain the code as intended. Review the contract:", ""]
         for g in warned:
             lines += [f"- `{g['target']}/{g['guarantee']}`: {w}" for w in g["warnings"]]
+    if report.get("notes"):
+        lines += ["", "### Notes", ""]
+        lines += [f"- {note}" for note in report["notes"]]
     lines += ["", "Verified means the Lean kernel (and nanoda) accepted a proof of the exact protected "
               f"statement about the code as translated by {_translator(report)}. "
               "It covers only the listed guarantees."]
