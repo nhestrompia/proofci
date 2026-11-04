@@ -16,3 +16,8 @@ targets:
         theorem: transfer_conserves
       - id: rejects-overdraft
         theorem: transfer_rejects_overdraft
+  - id: totals
+    function: src/ledger.ts::sumAmounts
+    guarantees:
+      - id: exact
+        theorem: sum_exact

@@ -405,8 +405,8 @@ def run_scenario(name, out_dir=None):
 
 
 TS_LEDGER = "src/ledger.ts"
-TS_GUARANTEES = ("fees/capped", "transfer/conservation", "transfer/rejects-overdraft")
-TS_FEE, TS_CONSERVES, TS_OVERDRAFT = TS_GUARANTEES
+TS_GUARANTEES = ("fees/capped", "transfer/conservation", "transfer/rejects-overdraft", "totals/exact")
+TS_FEE, TS_CONSERVES, TS_OVERDRAFT, TS_SUM = TS_GUARANTEES
 
 
 def ts_results():
@@ -474,6 +474,10 @@ def ts_function_removed(head):
     edit(head / TS_LEDGER, "export function transfer(", "export function move(")
 
 
+def ts_sum_skips_an_item(head):
+    edit(head / TS_LEDGER, "    total += amount;\n", "    if (amount === 7) continue;\n    total += amount;\n")
+
+
 def ts_mutates_callers_array(head):
     edit(head / TS_LEDGER, "export function transfer(", """export function audit(log: number[]): number {
   log.push(1);
@@ -511,7 +515,8 @@ SCENARIOS.update({
     "ts-import-for-side-effects": (ts_import_for_side_effects, dict.fromkeys(TS_GUARANTEES, X), 1),
     "ts-declaration-file-lies": (ts_declaration_file_lies, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-proof-uses-sorry": (ts_proof_uses_sorry, {**ts_results(), TS_CONSERVES: U}, 1),
-    "ts-function-removed": (ts_function_removed, {TS_FEE: S, TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-function-removed": (ts_function_removed, {TS_FEE: S, TS_CONSERVES: X, TS_OVERDRAFT: X, TS_SUM: S}, 1),
+    "ts-sum-skips-an-item": (ts_sum_skips_an_item, {**ts_results(), TS_SUM: U}, 1),
     "ts-mutates-callers-array": (ts_mutates_callers_array, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-alias-hides-a-write": (ts_alias_hides_a_write, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-contract-weakened": (ts_contract_weakened, ts_results(), 1),

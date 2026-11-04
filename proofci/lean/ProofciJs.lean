@@ -40,6 +40,10 @@ instance : Inhabited Num := ⟨⟨0, by decide, by decide⟩⟩
 @[scalar_tac x.val]
 theorem Num.bounds (x : Num) : -9007199254740991 ≤ x.val ∧ x.val ≤ 9007199254740991 := ⟨x.lo, x.hi⟩
 
+/-- Lets `scalar_tac` see through number literals in translated code. -/
+@[simp, scalar_tac_simps] theorem Num.val_mk (v : Int) (a : -9007199254740991 ≤ v) (b : v ≤ 9007199254740991) :
+    (Num.mk v a b).val = v := rfl
+
 /-- Fails unless `v` is a safe integer. -/
 def mk (v : Int) : Result Num :=
   if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ok ⟨v, h.1, h.2⟩
@@ -236,6 +240,23 @@ def reduce {α β} (f : β → α → Result β) (acc : β) : List α → Result
 @[step] theorem len_spec {α} (xs : List α) (h : xs.length ≤ 9007199254740991) :
     len xs ⦃ r => r.val = xs.length ⦄ :=
   mk_spec _ (by omega) (by omega)
+
+/-- The exact total of a list of numbers, for stating what a sum computes. -/
+def total (xs : List Num) : Int := (xs.map (·.val)).sum
+
+@[simp] theorem total_nil : total [] = 0 := by simp [total]
+
+@[simp] theorem total_cons (x : Num) (r : List Num) : total (x :: r) = x.val + total r := by
+  simp [total]
+
+theorem total_nonneg (xs : List Num) (hn : ∀ x ∈ xs, 0 ≤ x.val) : 0 ≤ total xs := by
+  induction xs with
+  | nil => simp
+  | cons x r ih =>
+    have hx := hn x (by simp)
+    have hr := ih (fun y hy => hn y (by simp [hy]))
+    simp only [total_cons]
+    omega
 
 /-- A number for the differential test. Inputs are always safe integers. -/
 def lit (v : Int) : Num :=

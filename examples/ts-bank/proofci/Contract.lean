@@ -16,3 +16,8 @@ theorem transfer_conserves (a : Accounts) (amount : Js.Num)
 /-- A transfer larger than the balance is refused. -/
 theorem transfer_rejects_overdraft (a : Accounts) (amount : Js.Num) (h : a.from.val < amount.val) :
     transfer a amount = ok none := by sorry
+
+/-- Adding up amounts gives their exact total, without losing precision. -/
+theorem sum_exact (xs : List Js.Num) (hn : ∀ x ∈ xs, 0 ≤ x.val)
+    (h : Js.total xs ≤ 9007199254740991) :
+    sumAmounts xs ⦃ r => r.val = Js.total xs ⦄ := by sorry

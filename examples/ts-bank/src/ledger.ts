@@ -16,3 +16,12 @@ export function transfer(accounts: Accounts, amount: number): Accounts | null {
   if (amount <= 0 || amount > accounts.from) return null;
   return { from: accounts.from - amount, to: accounts.to + amount };
 }
+
+/** The total of a list of amounts. */
+export function sumAmounts(amounts: readonly number[]): number {
+  let total = 0;
+  for (const amount of amounts) {
+    total += amount;
+  }
+  return total;
+}
