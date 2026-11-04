@@ -100,6 +100,17 @@ theorem wprun {p fn a h Ψ}
     (hb : Wp p ⟨fn.env0 a, h⟩ fn.body fun c s => ∃ v, c = .ret v ∧ Ψ v s) : WpRun p fn a h Ψ := by
   obtain ⟨c, s', he, v, rfl, hr⟩ := hb; exact ⟨_, _, Runs.of he, hr⟩
 
+/-- A function that ends without `return` gives `undefined`. -/
+theorem wprun_void {p fn a h Ψ}
+    (hb : Wp p ⟨fn.env0 a, h⟩ fn.body fun c s => c = .normal ∧ Ψ .undef s) : WpRun p fn a h Ψ := by
+  obtain ⟨c, s', ⟨F, hF⟩, rfl, hr⟩ := hb
+  refine ⟨_, s', ⟨F + 1, fun f hf => ?_⟩, hr⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  simp only [run]
+  have := hF g hg
+  simp only [Fn.env0] at this
+  simp only [this]
+
 theorem wps_set {p s x e Φ} (h : WpE p s e fun v s' => Φ .normal { s' with env := s'.env.put x v }) :
     WpS p s (.set x e) Φ := by
   obtain ⟨v, s', he, hr⟩ := h; exact ⟨_, _, Execs.set he, hr⟩
@@ -116,6 +127,12 @@ theorem wps_ite {p s c t e Φ}
   · simp only [ht, if_true] at hk
     obtain ⟨r, s₂, hb, hr⟩ := hk
     exact ⟨_, _, Execs.ite_true he ht hb, hr⟩
+theorem wps_setField {p s o k e Φ}
+    (h : WpE p s o fun ov s₁ => WpE p s₁ e fun v s₂ => ∃ l fs, ov = .ref l ∧ s₂.heap[l]? = some (.record fs) ∧
+      Φ .normal { s₂ with heap := s₂.heap.set l (.record ((k, v) :: fs.filter (·.1 != k))) }) :
+    WpS p s (.setField o k e) Φ := by
+  obtain ⟨ov, s₁, ho, v, s₂, he, l, fs, rfl, hl, hk⟩ := h
+  exact ⟨_, _, Execs.setField ho he hl, hk⟩
 theorem wps_forOf {p s x e body Φ}
     (h : WpE p s e fun v s₁ => WpIter p x v 0 body s₁ fun s₂ => Φ .normal s₂) : WpS p s (.forOf x e body) Φ := by
   obtain ⟨v, s₁, he, s₂, hi, hk⟩ := h; exact ⟨_, _, Execs.forOf he hi, hk⟩
@@ -218,7 +235,7 @@ end Core
 `simp` decides most branches; `split` takes the rest, and `omega` closes impossible ones. -/
 macro "core_step" : tactic => `(tactic| first
   | apply Core.wp_cons | apply Core.wp_nil | apply Core.wprun
-  | apply Core.wps_set | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
+  | apply Core.wps_set | apply Core.wps_setField | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
   | apply Core.wpe_lit | apply Core.wpe_var | apply Core.wpe_field | apply Core.wpe_bin | apply Core.wpe_isNullish
   | apply Core.wpe_not | apply Core.wpe_cond | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
   | apply Core.wpe_call' | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
