@@ -256,7 +256,7 @@ test("maps and sets are owned, and their keys are compared by value", () => {
 });
 
 test("a class that looks like Map is not treated as one", () => {
-  rejects("class Map { set(a: number) { return a; } } export function f(m: Map) { return m.set(1); }", /only declarations/);
+  rejects("class Map { set(a: number) { return a; } } export function f(m: Map) { return m.set(1); }", /type `Map`/);
 });
 
 test("identity comparison isn't approximated", () => {
@@ -303,11 +303,12 @@ test("a shadow JavaScript file, a compiler switch or a side effect rejects the f
   const source = "export function f(a: number) { return a; }";
   rejects(source, /beside/, { "a.js": "export const f = () => 0;" });
   rejects(`// @ts-nocheck\n${source}`, /@ts-/);
-  rejects(`// @ts-expect-error\nconst x: string = 1;\n${source}`, /@ts-/);
+  rejects(`export function f(a: number) {\n  // @ts-expect-error\n  const x: string = 1;\n  return a;\n}`, /@ts-/);
   rejects(`import "./b.ts";\n${source}`, /side effects/, { "b.ts": "export {};" });
-  rejects(`Math.floor = (a: number) => a;\n${source}`, /on import/);
-  rejects(`let x = 1;\n${source}`, /module-level/);
-  rejects(`export const x = compute();\nfunction compute() { return 1; }\n${source}`, /module-level/);
+  rejects(`Math.floor = (a: number) => a;\n${source}`, /replaces a built-in/);
+  rejects(`function g() { Array.prototype.map = () => []; }\n${source}`, /replaces a built-in/);
+  rejects(`Object.defineProperty(Math, "floor", { value: 1 });\n${source}`, /replaces a built-in/);
+  rejects(`(globalThis as any).Math = {};\n${source}`, /replaces a built-in/);
 });
 
 test("a problem with a file rejects every target in it, not only the first", () => {
@@ -331,11 +332,23 @@ test("a problem in a callee's file rejects every caller", () => {
   assert.deepEqual(Object.keys(result.failures).sort(), ["a.ts::f", "a.ts::g"]);
 });
 
+test("only what a function reaches matters", () => {
+  const f = "export function f(a: number) { return a + 1; }";
+  assert.deepEqual(run(`import { x } from "missing-package";\nexport const y = x;\n${f}`).failures, {});
+  assert.deepEqual(run(`const broken: string = 1;\nexport const config = { a: "b" };\n${f}`).failures, {});
+  assert.deepEqual(run(`let counter = 0;\nexport function g() { counter += 1; }\n${f}`).failures, {});
+  assert.deepEqual(run(`// @ts-ignore\nconst broken: string = 1;\n${f}`).failures, {});
+  rejects(`import { x } from "missing-package";\nexport function f(a: number) { return x + a; }`, /TypeScript error|`any`/);
+  rejects("let n = 0; export function f(a: number) { return a + n; }", /module-level/);
+  rejects("const c = { a: 1 }; export function f(a: number) { return a + c.a; }", /number constants/);
+  rejects("const broken: string = 1; const n = 2; export function f(a: number) { return a + g(); }\nfunction g(): number { const b: string = 1; return 1; }", /TypeScript error/);
+});
+
 test("a function with no source is rejected", () => {
   rejects("declare function g(a: number): number; export function f(a: number) { return g(a); }", /module-level|no body|no source/);
   rejects(`import { g } from "./b"; export function f(a: number) { return g(a); }`, /outside|no source|error/,
     { "b.d.ts": "export function g(a: number): number;" });
-  rejects(`import { g } from "some-package"; export function f(a: number) { return g(a); }`, /TypeScript error/);
+  rejects(`import { g } from "some-package"; export function f(a: number) { return g(a); }`, /TypeScript error|`any`/);
 });
 
 test("a failed target stays declared so that the other targets are judged", () => {

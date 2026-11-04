@@ -148,44 +148,66 @@ class Translator {
           + "so the program may load it instead");
       }
     }
-    if (COMPILER_SWITCH.test(file.text)) {
-      throw new Unsupported(`${relative(this.root, path)} turns off compiler errors with a \`@ts-\` comment`);
-    }
-    const problems = [...this.program.getSyntacticDiagnostics(file), ...this.program.getSemanticDiagnostics(file)];
-    if (problems.length) {
-      const first = problems[0];
-      const where = first.file ? first.file.getLineAndCharacterOfPosition(first.start ?? 0).line + 1 : 0;
-      throw new Unsupported(`${relative(this.root, path)}:${where}: TypeScript error: `
-        + ts.flattenDiagnosticMessageText(first.messageText, " "));
+    if (/@ts-nocheck/.test(file.text)) {
+      throw new Unsupported(`${relative(this.root, path)} turns off compiler errors with \`@ts-nocheck\``);
     }
     for (const statement of file.statements) this.checkTopLevel(statement);
   }
 
-  // Module code runs on import. Anything beyond declarations could change what
-  // the translated functions do, for example by patching `Math.floor`.
-  checkTopLevel(statement) {
-    if (ts.isImportDeclaration(statement)) {
-      if (!statement.importClause) throw this.fail(statement, "an import that exists only for its side effects");
-      return;
+  // Only what a function reaches has to be in the subset, so an unrelated import
+  // or error elsewhere in the file doesn't matter. This judges one declaration.
+  checkDeclaration(declaration) {
+    // A comment before `const` belongs to the whole statement.
+    const node = ts.isVariableDeclaration(declaration) && ts.isVariableStatement(declaration.parent.parent)
+      ? declaration.parent.parent : declaration;
+    const file = node.getSourceFile();
+    const text = file.text.slice(node.getFullStart(), node.end);
+    if (COMPILER_SWITCH.test(text)) throw this.fail(node, "this code turns off compiler errors with a `@ts-` comment");
+    const problems = [...this.program.getSyntacticDiagnostics(file), ...this.program.getSemanticDiagnostics(file)]
+      .filter(d => d.start !== undefined && d.start >= node.getFullStart() && d.start < node.end);
+    if (problems.length) {
+      const first = problems[0];
+      const line = file.getLineAndCharacterOfPosition(first.start).line + 1;
+      throw new Unsupported(`${relative(this.root, realpathSync(file.fileName))}:${line}: TypeScript error: `
+        + ts.flattenDiagnosticMessageText(first.messageText, " "));
     }
-    if (ts.isVariableStatement(statement)) {
-      if (!(statement.declarationList.flags & ts.NodeFlags.Const)) throw this.fail(statement, "module-level `let` or `var`");
-      for (const declaration of statement.declarationList.declarations) {
-        const init = declaration.initializer && unwrap(declaration.initializer);
-        if (!init || !(ts.isArrowFunction(init) || ts.isFunctionExpression(init) || this.literal(init) !== undefined)) {
-          throw this.fail(declaration, "module-level values must be functions or number literals for now");
+  }
+
+  // Module code runs on import. Translated functions assume the built-ins are
+  // the real ones, so a file they come from must not replace or extend one.
+  checkTopLevel(statement) {
+    if (ts.isImportDeclaration(statement) && !statement.importClause) {
+      throw this.fail(statement, "an import that exists only for its side effects");
+    }
+    const walk = node => {
+      const target = ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind) ? node.left : undefined;
+      if (target && this.touchesBuiltin(target)) throw this.fail(node, "this code replaces a built-in, which changes what translated code means");
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression.getText();
+        const first = node.arguments[0];
+        if (["Object.defineProperty", "Object.defineProperties", "Object.assign", "Object.setPrototypeOf", "Reflect.set", "Reflect.defineProperty"].includes(callee)
+          && first && this.touchesBuiltin(first)) {
+          throw this.fail(node, "this code replaces a built-in, which changes what translated code means");
         }
       }
-      return;
-    }
-    if (ts.isFunctionDeclaration(statement) || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
-      || ts.isExportDeclaration(statement) || ts.isEmptyStatement(statement)) return;
-    throw this.fail(statement, "module-level code runs on import, and only declarations are supported");
+      ts.forEachChild(node, walk);
+    };
+    walk(statement);
+  }
+
+  // `Math.floor`, `Array.prototype.map`, `globalThis.Math` and the like.
+  touchesBuiltin(node) {
+    let current = unwrap(node);
+    if (/\.prototype\b|\bglobalThis\b/.test(current.getText())) return true;
+    while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) current = unwrap(current.expression);
+    if (!ts.isIdentifier(current)) return false;
+    const declaration = this.checker.getSymbolAtLocation(current)?.valueDeclaration;
+    return Boolean(declaration) && this.program.isSourceFileDefaultLibrary(declaration.getSourceFile());
   }
 
   namespace(file) {
     const relativePath = relative(this.root, realpathSync(file.fileName)).replace(/\.ts$/, "");
-    return relativePath.split(sep).map(part => part.replace(/-/g, "_")).map(name).join(".");
+    return relativePath.split(sep).map(part => part.replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1")).map(name).join(".");
   }
 
   leanName(node, text) {
@@ -237,6 +259,7 @@ class Translator {
       return known.lean;
     }
     this.checkFile(declaration.getSourceFile());
+    this.checkDeclaration(declaration);
     if (declaration.typeParameters?.length) throw this.fail(declaration, "generic types are not supported yet");
     if (declaration.heritageClauses?.length) throw this.fail(declaration, "`extends` on a type is not supported yet");
     this.types.set(declaration, null);
@@ -392,6 +415,7 @@ class Translator {
     }
     if (known) return known.lean;
     this.checkFile(declaration.getSourceFile());
+    this.checkDeclaration(declaration);
     const fn = this.bodyOf(declaration);
     if (!fn || !fn.body) throw this.fail(declaration, "this function has no body to translate");
     if (fn.typeParameters?.length) throw this.fail(fn, "generic functions are not supported yet");
@@ -444,6 +468,8 @@ class Translator {
   declareConstant(declaration) {
     if (this.constants.has(declaration)) return this.constants.get(declaration);
     this.checkFile(declaration.getSourceFile());
+    this.checkDeclaration(declaration);
+    if (!(declaration.parent.flags & ts.NodeFlags.Const)) throw this.fail(declaration, "reading a module-level `let` or `var`");
     const value = this.literal(declaration.initializer);
     if (value === undefined) throw this.fail(declaration, "only number constants are supported for now");
     const lean = this.leanName(declaration, declaration.name.text);

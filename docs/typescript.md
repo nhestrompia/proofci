@@ -104,6 +104,26 @@ What blocks pure functions, as a share of the 5,701:
 - **Casts can become listed assumptions.** A downcast can't be checked, but a report
   can say that a result depends on it. That is worth trying before rejecting them.
 
+### What the translator accepts today
+
+The table above is what a finished subset would reach. `survey/try.mjs` runs the real
+translator on the pure functions of nine of those repositories instead. Today it
+accepts 19 of 1,457, about 1%, so there's a long way to go before this works on
+most real code. The main reasons:
+
+| Functions | Reason |
+|---:|---|
+| 403 | Types it can't read yet, including inline object types and types from packages |
+| 200 | Parameters with defaults, optional parameters and destructuring |
+| 123 | Generic functions |
+| 52 | Callbacks that assign to an outer variable |
+| 42 | Code that needs a check under `noUncheckedIndexedAccess` |
+| 40 | Types allowing both `null` and `undefined` |
+| 39 | Recursive types |
+| 36 | Optional fields |
+
+Dependencies aren't installed in this run, which inflates the first row.
+
 ### Limits of these numbers
 
 - The classifier is heuristic. It under-counts aliasing, because it doesn't follow
