@@ -3,6 +3,11 @@
 ICON = {"verified": "✅", "unproven": "❌", "unsupported": "⛔", "contract-stale": "⚠️", "error": "💥"}
 
 
+def _translator(report):
+    return ("ProofCI's TypeScript translator" if report.get("language") == "typescript"
+            else "the pinned Charon/Aeneas toolchain")
+
+
 def markdown(report):
     lines = ["## ProofCI", ""]
     lines.append("**Result: passed**" if report["passed"] else "**Result: blocked**")
@@ -45,7 +50,7 @@ def markdown(report):
         for g in warned:
             lines += [f"- `{g['target']}/{g['guarantee']}`: {w}" for w in g["warnings"]]
     lines += ["", "Verified means the Lean kernel (and nanoda) accepted a proof of the exact protected "
-              "statement about the Rust code as translated by the pinned Charon/Aeneas toolchain. "
+              f"statement about the code as translated by {_translator(report)}. "
               "It covers only the listed guarantees."]
     timings = report.get("timings_seconds") or {}
     if timings:

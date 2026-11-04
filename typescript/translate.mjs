@@ -73,7 +73,7 @@ class Translator {
     this.types = new Map();      // declaration -> { lean, text }
     this.functions = new Map();  // declaration -> { lean, text } (null while in progress)
     this.constants = new Map();
-    this.checkedFiles = new Set();
+    this.fileChecks = new Map();
     this.order = [];
   }
 
@@ -88,8 +88,22 @@ class Translator {
   // What the runtime would load must be what is translated, and nothing in
   // the file may change that behind the translation's back.
   checkFile(file) {
-    if (this.checkedFiles.has(file)) return;
-    this.checkedFiles.add(file);
+    if (!this.fileChecks.has(file)) {
+      let problem = null;
+      try {
+        this.inspectFile(file);
+      } catch (error) {
+        if (!(error instanceof Unsupported)) throw error;
+        problem = error;
+      }
+      this.fileChecks.set(file, problem);
+    }
+    // A problem with a file applies to every function in it, not only the first.
+    const problem = this.fileChecks.get(file);
+    if (problem) throw problem;
+  }
+
+  inspectFile(file) {
     const path = realpathSync(file.fileName);
     if (file.isDeclarationFile || !(path === this.root || path.startsWith(this.root + sep))) {
       throw new Unsupported(`${file.fileName} is outside the translated package`);
@@ -152,6 +166,7 @@ class Translator {
     const { TypeFlags } = ts;
     if (type.flags & TypeFlags.NumberLike) return "Js.Num";
     if (type.flags & TypeFlags.BooleanLike) return "Bool";
+    if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion()) {
       const parts = type.types.filter(t => !(t.flags & (TypeFlags.Null | TypeFlags.Undefined)));
       const nulls = type.types.filter(t => t.flags & TypeFlags.Null).length;
@@ -164,7 +179,8 @@ class Translator {
     }
     const symbol = type.aliasSymbol ?? type.symbol;
     const declaration = symbol?.declarations?.[0];
-    if (declaration && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
+    const library = declaration && this.program.isSourceFileDefaultLibrary(declaration.getSourceFile());
+    if (declaration && !library && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
       return `_root_.${this.declareType(declaration, type)}`;
     }
     throw this.fail(node, `the type \`${this.checker.typeToString(type)}\` is not supported yet`);
@@ -226,6 +242,44 @@ class Translator {
     const lines = variants.map(v => `  | ${name(v.tag)} ${v.fields.map(f => `(${name(f.name)} : ${this.type(f.type, f.node)})`).join(" ")}`);
     return { kind: "tagged", variants: variants.map(v => ({ tag: v.tag, fields: v.fields.map(f => f.name) })),
       text: [`inductive ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
+  }
+
+  // A description of a type, for generating and reading values of it.
+  describe(type, node) {
+    const lean = this.type(type, node);
+    if (lean === "Js.Num") return { kind: "number" };
+    if (lean === "Bool") return { kind: "boolean" };
+    if (type.isUnion() && this.nullish(type)) {
+      const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
+      return { kind: "optional", nothing, inner: this.describe(this.checker.getNonNullableType(type), node) };
+    }
+    const shape = this.shape(type);
+    const fields = owner => this.fields(owner, node).map(f => ({ name: f.name, lean: name(f.name), type: this.describe(f.type, f.node) }));
+    if (shape.kind === "enum") return { kind: "enum", lean: shape.lean, tags: shape.tags.map(t => ({ tag: t, lean: name(t) })) };
+    if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type) };
+    return { kind: "tagged", lean: shape.lean, variants: type.types.map(member => {
+      const all = fields(member);
+      const tag = all.find(f => f.name === "kind");
+      const literal = this.fields(member, node).find(f => f.name === "kind").type.value;
+      return { tag: literal, lean: name(literal), fields: all.filter(f => f !== tag) };
+    }) };
+  }
+
+  nullish(type) {
+    return type.types.some(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+  }
+
+  signature(declaration) {
+    const fn = this.bodyOf(declaration);
+    const signature = this.checker.getSignatureFromDeclaration(fn);
+    return {
+      file: relative(this.root, realpathSync(declaration.getSourceFile().fileName)),
+      exported: Boolean(ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export),
+      name: declaration.name.text,
+      lean: this.functions.get(declaration).lean,
+      params: fn.parameters.map(p => this.describe(this.checker.getTypeAtLocation(p), p)),
+      result: this.describe(this.checker.getReturnTypeOfSignature(signature), fn),
+    };
   }
 
   shape(type) {
@@ -872,6 +926,7 @@ export function translate({ root, module, targets }) {
   const translator = new Translator(root, targets);
   const failures = {};
   const names = {};
+  const signatures = {};
   let fatal = null;
   for (const target of targets) {
     const snapshot = {
@@ -882,6 +937,7 @@ export function translate({ root, module, targets }) {
     try {
       declaration = findDeclaration(translator, target);
       names[target] = translator.declareFunction(declaration);
+      signatures[target] = translator.signature(declaration);
     } catch (error) {
       if (!(error instanceof Unsupported)) throw error;
       failures[target] = error.message;
@@ -898,7 +954,8 @@ export function translate({ root, module, targets }) {
     }
   }
   const header = ["import Aeneas", "import ProofciJs", "", "open Aeneas Aeneas.Std Result", ""];
-  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal };
+  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures,
+    files: [...translator.fileChecks.keys()].map(f => relative(translator.root, realpathSync(f.fileName))) };
 }
 
 if (process.argv[1]?.endsWith("translate.mjs")) {

@@ -62,6 +62,24 @@ class ManifestTests(unittest.TestCase):
         self.assertRejected(GOOD + b"policy:\n  approvers: alice\n", "GitHub logins")
         self.assertRejected(GOOD + b"policy:\n  owners: [alice]\n", "unknown keys")
 
+    def test_typescript(self):
+        data = GOOD.replace(b"version: 1", b"version: 1\nlanguage: typescript\npackage: packages/core")
+        data = data.replace(b"ledger::calculate_fee", b"src/fees.ts::calculateFee")
+        m = manifest.parse(data)
+        self.assertEqual((m.language, m.crate), ("typescript", "packages/core"))
+        self.assertEqual(m.summary()["language"], "typescript")
+        for bad in (b"src/fees.js::f", b"../fees.ts::f", b"/etc/fees.ts::f", b"src/fees.ts", b"ledger::f"):
+            with self.assertRaises(manifest.ManifestError):
+                manifest.parse(data.replace(b"src/fees.ts::calculateFee", bad))
+
+    def test_language_and_directory_key_must_match(self):
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(GOOD.replace(b"version: 1", b"version: 1\npackage: ."))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(GOOD.replace(b"version: 1", b"version: 1\nlanguage: typescript\ncrate: ."))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(GOOD.replace(b"version: 1", b"version: 1\nlanguage: python"))
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 

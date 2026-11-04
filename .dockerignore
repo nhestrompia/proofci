@@ -4,4 +4,5 @@
 !typescript/package.json
 !typescript/package-lock.json
 !typescript/translate.mjs
+!typescript/differential.mjs
 **/__pycache__

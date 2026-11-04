@@ -127,7 +127,8 @@ RUN case "${TARGETARCH}" in \
  && mkdir -p /opt/node && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1 && rm /tmp/node.tar.xz
 COPY typescript/package.json typescript/package-lock.json /opt/proofci/typescript/
 RUN cd /opt/proofci/typescript && /opt/node/bin/node /opt/node/bin/npm ci --ignore-scripts --no-audit --no-fund \
- && rm -rf node_modules/typescript/lib/*/ package.json package-lock.json
+ && rm -rf node_modules/typescript/lib/*/ package.json package-lock.json \
+            /opt/node/include /opt/node/share /opt/node/lib/node_modules /opt/node/bin/npm /opt/node/bin/npx /opt/node/bin/corepack
 
 # Checking proofs needs the Lean binaries, shared libraries and .olean files,
 # not the static libraries used to compile Lean programs.
@@ -160,4 +161,4 @@ ENTRYPOINT ["python3", "-m", "proofci"]
 # adds the same layer on top of a published toolchain base.
 FROM toolchain
 COPY proofci /opt/proofci/proofci
-COPY typescript/translate.mjs /opt/proofci/typescript/translate.mjs
+COPY typescript/translate.mjs typescript/differential.mjs /opt/proofci/typescript/

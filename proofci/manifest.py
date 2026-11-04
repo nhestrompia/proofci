@@ -149,8 +149,9 @@ def parse(data: bytes) -> Manifest:
         target_ids.add(entry["id"])
         pattern = TS_PATH if language == "typescript" else RUST_PATH
         if not isinstance(entry["function"], str) or not pattern.match(entry["function"]):
-            example = "src/ledger.ts::transfer" if language == "typescript" else "crate_name::function"
-            raise ManifestError(f"{where}.function must look like {example}")
+            expected = "a path such as src/ledger.ts::transfer" if language == "typescript" \
+                else "a Rust path such as crate_name::function"
+            raise ManifestError(f"{where}.function must be {expected}")
         if not isinstance(entry["guarantees"], list) or not entry["guarantees"]:
             raise ManifestError(f"{where}.guarantees must be a non-empty list")
         guarantees = []

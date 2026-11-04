@@ -82,6 +82,26 @@ A "verified" result is only as good as these components:
 - **Collaborator approval:** without `policy.approvers`, any collaborator other than the author can approve a policy change. Name approvers, or use `approvers: []`, for strict repositories.
 - **Denial of service:** a pull request can make the check slow or fail (timeouts, memory limits). That blocks the PR; it never makes it pass.
 
+## TypeScript
+
+TypeScript support is experimental and isn't released yet. The translator is
+ProofCI's own code, so it is part of what you trust, without the outside review
+Charon and Aeneas have. Each check reduces that risk by running the translated
+functions in Node on generated inputs and comparing them with the Lean model.
+Any disagreement blocks the guarantees.
+
+The translator rejects what it can't model exactly, and only reads and
+type-checks the code. It ignores the project's `tsconfig.json`, and it rejects
+files with `@ts-` comments, compiled JavaScript beside the source, module-level
+code other than declarations, and declaration files standing in for source.
+
+A TypeScript guarantee also assumes:
+
+- Callers pass values of the declared types, without getters or proxies.
+- Code elsewhere in the program doesn't replace built-ins such as `Math.floor`.
+- The program runs the TypeScript source as written, so bundler replacements and
+  macros are outside the guarantee.
+
 ## Reporting a vulnerability
 
 Please use GitHub's private vulnerability reporting on this repository

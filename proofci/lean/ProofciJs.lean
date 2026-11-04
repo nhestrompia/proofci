@@ -134,4 +134,16 @@ theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 90071992547
 @[step] theorem unwrap_spec {α} (v : α) : unwrap (some v) ⦃ r => r = v ⦄ := by
   simp [unwrap, WP.spec_ok]
 
+/-- A number for the differential test. Inputs are always safe integers. -/
+def lit (v : Int) : Num :=
+  if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default
+
+/-- Compares the model with what Node computed. `expected` is `none` when Node
+    produced something other than a value of the declared type. The model may
+    always fail, but when it returns a value, Node must have returned the same. -/
+def agree {α} [DecidableEq α] (label : String) (r : Result α) (expected : Option α) : IO Unit :=
+  match r.match with
+  | .ok v => IO.println (if some v = expected then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
+  | _ => IO.println s!"PROOFCI_DIFF failed {label}"
+
 end Js

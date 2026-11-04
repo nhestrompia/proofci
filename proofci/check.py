@@ -49,6 +49,7 @@ class Outcome:
 class Report:
     outcomes: list = field(default_factory=list)
     policy_source: str = "base"
+    language: str = "rust"
     policy_changes: list = field(default_factory=list)
     policy_approvers: object = None   # from the protected base policy
     notes: list = field(default_factory=list)
@@ -64,6 +65,7 @@ class Report:
         return {
             "version": 1,
             "passed": self.passed,
+            "language": self.language,
             "policy_source": self.policy_source,
             "policy_changes": self.policy_changes,
             "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
@@ -132,6 +134,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         head = None
     report.policy_changes = policy_changes(base_checkout, base, head_checkout, head)
     report.policy_approvers = base.approvers
+    report.language = base.language
     if policy == "head":
         if head is None:
             raise ConfigError("the candidate has no valid proofci.yaml")
@@ -208,6 +211,14 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             problem = lean.build_translation(ws)
             if problem:
                 reason = "ProofCI translated this code but the result does not compile; please report it:\n" + problem
+                for o in pending:
+                    o.status, o.reason = UNSUPPORTED, reason
+                return report
+            disagreements, notes = typescript.differential(head_checkout, active.crate, work, ws, extraction)
+            report.notes += notes
+            if disagreements:
+                reason = ("ProofCI's model of this code disagrees with Node, so a proof about it would mean "
+                          "nothing; please report it. First disagreement: " + disagreements[0])
                 for o in pending:
                     o.status, o.reason = UNSUPPORTED, reason
                 return report

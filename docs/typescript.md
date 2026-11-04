@@ -1,9 +1,54 @@
-# TypeScript support: survey and plan
+# TypeScript support
 
-ProofCI's TypeScript path is being built on the `typescript-support` branch. This
-page records what the first survey measured and how it changed the plan.
+TypeScript support is experimental and isn't in a release yet. This page covers
+what works, what a proof means, and the survey behind the plan.
 
-## How the survey works
+## What works today
+
+The manifest names the language and the package, and functions by file:
+
+```yaml
+version: 1
+language: typescript
+package: .
+lean: proofci
+targets:
+  - id: transfer
+    function: src/ledger.ts::transfer
+    guarantees:
+      - id: conservation
+        theorem: transfer_conserves
+```
+
+Lean sees `src/ledger.ts::transfer` as `src.ledger.transfer`, in a module named after
+the package, so `ts-bank` is `import TsBank`. See [`examples/ts-bank`](../examples/ts-bank).
+Proofs work the same way as for Rust, including `step*`.
+
+| Supported | Details |
+|---|---|
+| Values | `number`, `boolean`, `T \| null`, `T \| undefined` |
+| Types | Interfaces, string-literal unions, unions tagged by `kind` |
+| Functions | Module-level functions and arrow functions, across files |
+| Control flow | `if` with early return, `switch`, `? :`, `&&`, `\|\|` |
+| Objects | Literals, destructuring, a leading spread |
+| Numbers | `+ - * / %`, comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
+
+Everything else is `unsupported`, with the source line. That includes strings,
+arrays, loops, mutation, classes, `async`, `throw` and calls into packages.
+
+### What `number` means
+
+`number` is a safe integer. If any step would produce a fraction, `NaN`, `Infinity`
+or a value past `Number.MAX_SAFE_INTEGER`, the model fails. So a proof that a function
+returns a value also proves it never lost precision. Code that needs fractions stays
+unproven, and is never judged wrongly.
+
+Each check also runs the translated functions in Node on generated inputs. See the
+[security model](../SECURITY.md#typescript).
+
+## Survey
+
+### How it works
 
 [`typescript/survey`](../typescript/survey) reads a repository with the TypeScript
 compiler and classifies every exported function that makes at least one decision.
@@ -32,7 +77,7 @@ What blocks pure functions, as a share of the 5,701:
 | Aliased mutation | 7% | 1% |
 | Fractional numbers | 5% | 2% |
 
-## What this changed
+### What this changed
 
 - **The plan's stop condition didn't trigger.** Fractions and aliasing are not what
   holds pure functions back, so binary64 numbers and a heap model stay later.
@@ -43,7 +88,7 @@ What blocks pure functions, as a share of the 5,701:
 - **Casts can become listed assumptions.** A downcast can't be checked, but a report
   can say that a result depends on it. That is worth trying before rejecting them.
 
-## Limits of these numbers
+### Limits of these numbers
 
 - The classifier is heuristic. It under-counts aliasing, because it doesn't follow
   values stored in collections and mutated later.

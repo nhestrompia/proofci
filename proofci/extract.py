@@ -55,6 +55,8 @@ class Extraction:
     modelled: list = None   # library functions given ProofCI models
     names: dict = None      # function in the manifest -> Lean name, where they differ
     failures: dict = None   # function in the manifest -> why it can't be translated
+    signatures: dict = None # TypeScript: the shape of each translated function
+    files: list = None      # TypeScript: the source files translated
 
 
 @dataclass
