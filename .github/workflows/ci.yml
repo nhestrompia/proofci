@@ -48,7 +48,7 @@ jobs:
         with:
           persist-credentials: false
       - id: hash
-        run: echo "hash=$(cat toolchain/Dockerfile toolchain/prune.py .dockerignore | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+        run: echo "hash=$(cat toolchain/Dockerfile toolchain/prune.py .dockerignore typescript/package-lock.json | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io

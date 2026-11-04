@@ -1,4 +1,7 @@
 *
 !proofci
 !toolchain/prune.py
+!typescript/package.json
+!typescript/package-lock.json
+!typescript/translate.mjs
 **/__pycache__

@@ -1,0 +1,18 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: fees
+    function: src/ledger.ts::calculateFee
+    guarantees:
+      - id: capped
+        theorem: fee_capped
+  - id: transfer
+    function: src/ledger.ts::transfer
+    guarantees:
+      - id: conservation
+        theorem: transfer_conserves
+      - id: rejects-overdraft
+        theorem: transfer_rejects_overdraft

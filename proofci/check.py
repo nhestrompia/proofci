@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import extract, lean, manifest as manifest_mod
+from . import extract, lean, manifest as manifest_mod, typescript
 
 VERIFIED = "verified"
 UNPROVEN = "unproven"
@@ -100,7 +100,7 @@ def policy_changes(base_checkout, base, head_checkout, head):
         return ["proofci.yaml was removed or is invalid in the pull request"]
     changes = []
     old, new = base.summary(), head.summary()
-    for key in ("crate", "lean"):
+    for key in ("language", "crate", "lean"):
         if old[key] != new[key]:
             changes.append(f"`{key}` changed from `{old[key]}` to `{new[key]}`")
     if old["approvers"] != new["approvers"]:
@@ -166,24 +166,33 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                                    vendor_dir=vendor_dir, opaque=opaque)
 
         extraction, failures = None, {}
-        try:
-            extraction = translate(functions)
-        except extract.Unsupported as error:
-            if len(functions) > 1:
-                for function in functions:
-                    try:
-                        translate([function])
-                    except extract.Unsupported as single:
-                        failures[function] = str(single)
-            if failures and len(failures) < len(functions):
-                # Keep the failing functions as bare declarations so the
-                # contract still elaborates and the other targets are judged.
-                try:
-                    extraction = translate(functions, opaque=sorted(failures))
-                except extract.Unsupported:
+        if active.language == "typescript":
+            try:
+                extraction = typescript.extract(head_checkout, active.crate, work, functions)
+                failures = extraction.failures
+                if len(failures) == len(functions):
                     extraction = None
-            if extraction is None and len(failures) != len(functions):
+            except extract.Unsupported as error:
                 failures = dict.fromkeys(functions, str(error))
+        else:
+            try:
+                extraction = translate(functions)
+            except extract.Unsupported as error:
+                if len(functions) > 1:
+                    for function in functions:
+                        try:
+                            translate([function])
+                        except extract.Unsupported as single:
+                            failures[function] = str(single)
+                if failures and len(failures) < len(functions):
+                    # Keep the failing functions as bare declarations so the
+                    # contract still elaborates and the other targets are judged.
+                    try:
+                        extraction = translate(functions, opaque=sorted(failures))
+                    except extract.Unsupported:
+                        extraction = None
+                if extraction is None and len(failures) != len(functions):
+                    failures = dict.fromkeys(functions, str(error))
         for o in report.outcomes:
             if o.function in failures:
                 o.status, o.reason = UNSUPPORTED, failures[o.function]
@@ -195,6 +204,13 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         # 2. Workspace: extracted model + protected contract + candidate proofs.
         ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
                            policy_checkout / active.lean, head_checkout / active.lean)
+        if active.language == "typescript":
+            problem = lean.build_translation(ws)
+            if problem:
+                reason = "ProofCI translated this code but the result does not compile; please report it:\n" + problem
+                for o in pending:
+                    o.status, o.reason = UNSUPPORTED, reason
+                return report
         if not (ws.root / "Proofs.lean").is_file():
             mark(UNPROVEN, f"no proofs found at `{active.proofs}`", only={o.theorem for o in pending})
             return report
@@ -204,7 +220,9 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         try:
             lean.build_contract(ws)
             model_names = {f"{extraction.crate_name}.{name}": path for path, name in (extraction.modelled or [])}
-            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in pending], list(model_names))
+            names = extraction.names or {}
+            audit = lean.audit(ws, [(o.theorem, names.get(o.function, lean_function(o.function))) for o in pending],
+                               list(model_names))
         except lean.ContractError as error:
             names = {o.theorem for o in pending}
             mark(CONTRACT_STALE, "the protected contract no longer elaborates against this code; "
@@ -305,6 +323,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
 def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
     """Vendor the candidate's crates.io dependencies (the step with network)."""
     active = load_manifest(head_checkout if policy == "head" else base_checkout)
+    if active.language == "typescript":
+        return  # the subset reaches no package code, so nothing is downloaded
     with tempfile.TemporaryDirectory(prefix="proofci-fetch-") as tmp:
         extract.fetch(head_checkout, active.crate, vendor_dir, Path(tmp))
 

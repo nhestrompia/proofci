@@ -16,7 +16,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import extract, lean
+from . import extract, lean, typescript
 from .check import ConfigError, lean_function, load_manifest
 
 
@@ -69,13 +69,20 @@ def run(repo: Path, work: Path, vendor=None, judge=False, out=print):
             shutil.rmtree(work / name, ignore_errors=True)
         (work / "translate").mkdir()
         try:
-            ex = extract.extract(repo, manifest.crate, work / "translate", start_from=functions, vendor_dir=vendor)
+            if manifest.language == "typescript":
+                ex = typescript.extract(repo, manifest.crate, work / "translate", functions)
+                for function, reason in ex.failures.items():
+                    out(f"unsupported: {function}: {reason}")
+                if len(ex.failures) == len(functions):
+                    return 1
+            else:
+                ex = extract.extract(repo, manifest.crate, work / "translate", start_from=functions, vendor_dir=vendor)
         except extract.Unsupported as error:
             out(f"unsupported: {error}")
             return 1
         ws = lean.assemble(ws_root, ex.lean_file, ex.module, repo / manifest.lean, repo / manifest.lean)
-        state = {"crate": crate_key, "module": ex.module, "modelled": ex.modelled}
-        out(f"translated the Rust code ({time.monotonic() - t0:.1f}s); "
+        state = {"crate": crate_key, "module": ex.module, "modelled": ex.modelled, "names": ex.names or {}}
+        out(f"translated the code ({time.monotonic() - t0:.1f}s); "
             f"standard-library models used: {len(ex.modelled)}")
     else:
         ws = lean.Workspace(ws_root, state["module"])
@@ -111,7 +118,8 @@ def run(repo: Path, work: Path, vendor=None, judge=False, out=print):
         finally:
             shutil.rmtree(trial.root, ignore_errors=True)
         mark = "verified" if verdict.accepted else f"not verified: {verdict.reason}"
-        out(f"{target.id}/{guarantee.id} ({lean_function(target.function)}): {mark}")
+        lean_name = state.get("names", {}).get(target.function, lean_function(target.function))
+        out(f"{target.id}/{guarantee.id} ({lean_name}): {mark}")
         status |= 0 if verdict.accepted else 1
     return status
 

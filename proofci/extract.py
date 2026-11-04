@@ -32,7 +32,7 @@ from . import models, sandbox
 
 MAX_STAGED_BYTES = 64 * 1024 * 1024
 MAX_STAGED_FILES = 5000
-RESERVED_MODULES = {"Contract", "Proofs", "ProofciAudit", "ProofciSpecs"}
+RESERVED_MODULES = {"Contract", "Proofs", "ProofciAudit", "ProofciSpecs", "ProofciJs"}
 SKIP_DIRS = {"target", "node_modules"}
 DEP_TABLES = ("dependencies", "build-dependencies")
 CARGO_ENV = {"CARGO_NET_OFFLINE": "true", "CARGO_TERM_COLOR": "never"}
@@ -53,6 +53,8 @@ class Extraction:
     crate_name: str
     log: str
     modelled: list = None   # library functions given ProofCI models
+    names: dict = None      # function in the manifest -> Lean name, where they differ
+    failures: dict = None   # function in the manifest -> why it can't be translated
 
 
 @dataclass
