@@ -41,13 +41,14 @@ def main(argv=None):
     d.add_argument("--work-dir", type=Path, default=Path("/tmp/proofci-dev"))
     d.add_argument("--vendor", type=Path, help="crates.io dependencies downloaded by `proofci fetch`")
     d.add_argument("--judge", action="store_true", help="also run the comparator on each guarantee")
+    d.add_argument("--show", action="store_true", help="print the translated Lean, the code proofs talk about")
     args = parser.parse_args(argv)
 
     if args.command == "dev":
         from . import dev
         try:
             return dev.run(args.repo, args.work_dir.resolve(),
-                           args.vendor.resolve() if args.vendor else None, args.judge)
+                           args.vendor.resolve() if args.vendor else None, args.judge, args.show)
         except (check_mod.ConfigError, manifest.ManifestError, sandbox.SandboxUnavailable,
                 FileNotFoundError, ValueError) as error:
             print(f"proofci: {error}", file=sys.stderr)

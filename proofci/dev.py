@@ -53,7 +53,7 @@ def _report(output, limit=60000):
     return (text + "\n\n" if text else "") + summary
 
 
-def run(repo: Path, work: Path, vendor=None, judge=False, out=print):
+def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print):
     repo = repo.resolve()
     manifest = load_manifest(repo)
     work.mkdir(parents=True, exist_ok=True)
@@ -95,6 +95,8 @@ def run(repo: Path, work: Path, vendor=None, judge=False, out=print):
                     stale.unlink()
             lean._copy_lean_tree(repo / manifest.lean, module, ws_root, required=module == "Contract")
     state_file.write_text(json.dumps(state))
+    if show:
+        out((ws_root / f"{state['module']}.lean").read_text())
 
     t1 = time.monotonic()
     contract = lean._lake(ws, ["build", "Contract"])

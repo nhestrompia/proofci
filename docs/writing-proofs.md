@@ -3,7 +3,8 @@
 Practical patterns for proving ProofCI guarantees about Aeneas-translated
 Rust. They come from proving properties of real code, including checked
 `u128` arithmetic, `?`, closures and library conversions. Give this page to
-your coding agent together with the contract and `proofci dev`.
+your coding agent together with the contract and `proofci dev`. For TypeScript,
+start with [proving TypeScript](proving-typescript.md).
 
 ## The shape of the translation
 

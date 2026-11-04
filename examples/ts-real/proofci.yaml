@@ -1,0 +1,25 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: tick-spacing
+    function: src/config/price.ts::deriveAuctionTickSpacing
+    guarantees:
+      - id: positive
+        theorem: tick_spacing_positive
+  - id: pricing
+    function: src/config/price.ts::deriveAuctionPricing
+    guarantees:
+      - id: on-a-tick
+        theorem: floor_on_tick
+      - id: bounded-drift
+        theorem: floor_drift_bounded
+  - id: spending-phase
+    function: src/phases.ts::getActiveSpendingPhase
+    guarantees:
+      - id: last-started
+        theorem: active_phase_is_last_started
+      - id: earliest-before-any
+        theorem: active_phase_before_any

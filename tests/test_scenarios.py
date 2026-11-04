@@ -409,6 +409,11 @@ TS_GUARANTEES = ("fees/capped", "transfer/conservation", "transfer/rejects-overd
 TS_FEE, TS_CONSERVES, TS_OVERDRAFT, TS_SUM = TS_GUARANTEES
 
 
+def ts_module_throws_when_loaded(head):
+    text = (head / "src/ledger.ts").read_text()
+    (head / "src/ledger.ts").write_text(text + '\nthrow new Error("not in this environment");\n')
+
+
 def ts_results():
     return dict.fromkeys(TS_GUARANTEES, V)
 
@@ -516,6 +521,7 @@ SCENARIOS.update({
     "ts-declaration-file-lies": (ts_declaration_file_lies, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-proof-uses-sorry": (ts_proof_uses_sorry, {**ts_results(), TS_CONSERVES: U}, 1),
     "ts-function-removed": (ts_function_removed, {TS_FEE: S, TS_CONSERVES: X, TS_OVERDRAFT: X, TS_SUM: S}, 1),
+    "ts-module-throws-when-loaded": (ts_module_throws_when_loaded, dict.fromkeys(TS_GUARANTEES, X), 1),
     "ts-sum-skips-an-item": (ts_sum_skips_an_item, {**ts_results(), TS_SUM: U}, 1),
     "ts-mutates-callers-array": (ts_mutates_callers_array, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-alias-hides-a-write": (ts_alias_hides_a_write, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
@@ -535,6 +541,7 @@ TS_REASONS = {
     "ts-import-for-side-effects": "side effects",
     "ts-declaration-file-lies": "no source",
     "ts-function-removed": "not a top-level function",
+    "ts-module-throws-when-loaded": "the comparison with Node did not run",
     "ts-mutates-callers-array": "shared with the caller",
     "ts-alias-hides-a-write": "passed around or stored",
 }

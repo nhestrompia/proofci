@@ -22,7 +22,9 @@ targets:
 
 Lean sees `src/ledger.ts::transfer` as `src.ledger.transfer`, in a module named after
 the package, so `ts-bank` is `import TsBank`. See [`examples/ts-bank`](../examples/ts-bank).
-Proofs work the same way as for Rust, including `step*`.
+Proofs work the same way as for Rust, including `step*`. Start with
+[proving TypeScript](proving-typescript.md), and see
+[`examples/ts-real`](../examples/ts-real) for proofs about functions from real projects.
 
 | Supported | Details |
 |---|---|
