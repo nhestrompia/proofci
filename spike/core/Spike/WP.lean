@@ -57,6 +57,16 @@ theorem wpe_and {p s a b Ψ}
   · simp only [ht, if_true] at hk
     obtain ⟨w, s₂, hb, hr⟩ := hk
     exact ⟨_, _, Evals.and_true he ht hb, hr⟩
+theorem wpe_cond {p s c a b Ψ}
+    (h : WpE p s c fun v s' => if truthy v then WpE p s' a Ψ else WpE p s' b Ψ) : WpE p s (.cond c a b) Ψ := by
+  obtain ⟨v, s', he, hk⟩ := h
+  cases ht : truthy v
+  · simp only [ht, Bool.false_eq_true, if_false] at hk
+    obtain ⟨w, s₂, hb, hr⟩ := hk
+    exact ⟨_, _, Evals.cond_false he ht hb, hr⟩
+  · simp only [ht, if_true] at hk
+    obtain ⟨w, s₂, hb, hr⟩ := hk
+    exact ⟨_, _, Evals.cond_true he ht hb, hr⟩
 theorem wpe_index {p s o i Ψ}
     (h : WpE p s o fun v s₁ => WpE p s₁ i fun n s₂ => ∃ l xs m, v = .ref l ∧ n = .num m ∧
       s₂.heap[l]? = some (.array xs) ∧ Ψ (if m < 0 then .undef else xs[m.toNat]?.getD .undef) s₂) :
@@ -79,6 +89,13 @@ theorem wpe_call {p s g args fn Ψ} (hg : p g = some fn)
     (h : WpA p s args fun vs s₁ => WpRun p fn vs s₁.heap fun v s₂ => Ψ v { s₁ with heap := s₂.heap }) :
     WpE p s (.call g args) Ψ := by
   obtain ⟨vs, s₁, ha, v, s₂, hr, hk⟩ := h; exact ⟨_, _, Evals.call ha hg hr, hk⟩
+theorem wpe_call' {p s g args Ψ}
+    (h : match p g with
+      | some fn => WpA p s args fun vs s₁ => WpRun p fn vs s₁.heap fun v s₂ => Ψ v { s₁ with heap := s₂.heap }
+      | none => False) : WpE p s (.call g args) Ψ := by
+  cases hg : p g with
+  | some fn => rw [hg] at h; exact wpe_call hg h
+  | none => rw [hg] at h; exact h.elim
 theorem wprun {p fn a h Ψ}
     (hb : Wp p ⟨fn.env0 a, h⟩ fn.body fun c s => ∃ v, c = .ret v ∧ Ψ v s) : WpRun p fn a h Ψ := by
   obtain ⟨c, s', he, v, rfl, hr⟩ := hb; exact ⟨_, _, Runs.of he, hr⟩
@@ -168,6 +185,19 @@ theorem bind_intro {α β : Type} {G : Prop} {x : Result α} {f : α → Result 
 theorem ok_intro {α : Type} {G : Prop} {a b : α} (k : a = b → G) : (ok a : Result α) = ok b → G :=
   fun h => k (Result.ok_injective h)
 
+theorem add_intro {G : Prop} {x y r : Js.Num} (k : r.val = x.val + y.val → G) : Js.add x y = ok r → G :=
+  fun h => k (add_val h)
+theorem sub_intro {G : Prop} {x y r : Js.Num} (k : r.val = x.val - y.val → G) : Js.sub x y = ok r → G :=
+  fun h => k (sub_val h)
+theorem mul_intro {G : Prop} {x y r : Js.Num} (k : r.val = x.val * y.val → G) : Js.mul x y = ok r → G :=
+  fun h => k (mul_val h)
+theorem bdiv_intro {G : Prop} {x y r : Int} (k : y ≠ 0 → r = x.tdiv y → G) : Js.bdiv x y = ok r → G :=
+  fun h => k (bdiv_val h).1 (bdiv_val h).2
+theorem brem_intro {G : Prop} {x y r : Int} (k : y ≠ 0 → r = x.tmod y → G) : Js.brem x y = ok r → G :=
+  fun h => k (brem_val h).1 (brem_val h).2
+theorem unwrap_intro {α : Type} {G : Prop} {x : Option α} {r : α} (k : x = some r → G) : Js.unwrap x = ok r → G :=
+  fun h => k (unwrap_val h)
+
 theorem wp_iter_loop {T σ β : Type} [Enc T] {p x l vs body h}
     {B : List T × σ → Result (ControlFlow (List T × σ) β)} {xs a r s} {Ψ : St → Prop}
     (hl : loop B (xs, a) = ok r) (hf : List.Forall₂ (Enc.enc h) xs vs)
@@ -190,22 +220,26 @@ macro "core_step" : tactic => `(tactic| first
   | apply Core.wp_cons | apply Core.wp_nil | apply Core.wprun
   | apply Core.wps_set | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
   | apply Core.wpe_lit | apply Core.wpe_var | apply Core.wpe_field | apply Core.wpe_bin | apply Core.wpe_isNullish
-  | apply Core.wpe_not | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
-  | apply Core.wpe_call | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
+  | apply Core.wpe_not | apply Core.wpe_cond | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
+  | apply Core.wpe_call' | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
   | apply Core.wpa_cons | apply Core.wpa_nil)
 
-macro "core_simp" : tactic => `(tactic| simp [Core.Env.put, Core.Fn.env0, Core.readField, Core.binary, Core.truthy, Core.nullish, *])
+macro "core_simp" : tactic => `(tactic| simp [Core.Env.put, Core.Fn.env0, Core.readField, Core.binary, Core.truthy, Core.nullish, List.lookup, *])
 
-macro "core_run" : tactic => `(tactic| repeat' (first | core_step | core_simp | (exfalso; omega) | split | rfl))
-macro "core_debug" : tactic => `(tactic| iterate 80 (try (first | core_step | core_simp | (exfalso; omega) | split | rfl)))
+macro "core_run" : tactic => `(tactic| iterate 60 (all_goals try (first | core_step | core_simp | (exfalso; omega) | split)))
 
 set_option hygiene false in
 /-- Follows the shallow side: each `do` step that succeeded becomes a fact. -/
-macro "shallow" : tactic => `(tactic| repeat' (first
-  | (revert hr; apply Core.ok_intro; intro hr; subst hr)
+macro "shallow" : tactic => `(tactic| iterate 24 (all_goals try (first
+  | (revert hr; with_reducible refine Core.ok_intro ?_; intro hr; subst hr)
   | split at hr
-  | (revert hr; apply Core.bind_intro; intro _ step hr
+  | (revert hr; with_reducible refine Core.bind_intro ?_; intro _ step hr
      first
-       | (have := Core.add_val step) | (have := Core.sub_val step) | (have := Core.mul_val step)
-       | (obtain ⟨_, _⟩ := Core.bdiv_val step) | (obtain ⟨_, _⟩ := Core.brem_val step)
-       | (have := Core.unwrap_val step) | skip)))
+       | (revert step; with_reducible refine Core.add_intro ?_; intro this)
+       | (revert step; with_reducible refine Core.sub_intro ?_; intro this)
+       | (revert step; with_reducible refine Core.mul_intro ?_; intro this)
+       | (revert step; with_reducible refine Core.bdiv_intro ?_; intro nz this; subst this)
+       | (revert step; with_reducible refine Core.brem_intro ?_; intro nz this; subst this)
+       | (revert step; with_reducible refine Core.unwrap_intro ?_; intro this; subst this)
+       | (revert step; with_reducible refine Core.ok_intro ?_; intro this; subst this)
+       | skip))))

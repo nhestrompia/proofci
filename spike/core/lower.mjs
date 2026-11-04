@@ -11,6 +11,7 @@ export function lower(root, targets) {
   const program = ts.createProgram(files, { strict: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, noEmit: true });
   const checker = program.getTypeChecker();
   const done = new Map();
+  const info = {};
   const queue = [];
   const fnKey = d => `${relative(root, d.getSourceFile().fileName).replace(/\.tsx?$/, "").replace(/\W/g, "_")}_${d.name.text}`;
   const resolve = id => {
@@ -101,6 +102,8 @@ export function lower(root, targets) {
         const x = bind(s.initializer.declarations[0].name), arr = E(s.expression), body = [];
         S(s.statement, body);
         const loop = `${key}_loop${loops.length}`;
+        const assigned = [...new Set(body.join(" ").match(/\.set "[^"]+"/g)?.map(m => m.slice(6, -1)) ?? [])];
+        info[key] = { loop, item: x, carried: assigned.filter(v => taken.has(v) && v !== x) };
         loops.push(`def ${loop} : List Stmt := [${body.join(", ")}]`);
         out.push(`.forOf ${lean(x)} (${arr}) ${loop}`); return;
       }
@@ -135,5 +138,5 @@ export function lower(root, targets) {
   while (queue.length) lowerFn(queue.shift());
   const defs = [...done.values()];
   const prog = `def prog : Prog := fun name => match name with\n${[...done.keys()].map(k => `  | ${lean(k)} => some ${k}`).join("\n")}\n  | _ => none`;
-  return { names, lean: `import Core\nopen Core\nset_option maxRecDepth 4000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
+  return { names, info, lean: `import Core\nopen Core\nset_option maxRecDepth 4000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
 }
