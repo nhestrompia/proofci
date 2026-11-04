@@ -3,9 +3,11 @@ open Core
 set_option maxRecDepth 4000
 namespace Gen
 
+def src_phases_getActiveSpendingPhase_loop0 : List Stmt := [.ite (.or (.isNullish (.field (.var "phase") "fromAge")) (.bin .le (.field (.var "phase") "fromAge") (.var "age"))) [.set "active" (.var "phase")] [.brk]]
+
 def src_phases_getActiveSpendingPhase : Fn := { params := ["resolvedPhases", "age"], body := [
     .set "active" (.index (.var "resolvedPhases") (.lit (.num 0))),
-    .forOf "phase" (.var "resolvedPhases") [.ite (.or (.isNullish (.field (.var "phase") "fromAge")) (.bin .le (.field (.var "phase") "fromAge") (.var "age"))) [.set "active" (.var "phase")] [.brk]],
+    .forOf "phase" (.var "resolvedPhases") src_phases_getActiveSpendingPhase_loop0,
     .ret (.var "active")] }
 
 def src_config_price_deriveAuctionPricing : Fn := { params := ["rawFloorPriceX96"], body := [
@@ -16,9 +18,11 @@ def src_ledger_transfer : Fn := { params := ["accounts", "amount"], body := [
     .ite (.or (.bin .le (.var "amount") (.lit (.num 0))) (.bin .gt (.var "amount") (.field (.var "accounts") "from"))) [.ret (.lit .null)] [],
     .ret (.record [("from", .bin .sub (.field (.var "accounts") "from") (.var "amount")), ("to", .bin .add (.field (.var "accounts") "to") (.var "amount"))])] }
 
+def src_ledger_sumAmounts_loop0 : List Stmt := [.set "total" (.bin .add (.var "total") (.var "amount"))]
+
 def src_ledger_sumAmounts : Fn := { params := ["amounts"], body := [
     .set "total" (.lit (.num 0)),
-    .forOf "amount" (.var "amounts") [.set "total" (.bin .add (.var "total") (.var "amount"))],
+    .forOf "amount" (.var "amounts") src_ledger_sumAmounts_loop0,
     .ret (.var "total")] }
 
 def src_shared_moveMoney : Fn := { params := ["from", "to", "amount"], body := [

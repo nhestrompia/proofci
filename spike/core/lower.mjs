@@ -31,7 +31,7 @@ export function lower(root, targets) {
       return n;
     };
     const params = decl.parameters.map(p => bind(p.name));
-    let tmp = 0;
+    const loops = [];
     const E = e => {
       if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) return E(e.expression);
       if (ts.isNumericLiteral(e)) return `.lit (.num ${e.text.replace(/_/g, "")})`;
@@ -100,7 +100,9 @@ export function lower(root, targets) {
       if (ts.isForOfStatement(s)) {
         const x = bind(s.initializer.declarations[0].name), arr = E(s.expression), body = [];
         S(s.statement, body);
-        out.push(`.forOf ${lean(x)} (${arr}) [${body.join(", ")}]`); return;
+        const loop = `${key}_loop${loops.length}`;
+        loops.push(`def ${loop} : List Stmt := [${body.join(", ")}]`);
+        out.push(`.forOf ${lean(x)} (${arr}) ${loop}`); return;
       }
       if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression)) {
         const { left, right, operatorToken: t } = s.expression;
@@ -118,7 +120,7 @@ export function lower(root, targets) {
     };
     const body = [];
     S(decl.body, body);
-    done.set(key, `{ params := [${params.map(lean).join(", ")}], body := [\n    ${body.join(",\n    ")}] }`);
+    done.set(key, `${loops.map(l => `${l}\n\n`).join("")}def ${key} : Fn := { params := [${params.map(lean).join(", ")}], body := [\n    ${body.join(",\n    ")}] }`);
   }
 
   const names = {};
@@ -131,7 +133,7 @@ export function lower(root, targets) {
     if (!done.has(fnKey(decl))) { done.set(fnKey(decl), null); queue.push(decl); }
   }
   while (queue.length) lowerFn(queue.shift());
-  const defs = [...done].map(([k, v]) => `def ${k} : Fn := ${v}`);
+  const defs = [...done.values()];
   const prog = `def prog : Prog := fun name => match name with\n${[...done.keys()].map(k => `  | ${lean(k)} => some ${k}`).join("\n")}\n  | _ => none`;
   return { names, lean: `import Core\nopen Core\nset_option maxRecDepth 4000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
 }
