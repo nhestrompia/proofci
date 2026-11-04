@@ -213,6 +213,11 @@ theorem EvalsL.cons {p s e es v vs s₁ s₂} (he : Evals p s e v s₁) (ht : Ev
     obtain ⟨g, rfl, hg⟩ := succ_of_le hf
     simp only [evalList, hF g (by omega), hG g (by omega)]⟩
 
+theorem Evals.length {p s o l xs s'} (ho : Evals p s o (.ref l) s') (hl : s'.heap[l]? = some (.array xs)) :
+    Evals p s (.length o) (.num xs.length) s' := by
+  obtain ⟨F, hF⟩ := ho
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg, hl]⟩
+
 theorem Evals.record {p s es vs s'} (h : EvalsF p s es vs s') :
     Evals p s (.record es) (.ref s'.heap.length) { s' with heap := s'.heap ++ [.record vs] } := by
   obtain ⟨F, hF⟩ := h

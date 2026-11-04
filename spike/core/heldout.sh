@@ -2,7 +2,7 @@
 # One attempt per function, with the generator as committed. Nothing is tuned between runs.
 cd "$(dirname "$0")"
 SP=$1
-for f in isCellMatch maybeIncrementLevel getNextRunningBalance deriveAuctionOutcome calculateTrend clamp rangePosition daysToWeeks trimIntervalDataToRange getV3HopCount; do
+for f in ${FNS:-isCellMatch maybeIncrementLevel getNextRunningBalance deriveAuctionOutcome calculateTrend clamp rangePosition daysToWeeks trimIntervalDataToRange getV3HopCount}; do
   t="src/heldout.ts::$f"
   if ! node --input-type=module -e "
     import { writeFileSync } from 'node:fs';

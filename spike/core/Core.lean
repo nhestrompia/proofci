@@ -103,6 +103,13 @@ def readField (h : Heap) : Val → String → Option Val
     | _ => none
   | _, _ => none
 
+/-- `a < b` on strings: by UTF-16 code unit, a prefix first. -/
+def strLt : List Nat → List Nat → Bool
+  | [], [] => false
+  | [], _ :: _ => true
+  | _ :: _, [] => false
+  | x :: xs, y :: ys => if x = y then strLt xs ys else decide (x < y)
+
 def binary : Op → Val → Val → Option Val
   | .add, .num a, .num b => some (.num (a + b))
   | .sub, .num a, .num b => some (.num (a - b))
@@ -111,6 +118,8 @@ def binary : Op → Val → Val → Option Val
   | .le, .num a, .num b => some (.bool (decide (a ≤ b)))
   | .gt, .num a, .num b => some (.bool (decide (a > b)))
   | .ge, .num a, .num b => some (.bool (decide (a ≥ b)))
+  | .lt, .str a, .str b => some (.bool (strLt a b))
+  | .gt, .str a, .str b => some (.bool (strLt b a))
   | .add, .big a, .big b => some (.big (a + b))
   | .sub, .big a, .big b => some (.big (a - b))
   | .mul, .big a, .big b => some (.big (a * b))

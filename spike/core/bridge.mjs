@@ -19,26 +19,47 @@ const scan = t => {
   if (t.kind === "array") scan(t.item);
 };
 for (const s of Object.values(view.signatures)) { s.params.forEach(scan); scan(s.result); }
+const enums = new Map();
+const scanE = t => {
+  if (t.kind === "enum") enums.set(t.lean, t);
+  if (t.kind === "record") t.fields.forEach(f => scanE(f.type));
+  if (t.kind === "optional") scanE(t.inner);
+  if (t.kind === "array") scanE(t.item);
+};
+for (const s of Object.values(view.signatures)) { s.params.forEach(scanE); scanE(s.result); }
 const short = n => n.replace(/\W/g, "_");
-const instances = [...records.values()].map(r => {
+const enumInstances = [...enums.values()].map(e => {
+  const units = t => `[${[...t].map(c => c.charCodeAt(0)).join(", ")}]`;
+  return `instance : Enc ${e.lean} := ⟨fun _ a v => match a with\n${e.tags.map(t => `  | .${t.lean} => v = .str ${units(t.tag)}`).join("\n")}⟩\n${e.tags.map(t =>
+    `@[simp] theorem enc_${short(e.lean)}_${t.tag} {h v} : Enc.enc h ${e.lean}.${t.lean} v ↔ v = .str ${units(t.tag)} := Iff.rfl`).join("\n")}`;
+}).join("\n\n");
+const instances = enumInstances + "\n\n" + [...records.values()].map(r => {
   const body = v => `∃ l fs, v = .ref l ∧ h[l]? = some (.record fs)${r.fields.map(f => ` ∧\n  Enc.enc h a.${f.lean} ((fs.lookup ${JSON.stringify(f.name)}).getD .undef)`).join("")}`;
   return `instance : Enc ${r.lean} := ⟨fun h a v => ${body()}⟩\n@[simp] theorem enc_${short(r.lean)} {h} {a : ${r.lean}} {v} : Enc.enc h a v ↔ ${body()} := Iff.rfl`;
 }).join("\n\n");
 
 // Takes apart `hyp : Enc.enc h name value`.
 function open_(type, hyp, tag) {
-  const scalar = { number: "enc_num", bigint: "enc_big", boolean: "enc_bool" }[type.kind];
+  const scalar = { number: "enc_num", bigint: "enc_big", boolean: "enc_bool", string: "enc_str" }[type.kind];
   if (scalar) return [`  simp only [${scalar}] at ${hyp}`, `  subst ${hyp}`];
-  if (type.kind === "array") return [`  obtain ⟨l${tag}, vs${tag}, rfl, harr${tag}, hf${tag}⟩ := ${hyp}`];
+  if (type.kind === "enum") return [`  cases p${tag} <;> simp only [${type.tags.map(t => `enc_${short(type.lean)}_${t.tag}`).join(", ")}] at ${hyp} <;> subst ${hyp}`];
+  if (type.kind === "array") return [`  simp only [enc_list] at ${hyp}`, `  obtain ⟨l${tag}, vs${tag}, rfl, harr${tag}, hf${tag}⟩ := ${hyp}`];
   if (type.kind === "record") {
     const fields = type.fields.map((_, i) => `f${tag}${i}`);
     return [`  simp only [enc_${short(type.lean)}] at ${hyp}`, `  obtain ⟨l${tag}, fs${tag}, rfl, hl${tag}, ${fields.join(", ")}⟩ := ${hyp}`,
-      ...type.fields.flatMap((f, i) => f.type.kind === "number" ? [`  simp only [enc_num] at f${tag}${i}`] : [])];
+      ...type.fields.flatMap((f, i) => { const r = { number: "enc_num", string: "enc_str", bigint: "enc_big", boolean: "enc_bool" }[f.type.kind]; return r ? [`  simp only [${r}] at f${tag}${i}`] : []; })];
   }
   throw new Error(`no encoding for ${type.kind}`);
 }
 const options = (type, tag) => type.kind !== "record" ? [] : type.fields.flatMap((f, i) => f.type.kind !== "optional" ? [] : [
   `  all_goals (try simp only [*, enc_none, enc_some, enc_num] at f${tag}${i})`, `  all_goals (try rcases f${tag}${i} with f${tag}${i} | f${tag}${i})`]);
+
+// An optional parameter is taken apart in each of its cases.
+function optionalParam(t, i) {
+  if (t.kind !== "optional") return open_(t, `h${i}`, `${i}`);
+  const inner = open_(t.inner, `h${i}`, `${i}`).map(l => l.replace(/^  /, ""));
+  return [`  rcases p${i} with _ | p${i}`, `  on_goal 2 =>`, `    simp only [enc_some] at h${i}`, ...inner.map(l => `    ${l}`), `  on_goal 1 =>`, `    rcases h${i} with h${i} | h${i} <;> subst h${i}`];
+}
 
 const uses = key => [...lean.slice(lean.indexOf(`def ${key} :`)).split("\n\n")[0].matchAll(/\.call "([^"]+)"/g)].map(m => m[1]);
 const out = [];
@@ -60,10 +81,10 @@ for (const [target, sig] of Object.entries(view.signatures)) {
     ...sig.params.map((_, i) => `    (h${i} : Enc.enc h p${i} v${i})`),
     `    (hr : ${sig.lean} ${P.join(" ")} = ok r) :`,
     `    WpRun prog ${key} [${V.join(", ")}] h fun v s => h <+: s.heap ∧ Enc.enc s.heap r v := by`,
-    ...sig.params.flatMap((t, i) => open_(t, `h${i}`, `${i}`)),
-    `  unfold ${unfolds.join(" ")} at hr`, "  apply wprun", `  simp only [${key}]`, "  try simp only [bind_ok, Aeneas.Std.bind_assoc] at hr"];
+    ...sig.params.flatMap((t, i) => optionalParam(t, i)),
+    `  all_goals unfold ${unfolds.join(" ")} at hr`, "  all_goals apply wprun", `  all_goals simp only [${key}]`, "  all_goals try simp only [bind_ok, Aeneas.Std.bind_assoc] at hr"];
   const loop = info[key];
-  if (!loop) lines.push("  shallow", "  all_goals core_run");
+  if (!loop) lines.push("  all_goals shallow", "  all_goals core_run");
   else {
     const arr = sig.params.findIndex(t => t.kind === "array");
     const item = sig.params[arr].item;

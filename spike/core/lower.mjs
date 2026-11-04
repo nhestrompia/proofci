@@ -31,7 +31,14 @@ export function lower(root, targets) {
       taken.add(n); scope.set(s, n);
       return n;
     };
-    const params = decl.parameters.map(p => bind(p.name));
+    const prelude = [];
+    const params = decl.parameters.map((p, i) => {
+      if (ts.isIdentifier(p.name)) return bind(p.name);
+      const arg = `arg${i}`;
+      taken.add(arg);
+      for (const e of p.name.elements) prelude.push(`.set ${lean(bind(e.name))} (.field (.var ${lean(arg)}) ${lean(e.name.text)})`);
+      return arg;
+    });
     const loops = [];
     const E = e => {
       if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) return E(e.expression);
@@ -57,6 +64,7 @@ export function lower(root, targets) {
       if (ts.isConditionalExpression(e)) return `.cond (${E(e.condition)}) (${E(e.whenTrue)}) (${E(e.whenFalse)})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken) return `.not (${E(e.operand)})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(e.operand)) return `.lit (.num (-${e.operand.text}))`;
+      if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken) return `.bin .sub (.lit (.num 0)) (${E(e.operand)})`;
       if (ts.isObjectLiteralExpression(e)) {
         const fields = e.properties.map(p => {
           if (ts.isShorthandPropertyAssignment(p)) return `(${lean(p.name.text)}, .var ${lean(scope.get(checker.getShorthandAssignmentValueSymbol(p)))})`;
@@ -121,7 +129,7 @@ export function lower(root, targets) {
       if (ts.isExpressionStatement(s)) { out.push(`.expr (${E(s.expression)})`); return; }
       throw new Error(`statement: ${s.getText()}`);
     };
-    const body = [];
+    const body = [...prelude];
     S(decl.body, body);
     done.set(key, `${loops.map(l => `${l}\n\n`).join("")}def ${key} : Fn := { params := [${params.map(lean).join(", ")}], body := [\n    ${body.join(",\n    ")}] }`);
   }
