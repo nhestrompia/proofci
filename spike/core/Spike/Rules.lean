@@ -151,3 +151,94 @@ theorem Iterates.brk {p x l i b s xs item s₁} (hl : s.heap[l]? = some (.array 
     simp only [iterate, hl, hi, hF g hg]⟩
 
 end Core
+
+namespace Core
+
+theorem Evals.not {p s a v s'} (ha : Evals p s a v s') : Evals p s (.not a) (.bool (!truthy v)) s' := by
+  obtain ⟨F, hF⟩ := ha
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg]⟩
+
+theorem Evals.and_true {p s a b v w s₁ s₂} (ha : Evals p s a v s₁) (ht : truthy v = true)
+    (hb : Evals p s₁ b w s₂) : Evals p s (.and a b) w s₂ := by
+  obtain ⟨F, hF⟩ := ha
+  obtain ⟨G, hG⟩ := hb
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp [eval, hF g (by omega), ht, hG g (by omega)]⟩
+
+theorem Evals.and_false {p s a b v s'} (ha : Evals p s a v s') (ht : truthy v = false) :
+    Evals p s (.and a b) v s' := by
+  obtain ⟨F, hF⟩ := ha
+  exact ⟨F + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp [eval, hF g hg, ht]⟩
+
+theorem Evals.cond_true {p s c a b v w s₁ s₂} (hc : Evals p s c v s₁) (ht : truthy v = true)
+    (ha : Evals p s₁ a w s₂) : Evals p s (.cond c a b) w s₂ := by
+  obtain ⟨F, hF⟩ := hc
+  obtain ⟨G, hG⟩ := ha
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp [eval, hF g (by omega), ht, hG g (by omega)]⟩
+
+theorem Evals.cond_false {p s c a b v w s₁ s₂} (hc : Evals p s c v s₁) (ht : truthy v = false)
+    (hb : Evals p s₁ b w s₂) : Evals p s (.cond c a b) w s₂ := by
+  obtain ⟨F, hF⟩ := hc
+  obtain ⟨G, hG⟩ := hb
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp [eval, hF g (by omega), ht, hG g (by omega)]⟩
+
+def EvalsF (p : Prog) (s : St) (es : List (String × Expr)) (vs : List (String × Val)) (s' : St) : Prop :=
+  ∃ F, ∀ f, F ≤ f → evalFields f p s es = .ok vs s'
+def EvalsL (p : Prog) (s : St) (es : List Expr) (vs : List Val) (s' : St) : Prop :=
+  ∃ F, ∀ f, F ≤ f → evalList f p s es = .ok vs s'
+
+theorem EvalsF.nil (p s) : EvalsF p s [] [] s :=
+  ⟨1, fun f h => by obtain ⟨g, rfl, -⟩ := succ_of_le (F := 0) h; simp only [evalFields]⟩
+theorem EvalsF.cons {p s k e es v vs s₁ s₂} (he : Evals p s e v s₁) (ht : EvalsF p s₁ es vs s₂) :
+    EvalsF p s ((k, e) :: es) ((k, v) :: vs) s₂ := by
+  obtain ⟨F, hF⟩ := he
+  obtain ⟨G, hG⟩ := ht
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [evalFields, hF g (by omega), hG g (by omega)]⟩
+theorem EvalsL.nil (p s) : EvalsL p s [] [] s :=
+  ⟨1, fun f h => by obtain ⟨g, rfl, -⟩ := succ_of_le (F := 0) h; simp only [evalList]⟩
+theorem EvalsL.cons {p s e es v vs s₁ s₂} (he : Evals p s e v s₁) (ht : EvalsL p s₁ es vs s₂) :
+    EvalsL p s (e :: es) (v :: vs) s₂ := by
+  obtain ⟨F, hF⟩ := he
+  obtain ⟨G, hG⟩ := ht
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [evalList, hF g (by omega), hG g (by omega)]⟩
+
+theorem Evals.record {p s es vs s'} (h : EvalsF p s es vs s') :
+    Evals p s (.record es) (.ref s'.heap.length) { s' with heap := s'.heap ++ [.record vs] } := by
+  obtain ⟨F, hF⟩ := h
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg]⟩
+
+theorem Evals.array {p s es vs s'} (h : EvalsL p s es vs s') :
+    Evals p s (.array es) (.ref s'.heap.length) { s' with heap := s'.heap ++ [.array vs] } := by
+  obtain ⟨F, hF⟩ := h
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg]⟩
+
+theorem Evals.call {p s g args vs s₁ fn v s₂} (ha : EvalsL p s args vs s₁) (hg : p g = some fn)
+    (hr : Runs p fn vs s₁.heap v s₂) : Evals p s (.call g args) v { s₁ with heap := s₂.heap } := by
+  obtain ⟨F, hF⟩ := ha
+  obtain ⟨G, hG⟩ := hr
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g', rfl, hg'⟩ := succ_of_le hf
+    simp only [eval, hF g' (by omega), hg, hG g' (by omega)]⟩
+
+theorem Execs.setField {p s o k e l v s₁ s₂ fs} (ho : Evals p s o (.ref l) s₁) (he : Evals p s₁ e v s₂)
+    (hl : s₂.heap[l]? = some (.record fs)) :
+    Execs p s (.setField o k e) .normal
+      { s₂ with heap := s₂.heap.set l (.record ((k, v) :: fs.filter (·.1 != k))) } := by
+  obtain ⟨F, hF⟩ := ho
+  obtain ⟨G, hG⟩ := he
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [exec, hF g (by omega), hG g (by omega), hl]⟩
+
+end Core
