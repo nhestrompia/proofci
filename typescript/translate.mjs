@@ -1741,7 +1741,17 @@ class Scope {
     const field = name(node.name.text);
     const inner = this.checker.getNonNullableType(this.typeOf(object));
     const property = this.checker.getPropertyOfType(inner, node.name.text);
-    if (!property?.valueDeclaration || this.isArray(object)) throw this.t.fail(node, "`?.` is only supported on fields for now");
+    const array = this.checker.isArrayType(inner) || inner.flags & ts.TypeFlags.StringLike;
+    if (array && node.name.text === "length") {
+      const fresh = this.fresh();
+      lines.push(`let ${fresh} ← match ${value} with`, "  | some item => do", "    let size ← Js.len item", "    Result.ok (some size)",
+        "  | none => Result.ok none");
+      return fresh;
+    }
+    const declaration = property?.valueDeclaration;
+    if (!declaration || array || this.t.program.isSourceFileDefaultLibrary(declaration.getSourceFile())) {
+      throw this.t.fail(node, "`?.` is only supported on fields for now");
+    }
     const slot = this.checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration);
     const flat = this.nullable(slot) || property.flags & ts.SymbolFlags.Optional;
     return flat ? `(Option.bind ${value} (fun item => item.${field}))` : `(Option.map (fun item => item.${field}) ${value})`;
@@ -2033,6 +2043,13 @@ class Scope {
     const literal = [left, right].find(ts.isStringLiteralLike);
     const other = left === literal ? right : left;
     const otherType = this.narrowedType(other, env);
+    if (literal && this.nullable(otherType)) {
+      // Earlier checks can narrow a union to one literal, which isn't how it's stored.
+      const symbol = this.checker.getSymbolAtLocation(other);
+      const stored = symbol?.valueDeclaration ? this.checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration) : otherType;
+      const plain = this.t.type(this.checker.getNonNullableType(stored), other) === "Js.Str";
+      return `${this.expression(other, env, lines)} = some ${plain ? this.text(literal.text) : `.${name(literal.text)}`}`;
+    }
     if (literal && this.t.type(otherType, other) !== "Js.Str") {
       return `${this.expression(other, env, lines)} = .${name(literal.text)}`;
     }

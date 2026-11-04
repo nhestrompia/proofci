@@ -463,3 +463,14 @@ export function twice(a: bigint): bigint {
   const replay = readFileSync(join(out, "Differential.lean"), "utf8");
   assert.equal(replay.match(/#eval/g).length, 3);
 });
+
+test("?. reads a length, and refuses other built-in members", () => {
+  emits("export function f(a?: number[]) { return a?.length ?? 0; }", "Js.len item");
+  rejects("export function f(a?: Map<string, number>) { return a?.size ?? 0; }", /only supported on fields/);
+});
+
+test("a literal compares with an optional value through some", () => {
+  emits(`export type K = "x" | "y";\nexport function f(a?: K) {\n  if (a === "x") return 1;\n  if (a === "y") return 2;\n  return 3;\n}`,
+    "a = some .x", "a = some .y");
+  emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
+});

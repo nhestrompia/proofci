@@ -110,7 +110,8 @@ What blocks pure functions, as a share of the 5,701:
 
 The table above is what a finished subset would reach. `survey/try.mjs` runs the real
 translator on the pure functions of nine of those repositories instead. Today it
-accepts 82 of 1,457, about 6%. The failures are now a long tail, and most of it is
+accepts 82 of 1,457, about 6%. Acceptance only means the translator produced Lean: of
+36 accepted functions that were also compiled, 35 built. The failures are now a long tail, and most of it is
 about mapping TypeScript's types onto Lean's: recursive types, generic types,
 untagged unions, `any` and `unknown`.
 
