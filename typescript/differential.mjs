@@ -13,6 +13,8 @@ import ts from "typescript";
 const MAX = Number.MAX_SAFE_INTEGER;
 const EDGES = [0, 1, -1, 2, -2, 3, 7, 10, -10, 100, 500, 1000, 9999, 10000, 10001, 94906265, 94906266, 2 ** 31, 2 ** 32, 2 ** 52, MAX - 1, MAX, -MAX];
 
+const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&"];
+
 function generator(seed) {
   let state = seed >>> 0;
   const next = () => {
@@ -36,6 +38,9 @@ function generator(seed) {
       case "boolean": return next() < 0.5;
       case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
       case "void": return undefined;
+      case "string": return pick(TEXTS);
+      case "map": return new Map(Array.from({ length: Math.floor(next() * 5) }, () => [value(type.key), value(type.value)]));
+      case "set": return new Set(Array.from({ length: Math.floor(next() * 5) }, () => value(type.item)));
       case "array": return Array.from({ length: Math.floor(next() * 7) }, () => value(type.item));
       case "optional": return next() < 0.3 ? (type.nothing === "null" ? null : undefined) : value(type.inner);
       case "enum": return pick(type.tags).tag;
@@ -62,6 +67,21 @@ export function term(type, value) {
       return typeof value === "bigint" ? `(${value} : Int)` : undefined;
     case "void":
       return value === undefined ? "()" : undefined;
+    case "string": {
+      if (typeof value !== "string") return undefined;
+      const units = Array.from({ length: value.length }, (_, i) => value.charCodeAt(i));
+      return `([${units.join(", ")}] : Js.Str)`;
+    }
+    case "map": {
+      if (!(value instanceof Map)) return undefined;
+      const parts = [...value].map(([k, v]) => [term(type.key, k), term(type.value, v)]);
+      return parts.flat().includes(undefined) ? undefined : `[${parts.map(([k, v]) => `(${k}, ${v})`).join(", ")}]`;
+    }
+    case "set": {
+      if (!(value instanceof Set)) return undefined;
+      const parts = [...value].map(item => term(type.item, item));
+      return parts.includes(undefined) ? undefined : `[${parts.join(", ")}]`;
+    }
     case "array": {
       if (!Array.isArray(value)) return undefined;
       const parts = value.map(item => term(type.item, item));
@@ -94,7 +114,11 @@ export function term(type, value) {
   }
 }
 
-const show = value => JSON.stringify(value, (_, v) => (typeof v === "bigint" ? `${v}n` : v));
+const show = value => JSON.stringify(value, (_, v) => {
+  if (typeof v === "bigint") return `${v}n`;
+  if (v instanceof Map || v instanceof Set) return [...v];
+  return v;
+});
 
 function compile(root, files, out) {
   for (const file of files) {
@@ -112,6 +136,7 @@ export async function differential({ root, out, module, signatures, files, cases
   compile(root, files, compiled);
   const lines = [`import ${module}`, "open Aeneas Aeneas.Std Result", ""];
   const skipped = [];
+  const labels = [];
   let seed = 1;
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
@@ -127,11 +152,13 @@ export async function differential({ root, out, module, signatures, files, cases
         threw = true;
       }
       const args = signature.params.map((type, i) => term(type, inputs[i]));
-      lines.push(`#eval Js.agree ${JSON.stringify(`${target} ${show(inputs)}`)} (_root_.${signature.lean} ${args.join(" ")}) `
+      labels.push(`${target} ${show(inputs)}`);
+      lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${args.join(" ")}) `
         + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
   }
   writeFileSync(join(out, "Differential.lean"), `${lines.join("\n")}\n`);
+  writeFileSync(join(out, "cases.json"), JSON.stringify(labels));
   return { skipped };
 }
 

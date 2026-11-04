@@ -15,6 +15,7 @@ from .extract import Extraction, Unsupported, lean_module_name
 
 
 MARKER = "PROOFCI_DIFF "
+MAX_CASES = 4000
 
 
 def translator():
@@ -23,6 +24,10 @@ def translator():
     installed = Path("/opt/proofci/typescript/translate.mjs")
     default = installed if installed.exists() else Path(__file__).resolve().parent.parent / "typescript" / "translate.mjs"
     return Path(os.environ.get("PROOFCI_TRANSLATOR", default))
+
+
+def _lean_errors(output):
+    return " ".join(line for line in output.splitlines() if not line.startswith(MARKER))[:800]
 
 
 def module_name(root: Path):
@@ -63,7 +68,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions) -> Extracti
     return extraction
 
 
-def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=200):
+def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=None, timeout=300):
     """Compare the translated functions with Node on generated inputs.
 
     Returns (disagreements, notes). Only code that passed the translator's
@@ -71,6 +76,8 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     this finds translator bugs and defends against nothing else."""
     out = work / "differential"
     out.mkdir()
+    if cases is None:  # each case takes about 8 ms to replay
+        cases = max(25, min(200, MAX_CASES // max(len(extraction.signatures), 1)))
     config = out / "config.json"
     config.write_text(json.dumps({
         "root": str(checkout / package_rel), "out": str(out), "module": extraction.module, "cases": cases,
@@ -82,7 +89,9 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
         return [], ["the comparison with Node did not run: " + node.output[-600:]]
     notes = [f"not compared with Node: {item}" for item in json.loads(node.output.splitlines()[-1])["skipped"]]
     replay = sandbox.run(["lake", "env", "lean", str(out / "Differential.lean")], readable=[ws.root, out],
-                         writable=[ws.root / ".lake"], cwd=ws.root, timeout=300)
+                         writable=[ws.root / ".lake"], cwd=ws.root, timeout=timeout)
+    if replay.timed_out:
+        return [f"the comparison with Node didn't finish in {timeout} seconds"], notes
     counts = {"agree": 0, "differ": 0, "failed": 0}
     disagreements = []
     for line in replay.output.splitlines():
@@ -91,8 +100,12 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
             counts[kind] += 1
             if kind == "differ":
                 disagreements.append(label)
-    if not sum(counts.values()):
-        return [], ["the comparison with Node did not run: " + replay.output[-600:]]
+    labels = json.loads((out / "cases.json").read_text())
+    expected = len(labels)
+    disagreements = [labels[int(index)] for index in disagreements]
+    if sum(counts.values()) != expected:
+        # Every case must report. One that doesn't compile compares nothing.
+        return [f"only {sum(counts.values())} of {expected} comparisons ran: " + _lean_errors(replay.output)], notes
     notes.append(f"compared with Node: {counts['agree']} results agree, "
                  f"{counts['failed']} inputs left the safe-integer model")
     return disagreements, notes

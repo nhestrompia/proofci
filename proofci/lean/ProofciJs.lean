@@ -258,6 +258,138 @@ theorem total_nonneg (xs : List Num) (hn : ∀ x ∈ xs, 0 ≤ x.val) : 0 ≤ to
     simp only [total_cons]
     omega
 
+/-! ## Strings
+
+A string is its UTF-16 code units, which is what `length`, `[i]` and `slice` see
+in JavaScript. Lean's `String` can't hold a lone surrogate, so it isn't used. -/
+
+abbrev Str := List Nat
+
+/-- The UTF-16 code units of a character. -/
+def units (c : Nat) : List Nat :=
+  if c < 65536 then [c]
+  else [55296 + (c - 65536) / 1024, 56320 + (c - 65536) % 1024]
+
+/-- `js!"text"` is a string literal, written out as code units when it elaborates. -/
+syntax "js!" str : term
+
+macro_rules
+  | `(js! $s:str) => do
+    let codes := (s.getString.toList.map (fun c => units c.toNat)).flatten
+    let items : Array (Lean.TSyntax `term) := codes.toArray.map (fun n => ⟨Lean.Syntax.mkNatLit n⟩)
+    `(([$items,*] : Js.Str))
+
+/-- `s[i]` -/
+def charAt? (s : Str) (i : Num) : Option Str := (at_ s i).map (fun c => [c])
+
+/-- `s.charAt(i)`: the empty string past the end. -/
+def charAt (s : Str) (i : Num) : Str := (charAt? s i).getD []
+
+/-- Does `pre` start `s`? -/
+def startsWith (s pre : Str) : Bool := pre.isPrefixOf s
+
+def endsWith (s suf : Str) : Bool := suf.reverse.isPrefixOf s.reverse
+
+/-- The first position of `sub` in `s`, as a natural number. -/
+def find? (s sub : Str) : Option Nat :=
+  match s with
+  | [] => if sub.isEmpty then some 0 else none
+  | c :: rest =>
+    if sub.isPrefixOf (c :: rest) then some 0 else (find? rest sub).map (· + 1)
+
+def strIncludes (s sub : Str) : Bool := (find? s sub).isSome
+
+/-- `s.indexOf(sub)` -/
+def strIndexOf (s sub : Str) : Result Num :=
+  match find? s sub with
+  | some i => mk i
+  | none => mk (-1)
+
+/-- `s.substring(a, b)`: bounds are clamped and swapped if out of order. -/
+def substring (s : Str) (a b : Num) : Str :=
+  let clamp (i : Num) : Nat := Min.min i.val.toNat s.length
+  let x := clamp a
+  let y := clamp b
+  (s.take (Max.max x y)).drop (Min.min x y)
+
+/-- Characters `trim` removes. -/
+def isSpace (c : Nat) : Bool :=
+  (9 ≤ c ∧ c ≤ 13) ∨ c = 32 ∨ c = 160 ∨ c = 5760 ∨ (8192 ≤ c ∧ c ≤ 8202) ∨ c = 8232 ∨ c = 8233
+    ∨ c = 8239 ∨ c = 8287 ∨ c = 12288 ∨ c = 65279
+
+def trimStart (s : Str) : Str := s.dropWhile isSpace
+def trimEnd (s : Str) : Str := (s.reverse.dropWhile isSpace).reverse
+def trim (s : Str) : Str := trimEnd (trimStart s)
+
+/-- `toLowerCase` for ASCII. Other text needs Unicode tables, so the model stops. -/
+def toLower (s : Str) : Result Str :=
+  if s.all (· < 128) then ok (s.map fun c => if 65 ≤ c ∧ c ≤ 90 then c + 32 else c) else fail .undef
+
+/-- `toUpperCase` for ASCII. -/
+def toUpper (s : Str) : Result Str :=
+  if s.all (· < 128) then ok (s.map fun c => if 97 ≤ c ∧ c ≤ 122 then c - 32 else c) else fail .undef
+
+/-- Splits at each `sep`, which must not be empty. `fuel` bounds the steps. -/
+def splitGo (sep : Str) : Nat → Str → Str → List Str
+  | 0, current, rest => [current ++ rest]
+  | _ + 1, current, [] => [current]
+  | fuel + 1, current, c :: rest =>
+    if sep.isPrefixOf (c :: rest) then current :: splitGo sep fuel [] ((c :: rest).drop sep.length)
+    else splitGo sep fuel (current ++ [c]) rest
+
+/-- `s.split(sep)`. An empty separator gives each code unit. -/
+def split (s sep : Str) : List Str :=
+  if sep.isEmpty then s.map (fun c => [c]) else splitGo sep s.length [] s
+
+/-- `xs.join(sep)` -/
+def join (xs : List Str) (sep : Str) : Str := (xs.intersperse sep).flatten
+
+/-- `s.replace(a, b)` and `s.replaceAll(a, b)`. `$` in `b` is a replacement
+    pattern and an empty `a` has its own rules, so the model stops for those. -/
+def replace (s a b : Str) : Result Str :=
+  if b.contains 36 ∨ a.isEmpty then fail .undef else
+  match find? s a with
+  | some i => ok (s.take i ++ b ++ s.drop (i + a.length))
+  | none => ok s
+
+def replaceAll (s a b : Str) : Result Str :=
+  if b.contains 36 ∨ a.isEmpty then fail .undef else ok (join (split s a) b)
+
+/-- `a < b` compares code units in order. -/
+def strLt : Str → Str → Bool
+  | [], [] => false
+  | [], _ :: _ => true
+  | _ :: _, [] => false
+  | x :: xs, y :: ys => x < y ∨ (x = y ∧ strLt xs ys)
+
+/-- A whole number as text. Every safe integer prints without an exponent. -/
+def intStr (v : Int) : Str := (toString v).toList.map Char.toNat
+
+def numStr (x : Num) : Str := intStr x.val
+def boolStr (b : Bool) : Str := if b then js!"true" else js!"false"
+
+/-! ## Maps and sets
+
+Both keep insertion order, like JavaScript's. Keys are compared by value, which
+is correct for the keys the translator allows: numbers, strings and booleans. -/
+
+abbrev Dict (K V : Type) := List (K × V)
+
+def dictGet {K V} [DecidableEq K] (m : Dict K V) (k : K) : Option V := m.lookup k
+
+def dictHas {K V} [DecidableEq K] (m : Dict K V) (k : K) : Bool := (m.lookup k).isSome
+
+/-- `m.set(k, v)`. An existing key keeps its position. -/
+def dictSet {K V} [DecidableEq K] (m : Dict K V) (k : K) (v : V) : Dict K V :=
+  if dictHas m k then m.map (fun e => if e.1 = k then (k, v) else e) else m ++ [(k, v)]
+
+def dictDelete {K V} [DecidableEq K] (m : Dict K V) (k : K) : Dict K V := m.filter (fun e => e.1 ≠ k)
+
+/-- `s.add(v)` -/
+def setAdd {K} [DecidableEq K] (s : List K) (v : K) : List K := if s.contains v then s else s ++ [v]
+
+def setDelete {K} [DecidableEq K] (s : List K) (v : K) : List K := s.filter (· ≠ v)
+
 /-- A number for the differential test. Inputs are always safe integers. -/
 def lit (v : Int) : Num :=
   if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default

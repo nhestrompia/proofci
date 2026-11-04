@@ -60,8 +60,36 @@ export const cutFrom = (xs: number[], a: number) => xs.slice(a);
 export const has = (xs: number[], a: number) => xs.includes(a);
 export const where = (xs: number[], a: number) => xs.indexOf(a);
 export const joinAll = (xs: number[], ys: number[]) => [...xs, 1, ...ys].concat(xs);
+export const textLength = (a: string) => a.length;
+export const textAt = (a: string, i: number) => a[i];
+export const textChar = (a: string, i: number) => a.charAt(i);
+export const textSlice = (a: string, x: number, y: number) => a.slice(x, y);
+export const textSub = (a: string, x: number, y: number) => a.substring(x, y);
+export const textStarts = (a: string, b: string) => a.startsWith(b);
+export const textEnds = (a: string, b: string) => a.endsWith(b);
+export const textHas = (a: string, b: string) => a.includes(b);
+export const textWhere = (a: string, b: string) => a.indexOf(b);
+export const textTrim = (a: string) => a.trim();
+export const textLower = (a: string) => a.toLowerCase();
+export const textUpper = (a: string) => a.toUpperCase();
+export const textSplit = (a: string, b: string) => a.split(b);
+export const textJoin = (xs: string[], b: string) => xs.join(b);
+export const textReplace = (a: string, b: string, c: string) => a.replace(b, c);
+export const textReplaceAll = (a: string, b: string, c: string) => a.replaceAll(b, c);
+export const textLess = (a: string, b: string) => a < b;
+export const textEqual = (a: string, b: string) => a === b;
+export const textAdd = (a: string, b: string) => a + "-" + b;
+export const textTemplate = (a: string, n: number, b: boolean, c: bigint) => `${a}=${n},${b},${c}`;
+export const textNumber = (n: number) => String(n);
+export function counted(xs: string[]) { const m = new Map<string, number>(); for (const x of xs) { const seen = m.get(x); if (seen === undefined) { m.set(x, 1); } else { m.set(x, seen + 1); } } m.delete("a"); return m; }
+export function unique(xs: number[]) { const s = new Set<number>(); for (const x of xs) { s.add(x); } s.delete(0); return s; }
+export const mapHas = (m: Map<number, string>, k: number) => m.has(k);
+export const mapGet = (m: Map<number, string>, k: number) => m.get(k);
+export const mapSize = (m: Map<string, number>) => m.size;
+export const setHas = (s: Set<string>, k: string) => s.has(k);
 export function changes(xs: number[], i: number, v: number) { const a = xs.slice(); a[i % 9] = v; a.push(v); a.unshift(1); a.pop(); a.shift(); a.reverse(); return a; }
 """
+BATCH = 12
 NAMES = [line.split()[2].split("(")[0] for line in OPERATIONS.strip().splitlines()]
 
 
@@ -83,7 +111,14 @@ class Numbers(unittest.TestCase):
             ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
                                work / "lean-src", work / "lean-src")
             self.assertIsNone(lean.build_translation(ws))
-            differ, notes = typescript.differential(package.parent, "package", work, ws, extraction, cases=500)
-            self.assertEqual(differ[:5], [])
-            print(notes)
-            self.assertIn("compared with Node", notes[-1])
+            # Lean slows down badly on one huge file, so compare in batches.
+            signatures = list(extraction.signatures.items())
+            for start in range(0, len(signatures), BATCH):
+                extraction.signatures = dict(signatures[start:start + BATCH])
+                batch = work / f"batch-{start}"
+                batch.mkdir()
+                differ, notes = typescript.differential(package.parent, "package", batch, ws, extraction,
+                                                        cases=500, timeout=300)
+                self.assertEqual(differ[:5], [])
+                self.assertIn("compared with Node", notes[-1])
+                print(notes[-1])

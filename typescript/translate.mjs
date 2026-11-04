@@ -201,7 +201,14 @@ class Translator {
     if (type.flags & TypeFlags.BooleanLike) return "Bool";
     if (type.flags & TypeFlags.BigIntLike) return "Int";
     if (type.flags & TypeFlags.Void) return "Unit";
+    if (type.flags & TypeFlags.StringLike) return "Js.Str";
     if (this.checker.isArrayType(type)) return `(List ${this.type(this.checker.getTypeArguments(type)[0], node)})`;
+    const collection = this.collection(type);
+    if (collection) {
+      const [key, value] = collection.args.map(arg => this.type(arg, node));
+      if (!["Js.Num", "Js.Str", "Bool", "Int"].includes(key)) throw this.fail(node, "only numbers, strings and booleans can be keys for now");
+      return collection.kind === "Map" ? `(Js.Dict ${key} ${value})` : `(List ${key})`;
+    }
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (type.isUnion()) {
@@ -281,6 +288,15 @@ class Translator {
       text: [`inductive ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
   }
 
+  // `Map<K, V>` or `Set<K>`, from the standard library rather than a lookalike.
+  collection(type) {
+    const name_ = type.symbol?.name;
+    if (name_ !== "Map" && name_ !== "Set" && name_ !== "ReadonlyMap" && name_ !== "ReadonlySet") return undefined;
+    const declaration = type.symbol.declarations?.[0];
+    if (!declaration || !this.program.isSourceFileDefaultLibrary(declaration.getSourceFile())) return undefined;
+    return { kind: name_.replace("Readonly", ""), args: this.checker.getTypeArguments(type) };
+  }
+
   // A description of a type, for generating and reading values of it.
   describe(type, node) {
     const lean = this.type(type, node);
@@ -288,11 +304,15 @@ class Translator {
     if (lean === "Bool") return { kind: "boolean" };
     if (lean === "Int") return { kind: "bigint" };
     if (lean === "Unit") return { kind: "void" };
+    if (lean === "Js.Str") return { kind: "string" };
     if (this.checker.isArrayType(type)) return { kind: "array", item: this.describe(this.checker.getTypeArguments(type)[0], node) };
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
       return { kind: "optional", nothing, inner: this.describe(this.checker.getNonNullableType(type), node) };
     }
+    const collection = this.collection(type);
+    if (collection?.kind === "Map") return { kind: "map", key: this.describe(collection.args[0], node), value: this.describe(collection.args[1], node) };
+    if (collection) return { kind: "set", item: this.describe(collection.args[0], node) };
     const shape = this.shape(type);
     const fields = owner => this.fields(owner, node).map(f => ({ name: f.name, lean: name(f.name), type: this.describe(f.type, f.node) }));
     if (shape.kind === "enum") return { kind: "enum", lean: shape.lean, tags: shape.tags.map(t => ({ tag: t, lean: name(t) })) };
@@ -458,12 +478,16 @@ class Scope {
   // a user's own `set`, is judged as a call, not as a write.
   isBuiltinReceiver(node, write) {
     if (!ts.isCallExpression(node)) return false;
-    return !this.isArray(write);
+    return !this.isArray(write) && !this.isCollection(write);
   }
 
   isArray(node) {
-    return this.checker.isArrayType(this.checker.getApparentType(this.typeOf(node)));
+    return this.checker.isArrayType(this.typeOf(node));
   }
+
+  isString(node) { return (this.typeOf(node).flags & ts.TypeFlags.StringLike) !== 0; }
+
+  isCollection(node) { return Boolean(this.t.collection(this.typeOf(node))); }
 
   // Writing through a name is only safe if no other name can see the value, so
   // that a value in Lean behaves like the object in JavaScript. A changed object
@@ -502,6 +526,7 @@ class Scope {
   requireFresh(node, symbol) {
     node = unwrap(node);
     const fresh = ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)
+      || (ts.isNewExpression(node) && this.isCollection(node))
       || (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))
         && ["slice", "map", "filter", "concat"].includes(unwrap(node.expression).name.text) && this.isArray(unwrap(node.expression).expression));
     if (!fresh) throw this.t.fail(node, `\`${symbol.name}\` is changed in place, so it must start as a new array or object`);
@@ -792,7 +817,9 @@ class Scope {
   // `xs.push(v)` and friends, used as statements on an owned array.
   mutation(node, env, lines) {
     const callee = unwrap(node.expression);
-    if (!ts.isPropertyAccessExpression(callee) || !MUTATING.has(callee.name.text) || !this.isArray(callee.expression)) return false;
+    if (!ts.isPropertyAccessExpression(callee) || !MUTATING.has(callee.name.text)) return false;
+    if (this.isCollection(callee.expression)) return this.collectionWrite(callee, node, env, lines);
+    if (!this.isArray(callee.expression)) return false;
     const receiver = unwrap(callee.expression);
     const symbol = this.symbol(receiver);
     const list = this.current(symbol, env);
@@ -807,6 +834,24 @@ class Scope {
       case "reverse": value = `${list}.reverse`; break;
       default: throw this.t.fail(node, `\`${callee.name.text}\` is not supported yet`);
     }
+    lines.push(`let ${this.rebind(symbol, env)} ← Result.ok (${value})`);
+    return true;
+  }
+
+  collectionWrite(callee, node, env, lines) {
+    const receiver = unwrap(callee.expression);
+    const symbol = this.symbol(receiver);
+    const current = this.current(symbol, env);
+    const { kind, args: types } = this.t.collection(this.typeOf(receiver));
+    const args = node.arguments;
+    const arg = index => this.convert(args[index], types[index], env, lines);
+    let value;
+    if (kind === "Map" && callee.name.text === "set") value = `Js.dictSet ${current} ${arg(0)} ${arg(1)}`;
+    else if (kind === "Map" && callee.name.text === "delete") value = `Js.dictDelete ${current} ${arg(0)}`;
+    else if (kind === "Set" && callee.name.text === "add") value = `Js.setAdd ${current} ${arg(0)}`;
+    else if (kind === "Set" && callee.name.text === "delete") value = `Js.setDelete ${current} ${arg(0)}`;
+    else if (callee.name.text === "clear") value = "[]";
+    else throw this.t.fail(node, `\`${callee.name.text}\` is not supported yet`);
     lines.push(`let ${this.rebind(symbol, env)} ← Result.ok (${value})`);
     return true;
   }
@@ -1186,6 +1231,13 @@ class Scope {
     }
     if (ts.isObjectLiteralExpression(node)) return this.wrapIf(target, this.record(node, target, env, lines), node);
     if (ts.isArrayLiteralExpression(node)) return this.wrapIf(target, this.arrayLiteral(node, target, env, lines), node);
+    if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines, target);
+    if (ts.isNewExpression(node) && this.isCollection(node)) return this.wrapIf(target, this.newCollection(node, target), node);
+    if (ts.isStringLiteralLike(node)) {
+      const plain = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
+      const lean = this.t.type(plain, node);
+      if (lean !== "Js.Str") return this.wrapIf(target, `(.${name(node.text)} : ${lean})`, node);
+    }
     const value = this.expression(node, env, lines);
     const from = this.t.type(this.narrowedType(node, env), node);
     const to = this.t.type(target, node);
@@ -1214,6 +1266,11 @@ class Scope {
     flush();
     if (!parts.length) return `([] : ${this.t.type(type, node)})`;
     return `(${parts.join(" ++ ")})`;
+  }
+
+  newCollection(node, target) {
+    if (node.arguments?.length) throw this.t.fail(node, "only an empty `new Map()` or `new Set()` is supported for now");
+    return `([] : ${this.t.type(this.nullable(target) ? this.checker.getNonNullableType(target) : target, node)})`;
   }
 
   // The type of what `node` reads, given the branch it is in.
@@ -1289,6 +1346,7 @@ class Scope {
     if (ts.isPropertyAccessExpression(node)) return this.property(node, env, lines);
     if (ts.isArrayLiteralExpression(node)) return this.arrayLiteral(node, this.typeOf(node), env, lines);
     if (ts.isElementAccessExpression(node)) {
+      if (this.isString(node.expression)) return `(Js.charAt? ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
       if (!this.isArray(node.expression)) throw this.t.fail(node, "`[]` is only supported on arrays for now");
       if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
       return `(Js.at_ ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
@@ -1300,7 +1358,9 @@ class Scope {
       if (ts.isAsExpression(node) && ts.isConstTypeReference(node.type)) return this.expression(node.expression, env, lines);
       throw this.t.fail(node, "type assertions are not supported yet");
     }
-    if (ts.isStringLiteral(node)) return this.tag(node);
+    if (ts.isStringLiteralLike(node)) return this.text(node.text);
+    if (ts.isTemplateExpression(node)) return this.template(node, env, lines);
+    if (ts.isNewExpression(node) && this.isCollection(node)) return this.newCollection(node, this.typeOf(node));
     if (ts.isPrefixUnaryExpression(node)) {
       if (node.operator === ts.SyntaxKind.ExclamationToken) return `(decide (${this.condition(node, env, lines)}))`;
       if (node.operator === ts.SyntaxKind.MinusToken) {
@@ -1320,11 +1380,15 @@ class Scope {
   }
 
   operand(node, env, lines) {
-    if (this.isBigInt(node)) return this.expression(node, env, lines);
+    if (this.isBigInt(node) || this.isString(node)) return this.expression(node, env, lines);
     return this.numeric(node, env, lines);
   }
 
   arithmetic(op, leftNode, left, rightNode, env, lines) {
+    if (this.isString(leftNode)) {
+      if (op !== ts.SyntaxKind.PlusToken || rightNode === ONE || !this.isString(rightNode)) throw this.t.fail(leftNode, "`+` between a string and another type is not supported");
+      return `(${left} ++ ${this.expression(rightNode, env, lines)})`;
+    }
     const bigint = this.isBigInt(leftNode);
     if (rightNode !== ONE && bigint !== this.isBigInt(rightNode)) throw this.t.fail(rightNode, "mixing `number` and `bigint`");
     const right = rightNode === ONE ? (bigint ? "(1 : Int)" : this.t.number(1, leftNode)) : this.operand(rightNode, env, lines);
@@ -1346,11 +1410,28 @@ class Scope {
     return this.expression(node, env, lines);
   }
 
-  tag(node) {
-    const type = this.checker.getContextualType(node) ?? this.typeOf(node);
-    if (type.isStringLiteral?.() && !type.aliasSymbol) throw this.t.fail(node, "string values are not supported yet");
-    this.t.type(type, node);
-    return `.${name(node.text)}`;
+  // A string literal, as code units when it can't be written in Lean source.
+  text(value) {
+    if (/^[\x20-\x21\x23-\x5b\x5d-\x7e]*$/.test(value)) return `(js!"${value}")`;
+    const units = Array.from({ length: value.length }, (_, i) => value.charCodeAt(i));
+    return `([${units.join(", ")}] : Js.Str)`;
+  }
+
+  template(node, env, lines) {
+    const parts = [this.text(node.head.text)];
+    for (const span of node.templateSpans) {
+      parts.push(this.toText(span.expression, env, lines), this.text(span.literal.text));
+    }
+    return `(${parts.join(" ++ ")})`;
+  }
+
+  // How a value prints inside a template.
+  toText(node, env, lines) {
+    if (this.isString(node)) return this.expression(node, env, lines);
+    if (this.isNumber(node)) return `(Js.numStr ${this.expression(node, env, lines)})`;
+    if (this.isBigInt(node)) return `(Js.intStr ${this.expression(node, env, lines)})`;
+    if (this.isBoolean(node)) return `(Js.boolStr ${this.expression(node, env, lines)})`;
+    throw this.t.fail(node, "only strings, numbers and booleans can go in a template for now");
   }
 
   identifier(node, env) {
@@ -1388,6 +1469,8 @@ class Scope {
       return bound;
     }
     if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
+    if (this.isString(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
+    if (this.isCollection(object) && node.name.text === "size") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
     if (this.isArray(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
     if (this.isArray(object)) throw this.t.fail(node, `\`.${node.name.text}\` is not supported on arrays yet`);
     const type = this.typeOf(object);
@@ -1405,9 +1488,9 @@ class Scope {
     return this.nullable(this.typeOf(node.expression)) ? this.bind(`Js.unwrap ${inner}`, lines) : inner;
   }
 
-  ternary(node, env, lines) {
+  ternary(node, env, lines, target) {
     const narrowed = this.narrowing(node.condition, env);
-    const type = this.typeOf(node);
+    const type = target ?? this.typeOf(node);
     const branch = (expression, branchEnv) => {
       const inner = [];
       const value = this.convert(expression, type, branchEnv, inner);
@@ -1432,6 +1515,11 @@ class Scope {
       return this.math(callee.name.text, node, env, lines);
     }
     if (ts.isPropertyAccessExpression(callee) && this.isArray(callee.expression)) return this.arrayMethod(callee, node, env, lines);
+    if (ts.isPropertyAccessExpression(callee) && this.isString(callee.expression)) return this.stringMethod(callee, node, env, lines);
+    if (ts.isPropertyAccessExpression(callee) && this.isCollection(callee.expression)) return this.collectionMethod(callee, node, env, lines);
+    if (ts.isIdentifier(callee) && callee.text === "String" && !this.isLocal(callee) && node.arguments.length === 1) {
+      return this.toText(node.arguments[0], env, lines);
+    }
     const signature = this.checker.getResolvedSignature(node);
     let declaration = signature?.declaration;
     if (declaration && !ts.isFunctionDeclaration(declaration)) declaration = declaration.parent;
@@ -1464,6 +1552,10 @@ class Scope {
         if (args.length === 0) return list;
         if (args.length === 1) return `(Js.sliceFrom ${list} ${this.numeric(args[0], env, lines)})`;
         return `(Js.slice ${list} ${this.numeric(args[0], env, lines)} ${this.numeric(args[1], env, lines)})`;
+      case "join": {
+        if (!(item.flags & ts.TypeFlags.StringLike)) throw this.t.fail(node, "`join` is only supported on strings for now");
+        return `(Js.join ${list} ${args[0] ? this.expression(args[0], env, lines) : this.text(",")})`;
+      }
       case "concat":
         if (args.length !== 1 || !this.isArray(args[0])) throw this.t.fail(node, "only `concat` of one array is supported for now");
         return `(${list} ++ ${this.expression(args[0], env, lines)})`;
@@ -1477,6 +1569,53 @@ class Scope {
       }
       default: throw this.t.fail(node, `\`.${method}\` is not supported on arrays yet`);
     }
+  }
+
+  stringMethod(callee, node, env, lines) {
+    const method = callee.name.text;
+    const value = this.expression(callee.expression, env, lines);
+    const args = node.arguments;
+    const text = index => {
+      if (!args[index] || !this.isString(args[index])) throw this.t.fail(node, `\`${method}\` is only supported with a string here, because it would otherwise take a regular expression`);
+      return this.expression(args[index], env, lines);
+    };
+    const count = index => this.numeric(args[index], env, lines);
+    const none = () => { if (args.length) throw this.t.fail(node, `\`${method}\` with arguments is not supported yet`); };
+    const exactly = n => { if (args.length !== n) throw this.t.fail(node, `\`${method}\` with these arguments is not supported yet`); };
+    switch (method) {
+      case "charAt": exactly(1); return `(Js.charAt ${value} ${count(0)})`;
+      case "slice":
+        if (args.length === 1) return `(Js.sliceFrom ${value} ${count(0)})`;
+        exactly(2); return `(Js.slice ${value} ${count(0)} ${count(1)})`;
+      case "substring": exactly(2); return `(Js.substring ${value} ${count(0)} ${count(1)})`;
+      case "startsWith": exactly(1); return `(Js.startsWith ${value} ${text(0)})`;
+      case "endsWith": exactly(1); return `(Js.endsWith ${value} ${text(0)})`;
+      case "includes": exactly(1); return `(Js.strIncludes ${value} ${text(0)})`;
+      case "indexOf": exactly(1); return this.bind(`Js.strIndexOf ${value} ${text(0)}`, lines);
+      case "trim": none(); return `(Js.trim ${value})`;
+      case "trimStart": none(); return `(Js.trimStart ${value})`;
+      case "trimEnd": none(); return `(Js.trimEnd ${value})`;
+      case "toLowerCase": none(); return this.bind(`Js.toLower ${value}`, lines);
+      case "toUpperCase": none(); return this.bind(`Js.toUpper ${value}`, lines);
+      case "toString": none(); return value;
+      case "split": exactly(1); return `(Js.split ${value} ${text(0)})`;
+      case "replace": exactly(2); return this.bind(`Js.replace ${value} ${text(0)} ${text(1)}`, lines);
+      case "replaceAll": exactly(2); return this.bind(`Js.replaceAll ${value} ${text(0)} ${text(1)}`, lines);
+      case "concat": exactly(1); return `(${value} ++ ${text(0)})`;
+      default: throw this.t.fail(node, `\`.${method}\` is not supported on strings yet`);
+    }
+  }
+
+  collectionMethod(callee, node, env, lines) {
+    const method = callee.name.text;
+    if (MUTATING.has(method)) throw this.t.fail(node, `\`${method}\` is only supported as its own statement, and its result can't be used yet`);
+    const value = this.expression(callee.expression, env, lines);
+    const { kind, args: types } = this.t.collection(this.typeOf(callee.expression));
+    const key = () => this.convert(node.arguments[0], types[0], env, lines);
+    if (kind === "Map" && method === "get") return `(Js.dictGet ${value} ${key()})`;
+    if (kind === "Map" && method === "has") return `(Js.dictHas ${value} ${key()})`;
+    if (kind === "Set" && method === "has") return `(${value}.contains ${key()})`;
+    throw this.t.fail(node, `\`.${method}\` is not supported here yet`);
   }
 
   bindCallback(method, callback, rest, lines) {
@@ -1543,6 +1682,12 @@ class Scope {
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
       if (ORDER[op]) {
+        if (this.isString(node.left) && this.isString(node.right)) {
+          const a = this.expression(node.left, env, lines), b = this.expression(node.right, env, lines);
+          const swap = op === ts.SyntaxKind.GreaterThanToken || op === ts.SyntaxKind.LessThanEqualsToken;
+          const lt = `Js.strLt ${swap ? b : a} ${swap ? a : b} = true`;
+          return op === ts.SyntaxKind.LessThanToken || op === ts.SyntaxKind.GreaterThanToken ? lt : `¬(${lt})`;
+        }
         if (this.isBigInt(node.left) && this.isBigInt(node.right)) {
           return `${this.expression(node.left, env, lines)} ${ORDER[op]} ${this.expression(node.right, env, lines)}`;
         }
@@ -1592,8 +1737,12 @@ class Scope {
     }
     const literal = [left, right].find(ts.isStringLiteralLike);
     const other = left === literal ? right : left;
-    if (literal && this.t.type(this.typeOf(other), other)) {
+    const otherType = this.narrowedType(other, env);
+    if (literal && this.t.type(otherType, other) !== "Js.Str") {
       return `${this.expression(other, env, lines)} = .${name(literal.text)}`;
+    }
+    if (this.isString(left) && this.isString(right)) {
+      return `${this.expression(left, env, lines)} = ${this.expression(right, env, lines)}`;
     }
     throw this.t.fail(node, "`===` is only supported on numbers, booleans and string-literal unions for now");
   }

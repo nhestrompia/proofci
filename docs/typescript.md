@@ -26,15 +26,31 @@ Proofs work the same way as for Rust, including `step*`.
 
 | Supported | Details |
 |---|---|
-| Values | `number`, `boolean`, `T \| null`, `T \| undefined` |
-| Types | Interfaces, string-literal unions, unions tagged by `kind` |
-| Functions | Module-level functions and arrow functions, across files |
-| Control flow | `if` with early return, `switch`, `? :`, `&&`, `\|\|` |
-| Objects | Literals, destructuring, a leading spread |
+| Values | `number`, `bigint`, `boolean`, `string`, `T \| null`, `T \| undefined` |
+| Types | Interfaces, string-literal unions, unions tagged by `kind`, arrays, `Map`, `Set` |
+| Functions | Module-level functions and arrow functions across files, self-recursion, inline callbacks |
+| Control flow | `if`, `switch`, `for`, `while`, `for...of`, `break`, `continue`, `throw`, `try`/`catch` |
+| Local changes | Reassignment, `+=`, `++`, and in-place changes to a value only one name can see |
+| Arrays | `length`, `[i]`, `push`, `map`, `filter`, `reduce`, `find`, `some`, `every`, `slice`, `includes`, `join` and more |
+| Strings | `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`, `replace` with a string, templates, ASCII case changes |
 | Numbers | `+ - * / %`, comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
 
-Everything else is `unsupported`, with the source line. That includes strings,
-arrays, loops, mutation, classes, `async`, `throw` and calls into packages.
+Everything else is `unsupported`, with the source line. That includes fractions,
+regular expressions, classes, `async`, `??`, `?.` and calls into packages.
+
+### In-place changes
+
+A value in Lean only behaves like a JavaScript object if nothing else can see the
+object change. So a changed array, map or object must start as a new value in that
+function, and can only be read, returned or copied. Changing a parameter, storing a
+changed array in another object or passing it to a function is `unsupported`.
+
+### Proving loops
+
+A loop translates to Aeneas's `loop`, so `loop.spec_decr_nat` applies. Give it what
+shrinks and what stays true. See `sum_exact` in
+[`examples/ts-bank`](../examples/ts-bank/proofci/Proofs.lean). `throw` is `fail .panic`,
+so "this input throws" is stated as `f x = fail .panic`.
 
 ### What `number` means
 

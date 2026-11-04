@@ -66,7 +66,7 @@ test("a null test on the wrong nullish value is rejected, not treated as null", 
 
 test("types the model can't represent exactly are rejected", () => {
   const cases = [
-    ["export function f(a: string) { return 1; }", /type `string`/],
+    ["export function f(a: symbol) { return 1; }", /type `symbol`/],
     ["export function f(a: [number, number]) { return 1; }", /not supported/],
     ["export function f(a: { x: number }) { return a.x; }", /not supported/],
     ["interface A { x?: number } export function f(a: A) { return 1; }", /optional/],
@@ -98,7 +98,7 @@ test("JavaScript behavior the model doesn't cover is rejected", () => {
     ["export function f(a: number) { return Math.sqrt(a); }", /Math.sqrt/],
     ["export function f(a: number) { return typeof a; }", /not supported/],
     ["export function f(a: number) { return (a as any); }", /type assertions|`any`/],
-    ["export function f() { return `x`; }", /not supported/],
+    ["export function f(a: object) { return `${a}`; }", /template|not supported/],
   ];
   for (const [source, pattern] of cases) {
     rejects(source, pattern);
@@ -224,6 +224,39 @@ test("a new array can change freely", () => {
   emits("export function f() { const a = [1, 2]; a[0] = 5; return a; }", "Js.setAt");
   emits("interface P { x: number } export function f() { const p: P = { x: 1 }; p.x = 2; return p; }", "with x :=");
   emits("export function f(n: number) { const a: number[] = []; for (let i = 0; i < n; i++) { a.push(i); } return a.length; }", "a_2");
+});
+
+test("strings are code units, and text the model can't handle is rejected", () => {
+  emits(`export function f(a: string) { return a + "x"; }`, `a ++ (js!"x")`);
+  emits("export function f(a: string, n: number) { return `${a}:${n}`; }", "Js.numStr n");
+  emits("export function f(a: string) { return a.length; }", "Js.len a");
+  emits(`export function f(a: string) { return "😀" + a; }`, "[55357, 56832]");
+  emits(`export function f(a: string, b: string) { return a === b || a < b; }`, "Js.strLt a b");
+  rejects(`export function f(a: string) { return a.match(/x/); }`, /not supported/);
+  rejects(`export function f(a: string) { return a.replace(/x/, "y"); }`, /regular expression/);
+  rejects(`export function f(a: string, b: number) { return a + b; }`, /string and another type/);
+  rejects(`export function f(a: string) { return a.localeCompare("b"); }`, /not supported on strings/);
+});
+
+test("a string-literal union stays an enum where the types say so", () => {
+  emits(`type S = "a" | "b"; export function f(s: S): S { return s === "a" ? "b" : "a"; }`, ".a");
+  emits(`type S = "a" | "b"; export function f(): S { return "a"; }`, "(.a :");
+  emits(`export function f(a: string) { return a === "x"; }`, `a = (js!"x")`);
+});
+
+test("maps and sets are owned, and their keys are compared by value", () => {
+  emits(`export function f(xs: string[]) { const m = new Map<string, number>();
+    for (const x of xs) { m.set(x, (m.get(x) ?? 0)); } return m.size; }`.replace("(m.get(x) ?? 0)", "1"), "Js.dictSet", "([] : (Js.Dict Js.Str Js.Num))");
+  emits("export function f(m: Map<number, string>, k: number) { return m.has(k) ? m.get(k) : undefined; }", "Js.dictHas");
+  emits("export function f(xs: number[]) { const s = new Set<number>(); for (const x of xs) { s.add(x); } return s.size; }", "Js.setAdd");
+  rejects("export function f(m: Map<number, number>) { m.set(1, 2); return m; }", /shared with the caller/);
+  rejects("interface L { n: number } export function f(m: Map<L, number>) { return 1; }", /keys/);
+  rejects("export function f() { return new Map([[1, 2]]); }", /empty/);
+  rejects("export function f() { const m = new Map<number, number>(); return m.set(1, 2); }", /own statement/);
+});
+
+test("a class that looks like Map is not treated as one", () => {
+  rejects("class Map { set(a: number) { return a; } } export function f(m: Map) { return m.set(1); }", /only declarations/);
 });
 
 test("identity comparison isn't approximated", () => {
