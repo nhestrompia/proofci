@@ -45,16 +45,18 @@ def module_name(root: Path):
     return name or "package"
 
 
-def extract(checkout: Path, package_rel: str, work: Path, functions) -> Extraction:
+def extract(checkout: Path, package_rel: str, work: Path, functions, policy_checkout=None) -> Extraction:
     root = checkout / package_rel
     crate_name = module_name(root)
     module = lean_module_name(crate_name)
     out = work / "translated"
     out.mkdir()
     config = out / "config.json"
-    config.write_text(json.dumps({"root": str(root), "module": module, "out": str(out), "targets": list(functions)}))
+    policy = Path(policy_checkout or checkout)
+    config.write_text(json.dumps({"root": str(root), "module": module, "out": str(out), "targets": list(functions),
+                                  "repository": str(checkout), "policyRoot": str(policy)}))
     program = translator()
-    result = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
+    result = sandbox.run(["node", str(program), str(config)], readable=[checkout, policy, program.parent],
                          writable=[out], cwd=out, timeout=300)
     if result.status != 0:
         raise Unsupported("the TypeScript translator failed:\n" + result.output[-4000:])

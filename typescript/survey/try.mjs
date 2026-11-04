@@ -2,19 +2,21 @@
 // it accepts, by the reason it gave. Usage: node survey/try.mjs <repo> <survey.json>
 import { readFileSync } from "node:fs";
 import { translate } from "../translate.mjs";
+import { workspacePaths } from "./analyze.mjs";
 
 const [root, input] = process.argv.slice(2);
 const { results } = JSON.parse(readFileSync(input, "utf8"));
 const IMPURE = new Set(["async", "ambient-effect", "package-call", "this-state", "module-state", "date", "generator"]);
 const pure = results.filter(r => r.logic && !r.name.includes(".") && !r.features.some(f => IMPURE.has(f)) && r.file.endsWith(".ts") && !r.file.startsWith("/"));
 const reasons = {};
+const paths = workspacePaths(root);
 let accepted = 0;
-const reason = text => text.replace(/^[^:]*:\d+: /, "").replace(/`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 70);
+const reason = text => text.replace(/^[^:]*:\d+: /, "").replace(process.env.RAW ? /$^/ : /`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 70);
 const byFile = Map.groupBy(pure, r => r.file);
 for (const [file, group] of byFile) {
   let result;
   try {
-    result = translate({ root, module: "M", targets: group.map(r => `${file}::${r.name}`) });
+    result = translate({ root, module: "M", paths, targets: group.map(r => `${file}::${r.name}`) });
   } catch (error) {
     const key = `crash: ${error.message.slice(0, 60)}`;
     reasons[key] = (reasons[key] ?? 0) + group.length;

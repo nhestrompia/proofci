@@ -38,6 +38,7 @@ function generator(seed) {
       case "boolean": return next() < 0.5;
       case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
       case "void": return undefined;
+      case "generic": return number();
       case "string": return pick(TEXTS);
       case "map": return new Map(Array.from({ length: Math.floor(next() * 5) }, () => [value(type.key), value(type.value)]));
       case "set": return new Set(Array.from({ length: Math.floor(next() * 5) }, () => value(type.item)));
@@ -88,7 +89,7 @@ export function term(type, value) {
       return parts.includes(undefined) ? undefined : `[${parts.join(", ")}]`;
     }
     case "optional": {
-      if (value === (type.nothing === "null" ? null : undefined)) return "none";
+      if (value === (type.nothing === "null" ? null : undefined) || (type.both && value == null)) return "none";
       const inner = term(type.inner, value);
       return inner === undefined ? undefined : `(some ${inner})`;
     }
@@ -140,6 +141,7 @@ export async function differential({ root, out, module, signatures, files, cases
   let seed = 1;
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
+    if (JSON.stringify(signature).includes('"generic"')) { skipped.push(`${target}: generic`); continue; }
     const loaded = await import(pathToFileURL(join(compiled, signature.file.replace(/\.ts$/, ".mjs"))));
     const fn = loaded[signature.name];
     const value = generator(seed++);

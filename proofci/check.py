@@ -171,7 +171,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         extraction, failures = None, {}
         if active.language == "typescript":
             try:
-                extraction = typescript.extract(head_checkout, active.crate, work, functions)
+                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout)
                 failures = extraction.failures
                 if len(failures) == len(functions):
                     extraction = None

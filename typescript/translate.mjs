@@ -10,8 +10,10 @@
 // Writes <out>/<module>.lean and prints a JSON result on stdout.
 
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
+import { protectedPaths } from "./paths.mjs";
 
 export class Unsupported extends Error {}
 
@@ -21,6 +23,11 @@ const LEAN_KEYWORDS = new Set(["at", "by", "calc", "class", "deriving", "do", "e
   "syntax", "then", "theorem", "this", "to", "try", "universe", "unless", "using", "variable", "where", "with",
   "abbrev", "axiom", "def", "example", "fix", "for", "forall", "inductive", "lemma", "mutual", "nomatch", "opaque",
   "return", "suffices", "termination_by", "decreasing_by", "Type", "Sort", "Prop", "true", "false", "none", "some"]);
+
+// Translation reads `xs[i]` as possibly undefined. Most projects don't compile
+// with that on, so their code is judged by what they do compile with, and a read
+// the project assumes is present stops the model when it isn't.
+const LENIENT = { noUncheckedIndexedAccess: false, exactOptionalPropertyTypes: false };
 
 export const OPTIONS = {
   target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
@@ -94,14 +101,17 @@ const unwrap = node => {
 };
 
 class Translator {
-  constructor(root, targets) {
+  constructor(root, targets, paths = {}, repository = root) {
     this.root = realpathSync(root);
+    this.repository = realpathSync(repository);
     this.files = [...new Set(targets.map(t => join(this.root, t.split("::")[0])))];
     for (const file of this.files) {
       if (!existsSync(file)) throw new Unsupported(`${relative(this.root, file)} does not exist`);
     }
-    this.program = ts.createProgram(this.files, OPTIONS);
+    this.program = ts.createProgram(this.files, { ...OPTIONS, paths });
     this.checker = this.program.getTypeChecker();
+    this.lenient = ts.createProgram(this.files, { ...OPTIONS, ...LENIENT, paths });
+    this.anonymous = new Map(); // key -> shape of an inline object type
     this.types = new Map();      // declaration -> { lean, text }
     this.functions = new Map();  // declaration -> { lean, text } (null while in progress)
     this.constants = new Map();
@@ -138,7 +148,7 @@ class Translator {
 
   inspectFile(file) {
     const path = realpathSync(file.fileName);
-    if (file.isDeclarationFile || !(path === this.root || path.startsWith(this.root + sep))) {
+    if (file.isDeclarationFile || !(path === this.repository || path.startsWith(this.repository + sep))) {
       throw new Unsupported(`${file.fileName} is outside the translated package`);
     }
     const stem = path.replace(/\.ts$/, "");
@@ -163,7 +173,8 @@ class Translator {
     const file = node.getSourceFile();
     const text = file.text.slice(node.getFullStart(), node.end);
     if (COMPILER_SWITCH.test(text)) throw this.fail(node, "this code turns off compiler errors with a `@ts-` comment");
-    const problems = [...this.program.getSyntacticDiagnostics(file), ...this.program.getSemanticDiagnostics(file)]
+    const relaxed = this.lenient.getSourceFile(file.fileName);
+    const problems = [...this.lenient.getSyntacticDiagnostics(relaxed), ...this.lenient.getSemanticDiagnostics(relaxed)]
       .filter(d => d.start !== undefined && d.start >= node.getFullStart() && d.start < node.end);
     if (problems.length) {
       const first = problems[0];
@@ -233,15 +244,14 @@ class Translator {
     }
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
+    if (type.flags & TypeFlags.TypeParameter) return name(type.symbol.name);
     if (type.isUnion()) {
       const parts = type.types.filter(t => !(t.flags & (TypeFlags.Null | TypeFlags.Undefined)));
-      const nulls = type.types.filter(t => t.flags & TypeFlags.Null).length;
-      const undefineds = type.types.filter(t => t.flags & TypeFlags.Undefined).length;
-      if (nulls + undefineds === 1) {
+      if (parts.length < type.types.length) {
         const rest = parts.length === 1 ? parts[0] : this.checker.getNonNullableType(type);
         return `(Option ${this.type(rest, node)})`;
       }
-      if (nulls + undefineds > 1) throw this.fail(node, "a type allowing both `null` and `undefined`");
+      if (!type.aliasSymbol && parts.every(t => t.flags & TypeFlags.StringLike)) return "Js.Str";
     }
     const symbol = type.aliasSymbol ?? type.symbol;
     const declaration = symbol?.declarations?.[0];
@@ -249,7 +259,32 @@ class Translator {
     if (declaration && !library && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
       return `_root_.${this.declareType(declaration, type)}`;
     }
+    if (type.flags & TypeFlags.Object && (symbol?.name === "__type" || symbol?.name === "__object")) {
+      return `_root_.${this.declareAnonymous(type, node).lean}`;
+    }
     throw this.fail(node, `the type \`${this.checker.typeToString(type)}\` is not supported yet`);
+  }
+
+  // An inline object type becomes a structure named after its shape, so that the
+  // same shape written twice is one Lean type.
+  declareAnonymous(type, node) {
+    const fields = this.fields(type, node).map(f => ({ ...f, lean: this.fieldType(f) }));
+    if (!fields.length) throw this.fail(node, "empty records are not supported");
+    const key = fields.map(f => `${f.name}:${f.lean}`).sort().join(",");
+    if (!this.anonymous.has(key)) {
+      const hash = createHash("sha256").update(key).digest("hex").slice(0, 10);
+      const lean = `Proofci.Inline.R${hash}`;
+      const lines = fields.map(f => `  ${name(f.name)} : ${f.lean}`);
+      const text = [`structure ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n");
+      this.anonymous.set(key, { lean, kind: "record", fields: fields.map(f => f.name) });
+      this.order.push(text);
+    }
+    return this.anonymous.get(key);
+  }
+
+  fieldType(field) {
+    const lean = this.type(field.type, field.node);
+    return field.node.questionToken && !lean.startsWith("(Option ") ? `(Option ${lean})` : lean;
   }
 
   declareType(declaration, type) {
@@ -276,8 +311,9 @@ class Translator {
     if (this.checker.getIndexInfosOfType(type).length) throw this.fail(declaration, "index signatures are not supported yet");
     return this.checker.getPropertiesOfType(type).map(property => {
       const node = property.valueDeclaration;
-      if (!node || !(ts.isPropertySignature(node))) throw this.fail(declaration, `\`${property.name}\` is not a plain field`);
-      if (node.questionToken) throw this.fail(node, "optional fields are not supported yet");
+      if (!node || !(ts.isPropertySignature(node) || ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))) {
+        throw this.fail(declaration, `\`${property.name}\` is not a plain field`);
+      }
       return { name: property.name, type: this.checker.getTypeOfSymbolAtLocation(property, node), node };
     });
   }
@@ -286,7 +322,7 @@ class Translator {
     if (!(type.flags & ts.TypeFlags.Object)) throw this.fail(declaration, "this type is not supported yet");
     const fields = this.fields(type, declaration);
     if (!fields.length) throw this.fail(declaration, "empty records are not supported");
-    const lines = fields.map(f => `  ${name(f.name)} : ${this.type(f.type, f.node)}`);
+    const lines = fields.map(f => `  ${name(f.name)} : ${this.fieldType(f)}`);
     return { kind: "record", fields: fields.map(f => f.name),
       text: [`structure ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
   }
@@ -329,15 +365,20 @@ class Translator {
     if (lean === "Unit") return { kind: "void" };
     if (lean === "Js.Str") return { kind: "string" };
     if (this.checker.isArrayType(type)) return { kind: "array", item: this.describe(this.checker.getTypeArguments(type)[0], node) };
+    if (type.flags & ts.TypeFlags.TypeParameter) return { kind: "generic" };
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
-      return { kind: "optional", nothing, inner: this.describe(this.checker.getNonNullableType(type), node) };
+      return { kind: "optional", nothing, both: type.types.filter(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)).length > 1, inner: this.describe(this.checker.getNonNullableType(type), node) };
     }
     const collection = this.collection(type);
     if (collection?.kind === "Map") return { kind: "map", key: this.describe(collection.args[0], node), value: this.describe(collection.args[1], node) };
     if (collection) return { kind: "set", item: this.describe(collection.args[0], node) };
     const shape = this.shape(type);
-    const fields = owner => this.fields(owner, node).map(f => ({ name: f.name, lean: name(f.name), type: this.describe(f.type, f.node) }));
+    const fields = owner => this.fields(owner, node).map(f => {
+      const described = this.describe(f.type, f.node);
+      const optional = f.node.questionToken && described.kind !== "optional";
+      return { name: f.name, lean: name(f.name), type: optional ? { kind: "optional", nothing: "undefined", inner: described } : described };
+    });
     if (shape.kind === "enum") return { kind: "enum", lean: shape.lean, tags: shape.tags.map(t => ({ tag: t, lean: name(t) })) };
     if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type) };
     return { kind: "tagged", lean: shape.lean, variants: type.types.map(member => {
@@ -360,13 +401,17 @@ class Translator {
       exported: Boolean(ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export),
       name: declaration.name.text,
       lean: this.functions.get(declaration).lean,
-      params: fn.parameters.map(p => this.describe(this.checker.getTypeAtLocation(p), p)),
+      params: fn.parameters.map(p => {
+        const described = this.describe(this.checker.getTypeAtLocation(p), p);
+        return p.initializer && described.kind !== "optional" ? { kind: "optional", nothing: "undefined", inner: described } : described;
+      }),
       result: this.describe(this.checker.getReturnTypeOfSignature(signature), fn),
     };
   }
 
   shape(type) {
     const symbol = type.aliasSymbol ?? type.symbol;
+    if (symbol?.name === "__type" || symbol?.name === "__object") return this.declareAnonymous(type, symbol.declarations?.[0]);
     const declaration = symbol?.declarations?.[0];
     return declaration ? this.types.get(declaration) : undefined;
   }
@@ -418,7 +463,6 @@ class Translator {
     this.checkDeclaration(declaration);
     const fn = this.bodyOf(declaration);
     if (!fn || !fn.body) throw this.fail(declaration, "this function has no body to translate");
-    if (fn.typeParameters?.length) throw this.fail(fn, "generic functions are not supported yet");
     if (fn.asteriskToken) throw this.fail(fn, "generators are not supported");
     if (fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) throw this.fail(fn, "`async` is not supported yet");
     const lean = this.leanName(declaration, declaration.name.text);
@@ -428,21 +472,15 @@ class Translator {
     const signature = this.checker.getSignatureFromDeclaration(fn);
     const returns = this.checker.getReturnTypeOfSignature(signature);
     const scope = new Scope(this, fn);
-    const params = fn.parameters.map(p => {
-      if (!ts.isIdentifier(p.name) || p.initializer || p.questionToken || p.dotDotDotToken) {
-        throw this.fail(p, "only plain parameters are supported for now");
-      }
-      const text = local(p.name.text);
-      scope.taken.add(text);
-      return `(${text} : ${this.type(this.checker.getTypeAtLocation(p), p)})`;
-    });
+    const prologue = [];
+    const env = new Map();
+    const params = fn.parameters.map((p, index) => scope.parameter(p, index, prologue, env));
+    const generics = (fn.typeParameters ?? []).map(t => `{${name(t.name.text)} : Type} [DecidableEq ${name(t.name.text)}]`);
     const result = this.type(returns, fn);
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
-    const body = ts.isBlock(fn.body)
-      ? scope.block(statements, flow, new Map())
-      : scope.returning(fn.body, flow, new Map());
-    const lines = [`def ${lean} ${params.join(" ")} : Result ${result} := do`, ...body.map(l => `  ${l}`)];
+    const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
+    const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : Result ${result} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
     this.current.pop();
     entry.pending = false;
@@ -455,10 +493,9 @@ class Translator {
   stub(declaration) {
     const fn = this.bodyOf(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
-    const params = fn.parameters.map((p, index) => {
-      const text = ts.isIdentifier(p.name) ? local(p.name.text) : `arg${index}`;
-      return `(${text} : ${this.type(this.checker.getTypeAtLocation(p), p)})`;
-    });
+    const scope = new Stub(this, fn);
+    const generics = (fn.typeParameters ?? []).map(t => `{${name(t.name.text)} : Type} [DecidableEq ${name(t.name.text)}]`);
+    const params = [...generics, ...fn.parameters.map((p, index) => scope.parameter(p, index, [], new Map()))];
     const result = this.type(this.checker.getReturnTypeOfSignature(signature), fn);
     const lean = this.leanName(declaration, declaration.name.text);
     this.order.push(`axiom ${lean} ${params.join(" ")} : Result ${result}`);
@@ -470,12 +507,34 @@ class Translator {
     this.checkFile(declaration.getSourceFile());
     this.checkDeclaration(declaration);
     if (!(declaration.parent.flags & ts.NodeFlags.Const)) throw this.fail(declaration, "reading a module-level `let` or `var`");
-    const value = this.literal(declaration.initializer);
-    if (value === undefined) throw this.fail(declaration, "only number constants are supported for now");
     const lean = this.leanName(declaration, declaration.name.text);
-    this.order.push(`def ${lean} : Js.Num := ${this.number(value, declaration)}`);
-    this.constants.set(declaration, lean);
-    return lean;
+    const value = this.literal(declaration.initializer);
+    if (value !== undefined) {
+      this.order.push(`def ${lean} : Js.Num := ${this.number(value, declaration)}`);
+      this.constants.set(declaration, { lean, pure: true });
+      return this.constants.get(declaration);
+    }
+    // Anything else is computed once on import, which a `Result` constant models.
+    const scope = new Scope(this, declaration);
+    const type = this.checker.getTypeAtLocation(declaration.name);
+    const leanType = this.type(type, declaration);
+    const lines = [];
+    const result = scope.convert(declaration.initializer, type, new Map(), lines);
+    this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
+    this.constants.set(declaration, { lean, pure: false });
+    return this.constants.get(declaration);
+  }
+}
+
+// Only the signature of a failed target: its body may be what failed.
+class Stub {
+  constructor(translator, fn) { this.t = translator; this.checker = translator.checker; this.fn = fn; }
+
+  parameter(p, index) {
+    const type = this.checker.getTypeAtLocation(p);
+    const lean = this.t.type(type, p);
+    if (p.initializer) return `(${ts.isIdentifier(p.name) ? `${p.name.text}_arg` : `arg${index}`} : (Option ${lean}))`;
+    return `(${ts.isIdentifier(p.name) ? local(p.name.text) : `arg${index}`} : ${lean})`;
   }
 }
 
@@ -493,11 +552,20 @@ class Scope {
       if (ts.isIdentifier(node)) this.names.add(node.text);
       const write = writeTarget(node);
       if (write && !this.isBuiltinReceiver(node, write)) this.noteWrite(write, nested, ts.isCallExpression(node));
-      ts.forEachChild(node, child => walk(child, nested || (ts.isFunctionLike(node) && node !== fn)));
+      ts.forEachChild(node, child => walk(child, nested || (ts.isFunctionLike(node) && node !== fn && !this.isForEachBody(node))));
     };
     this.owned = new Set();
     walk(fn, false);
     this.checkOwnership();
+  }
+
+  // `xs.forEach(x => { ... })` as a statement is a `for...of` loop in other words.
+  isForEachBody(node) {
+    if (!(ts.isArrowFunction(node) || ts.isFunctionExpression(node))) return false;
+    const call = node.parent;
+    return ts.isCallExpression(call) && ts.isExpressionStatement(call.parent) && call.arguments[0] === node
+      && ts.isPropertyAccessExpression(unwrap(call.expression)) && unwrap(call.expression).name.text === "forEach"
+      && node.parameters.length === 1 && this.isArray(unwrap(call.expression).expression);
   }
 
   // A method that merely shares a name with a mutating one, such as a call to
@@ -538,9 +606,11 @@ class Scope {
         const symbol = this.symbol(unwrap(node.left));
         if (this.owned.has(symbol)) this.requireFresh(node.right, symbol);
       }
-      if (ts.isForOfStatement(node)) {
-        const iterated = rootOf(node.expression);
-        if (ts.isIdentifier(iterated) && this.owned.has(this.symbol(iterated)) && this.assignedIn([node.statement]).includes(this.symbol(iterated))) {
+      const looped = ts.isForOfStatement(node) ? [node.expression, node.statement]
+        : this.isForEachBody(node) ? [unwrap(node.parent.expression).expression, node.body] : null;
+      if (looped) {
+        const iterated = rootOf(looped[0]);
+        if (ts.isIdentifier(iterated) && this.owned.has(this.symbol(iterated)) && this.assignedIn([looped[1]]).includes(this.symbol(iterated))) {
           throw this.t.fail(node, "changing an array while looping over it is not supported");
         }
       }
@@ -588,6 +658,37 @@ class Scope {
     }
   }
 
+  // A parameter, as Lean sees it. A default or a destructuring pattern is applied
+  // at the top of the function, in `prologue`.
+  parameter(p, index, prologue, env) {
+    if (p.dotDotDotToken) throw this.t.fail(p, "rest parameters are not supported yet");
+    const type = this.checker.getTypeAtLocation(p);
+    if (ts.isIdentifier(p.name)) {
+      const symbol = this.symbol(p.name);
+      local(p.name.text);
+      if (!p.initializer) {
+        this.taken.add(this.rebind(symbol, env));
+        return `(${this.current(symbol, env)} : ${this.t.type(type, p)})`;
+      }
+      const argument = `${p.name.text}_arg`;
+      this.taken.add(argument);
+      const inner = [];
+      const fallback = this.convert(p.initializer, type, env, inner);
+      prologue.push(`let ${this.rebind(symbol, env)} ← match ${argument} with`, "  | some value => Result.ok value",
+        "  | none => do", ...inner.map(l => `    ${l}`), `    Result.ok ${fallback}`);
+      return `(${argument} : (Option ${this.t.type(type, p)}))`;
+    }
+    if (!ts.isObjectBindingPattern(p.name) || p.initializer) throw this.t.fail(p, "this parameter shape is not supported yet");
+    const argument = `arg${index}`;
+    this.taken.add(argument);
+    for (const element of p.name.elements) {
+      if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) throw this.t.fail(element, "only plain destructuring is supported for now");
+      const field = element.propertyName?.getText() ?? element.name.text;
+      prologue.push(`let ${this.rebind(this.symbol(element.name), env)} ← Result.ok (${argument}.${name(field)})`);
+    }
+    return `(${argument} : ${this.t.type(type, p)})`;
+  }
+
   functionFlow(returns, result) {
     const isVoid = result === "Unit";
     return {
@@ -623,6 +724,10 @@ class Scope {
       lean = base.startsWith("«") ? `${symbol.name}_v${version}` : `${base}_${version}`;
     }
     this.taken.add(lean);
+    // What was learned about its fields no longer holds.
+    for (const key of [...env.keys()]) {
+      if (typeof key === "string" && (key.startsWith(`field:${symbol.name}.`))) env.delete(key);
+    }
     const { tag, bound } = env.get(symbol) ?? {};
     env.set(symbol, { tag, bound, ...extra, lean });
     return lean;
@@ -650,7 +755,7 @@ class Scope {
   assignedIn(nodes, declaredInside = () => false) {
     const found = new Map();
     const walk = node => {
-      if (ts.isFunctionLike(node)) return;
+      if (ts.isFunctionLike(node) && !this.isForEachBody(node)) return;
       const write = writeTarget(node);
       if (write && !this.isBuiltinReceiver(node, write)) {
         const symbol = this.symbol(rootOf(write));
@@ -742,9 +847,14 @@ class Scope {
     if (ts.isEmptyStatement(first)) return this.block(rest, flow, env);
     if (ts.isReturnStatement(first)) {
       if (!flow.ret) throw this.t.fail(first, "`return` here is not supported yet");
+      if (flow.discard) {
+        const lines = [];
+        if (first.expression) this.expression(first.expression, env, lines);
+        return [...lines, ...flow.ret("()", env)];
+      }
       if (!first.expression) {
         if (flow.result !== "Unit") throw this.t.fail(first, "`return` without a value");
-        return flow.ret("()");
+        return flow.ret("()", env);
       }
       return this.returning(first.expression, flow, env);
     }
@@ -756,6 +866,10 @@ class Scope {
       return leave(env);
     }
     if (ts.isVariableStatement(first)) return this.variable(first, rest, flow, env);
+    if (ts.isExpressionStatement(first) && ts.isCallExpression(unwrap(first.expression))
+      && unwrap(first.expression).arguments[0] && this.isForEachBody(unwrap(unwrap(first.expression).arguments[0]))) {
+      return this.forEach(first, unwrap(first.expression), rest, flow, env);
+    }
     if (ts.isExpressionStatement(first)) return this.effect(first, rest, flow, env);
     if (ts.isIfStatement(first)) return this.conditional(first, rest, flow, env);
     if (ts.isSwitchStatement(first)) return this.switching(first, rest, flow, env);
@@ -778,7 +892,7 @@ class Scope {
   returning(node, flow, env) {
     const lines = [];
     const value = this.convert(node, flow.returns, env, lines);
-    return [...lines, ...flow.ret(value)];
+    return [...lines, ...flow.ret(value, env)];
   }
 
   // A thrown value stops the function. `.panic` is only ever produced here, which
@@ -933,12 +1047,39 @@ class Scope {
     return false;
   }
 
+  // A test whose left side narrows, such as `x !== null && x.y > 0`, is two
+  // nested tests, so that the right side and the branch see the narrowed value.
+  splitTest(test, env, arm) {
+    test = unwrap(test);
+    if (ts.isBinaryExpression(test) && test.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      const narrowed = this.narrowing(test.left, env);
+      if (narrowed) return narrowed((onPath, next) => (onPath ? this.splitTest(test.right, next, arm) : arm(false, next)));
+    }
+    if (ts.isBinaryExpression(test) && test.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+      const narrowed = this.narrowing(test.left, env);
+      if (narrowed) return narrowed((onPath, next) => (onPath ? arm(true, next) : this.splitTest(test.right, next, arm)));
+    }
+    const narrowed = this.narrowing(test, env);
+    if (narrowed) return narrowed(arm);
+    const lines = [];
+    const condition = this.condition(test, env, lines);
+    return [...lines, `if ${condition} then`, ...this.indent(arm(true, env)), "else", ...this.indent(arm(false, env))];
+  }
+
+  splits(test) {
+    test = unwrap(test);
+    return ts.isBinaryExpression(test) && (test.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken || test.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+      && Boolean(this.narrowing(test.left, new Map()));
+  }
+
   conditional(statement, rest, flow, env) {
     const whenTrue = statement.thenStatement;
     const whenFalse = statement.elseStatement;
     const trueExits = this.exits(whenTrue);
     const falseExits = whenFalse ? this.exits(whenFalse) : false;
-    const narrowed = this.narrowing(statement.expression, env);
+    const narrowed = this.splits(statement.expression)
+      ? arm => this.splitTest(statement.expression, env, arm)
+      : this.narrowing(statement.expression, env);
 
     // Neither branch leaves, so both can join the code that follows.
     if (!trueExits && !falseExits && rest.length && !this.jumps(whenTrue) && !this.jumps(whenFalse)) {
@@ -1114,26 +1255,40 @@ class Scope {
     return found;
   }
 
+  forEach(statement, call, rest, flow, env) {
+    const callback = unwrap(call.arguments[0]);
+    if (!ts.isIdentifier(callback.parameters[0].name)) throw this.t.fail(callback, "only a plain parameter is supported here for now");
+    const body = ts.isBlock(callback.body) ? callback.body : ts.factory.createExpressionStatement(callback.body);
+    if (!ts.isBlock(callback.body)) body.parent = callback;
+    return this.walkArray(statement, unwrap(call.expression).expression, callback.parameters[0].name, body, rest, flow, env, true);
+  }
+
   forOf(statement, rest, flow, env) {
     if (statement.awaitModifier) throw this.t.fail(statement, "`for await` is not supported");
     if (!this.isArray(statement.expression)) throw this.t.fail(statement.expression, "`for...of` is only supported on arrays for now");
     const declaration = statement.initializer.declarations?.[0];
     if (!declaration || !ts.isIdentifier(declaration.name)) throw this.t.fail(statement, "`for...of` needs a plain variable for now");
+    return this.walkArray(statement, statement.expression, declaration.name, statement.statement, rest, flow, env, false);
+  }
+
+  walkArray(statement, array, variable, loopBody, rest, flow, env, isCallback) {
     const lines = [];
     const start = new Map(env);
-    const iterated = this.expression(statement.expression, start, lines);
-    const remaining = { name: this.fresh(), leanType: this.t.type(this.typeOf(statement.expression), statement) };
+    const iterated = this.expression(array, start, lines);
+    const remaining = { name: this.fresh(), leanType: this.t.type(this.typeOf(array), statement) };
     start.set(remaining, { lean: remaining.name });
     this.taken.add(remaining.name);
     lines.push(`let ${remaining.name} ← Result.ok (${iterated})`);
     const outer = this.assignedIn([statement]);
-    const element = this.symbol(declaration.name);
+    const element = this.symbol(variable);
     const code = this.emitLoop(statement, [remaining, ...outer], rest, flow, start, (body, inside, leave, again) => {
       const next = new Map(inside);
       const head = this.rebind(element, next);
       const tail = this.fresh();
       next.set(remaining, { lean: tail });
-      const inner = this.block([statement.statement], { ...body, fall: again, cont: again }, next);
+      // In a callback, `return` only ends this call.
+      const loopFlow = { ...body, fall: again, cont: again, ...(isCallback ? { ret: (_value, stepEnv) => again(stepEnv), brk: null, discard: true } : {}) };
+      const inner = this.block([loopBody], loopFlow, next);
       return [`match ${this.current(remaining, inside)} with`, `| [] =>`, `  ${leave(inside)}`, `| ${head} :: ${tail} =>`, ...this.indent(inner)];
     }, outer);
     return [...lines, ...code];
@@ -1145,6 +1300,22 @@ class Scope {
   // branch where it is present sees the plain value.
   narrowing(test, env) {
     test = unwrap(test);
+    if (ts.isPrefixUnaryExpression(test) && test.operator === ts.SyntaxKind.ExclamationToken) {
+      const inner = this.narrowing(test.operand, env);
+      return inner && (arm => inner((onPath, branchEnv) => arm(!onPath, branchEnv)));
+    }
+    // `if (x)` on a nullable object: objects are always truthy.
+    if (ts.isIdentifier(test) && this.nullable(this.declaredType(this.symbol(test), test))) {
+      const inner = this.checker.getNonNullableType(this.declaredType(this.symbol(test), test));
+      if (inner.flags & ts.TypeFlags.Object) {
+        const symbol = this.symbol(test);
+        return arm => {
+          const next = new Map(env);
+          const lean = this.rebind(symbol, next, { present: true });
+          return [`match ${this.current(symbol, env)} with`, "| none =>", ...this.indent(arm(false, env)), `| some ${lean} =>`, ...this.indent(arm(true, next))];
+        };
+      }
+    }
     if (!ts.isBinaryExpression(test)) return undefined;
     const op = test.operatorToken.kind;
     const equal = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
@@ -1152,21 +1323,53 @@ class Scope {
     if (!equal && !different) return undefined;
     const [variable, other] = this.isNull(test.right) ? [unwrap(test.left), test.right] : [unwrap(test.right), test.left];
     if (!this.isNull(other)) return undefined;
-    if (!ts.isIdentifier(variable)) throw this.t.fail(test, "only a local variable can be tested against null for now");
+    if (this.isFieldPath(variable)) return this.narrowField(variable, other, op, equal, env);
+    if (!ts.isIdentifier(variable)) throw this.t.fail(test, "only a variable or field can be tested against null for now");
     const symbol = this.symbol(variable);
     // `===` tells null from undefined, and a type only ever allows one of them
     // here, so testing for the other one is always false.
     const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
     const allowed = this.declaredType(symbol, variable);
     const wanted = this.isUndefined(unwrap(other)) ? ts.TypeFlags.Undefined : ts.TypeFlags.Null;
+    const kinds = allowed.isUnion() ? allowed.types.filter(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)).length : 0;
     if (strict && !(allowed.isUnion() && allowed.types.some(t => t.flags & wanted))) {
       throw this.t.fail(test, "this null check is always false, because the type allows the other nullish value");
     }
+    if (strict && kinds > 1) throw this.t.fail(test, "`===` can't tell `null` from `undefined` here; use `== null`");
     const lean = this.current(symbol, env);
     return arm => {
       const next = new Map(env);
       const inner = this.rebind(symbol, next, { present: true });
       return [`match ${lean} with`, "| none =>", ...this.indent(arm(equal, env)), `| some ${inner} =>`, ...this.indent(arm(!equal, next))];
+    };
+  }
+
+  // `a.b.c`, with no calls, so reading it twice can't change anything.
+  isFieldPath(node) {
+    node = unwrap(node);
+    if (!ts.isPropertyAccessExpression(node) || node.questionDotToken) return false;
+    const owner = unwrap(node.expression);
+    return ts.isIdentifier(owner) || this.isFieldPath(owner);
+  }
+
+  fieldKey(node) { return `field:${unwrap(node).getText()}`; }
+
+  narrowField(field, other, op, equal, env) {
+    const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+    const declared = this.typeOf(field);
+    const kinds = declared.isUnion() ? declared.types.filter(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) : [];
+    const wanted = this.isUndefined(unwrap(other)) ? ts.TypeFlags.Undefined : ts.TypeFlags.Null;
+    if (!kinds.length) throw this.t.fail(field, "this field can't be null here");
+    if (strict && !kinds.some(t => t.flags & wanted)) throw this.t.fail(field, "this null check is always false, because the type allows the other nullish value");
+    if (strict && kinds.length > 1) throw this.t.fail(field, "`===` can't tell `null` from `undefined` here; use `== null`");
+    const lines = [];
+    const value = this.expression(field, env, lines);
+    if (lines.length) throw this.t.fail(field, "this null check is not supported yet");
+    return arm => {
+      const next = new Map(env);
+      const fresh = this.fresh();
+      next.set(this.fieldKey(field), { lean: fresh });
+      return [`match ${value} with`, "| none =>", ...this.indent(arm(equal, env)), `| some ${fresh} =>`, ...this.indent(arm(!equal, next))];
     };
   }
 
@@ -1258,6 +1461,7 @@ class Scope {
     if (ts.isObjectLiteralExpression(node)) return this.wrapIf(target, this.record(node, target, env, lines), node);
     if (ts.isArrayLiteralExpression(node)) return this.wrapIf(target, this.arrayLiteral(node, target, env, lines), node);
     if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines, target);
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return this.nullish(node, env, lines, target);
     if (ts.isNewExpression(node) && this.isCollection(node)) return this.wrapIf(target, this.newCollection(node, target), node);
     if (ts.isStringLiteralLike(node)) {
       const plain = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
@@ -1269,7 +1473,13 @@ class Scope {
     const to = this.t.type(target, node);
     if (from === to) return value;
     if (to === `(Option ${from})`) return `(some ${value})`;
+    // Compiled without index checks, the project assumes this value is present.
+    if (from === `(Option ${to})`) return this.bind(`Js.unwrap ${value}`, lines);
     throw this.t.fail(node, `a \`${this.checker.typeToString(this.typeOf(node))}\` is used as a \`${this.checker.typeToString(target)}\`, which is not supported yet`);
+  }
+
+  optionalSlot(slot) {
+    return this.nullable(slot) ? slot : this.checker.getUnionType?.([slot, this.checker.getUndefinedType()]) ?? slot;
   }
 
   arrayLiteral(node, target, env, lines) {
@@ -1341,9 +1551,13 @@ class Scope {
       const parts = [];
       for (const property of properties) {
         const value = fields.get(property.name);
-        if (!value) continue;
+        if (!value) {
+          if (!base && property.flags & ts.SymbolFlags.Optional) parts.push(`${name(property.name)} := none`);
+          continue;
+        }
         const slot = this.checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration);
-        parts.push(`${name(property.name)} := ${this.convert(value, slot, env, lines)}`);
+        const declared = property.flags & ts.SymbolFlags.Optional ? this.optionalSlot(slot) : slot;
+        parts.push(`${name(property.name)} := ${this.convert(value, declared, env, lines)}`);
       }
       const leanType = this.t.type(type, node);
       return base ? `({ ${base} with ${parts.join(", ")} } : ${leanType})` : `({ ${parts.join(", ")} } : ${leanType})`;
@@ -1364,6 +1578,7 @@ class Scope {
   // Binds what must be computed and returns an expression with no effects.
   expression(node, env, lines) {
     node = unwrap(node);
+    this.lines = lines;
     if (ts.isNumericLiteral(node)) return this.t.number(Number(node.text), node);
     if (ts.isBigIntLiteral(node)) return `(${node.text.slice(0, -1).replace(/_/g, "")} : Int)`;
     if (node.kind === ts.SyntaxKind.TrueKeyword) return "true";
@@ -1380,6 +1595,7 @@ class Scope {
     if (ts.isNonNullExpression(node)) return this.nonNull(node, env, lines);
     if (ts.isCallExpression(node)) return this.call(node, env, lines);
     if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines);
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return this.nullish(node, env, lines);
     if (ts.isSatisfiesExpression(node) || ts.isAsExpression(node)) {
       if (ts.isAsExpression(node) && ts.isConstTypeReference(node.type)) return this.expression(node.expression, env, lines);
       throw this.t.fail(node, "type assertions are not supported yet");
@@ -1465,7 +1681,10 @@ class Scope {
     const symbol = this.symbol(node);
     const declaration = symbol?.valueDeclaration;
     if (!declaration) throw this.t.fail(node, `\`${node.text}\` is not declared in the translated code`);
-    if (this.isModuleLevel(declaration)) return `_root_.${this.t.declareConstant(declaration)}`;
+    if (this.isModuleLevel(declaration)) {
+      const constant = this.t.declareConstant(declaration);
+      return constant.pure ? `_root_.${constant.lean}` : this.bind(`_root_.${constant.lean}`, this.lines);
+    }
     if (ts.isFunctionDeclaration(declaration)) throw this.t.fail(node, "functions as values are not supported yet");
     // A nullable variable read as non-null relies on narrowing the translator
     // didn't follow; the value would have the wrong Lean type.
@@ -1483,6 +1702,8 @@ class Scope {
 
   property(node, env, lines) {
     const object = unwrap(node.expression);
+    const known = env.get(this.fieldKey(node));
+    if (known) return known.lean;
     if (ts.isIdentifier(object) && object.text === "Number" && !this.isLocal(object)) {
       if (node.name.text === "MAX_SAFE_INTEGER") return this.t.number(Number.MAX_SAFE_INTEGER, node);
       if (node.name.text === "MIN_SAFE_INTEGER") return this.t.number(Number.MIN_SAFE_INTEGER, node);
@@ -1494,7 +1715,12 @@ class Scope {
       if (!bound) throw this.t.fail(node, "this field isn't available in this case");
       return bound;
     }
-    if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
+    if (node.questionDotToken || ts.isOptionalChain(node)) return this.optionalField(node, object, env, lines);
+    if (this.nullable(this.typeOf(object))) {
+      // Compiled without index checks: a missing object stops the model.
+      const value = this.expression(object, env, lines);
+      return `${this.bind(`Js.unwrap ${value}`, lines)}.${name(node.name.text)}`;
+    }
     if (this.isString(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
     if (this.isCollection(object) && node.name.text === "size") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
     if (this.isArray(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
@@ -1502,6 +1728,31 @@ class Scope {
     const type = this.typeOf(object);
     if (type.isUnion()) throw this.t.fail(node, "reading a field of a union outside a `switch` is not supported yet");
     return `${this.expression(object, env, lines)}.${name(node.name.text)}`;
+  }
+
+  optionalField(node, object, env, lines) {
+    if (!this.nullable(this.typeOf(object))) return this.expression(ts.factory.createPropertyAccessExpression(object, node.name), env, lines);
+    const value = this.expression(object, env, lines);
+    const field = name(node.name.text);
+    const inner = this.checker.getNonNullableType(this.typeOf(object));
+    const property = this.checker.getPropertyOfType(inner, node.name.text);
+    if (!property?.valueDeclaration || this.isArray(object)) throw this.t.fail(node, "`?.` is only supported on fields for now");
+    const slot = this.checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration);
+    const flat = this.nullable(slot) || property.flags & ts.SymbolFlags.Optional;
+    return flat ? `(Option.bind ${value} (fun item => item.${field}))` : `(Option.map (fun item => item.${field}) ${value})`;
+  }
+
+  // `a ?? b`: `b` only runs when `a` is null or undefined.
+  nullish(node, env, lines, target) {
+    const left = this.expression(node.left, env, lines);
+    const type = target ?? this.typeOf(node);
+    const inner = [];
+    const fallback = this.convert(node.right, type, env, inner);
+    const present = this.nullable(type) ? "some value" : "value";
+    const fresh = this.fresh();
+    lines.push(`let ${fresh} ← match ${left} with`, `  | some value => Result.ok (${present})`, "  | none => do",
+      ...inner.map(l => `    ${l}`), `    Result.ok ${fallback}`);
+    return fresh;
   }
 
   isLocal(node) {
@@ -1554,9 +1805,19 @@ class Scope {
     if (declaration.getSourceFile().isDeclarationFile) throw this.t.fail(node, "this function has no source in the package");
     const lean = this.t.declareFunction(declaration);
     const parameters = signature.getParameters();
-    if (parameters.length !== node.arguments.length) throw this.t.fail(node, "optional arguments are not supported yet");
-    const args = node.arguments.map((argument, index) => this.convert(argument,
-      this.checker.getTypeOfSymbolAtLocation(parameters[index], parameters[index].valueDeclaration), env, lines));
+    if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
+    const args = parameters.map((parameter, index) => {
+      const site = parameter.valueDeclaration;
+      const hasDefault = Boolean(site.initializer);
+      const argument = node.arguments[index];
+      if (!argument) {
+        if (!hasDefault && !site.questionToken) throw this.t.fail(node, "a missing argument");
+        return "none";
+      }
+      const slot = this.checker.getTypeAtLocation(site);
+      const value = this.convert(argument, slot, env, lines);
+      return hasDefault ? `(some ${value})` : value;
+    });
     // A function can't name itself through `_root_` while it is being defined.
     const callee_ = this.t.functions.get(declaration)?.pending ? lean : `_root_.${lean}`;
     return this.bind(`${callee_} ${args.join(" ")}`, lines);
@@ -1726,7 +1987,10 @@ class Scope {
       }
       throw this.t.fail(node, "this operator is not supported");
     }
-    if (!this.isBoolean(node)) throw this.t.fail(node, "conditions must be `boolean`; truthiness is not supported yet");
+    if (this.isString(node)) return `${this.expression(node, env, lines)} ≠ []`;
+    if (this.isNumber(node)) return `${this.expression(node, env, lines)}.val ≠ 0`; // NaN never reaches here
+    if (this.isBigInt(node)) return `${this.expression(node, env, lines)} ≠ 0`;
+    if (!this.isBoolean(node)) throw this.t.fail(node, "truthiness of this type is not supported yet");
     return `${this.expression(node, env, lines)} = true`;
   }
 
@@ -1789,8 +2053,9 @@ function findDeclaration(translator, target) {
   throw new Unsupported(`\`${functionName}\` is not a top-level function in ${path}`);
 }
 
-export function translate({ root, module, targets }) {
-  const translator = new Translator(root, targets);
+export function translate({ root, module, targets, paths, repository, policyRoot }) {
+  const resolved = policyRoot ? protectedPaths(policyRoot, repository) : paths;
+  const translator = new Translator(root, targets, resolved, repository);
   const failures = {};
   const names = {};
   const signatures = {};

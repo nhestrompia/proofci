@@ -68,15 +68,9 @@ test("types the model can't represent exactly are rejected", () => {
   const cases = [
     ["export function f(a: symbol) { return 1; }", /type `symbol`/],
     ["export function f(a: [number, number]) { return 1; }", /not supported/],
-    ["export function f(a: { x: number }) { return a.x; }", /not supported/],
-    ["interface A { x?: number } export function f(a: A) { return 1; }", /optional/],
     ["interface A { x: number; g(): void } export function f(a: A) { return 1; }", /plain field/],
     ["interface A { x: number } interface B extends A { y: number } export function f(a: B) { return 1; }", /extends/],
-    ["export function f(a: number | null | undefined) { return 1; }", /both/],
-    ["export function f<T>(a: T) { return 1; }", /generic/],
-    ["export function f(a = 1) { return a; }", /plain parameters/],
-    ["export function f(...a: number[]) { return 1; }", /plain parameters/],
-    ["export function f({ a }: { a: number }) { return a; }", /plain parameters/],
+    ["export function f(...a: number[]) { return 1; }", /rest parameters/],
   ];
   for (const [source, pattern] of cases) rejects(source, pattern);
 });
@@ -91,7 +85,7 @@ test("JavaScript behavior the model doesn't cover is rejected", () => {
     ["export function f(a: number) { return a * 0.5; }", /not a safe integer/],
     ["export function f() { return 9007199254740993; }", /not a safe integer/],
     ["export function f(a: number) { return a == 1; }", /not supported/],
-    ["export function f(a: number) { return a ? 1 : 0; }", /truthiness/],
+    ["export function f(a: symbol) { return a ? 1 : 0; }", /truthiness|type `symbol`/],
     ["export function f(a: number, b: boolean) { return a && b; }", /boolean/],
     ["export function f(a: number) { return a & 1; }", /not supported/],
     ["export function f(a: number) { return +a; }", /not supported/],
@@ -195,7 +189,7 @@ test("callbacks that would see more than the model passes are rejected", () => {
   rejects("export function f(xs: number[]) { return xs.map((x, i) => x + i); }", /exactly 1/);
   rejects("function g(x: number) { return x; } export function f(xs: number[]) { return xs.map(g); }", /inline function/);
   rejects("export function f(xs: number[]) { return xs.reduce((a, b) => a + b); }", /initial value/);
-  rejects("export function f(xs: number[]) { let s = 0; xs.forEach(x => { s += x; }); return s; }", /nested function/);
+  rejects("export function f(xs: number[]) { let s = 0; const ys = xs.map(x => { s += x; return x; }); return s; }", /nested function/);
 });
 
 test("an in-place change needs a value nobody else can see", () => {
@@ -259,6 +253,61 @@ test("a class that looks like Map is not treated as one", () => {
   rejects("class Map { set(a: number) { return a; } } export function f(m: Map) { return m.set(1); }", /type `Map`/);
 });
 
+test("parameters can be optional, defaulted or destructured", () => {
+  emits("export function f(a?: number) { return a === undefined ? 0 : a; }", "(Option Js.Num)");
+  emits("export function f(a = 2) { return a; }", "a_arg", "| none => do");
+  emits("export function f({ x, y: z }: { x: number; y: number }) { return x + z; }", "arg0.x", "arg0.y");
+  emits("function g(a: number, b = 1) { return a + b; } export function f(a: number) { return g(a) + g(a, 2); }", "none", "(some ");
+});
+
+test("optional fields read as options, and a literal may omit them", () => {
+  emits("interface A { x?: number; y: number } export function f(): A { return { y: 1 }; }", "x := none");
+  emits("interface A { x?: number; y: number } export function f(a: A) { return a.x === undefined ? 0 : a.x + 1; }", "match a.x with");
+  emits("interface A { x: number | null } export function f(a: A) { if (a.x !== null) { return a.x; } return 0; }", "| some tmp1 =>");
+  rejects("interface A { x?: number } export function f(a: A) { return a.x === null ? 0 : 1; }", /always false|TypeScript error/);
+  emits("interface A { x: number | null } export function f() { let a: A = { x: 1 }; if (a.x !== null) { a = { x: null }; return a.x; } return 0; }", "a_1");
+});
+
+test("inline object types are one type per shape", () => {
+  const { source } = run("export function f(a: { x: number }): { x: number } { return { x: a.x + 1 }; }");
+  assert.equal(source.match(/structure /g).length, 1, source);
+});
+
+test("generic functions keep their type parameters", () => {
+  emits("export function f<T>(xs: T[]): T[] { return xs.slice(1); }", "{T : Type}");
+  rejects("export function f<T>(a: T, b: T) { return a === b; }", /only supported/);
+});
+
+test("null checks in their other spellings", () => {
+  emits("export function f(a: number | null) { return a ?? 0; }", "| none => do");
+  emits("interface A { x: number } export function f(a: A | null) { return a?.x; }", "Option.map (fun item");
+  emits("interface A { x?: number } export function f(a: A | null) { return a?.x; }", "Option.bind a");
+  emits("interface A { x: number } export function f(a: A | null) { if (a) return a.x; return 0; }", "match a with");
+  emits("interface A { x: number } export function f(a: A | null) { if (!a) return 0; return a.x; }", "match a with");
+  emits("interface A { x: number } export function f(a: A | null) { if (a !== null && a.x > 0) { return a.x; } return 0; }", "match a with");
+  emits("interface A { x: number } export function f(a: A | null) { if (a === null || a.x > 0) { return 1; } return a.x; }", "match a with");
+  emits("export function f(a: number | null | undefined) { return a == null ? 0 : a; }");
+  rejects("export function f(a: number | null | undefined) { return a === null ? 0 : 1; }", /tell `null` from `undefined`/);
+  rejects("export function f(a: string | null) { return a ? 1 : 0; }", /truthiness|not supported/);
+});
+
+test("a read the project assumes is present stops the model when it isn't", () => {
+  emits("interface A { x: number } export function f(xs: A[]) { return xs[0].x; }", "Js.unwrap");
+  emits("export function f(xs: number[]) { const a: number = xs[0]; return a; }", "Js.unwrap");
+});
+
+test("module-level values are computed once", () => {
+  emits("const LIMIT = 2 * 3; export function f(a: number) { return a + LIMIT; }", "def a.LIMIT : Result Js.Num");
+  emits("const C = { a: 1 }; export function f(a: number) { return a + C.a; }", "_root_.a.C");
+  emits("const NAMES = ['a', 'b']; export function f(a: string) { return NAMES.includes(a); }");
+});
+
+test("forEach is a loop, and return only ends one call", () => {
+  emits("export function f(xs: number[]) { let s = 0; xs.forEach(x => { s += x; }); return s; }", "Aeneas.Std.loop");
+  emits("export function f(xs: number[]) { let s = 0; xs.forEach(x => { s += 1; if (x > 0) return; s += x; }); return s; }", ".cont (tmp2, s_2)");
+  rejects("export function f() { const a = [1]; a.forEach(x => { a.push(x); }); return a; }", /looping over/);
+});
+
 test("identity comparison isn't approximated", () => {
   rejects("interface L { n: number } export function f(xs: L[], x: L) { return xs.includes(x); }", /identity/);
   rejects("export function f(a: number[], b: number[]) { return a === b; }", /only supported on/);
@@ -311,6 +360,29 @@ test("a shadow JavaScript file, a compiler switch or a side effect rejects the f
   rejects(`(globalThis as any).Math = {};\n${source}`, /replaces a built-in/);
 });
 
+test("package imports resolve through the protected mapping, not the candidate's", () => {
+  const make = (name, helper) => {
+    const repo = join(dir, name);
+    mkdirSync(join(repo, "packages/core/src"), { recursive: true });
+    writeFileSync(join(repo, "packages/core/package.json"), JSON.stringify({ name: "@acme/core" }));
+    writeFileSync(join(repo, "packages/core/src/index.ts"), helper);
+    return repo;
+  };
+  const base = make("policy", "export function g(a: number) { return a + 1; }");
+  const head = make("head", "export function g(a: number) { return a + 2; }");
+  // The candidate adds a package claiming the name, which the base doesn't map.
+  mkdirSync(join(head, "fake"), { recursive: true });
+  writeFileSync(join(head, "fake/package.json"), JSON.stringify({ name: "@acme/fake" }));
+  writeFileSync(join(head, "fake/index.ts"), "export function g(a: number) { return a; }");
+  writeFileSync(join(head, "a.ts"), `import { g } from "@acme/core"; export function f(a: number) { return g(a); }`);
+  writeFileSync(join(head, "b.ts"), `import { g } from "@acme/fake"; export function f(a: number) { return g(a); }`);
+  const good = translate({ root: head, repository: head, policyRoot: base, module: "M", targets: ["a.ts::f"] });
+  assert.deepEqual(good.failures, {});
+  assert.ok(good.source.includes("Js.Num.mk (2)"), good.source);
+  const bad = translate({ root: head, repository: head, policyRoot: base, module: "M", targets: ["b.ts::f"] });
+  assert.ok(bad.failures["b.ts::f"]);
+});
+
 test("a problem with a file rejects every target in it, not only the first", () => {
   const root = join(dir, `p${count++}`);
   mkdirSync(root);
@@ -340,7 +412,6 @@ test("only what a function reaches matters", () => {
   assert.deepEqual(run(`// @ts-ignore\nconst broken: string = 1;\n${f}`).failures, {});
   rejects(`import { x } from "missing-package";\nexport function f(a: number) { return x + a; }`, /TypeScript error|`any`/);
   rejects("let n = 0; export function f(a: number) { return a + n; }", /module-level/);
-  rejects("const c = { a: 1 }; export function f(a: number) { return a + c.a; }", /number constants/);
   rejects("const broken: string = 1; const n = 2; export function f(a: number) { return a + g(); }\nfunction g(): number { const b: string = 1; return 1; }", /TypeScript error/);
 });
 

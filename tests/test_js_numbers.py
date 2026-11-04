@@ -87,10 +87,34 @@ export const mapHas = (m: Map<number, string>, k: number) => m.has(k);
 export const mapGet = (m: Map<number, string>, k: number) => m.get(k);
 export const mapSize = (m: Map<string, number>) => m.size;
 export const setHas = (s: Set<string>, k: string) => s.has(k);
+export const optional = (a?: number) => (a === undefined ? 1 : a + 1);
+export const defaulted = (a = 5, b: number = a + 1) => a * b;
+export const destructured = ({ x, y: z }: { x: number; y: number }) => x - z;
+export const anyNull = (a: number | null | undefined) => (a == null ? 0 : a);
+export const orElse = (a: number | null, b: number) => (a ?? b) + 1;
+export const truthyNumber = (a: number) => (a ? 1 : 2);
+export const truthyText = (a: string) => (a ? 1 : 2);
+export const notText = (a: string) => !a;
+export const truthyBig = (a: bigint) => (a ? 1 : 2);
+export function maybeField(a: { x: number } | null) { return a?.x; }
+export function maybeOptional(a: { x?: number } | null) { return a?.x; }
+export function truthyObject(a: { x: number } | null) { if (a) return a.x; return 0; }
+export function notObject(a: { x: number } | undefined) { if (!a) return 0; return a.x; }
+export function bothTests(a: { x: number } | null) { if (a !== null && a.x > 0) { return a.x; } return 0; }
+export function eitherTest(a: { x: number } | null) { if (a === null || a.x > 0) { return 1; } return a.x; }
+export function reads(xs: { n: number }[]) { return xs[0].n + 1; }
+export function walk(xs: number[]) { let s = 0; xs.forEach(x => { s += 1; if (x > 0) return; s += x; }); return s; }
+const LIMIT = 2 * 3;
+const CONFIG = { a: 1, names: ["a", "b"] };
+export const limited = (a: number) => a + LIMIT + CONFIG.a;
+export const named = (a: string) => CONFIG.names.includes(a);
+export const fieldOptional = (a: { x?: number; y: number }) => (a.x === undefined ? a.y : a.x + 1);
+export function fieldNull(a: { x: number | null }) { if (a.x !== null) { return a.x; } return 0; }
 export function changes(xs: number[], i: number, v: number) { const a = xs.slice(); a[i % 9] = v; a.push(v); a.unshift(1); a.pop(); a.shift(); a.reverse(); return a; }
 """
 BATCH = 12
-NAMES = [line.split()[2].split("(")[0] for line in OPERATIONS.strip().splitlines()]
+NAMES = [line.split()[2].split("(")[0] for line in OPERATIONS.strip().splitlines()
+         if line.startswith("export")]
 
 
 @unittest.skipUnless(os.environ.get("PROOFCI_TOOLCHAIN"), "needs the ProofCI toolchain image")
