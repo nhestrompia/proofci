@@ -34,6 +34,8 @@ function generator(seed) {
     switch (type.kind) {
       case "number": return number();
       case "boolean": return next() < 0.5;
+      case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
+      case "void": return undefined;
       case "optional": return next() < 0.3 ? (type.nothing === "null" ? null : undefined) : value(type.inner);
       case "enum": return pick(type.tags).tag;
       case "record": return Object.fromEntries(type.fields.map(f => [f.name, value(f.type)]));
@@ -55,6 +57,10 @@ export function term(type, value) {
       return `(Js.lit (${value === 0 ? 0 : value}))`;
     case "boolean":
       return typeof value === "boolean" ? String(value) : undefined;
+    case "bigint":
+      return typeof value === "bigint" ? `(${value} : Int)` : undefined;
+    case "void":
+      return value === undefined ? "()" : undefined;
     case "optional": {
       if (value === (type.nothing === "null" ? null : undefined)) return "none";
       const inner = term(type.inner, value);
@@ -82,6 +88,8 @@ export function term(type, value) {
   }
 }
 
+const show = value => JSON.stringify(value, (_, v) => (typeof v === "bigint" ? `${v}n` : v));
+
 function compile(root, files, out) {
   for (const file of files) {
     const js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
@@ -106,15 +114,15 @@ export async function differential({ root, out, module, signatures, files, cases
     const value = generator(seed++);
     for (let index = 0; index < cases; index += 1) {
       const inputs = signature.params.map(value);
-      let expected;
+      let expected, threw = false;
       try {
         expected = term(signature.result, fn(...structuredClone(inputs)));
       } catch {
-        expected = undefined;
+        threw = true;
       }
       const args = signature.params.map((type, i) => term(type, inputs[i]));
-      lines.push(`#eval Js.agree ${JSON.stringify(`${target} ${JSON.stringify(inputs)}`)} (_root_.${signature.lean} ${args.join(" ")}) `
-        + (expected === undefined ? "none" : `(some ${expected})`));
+      lines.push(`#eval Js.agree ${JSON.stringify(`${target} ${show(inputs)}`)} (_root_.${signature.lean} ${args.join(" ")}) `
+        + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
   }
   writeFileSync(join(out, "Differential.lean"), `${lines.join("\n")}\n`);

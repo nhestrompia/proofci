@@ -134,6 +134,25 @@ theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 90071992547
 @[step] theorem unwrap_spec {α} (v : α) : unwrap (some v) ⦃ r => r = v ⦄ := by
   simp [unwrap, WP.spec_ok]
 
+/-- `a / b` on `bigint`: truncates, and throws on zero. -/
+def bdiv (a b : Int) : Result Int := if b = 0 then fail .panic else ok (Int.tdiv a b)
+
+/-- `a % b` on `bigint`: takes the sign of `a`, and throws on zero. -/
+def brem (a b : Int) : Result Int := if b = 0 then fail .panic else ok (Int.tmod a b)
+
+/-- `try { body } catch { handler }`. `.panic` is only produced by `throw`, so
+    the handler runs for exceptions and never for leaving the model. -/
+def attempt {α} (body handler : Result α) : Result α :=
+  match body.match with
+  | .vis (.fail .panic) _ => handler
+  | _ => body
+
+@[simp] theorem attempt_ok {α} (v : α) (h : Result α) : attempt (ok v) h = ok v := by
+  simp [attempt]
+
+@[simp] theorem attempt_panic {α} (h : Result α) : attempt (fail .panic) h = h := by
+  simp [attempt]
+
 /-- A number for the differential test. Inputs are always safe integers. -/
 def lit (v : Int) : Num :=
   if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default
@@ -141,9 +160,10 @@ def lit (v : Int) : Num :=
 /-- Compares the model with what Node computed. `expected` is `none` when Node
     produced something other than a value of the declared type. The model may
     always fail, but when it returns a value, Node must have returned the same. -/
-def agree {α} [DecidableEq α] (label : String) (r : Result α) (expected : Option α) : IO Unit :=
+def agree {α} [DecidableEq α] (label : String) (r : Result α) (expected : Option α) (threw : Bool) : IO Unit :=
   match r.match with
   | .ok v => IO.println (if some v = expected then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
+  | .vis (.fail .panic) _ => IO.println (if threw then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
   | _ => IO.println s!"PROOFCI_DIFF failed {label}"
 
 end Js

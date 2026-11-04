@@ -388,6 +388,9 @@ def run_scenario(name, out_dir=None):
         problems.append(f"statuses {statuses} != expected {expected}")
     if done.returncode != expected_exit:
         problems.append(f"exit {done.returncode} != expected {expected_exit}")
+    wanted = TS_REASONS.get(name)
+    if wanted and not any(wanted in g["reason"] for g in data["guarantees"]):
+        problems.append(f"no guarantee was rejected for the expected reason: {wanted!r}")
     if name == "weaken-policy" and not data["policy_changes"]:
         problems.append("policy change not reported")
     if name == "contract-no-panic" and any(g.get("warnings") for g in data["guarantees"]):
@@ -493,6 +496,21 @@ SCENARIOS.update({
     "ts-function-removed": (ts_function_removed, {TS_FEE: S, TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-contract-weakened": (ts_contract_weakened, ts_results(), 1),
 })
+
+
+# A crash in the translator also reports `unsupported`, so these check the cause.
+TS_REASONS = {
+    "ts-fractional-fee": "not a safe integer",
+    "ts-cast-hides-a-type": "type assertions",
+    "ts-javascript-beside-source": "sits beside",
+    "ts-compiler-error-silenced": "@ts-",
+    "ts-compiler-error": "TypeScript error",
+    "ts-tsconfig-relaxes-checks": "TypeScript error",
+    "ts-module-patches-math": "on import",
+    "ts-import-for-side-effects": "side effects",
+    "ts-declaration-file-lies": "no source",
+    "ts-function-removed": "not a top-level function",
+}
 
 
 @unittest.skipUnless(os.environ.get("PROOFCI_TOOLCHAIN"), "needs the ProofCI toolchain image")

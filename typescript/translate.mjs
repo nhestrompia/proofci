@@ -43,6 +43,23 @@ const ORDER = {
   [ts.SyntaxKind.GreaterThanToken]: ">", [ts.SyntaxKind.GreaterThanEqualsToken]: "≥",
 };
 
+const COMPOUND = {
+  [ts.SyntaxKind.PlusEqualsToken]: ts.SyntaxKind.PlusToken, [ts.SyntaxKind.MinusEqualsToken]: ts.SyntaxKind.MinusToken,
+  [ts.SyntaxKind.AsteriskEqualsToken]: ts.SyntaxKind.AsteriskToken, [ts.SyntaxKind.SlashEqualsToken]: ts.SyntaxKind.SlashToken,
+  [ts.SyntaxKind.PercentEqualsToken]: ts.SyntaxKind.PercentToken,
+};
+
+const ONE = ts.factory.createNumericLiteral(1); // the step of `++` and `--`
+
+const isUpdate = node => node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken;
+
+// What `node` writes to, if it is a write.
+const writeTarget = node => {
+  if (ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind)) return node.left;
+  if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && isUpdate(node)) return node.operand;
+  return undefined;
+};
+
 const name = text => {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) throw new Unsupported(`the name \`${text}\` has no Lean spelling yet`);
   return LEAN_KEYWORDS.has(text) ? `«${text}»` : text;
@@ -75,6 +92,7 @@ class Translator {
     this.constants = new Map();
     this.fileChecks = new Map();
     this.order = [];
+    this.current = [];
   }
 
   fail(node, message) {
@@ -166,7 +184,10 @@ class Translator {
     const { TypeFlags } = ts;
     if (type.flags & TypeFlags.NumberLike) return "Js.Num";
     if (type.flags & TypeFlags.BooleanLike) return "Bool";
+    if (type.flags & TypeFlags.BigIntLike) return "Int";
+    if (type.flags & TypeFlags.Void) return "Unit";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
+    if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (type.isUnion()) {
       const parts = type.types.filter(t => !(t.flags & (TypeFlags.Null | TypeFlags.Undefined)));
       const nulls = type.types.filter(t => t.flags & TypeFlags.Null).length;
@@ -249,6 +270,8 @@ class Translator {
     const lean = this.type(type, node);
     if (lean === "Js.Num") return { kind: "number" };
     if (lean === "Bool") return { kind: "boolean" };
+    if (lean === "Int") return { kind: "bigint" };
+    if (lean === "Unit") return { kind: "void" };
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
       return { kind: "optional", nothing, inner: this.describe(this.checker.getNonNullableType(type), node) };
@@ -293,6 +316,7 @@ class Translator {
   literal(node) {
     node = unwrap(node);
     if (ts.isNumericLiteral(node)) return Number(node.text);
+    if (ts.isBigIntLiteral(node)) return undefined;
     if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(unwrap(node.operand))) {
       return -Number(unwrap(node.operand).text);
     }
@@ -301,7 +325,7 @@ class Translator {
 
   number(value, node) {
     if (!Number.isSafeInteger(value)) throw this.fail(node, `the number ${value} is not a safe integer`);
-    return `(Js.Num.mk (${value}) (by decide) (by decide))`;
+    return `(Js.Num.mk (${value}) (of_decide_eq_true rfl) (of_decide_eq_true rfl))`;
   }
 
   // ------------------------------------------------------------ functions
@@ -323,19 +347,23 @@ class Translator {
 
   // Declares a function and everything it reaches, callees first.
   declareFunction(declaration) {
-    if (this.functions.has(declaration)) {
-      const known = this.functions.get(declaration);
-      if (!known) throw this.fail(declaration, "recursion is not supported yet");
+    const known = this.functions.get(declaration);
+    if (known?.pending) {
+      if (this.current.at(-1) !== declaration) throw this.fail(declaration, "mutual recursion is not supported yet");
+      known.recursive = true;
       return known.lean;
     }
+    if (known) return known.lean;
     this.checkFile(declaration.getSourceFile());
     const fn = this.bodyOf(declaration);
     if (!fn || !fn.body) throw this.fail(declaration, "this function has no body to translate");
     if (fn.typeParameters?.length) throw this.fail(fn, "generic functions are not supported yet");
     if (fn.asteriskToken) throw this.fail(fn, "generators are not supported");
     if (fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) throw this.fail(fn, "`async` is not supported yet");
-    this.functions.set(declaration, null);
     const lean = this.leanName(declaration, declaration.name.text);
+    const entry = { lean, pending: true, recursive: false };
+    this.functions.set(declaration, entry);
+    this.current.push(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
     const returns = this.checker.getReturnTypeOfSignature(signature);
     const scope = new Scope(this, fn);
@@ -344,15 +372,20 @@ class Translator {
         throw this.fail(p, "only plain parameters are supported for now");
       }
       const text = local(p.name.text);
+      scope.taken.add(text);
       return `(${text} : ${this.type(this.checker.getTypeAtLocation(p), p)})`;
     });
     const result = this.type(returns, fn);
+    const flow = scope.functionFlow(returns, result);
+    const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = ts.isBlock(fn.body)
-      ? scope.block([...fn.body.statements], returns, new Map())
-      : scope.block([ts.factory.createReturnStatement(fn.body)], returns, new Map(), fn.body);
-    const text = [`def ${lean} ${params.join(" ")} : Result ${result} := do`, ...body.map(l => `  ${l}`)].join("\n");
-    this.functions.set(declaration, { lean });
-    this.order.push(text);
+      ? scope.block(statements, flow, new Map())
+      : scope.returning(fn.body, flow, new Map());
+    const lines = [`def ${lean} ${params.join(" ")} : Result ${result} := do`, ...body.map(l => `  ${l}`)];
+    if (entry.recursive) lines.push("partial_fixpoint");
+    this.current.pop();
+    entry.pending = false;
+    this.order.push(lines.join("\n"));
     return lean;
   }
 
@@ -392,19 +425,121 @@ class Scope {
     this.fn = fn;
     this.counter = 0;
     this.names = new Set();
-    this.writes = new Set();
-    const walk = node => {
+    this.taken = new Set(); // Lean names used so far in this function
+    const walk = (node, nested) => {
       if (ts.isIdentifier(node)) this.names.add(node.text);
-      if (ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind)) this.noteWrite(node.left);
-      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
-        && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) this.noteWrite(node.operand);
-      ts.forEachChild(node, walk);
+      const write = writeTarget(node);
+      if (write) this.noteWrite(write, nested);
+      ts.forEachChild(node, child => walk(child, nested || (ts.isFunctionLike(node) && node !== fn)));
     };
-    walk(fn);
+    walk(fn, false);
   }
 
-  noteWrite(target) {
-    throw this.t.fail(target, "assignment is not supported yet");
+  noteWrite(target, nested) {
+    target = unwrap(target);
+    if (nested) throw this.t.fail(target, "assignment inside a nested function is not supported yet");
+    if (!ts.isIdentifier(target)) throw this.t.fail(target, "assigning to a field or element is not supported yet");
+    const declaration = this.symbol(target)?.valueDeclaration;
+    if (!declaration || this.isModuleLevel(declaration)) throw this.t.fail(target, "assignment to module-level state");
+  }
+
+  functionFlow(returns, result) {
+    const isVoid = result === "Unit";
+    return {
+      returns, result,
+      fall: () => {
+        if (!isVoid) throw this.t.fail(this.fn, "a path reaches the end of the function without `return`");
+        return ["Result.ok ()"];
+      },
+      ret: value => [`Result.ok ${value}`],
+    };
+  }
+
+  // A path that ends by joining the code after a branch. Only `vars` change.
+  joinFlow(vars, outer) {
+    return {
+      returns: outer.returns, result: outer.result,
+      fall: env => [`Result.ok ${this.tuple(vars, env)}`],
+      ret: null,
+    };
+  }
+
+  // Aeneas's `do` can't elaborate a name rebound in a nested block, so nothing
+  // is ever shadowed: each assignment makes a new name, and `env` tracks which
+  // name is current for a variable on this path.
+  current(symbol, env) {
+    return env.get(symbol)?.lean ?? local(symbol.name);
+  }
+
+  rebind(symbol, env, extra = {}) {
+    const base = local(symbol.name);
+    let lean = base;
+    for (let version = 1; this.taken.has(lean) || (lean !== base && this.names.has(lean)); version += 1) {
+      lean = base.startsWith("«") ? `${symbol.name}_v${version}` : `${base}_${version}`;
+    }
+    this.taken.add(lean);
+    const { tag, bound } = env.get(symbol) ?? {};
+    env.set(symbol, { tag, bound, ...extra, lean });
+    return lean;
+  }
+
+  tuple(vars, env) {
+    if (!vars.length) return "()";
+    const names = vars.map(v => this.current(v, env));
+    return names.length === 1 ? names[0] : `(${names.join(", ")})`;
+  }
+
+  // Binds `vars` to new names in `env`, for the code after a join.
+  pattern(vars, env) {
+    if (!vars.length) return "_";
+    const names = vars.map(v => this.rebind(v, env));
+    return names.length === 1 ? names[0] : `(${names.join(", ")})`;
+  }
+
+  tupleType(vars, node) {
+    if (!vars.length) return "Unit";
+    return vars.map(v => this.t.type(this.declaredType(v, node), node)).join(" × ");
+  }
+
+  // Variables declared outside `nodes` and written inside them, in a stable order.
+  assignedIn(nodes, declaredInside = () => false) {
+    const found = new Map();
+    const walk = node => {
+      if (ts.isFunctionLike(node)) return;
+      const write = writeTarget(node);
+      if (write) {
+        const symbol = this.symbol(unwrap(write));
+        if (symbol && !this.isWithin(symbol, nodes) && !declaredInside(symbol)) found.set(symbol.name, symbol);
+      }
+      ts.forEachChild(node, walk);
+    };
+    nodes.filter(Boolean).forEach(walk);
+    return [...found.keys()].sort().map(key => found.get(key));
+  }
+
+  isWithin(symbol, nodes) {
+    const declaration = symbol.valueDeclaration;
+    return nodes.some(node => node && declaration.pos >= node.pos && declaration.end <= node.end
+      && declaration.getSourceFile() === node.getSourceFile());
+  }
+
+  // Does this contain a `return`, `break` or `continue` that leaves it?
+  jumps(node) {
+    if (!node) return false;
+    let found = false;
+    const walk = (current, loop, breakable) => {
+      if (found || ts.isFunctionLike(current)) return;
+      if (ts.isReturnStatement(current)) found = true;
+      else if (ts.isBreakStatement(current) && !breakable) found = true;
+      else if (ts.isContinueStatement(current) && !loop) found = true;
+      else {
+        const inLoop = loop || ts.isIterationStatement(current, false);
+        const inBreakable = breakable || ts.isIterationStatement(current, false) || ts.isSwitchStatement(current);
+        ts.forEachChild(current, child => walk(child, inLoop, inBreakable));
+      }
+    };
+    walk(node, false, false);
+    return found;
   }
 
   fresh() {
@@ -424,6 +559,9 @@ class Scope {
 
   isNumber(node) { return (this.typeOf(node).flags & ts.TypeFlags.NumberLike) !== 0; }
   isBoolean(node) { return (this.typeOf(node).flags & ts.TypeFlags.BooleanLike) !== 0; }
+  isBigInt(node) {
+    return (this.typeOf(node).flags & ts.TypeFlags.BigIntLike) !== 0;
+  }
   isUndefined(node) {
     return ts.isIdentifier(node) && node.text === "undefined" && !this.symbol(node)?.valueDeclaration;
   }
@@ -440,77 +578,334 @@ class Scope {
 
   // ------------------------------------------------------------ statements
 
-  // Lines for `statements`. Every path must leave through `return`.
-  block(statements, returns, env, expression) {
-    if (expression) return this.returning(expression, returns, env);
-    if (!statements.length) throw this.t.fail(this.fn, "a path reaches the end of the function without `return`");
+  // Lines for `statements`, followed by whatever `flow` does at the end. Local
+  // bindings are written `let x ← Result.ok v`: Aeneas's `do` can't elaborate a
+  // plain `let` inside a loop body, and `step*` removes these for free.
+  block(statements, flow, env) {
+    if (!statements.length) return flow.fall(env);
     const [first, ...rest] = statements;
-    if (ts.isBlock(first)) return this.block([...first.statements, ...rest], returns, env);
-    if (ts.isEmptyStatement(first)) return this.block(rest, returns, env);
-    if (ts.isReturnStatement(first)) {
-      if (!first.expression) throw this.t.fail(first, "`return` without a value");
-      return this.returning(first.expression, returns, env);
+    if (ts.isBlock(first)) {
+      // Inner declarations go out of scope, which Lean's shadowing can't express
+      // once code follows the block, so a block with declarations must join.
+      const declares = first.statements.some(ts.isVariableStatement);
+      if (declares && rest.length && !this.exits(first)) return this.joined(first, rest, flow, env);
+      return this.block([...first.statements, ...rest], flow, env);
     }
-    if (ts.isVariableStatement(first)) return this.variable(first, rest, returns, env);
-    if (ts.isIfStatement(first)) return this.conditional(first, rest, returns, env);
-    if (ts.isSwitchStatement(first)) return this.switching(first, returns, env);
+    if (ts.isEmptyStatement(first)) return this.block(rest, flow, env);
+    if (ts.isReturnStatement(first)) {
+      if (!flow.ret) throw this.t.fail(first, "`return` here is not supported yet");
+      if (!first.expression) {
+        if (flow.result !== "Unit") throw this.t.fail(first, "`return` without a value");
+        return flow.ret("()");
+      }
+      return this.returning(first.expression, flow, env);
+    }
+    if (ts.isThrowStatement(first)) return this.throwing(first);
+    if (ts.isBreakStatement(first) || ts.isContinueStatement(first)) {
+      if (first.label) throw this.t.fail(first, "labels are not supported");
+      const leave = ts.isBreakStatement(first) ? flow.brk : flow.cont;
+      if (!leave) throw this.t.fail(first, "this `break` or `continue` is not supported yet");
+      return leave(env);
+    }
+    if (ts.isVariableStatement(first)) return this.variable(first, rest, flow, env);
+    if (ts.isExpressionStatement(first)) return this.effect(first, rest, flow, env);
+    if (ts.isIfStatement(first)) return this.conditional(first, rest, flow, env);
+    if (ts.isSwitchStatement(first)) return this.switching(first, rest, flow, env);
+    if (ts.isTryStatement(first)) return this.attempt(first, rest, flow, env);
+    if (ts.isForOfStatement(first)) return this.forOf(first, rest, flow, env);
+    if (ts.isForStatement(first)) return this.forLoop(first, rest, flow, env);
+    if (ts.isWhileStatement(first)) return this.whileLoop(first, rest, flow, env);
     throw this.t.fail(first, `\`${ts.SyntaxKind[first.kind]}\` is not supported yet`);
   }
 
-  returning(node, returns, env) {
-    const lines = [];
-    const value = this.convert(node, returns, env, lines);
-    return [...lines, `Result.ok ${value}`];
+  // Runs `node` as its own sequence, then continues with `rest`.
+  joined(node, rest, flow, env) {
+    if (this.jumps(node)) throw this.t.fail(node, "a nested block that returns is not supported yet");
+    const vars = this.assignedIn([node]);
+    const inner = this.block([...node.statements], this.joinFlow(vars, flow), new Map(env));
+    const after = new Map(env);
+    return [`let ${this.pattern(vars, after)} ← do`, ...this.indent(inner), ...this.block(rest, flow, after)];
   }
 
-  variable(statement, rest, returns, env) {
+  returning(node, flow, env) {
+    const lines = [];
+    const value = this.convert(node, flow.returns, env, lines);
+    return [...lines, ...flow.ret(value)];
+  }
+
+  // A thrown value stops the function. `.panic` is only ever produced here, which
+  // is how `try` tells a thrown exception from leaving the model.
+  throwing(statement) {
+    const thrown = unwrap(statement.expression);
+    let simple = ts.isNewExpression(thrown);
+    const walk = node => {
+      if (ts.isCallExpression(node) || (node !== thrown && ts.isNewExpression(node))) simple = false;
+      ts.forEachChild(node, walk);
+    };
+    walk(thrown);
+    if (!simple) throw this.t.fail(statement, "only `throw new SomeError(...)` is supported for now");
+    return ["Result.fail .panic"];
+  }
+
+  variable(statement, rest, flow, env) {
     if (!(statement.declarationList.flags & ts.NodeFlags.BlockScoped)) throw this.t.fail(statement, "`var` is not supported");
     const lines = [];
     const next = new Map(env);
     for (const declaration of statement.declarationList.declarations) {
       if (!declaration.initializer) throw this.t.fail(declaration, "a declaration without a value");
       if (ts.isIdentifier(declaration.name)) {
-        const value = this.expression(declaration.initializer, env, lines);
-        lines.push(`let ${local(declaration.name.text)} := ${value}`);
-        next.delete(this.symbol(declaration.name));
+        const symbol = this.symbol(declaration.name);
+        const value = this.convert(declaration.initializer, this.declaredType(symbol, declaration.name), next, lines);
+        lines.push(`let ${this.rebind(symbol, next)} ← Result.ok (${value})`);
         continue;
       }
       if (!ts.isObjectBindingPattern(declaration.name)) throw this.t.fail(declaration, "array destructuring is not supported yet");
-      const source = this.expression(declaration.initializer, env, lines);
+      const source = this.expression(declaration.initializer, next, lines);
       for (const element of declaration.name.elements) {
         if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) {
           throw this.t.fail(element, "only plain destructuring is supported for now");
         }
         const field = element.propertyName?.getText() ?? element.name.text;
-        lines.push(`let ${local(element.name.text)} := ${source}.${name(field)}`);
+        lines.push(`let ${this.rebind(this.symbol(element.name), next)} ← Result.ok (${source}.${name(field)})`);
       }
     }
-    return [...lines, ...this.block(rest, returns, next)];
+    return [...lines, ...this.block(rest, flow, next)];
   }
 
+  // An expression used as a statement: an assignment, an update or a call.
+  effect(statement, rest, flow, env) {
+    const node = unwrap(statement.expression);
+    const lines = [];
+    const next = new Map(env);
+    if (ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind)) {
+      this.assign(node, next, lines);
+    } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      if (!isUpdate(node)) throw this.t.fail(node, "this statement has no effect");
+      const target = unwrap(node.operand);
+      const op = node.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
+      this.update(target, op, ONE, next, lines);
+    } else if (ts.isCallExpression(node)) {
+      this.expression(node, next, lines);
+    } else {
+      throw this.t.fail(node, "this statement is not supported yet");
+    }
+    return [...lines, ...this.block(rest, flow, next)];
+  }
+
+  assign(node, env, lines) {
+    const target = unwrap(node.left);
+    if (!ts.isIdentifier(target)) throw this.t.fail(target, "assigning to a field or element is not supported yet");
+    const symbol = this.symbol(target);
+    if (env.get(symbol)?.present) throw this.t.fail(node, "assigning to a variable inside its own null check is not supported yet");
+    const op = node.operatorToken.kind;
+    if (op === ts.SyntaxKind.EqualsToken) {
+      const value = this.convert(node.right, this.declaredType(symbol, target), env, lines);
+      lines.push(`let ${this.rebind(symbol, env)} ← Result.ok (${value})`);
+      return;
+    }
+    const base = COMPOUND[op];
+    if (!base) throw this.t.fail(node, "this assignment operator is not supported yet");
+    this.update(target, base, node.right, env, lines);
+  }
+
+  update(target, op, operand, env, lines) {
+    if (!ts.isIdentifier(target)) throw this.t.fail(target, "assigning to a field or element is not supported yet");
+    const left = this.expression(target, env, lines);
+    const value = this.arithmetic(op, target, left, operand, env, lines);
+    lines.push(`let ${this.rebind(this.symbol(target), env)} ← Result.ok (${value})`);
+  }
+
+  // Paths that end by returning, breaking or throwing.
   exits(node) {
-    if (ts.isReturnStatement(node)) return true;
+    if (ts.isReturnStatement(node) || ts.isThrowStatement(node) || ts.isBreakStatement(node) || ts.isContinueStatement(node)) return true;
     if (ts.isBlock(node)) return node.statements.some(s => this.exits(s));
     if (ts.isIfStatement(node)) return Boolean(node.elseStatement) && this.exits(node.thenStatement) && this.exits(node.elseStatement);
-    if (ts.isSwitchStatement(node)) return true;
     return false;
   }
 
-  conditional(statement, rest, returns, env) {
+  conditional(statement, rest, flow, env) {
     const whenTrue = statement.thenStatement;
     const whenFalse = statement.elseStatement;
     const trueExits = this.exits(whenTrue);
     const falseExits = whenFalse ? this.exits(whenFalse) : false;
-    // A branch that doesn't return would need a join point; that comes with mutation.
-    if (!trueExits && !falseExits) throw this.t.fail(statement, "an `if` where neither branch returns is not supported yet");
+    const narrowed = this.narrowing(statement.expression, env);
+
+    // Neither branch leaves, so both can join the code that follows.
+    if (!trueExits && !falseExits && rest.length && !this.jumps(whenTrue) && !this.jumps(whenFalse)) {
+      const vars = this.assignedIn([whenTrue, whenFalse]);
+      const join = this.joinFlow(vars, flow);
+      const arm = (onPath, branchEnv) => {
+        const chosen = onPath ? whenTrue : whenFalse;
+        return this.block(chosen ? [chosen] : [], join, new Map(branchEnv));
+      };
+      if (narrowed) {
+        const arms = narrowed(arm);
+        const after = new Map(env);
+        return [`let ${this.pattern(vars, after)} ← do`, ...this.indent(arms), ...this.block(rest, flow, after)];
+      }
+      const lines = [];
+      const test = this.condition(statement.expression, env, lines);
+      const thenLines = arm(true, env), elseLines = arm(false, env);
+      const after = new Map(env);
+      return [...lines, `let ${this.pattern(vars, after)} ← if ${test} then`, ...this.indent(this.indent(thenLines)),
+        "  else", ...this.indent(this.indent(elseLines)), ...this.block(rest, flow, after)];
+    }
+
+    // Otherwise each branch continues with its own copy of what follows.
     const thenPath = trueExits ? [whenTrue] : [whenTrue, ...rest];
     const elsePath = falseExits ? [whenFalse] : [...(whenFalse ? [whenFalse] : []), ...rest];
-    const narrowed = this.narrowing(statement.expression, env);
-    if (narrowed) return narrowed(onPath => this.block(onPath ? thenPath : elsePath, returns, env), (onPath, next) => this.block(onPath ? thenPath : elsePath, returns, next));
+    const arm = (onPath, branchEnv) => this.block(onPath ? thenPath : elsePath, flow, new Map(branchEnv));
+    if (narrowed) return narrowed(arm);
     const lines = [];
     const test = this.condition(statement.expression, env, lines);
-    return [...lines, `if ${test} then`, ...this.indent(this.block(thenPath, returns, env)),
-      "else", ...this.indent(this.block(elsePath, returns, env))];
+    return [...lines, `if ${test} then`, ...this.indent(arm(true, env)), "else", ...this.indent(arm(false, env))];
+  }
+
+  // `try`: the catch block runs only for a thrown exception. A value that left
+  // the model stays a failure, so it can't be mistaken for one.
+  attempt(statement, rest, flow, env) {
+    if (statement.finallyBlock) throw this.t.fail(statement, "`finally` is not supported yet");
+    const clause = statement.catchClause;
+    if (clause.variableDeclaration && this.usedIn(clause.variableDeclaration, clause.block)) {
+      throw this.t.fail(clause, "reading the caught value is not supported yet");
+    }
+    const attempted = statement.tryBlock;
+    if (this.assignedIn([attempted]).length) {
+      throw this.t.fail(attempted, "assigning to an outer variable inside `try` is not supported yet");
+    }
+    const bothReturn = this.jumps(attempted) || this.jumps(clause.block);
+    let inner = flow, vars = null;
+    if (!bothReturn) {
+      vars = this.assignedIn([clause.block]);
+      inner = this.joinFlow(vars, flow);
+    } else if (!this.exits(attempted) || !this.exits(clause.block)) {
+      throw this.t.fail(statement, "`try` must either always return or never return for now");
+    }
+    const body = [...this.indent(this.block([...attempted.statements], inner, new Map(env))),
+      ") (do", ...this.indent(this.block([...clause.block.statements], inner, new Map(env))), ")"];
+    if (!vars) return ["Js.attempt (do", ...body];
+    const after = new Map(env);
+    return [`let ${this.pattern(vars, after)} ← Js.attempt (do`, ...body, ...this.block(rest, flow, after)];
+  }
+
+  usedIn(declaration, node) {
+    const symbol = declaration.symbol ?? this.checker.getSymbolAtLocation(declaration.name);
+    let used = false;
+    const walk = current => {
+      if (ts.isIdentifier(current) && this.symbol(current) === symbol) used = true;
+      ts.forEachChild(current, walk);
+    };
+    walk(node);
+    return used;
+  }
+
+  // ----------------------------------------------------------------- loops
+
+  // `step` builds one iteration, given the flow for its body. `leaving` is what
+  // the code after the loop can see, which excludes a `for` loop's counters.
+  emitLoop(statement, vars, rest, flow, env, step, leaving = vars) {
+    const returns = this.jumpsOut(statement);
+    const inside = new Map(env);
+    const pattern = vars.length ? this.pattern(vars, inside) : "()";
+    const stateType = this.tupleType(vars, statement);
+    const afterType = this.tupleType(leaving, statement);
+    const leave = stepEnv => (returns
+      ? `Result.ok (.done (.inr ${this.tuple(leaving, stepEnv)}))`
+      : `Result.ok (.done ${this.tuple(leaving, stepEnv)})`);
+    const again = stepEnv => [`Result.ok (.cont ${this.tuple(vars, stepEnv)})`];
+    const body = {
+      returns: flow.returns, result: flow.result,
+      fall: null, cont: null, brk: stepEnv => [leave(stepEnv)],
+      ret: value => [returns ? `Result.ok (.done (.inl ${value}))` : `Result.ok (.done ${value})`],
+    };
+    const lines = step(body, inside, leave, again);
+    const result = returns ? `Sum (${flow.result}) (${afterType})` : afterType;
+    const header = `(Aeneas.Std.loop (fun (state : ${stateType}) => match state with | ${pattern} => do`;
+    const call = [header, ...this.indent(lines), `) ${this.tuple(vars, env)} : Result (${result}))`];
+    const after = new Map(env);
+    if (!returns) return [`let ${this.pattern(leaving, after)} ← ${call[0]}`, ...call.slice(1), ...this.block(rest, flow, after)];
+    if (!flow.ret) throw this.t.fail(statement, "`return` here is not supported yet");
+    const value = this.fresh();
+    const carried = this.fresh();
+    return [`let ${value} ← ${call[0]}`, ...call.slice(1), `match ${value} with`,
+      `| .inl ${carried} =>`, ...this.indent(flow.ret(carried)),
+      `| .inr ${this.pattern(leaving, after)} =>`, ...this.indent(this.block(rest, flow, after))];
+  }
+
+  jumpsOut(statement) {
+    let found = false;
+    const walk = node => {
+      if (ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node)) found = true;
+      ts.forEachChild(node, walk);
+    };
+    walk(statement);
+    return found;
+  }
+
+  whileLoop(statement, rest, flow, env) {
+    const vars = this.assignedIn([statement]);
+    return this.emitLoop(statement, vars, rest, flow, env, (body, inside, leave, again) => {
+      const lines = [];
+      const test = this.condition(statement.expression, inside, lines);
+      const inner = this.block([statement.statement], { ...body, fall: again, cont: again }, new Map(inside));
+      return [...lines, `if ${test} then`, ...this.indent(inner), "else", `  ${leave(inside)}`];
+    });
+  }
+
+  forLoop(statement, rest, flow, env) {
+    const initializer = statement.initializer;
+    if (!initializer || !ts.isVariableDeclarationList(initializer)) throw this.t.fail(statement, "a `for` loop needs a declaration");
+    if (!(initializer.flags & ts.NodeFlags.BlockScoped)) throw this.t.fail(statement, "`var` is not supported");
+    if (!statement.condition || !statement.incrementor) throw this.t.fail(statement, "a `for` loop needs a condition and an update");
+    const lines = [];
+    const start = new Map(env);
+    for (const declaration of initializer.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) throw this.t.fail(declaration, "a `for` loop needs plain declarations");
+      const symbol = this.symbol(declaration.name);
+      const value = this.convert(declaration.initializer, this.declaredType(symbol, declaration.name), start, lines);
+      lines.push(`let ${this.rebind(symbol, start)} ← Result.ok (${value})`);
+    }
+    // The counters live in the loop's state, but nothing after the loop sees them.
+    const counters = this.declaredBy(initializer).filter(symbol => this.isWrittenIn(symbol, statement));
+    const outer = this.assignedIn([statement]);
+    const code = this.emitLoop(statement, [...counters, ...outer], rest, flow, start, (body, inside, leave, again) => {
+      const head = [];
+      const test = this.condition(statement.condition, inside, head);
+      const advance = stepEnv => {
+        const lines2 = [];
+        const next = new Map(stepEnv);
+        const change = unwrap(statement.incrementor);
+        if (ts.isBinaryExpression(change)) this.assign(change, next, lines2);
+        else if ((ts.isPrefixUnaryExpression(change) || ts.isPostfixUnaryExpression(change)) && isUpdate(change)) {
+          const op = change.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
+          this.update(unwrap(change.operand), op, ONE, next, lines2);
+        } else throw this.t.fail(change, "this `for` update is not supported yet");
+        return [...lines2, ...again(next)];
+      };
+      const inner = this.block([statement.statement], { ...body, fall: advance, cont: advance }, new Map(inside));
+      return [...head, `if ${test} then`, ...this.indent(inner), "else", `  ${leave(inside)}`];
+    }, outer);
+    return [...lines, ...code];
+  }
+
+  declaredBy(list) {
+    return list.declarations.map(d => this.symbol(d.name));
+  }
+
+  isWrittenIn(symbol, node) {
+    let found = false;
+    const walk = current => {
+      const write = writeTarget(current);
+      if (write && this.symbol(unwrap(write)) === symbol) found = true;
+      ts.forEachChild(current, walk);
+    };
+    walk(node);
+    return found;
+  }
+
+  forOf(statement, rest, flow, env) {
+    throw this.t.fail(statement, "`for...of` needs arrays, which are not supported yet");
   }
 
   indent(lines) { return lines.map(l => `  ${l}`); }
@@ -536,23 +931,20 @@ class Scope {
     if (strict && !(allowed.isUnion() && allowed.types.some(t => t.flags & wanted))) {
       throw this.t.fail(test, "this null check is always false, because the type allows the other nullish value");
     }
-    const lean = name(variable.text);
-    return (_unused, arm) => {
+    const lean = this.current(symbol, env);
+    return arm => {
       const next = new Map(env);
-      next.set(symbol, { present: true });
-      return [`match ${lean} with`, "| none =>", ...this.indent(arm(equal, env)), `| some ${lean} =>`, ...this.indent(arm(!equal, next))];
+      const inner = this.rebind(symbol, next, { present: true });
+      return [`match ${lean} with`, "| none =>", ...this.indent(arm(equal, env)), `| some ${inner} =>`, ...this.indent(arm(!equal, next))];
     };
   }
 
-  switching(statement, returns, env) {
+  switching(statement, rest, flow, env) {
     const subject = unwrap(statement.expression);
-    if (statement.caseBlock.clauses.some(c => ts.isDefaultClause(c)) && !ts.isPropertyAccessExpression(subject) && !ts.isIdentifier(subject)) {
-      throw this.t.fail(statement, "this `switch` is not supported yet");
-    }
     let owner, shape;
     if (ts.isPropertyAccessExpression(subject) && subject.name.text === "kind" && ts.isIdentifier(subject.expression)) {
       owner = subject.expression;
-      shape = this.t.shape(this.declaredType(this.symbol(owner), owner)) ?? this.declareFor(owner);
+      shape = this.declareFor(owner);
       if (shape?.kind !== "tagged") throw this.t.fail(statement, "`switch` on `.kind` needs a tagged union");
     } else if (ts.isIdentifier(subject)) {
       owner = subject;
@@ -563,31 +955,56 @@ class Scope {
     }
     const tags = shape.kind === "tagged" ? shape.variants.map(v => v.tag) : shape.tags;
     const arms = new Map();
-    let fallback;
+    let fallback, pending = [];
     for (const clause of statement.caseBlock.clauses) {
-      if (!clause.statements.length) throw this.t.fail(clause, "fall-through between cases is not supported yet");
-      if (!clause.statements.some(s => this.exits(s))) throw this.t.fail(clause, "every case must return");
-      if (ts.isDefaultClause(clause)) { fallback = clause; continue; }
-      const label = unwrap(clause.expression);
-      if (!ts.isStringLiteral(label)) throw this.t.fail(clause, "case labels must be string literals");
-      arms.set(label.text, clause);
+      if (!ts.isDefaultClause(clause)) {
+        const label = unwrap(clause.expression);
+        if (!ts.isStringLiteral(label)) throw this.t.fail(clause, "case labels must be string literals");
+        pending.push(label.text);
+      }
+      if (!clause.statements.length) {
+        if (ts.isDefaultClause(clause)) throw this.t.fail(clause, "an empty `default` is not supported yet");
+        continue;
+      }
+      const statements = [...clause.statements];
+      const last = statements.at(-1);
+      if (ts.isBreakStatement(last) && !last.label) statements.pop();
+      else if (!this.exits(last) && clause !== statement.caseBlock.clauses.at(-1)) {
+        throw this.t.fail(clause, "falling through to the next case is not supported");
+      }
+      if (statements.some(s => this.containsBreak(s))) throw this.t.fail(clause, "only a final `break` is supported in a case");
+      for (const tag of pending) arms.set(tag, statements);
+      if (ts.isDefaultClause(clause)) fallback = statements;
+      pending = [];
     }
-    const lines = [`match ${name(owner.text)} with`];
     const symbol = this.symbol(owner);
+    const lines = [`match ${this.current(symbol, env)} with`];
     for (const tag of tags) {
-      const clause = arms.get(tag) ?? fallback;
-      if (!clause) throw this.t.fail(statement, `no case handles \`${tag}\``);
+      const statements = arms.get(tag) ?? fallback ?? [];
+      const path = [...statements, ...rest];
       if (shape.kind === "enum") {
-        lines.push(`| .${name(tag)} =>`, ...this.indent(this.block([...clause.statements], returns, env)));
+        lines.push(`| .${name(tag)} =>`, ...this.indent(this.block(path, flow, new Map(env))));
         continue;
       }
       const fields = shape.variants.find(v => v.tag === tag).fields;
       const bound = new Map(fields.map(f => [f, this.fresh()]));
       const next = new Map(env);
-      next.set(symbol, { tag, bound });
-      lines.push(`| .${name(tag)} ${[...bound.values()].join(" ")} =>`, ...this.indent(this.block([...clause.statements], returns, next)));
+      next.set(symbol, { ...next.get(symbol), tag, bound });
+      lines.push(`| .${name(tag)} ${[...bound.values()].join(" ")} =>`, ...this.indent(this.block(path, flow, next)));
     }
     return lines;
+  }
+
+  containsBreak(node) {
+    let found = false;
+    const walk = (current, inner) => {
+      if (ts.isFunctionLike(current)) return;
+      if (ts.isBreakStatement(current) && !inner) found = true;
+      const nested = inner || ts.isIterationStatement(current, false) || ts.isSwitchStatement(current);
+      ts.forEachChild(current, child => walk(child, nested));
+    };
+    walk(node, false);
+    return found;
   }
 
   declareFor(node) {
@@ -681,6 +1098,7 @@ class Scope {
   expression(node, env, lines) {
     node = unwrap(node);
     if (ts.isNumericLiteral(node)) return this.t.number(Number(node.text), node);
+    if (ts.isBigIntLiteral(node)) return `(${node.text.slice(0, -1).replace(/_/g, "")} : Int)`;
     if (node.kind === ts.SyntaxKind.TrueKeyword) return "true";
     if (node.kind === ts.SyntaxKind.FalseKeyword) return "false";
     if (ts.isIdentifier(node)) return this.identifier(node, env);
@@ -698,21 +1116,33 @@ class Scope {
       if (node.operator === ts.SyntaxKind.MinusToken) {
         const literal = this.t.literal(node);
         if (literal !== undefined) return this.t.number(literal, node);
+        if (this.isBigInt(node.operand)) return `(-${this.expression(node.operand, env, lines)})`;
         return this.bind(`Js.neg ${this.numeric(node.operand, env, lines)}`, lines);
       }
       throw this.t.fail(node, "this operator is not supported");
     }
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
-      if (ARITHMETIC[op]) {
-        if (!this.isNumber(node)) throw this.t.fail(node, "arithmetic is only supported on `number` for now");
-        const left = this.numeric(node.left, env, lines);
-        const right = this.numeric(node.right, env, lines);
-        return this.bind(`Js.${ARITHMETIC[op]} ${left} ${right}`, lines);
-      }
+      if (ARITHMETIC[op]) return this.arithmetic(op, node.left, this.operand(node.left, env, lines), node.right, env, lines);
       return `(decide (${this.condition(node, env, lines)}))`;
     }
     throw this.t.fail(node, `\`${ts.SyntaxKind[node.kind]}\` is not supported yet`);
+  }
+
+  operand(node, env, lines) {
+    if (this.isBigInt(node)) return this.expression(node, env, lines);
+    return this.numeric(node, env, lines);
+  }
+
+  arithmetic(op, leftNode, left, rightNode, env, lines) {
+    const bigint = this.isBigInt(leftNode);
+    if (rightNode !== ONE && bigint !== this.isBigInt(rightNode)) throw this.t.fail(rightNode, "mixing `number` and `bigint`");
+    const right = rightNode === ONE ? (bigint ? "(1 : Int)" : this.t.number(1, leftNode)) : this.operand(rightNode, env, lines);
+    if (!bigint) return this.bind(`Js.${ARITHMETIC[op]} ${left} ${right}`, lines);
+    if (op === ts.SyntaxKind.SlashToken) return this.bind(`Js.bdiv ${left} ${right}`, lines);
+    if (op === ts.SyntaxKind.PercentToken) return this.bind(`Js.brem ${left} ${right}`, lines);
+    const symbol = { [ts.SyntaxKind.PlusToken]: "+", [ts.SyntaxKind.MinusToken]: "-", [ts.SyntaxKind.AsteriskToken]: "*" }[op];
+    return `(${left} ${symbol} ${right})`;
   }
 
   bind(text, lines) {
@@ -745,7 +1175,7 @@ class Scope {
     if (this.nullable(this.declaredType(symbol, node)) && !this.nullable(this.typeOf(node)) && !env.get(symbol)?.present) {
       throw this.t.fail(node, "this kind of null check is not supported yet");
     }
-    return name(node.text);
+    return this.current(symbol, env);
   }
 
   isModuleLevel(declaration) {
@@ -792,7 +1222,7 @@ class Scope {
     };
     const fresh = this.fresh();
     if (narrowed) {
-      const arms = narrowed(null, (onPath, next) => branch(onPath ? node.whenTrue : node.whenFalse, next));
+      const arms = narrowed((onPath, next) => branch(onPath ? node.whenTrue : node.whenFalse, next));
       lines.push(`let ${fresh} ← do`, ...this.indent(arms));
       return fresh;
     }
@@ -819,7 +1249,9 @@ class Scope {
     if (parameters.length !== node.arguments.length) throw this.t.fail(node, "optional arguments are not supported yet");
     const args = node.arguments.map((argument, index) => this.convert(argument,
       this.checker.getTypeOfSymbolAtLocation(parameters[index], parameters[index].valueDeclaration), env, lines));
-    return this.bind(`_root_.${lean} ${args.join(" ")}`, lines);
+    // A function can't name itself through `_root_` while it is being defined.
+    const callee_ = this.t.functions.get(declaration)?.pending ? lean : `_root_.${lean}`;
+    return this.bind(`${callee_} ${args.join(" ")}`, lines);
   }
 
   math(method, node, env, lines) {
@@ -860,6 +1292,9 @@ class Scope {
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
       if (ORDER[op]) {
+        if (this.isBigInt(node.left) && this.isBigInt(node.right)) {
+          return `${this.expression(node.left, env, lines)} ${ORDER[op]} ${this.expression(node.right, env, lines)}`;
+        }
         return `${this.valueOf(node.left, env, lines)} ${ORDER[op]} ${this.valueOf(node.right, env, lines)}`;
       }
       if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) return this.logical(node, env, lines);
@@ -895,7 +1330,7 @@ class Scope {
     if (this.isNumber(left) && this.isNumber(right)) {
       return `${this.valueOf(left, env, lines)} = ${this.valueOf(right, env, lines)}`;
     }
-    if (this.isBoolean(left) && this.isBoolean(right)) {
+    if ((this.isBoolean(left) && this.isBoolean(right)) || (this.isBigInt(left) && this.isBigInt(right))) {
       return `${this.expression(left, env, lines)} = ${this.expression(right, env, lines)}`;
     }
     const literal = [left, right].find(ts.isStringLiteralLike);

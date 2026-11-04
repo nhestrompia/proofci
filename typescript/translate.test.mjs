@@ -54,7 +54,7 @@ test("names Lean reserves are escaped", () => {
 });
 
 test("nullable values narrow through a match", () => {
-  emits("export function f(a: number | null) { if (a === null) return 0; return a; }", "match a with", "| some a =>");
+  emits("export function f(a: number | null) { if (a === null) return 0; return a; }", "match a with", "| some a_1 =>");
   emits("export function f(a: number): number | null { return a; }", "Result.ok (some a)");
   emits("export function f(a: number | undefined) { return a === undefined ? 0 : a; }", "| none =>");
 });
@@ -105,18 +105,91 @@ test("JavaScript behavior the model doesn't cover is rejected", () => {
   }
 });
 
-test("mutation is rejected until the ownership check exists", () => {
-  rejects("export function f(a: number) { a = 1; return a; }", /assignment/);
-  rejects("export function f(a: number) { let b = 0; b += a; return b; }", /assignment/);
-  rejects("export function f(a: number) { let b = 0; b++; return b; }", /assignment/);
-  rejects("interface A { x: number } export function f(a: A) { a.x = 1; return a; }", /assignment/);
-  rejects("export function f(a: number) { var b = a; return b; }", /var/);
+test("reassigning a local makes a new name, so nothing is shadowed", () => {
+  emits("export function f(a: number) { let b = 0; b += a; b = b + 1; return b; }", "let b_1 ←", "let b_2 ←");
+  emits("export function f(a: number) { a = a + 1; return a; }", "let a_1 ←");
+  emits("export function f(a: number) { let b = a; b++; b--; return b; }", "Js.add b", "Js.sub b_1");
 });
 
-test("control flow that needs joins or loops is rejected", () => {
-  rejects("export function f(a: number) { for (;;) { return a; } }", /not supported/);
-  rejects("export function f(a: number) { if (a > 0) { const b = 1; } return a; }", /neither branch/);
-  rejects("export function f(a: number): number { return f(a); }", /recursion/);
+test("branches that don't return join the code after them", () => {
+  emits("export function f(a: number) { let r = a; if (r > 9) { r = 9; } return r + 1; }", "let r_2 ← if", "Js.add r_2");
+  emits(`export function f(a: number | null) { let t = 0; if (a !== null) { t = a; } return t; }`, "let t_2 ← do", "match a with");
+});
+
+test("a branch that leaves makes no join", () => {
+  emits("export function f(a: number) { if (a < 0) throw new RangeError('x'); return a; }", "Result.fail .panic");
+  const { source } = run("export function f(a: number) { if (a < 0) return 1; return a; }");
+  assert.ok(!source.includes("← if"), source);
+});
+
+test("loops use Aeneas's loop, with the changed variables as state", () => {
+  emits("export function f(n: number) { let s = 0; for (let i = 0; i < n; i++) { s += i; } return s; }",
+    "Aeneas.Std.loop", "(i_1, s_1)", ".cont (i_2, s_2)", ".done s_1");
+  emits("export function f(n: number) { let i = 0; while (i < n) { i += 1; } return i; }", ".cont i_2");
+});
+
+test("a counter stays out of what the code after a for loop sees", () => {
+  const { source } = run("export function f(n: number) { let s = 0; for (let i = 0; i < n; i++) { s += 1; } return s; }");
+  assert.ok(source.includes("Result (Js.Num))"), source);
+});
+
+test("break, continue and return inside loops", () => {
+  emits("export function f(n: number) { let i = 0; while (true) { if (i > n) break; i += 1; } return i; }", ".done i_1");
+  emits("export function f(n: number) { for (let i = 0; i < n; i++) { if (i === 3) return i; } return -1; }",
+    ".done (.inl", ".done (.inr", "Sum (Js.Num)");
+  emits("export function f(n: number) { let s = 0; for (let i = 0; i < n; i++) { if (i === 3) continue; s += i; } return s; }", "Js.add i_1");
+});
+
+test("a block's declarations end with the block", () => {
+  emits("export function f(a: number) { const b = a; { const b = 2; if (b > a) { throw new Error('x'); } } return b; }", "let b_1 ←");
+  rejects("export function f(a: number) { const b = 1; { const b = 2; if (a > b) { return a; } } return b; }", /nested block/);
+});
+
+test("a void function can be called for what it throws", () => {
+  emits(`function check(a: number): void { if (a < 0) throw new Error("x"); }
+    export function f(a: number) { check(a); return a; }`, "_root_.a.check a", "Result.ok ()");
+});
+
+test("catch runs for throws, and can't see what it can't model", () => {
+  emits("function g(a: number): number { return a; } export function f(a: number) { try { return g(a); } catch { return 0; } }", "Js.attempt");
+  rejects("export function f(a: number) { try { return a; } catch (e) { throw e; } }", /caught value|only `throw new/);
+  rejects("export function f(a: number) { let b = 0; try { b = 1; throw new Error(); } catch { return b; } }", /inside `try`/);
+  rejects("export function f(a: number) { try { return a; } finally { } }", /finally/);
+});
+
+test("only what can be modelled can be thrown", () => {
+  rejects("export function f(a: number) { throw a; }", /throw new/);
+  rejects("function g() { return 1; } export function f(a: number) { throw new Error(String(g())); }", /throw new/);
+});
+
+test("writes that could reach shared state are rejected", () => {
+  rejects("interface A { x: number } export function f(a: A) { a.x = 1; return a; }", /field or element/);
+  rejects("let c = 0; export function f(a: number) { c = a; return a; }", /module-level/);
+  rejects("export function f(a: number) { var b = a; return b; }", /var/);
+  rejects("export function f(a: number) { let b = 0; [1].length; const g = () => { b = 1; }; return b; }", /nested function/);
+  rejects("export function f(a: number | null) { if (a !== null) { a = null; } return 1; }", /own null check/);
+  rejects("export function f(a: number) { let b = 0; const c = (b = 1); return c; }", /not supported/);
+  rejects("export function f(a: number) { let b = 0; return b++; }", /not supported/);
+  rejects("export function f(a: number) { let b = 1; b **= 2; return b; }", /operator/);
+});
+
+test("switch handles grouped cases, default and a final break", () => {
+  emits(`type S = "a" | "b" | "c"; export function f(s: S) {
+    let r = 0;
+    switch (s) { case "a": case "b": r = 1; break; default: r = 2; }
+    return r; }`, "| .a =>", "| .c =>");
+  rejects(`type S = "a" | "b"; export function f(s: S) { let r = 0; switch (s) { case "a": r = 1; case "b": r = 2; } return r; }`, /falling through|TypeScript error/);
+});
+
+test("self-recursion becomes a fixpoint, and mutual recursion is rejected", () => {
+  emits("export function f(n: number): number { return n <= 0 ? 0 : f(n - 1); }", "partial_fixpoint", "a.f tmp");
+  rejects(`function g(n: number): number { return f(n); } export function f(n: number): number { return g(n); }`, /mutual/);
+});
+
+test("bigint stays exact and division follows JavaScript", () => {
+  emits("export function f(a: bigint, b: bigint) { return (a * 2n + 1n) / b; }", "(a * (2 : Int))", "Js.bdiv");
+  emits("export function f(a: bigint) { return a < 3n; }", "a < (3 : Int)");
+  rejects("export function f(a: bigint, b: number) { return a + b; }", /TypeScript error/);
 });
 
 test("code outside the subset can't reach a function through a closure", () => {

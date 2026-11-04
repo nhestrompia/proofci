@@ -18,7 +18,10 @@ MARKER = "PROOFCI_DIFF "
 
 
 def translator():
-    default = Path(__file__).resolve().parent.parent / "typescript" / "translate.mjs"
+    """The translator sits beside its installed compiler. Tests that mount a
+    checkout over the code still use the compiler from the image."""
+    installed = Path("/opt/proofci/typescript/translate.mjs")
+    default = installed if installed.exists() else Path(__file__).resolve().parent.parent / "typescript" / "translate.mjs"
     return Path(os.environ.get("PROOFCI_TRANSLATOR", default))
 
 
