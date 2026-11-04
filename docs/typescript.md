@@ -108,21 +108,9 @@ What blocks pure functions, as a share of the 5,701:
 
 The table above is what a finished subset would reach. `survey/try.mjs` runs the real
 translator on the pure functions of nine of those repositories instead. Today it
-accepts 19 of 1,457, about 1%, so there's a long way to go before this works on
-most real code. The main reasons:
-
-| Functions | Reason |
-|---:|---|
-| 403 | Types it can't read yet, including inline object types and types from packages |
-| 200 | Parameters with defaults, optional parameters and destructuring |
-| 123 | Generic functions |
-| 52 | Callbacks that assign to an outer variable |
-| 42 | Code that needs a check under `noUncheckedIndexedAccess` |
-| 40 | Types allowing both `null` and `undefined` |
-| 39 | Recursive types |
-| 36 | Optional fields |
-
-Dependencies aren't installed in this run, which inflates the first row.
+accepts 82 of 1,457, about 6%. The failures are now a long tail, and most of it is
+about mapping TypeScript's types onto Lean's: recursive types, generic types,
+untagged unions, `any` and `unknown`.
 
 ### Limits of these numbers
 
@@ -141,3 +129,23 @@ cd typescript && npm ci --ignore-scripts
 node --max-old-space-size=8192 survey/run.mjs <repository> <output.json>
 python3 survey/report.py <directory of outputs>
 ```
+
+## Getting to full TypeScript
+
+"Full" can't mean every program. `eval`, `Proxy` and reflection on unknown objects
+have no useful proofs. The realistic goal is that every function gets a sound verdict,
+pure logic can usually be proved, and everything else becomes a listed assumption.
+
+The current design maps each TypeScript type to a Lean type, which is why each new
+type shape is a new feature. The plan is to add a second path that doesn't need that:
+
+1. **Finish the cheap wins.** Install packages for their types with `--ignore-scripts`,
+   add recursive and generic types, and make `unsupported` say how to fix the code.
+2. **Try a dynamic path.** Translate to a single Lean type of JavaScript values plus an
+   explicit heap, so TypeScript types become preconditions. That one change covers
+   unions, `unknown`, aliasing, classes and closures. The typed path stays as the fast
+   path. This depends on a spike showing proofs stay practical.
+3. **Fill in the runtime.** Library models, promises as an event queue, and binary64
+   numbers with safe integers as lemmas on top.
+4. **Prove the translation.** Generate a proof, per function, that the typed output
+   matches the dynamic semantics, so the translator leaves the trusted base.
