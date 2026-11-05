@@ -1402,6 +1402,11 @@ theorem post_loop {T S σ β : Type} {α} {_ : TyRep α} {mk : List T → σ →
 theorem enter {p s x w body Φ} (k : ∀ s', Upd s s' x → s'.env x = some w → s'.heap = s.heap → Wp p s' body Φ) :
     Wp p ⟨s.env.put x w, s.heap⟩ body Φ :=
   k _ ⟨List.prefix_refl _, fun y hy => by simp [Env.put, hy]⟩ (by simp [Env.put]) rfl
+theorem enter2 {p s y x u w body Φ} (hne : x ≠ y)
+    (k : ∀ s₁ s₂, Upd s s₁ y → Upd s₁ s₂ x → s₂.env y = some u → s₂.env x = some w → s₂.heap = s.heap → Wp p s₂ body Φ) :
+    Wp p ⟨(s.env.put y u).put x w, s.heap⟩ body Φ :=
+  k ⟨s.env.put y u, s.heap⟩ _ ⟨List.prefix_refl _, fun z hz => by simp [Env.put, hz]⟩ ⟨List.prefix_refl _, fun z hz => by simp [Env.put, hz]⟩
+    (by simp [Env.put, hne.symm]) (by simp [Env.put]) rfl
 theorem V.mk' {s x w α} {_ : TyRep α} {a : α} {h : Heap} (he : s.env x = some w) (hh : s.heap = h) (r : rep h a w) : V s x a :=
   ⟨w, he, hh ▸ r⟩
 theorem Fr.sub {a b c : St} {W W2} (f : Fr a b W) (g : Fr b c W2) (hs : ∀ y ∈ W2, y ∈ W) : Fr a c W :=
@@ -1624,6 +1629,134 @@ theorem post_seqs {T S σ β : Type} {α} {_ : TyRep α} {p st} {mk : List T →
     (hz : ∀ v s, h <+: s.heap → rep s.heap a v → Zr r v s) : Post (SeqS p st (LoopQ mk R Zb Zr rest (.done r))) h a :=
   fun v s hb hr => Or.inr ⟨v, rfl, hz v s hb hr⟩
 
+section reduce
+variable {p : Prog} {s : St} {fn : Fn} {y x : String} {env : Env} {l : Nat} {vs : List Val}
+variable {α β} [TyRep α] [TyRep β]
+
+def Cb2 (p : Prog) (s : St) (fn : Fn) (y x : String) (f : β → α → Result β) : Prop :=
+  ∀ s', Ext s s' → ∀ u w b a r, rep s'.heap b u → rep s'.heap a w → f b a = ok r →
+    Wp p ⟨(s'.env.put y u).put x w, s'.heap⟩ fn.body (Ret s'.heap r)
+
+theorem hof_reduce {f : β → α → Result β} (henv : s.env = env) (hcb : Cb2 p s fn y x f) :
+    ∀ (xs : List α) i h (acc : β) (u : Val) (r : β), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → rep h acc u → Js.reduce f acc xs = ok r →
+      ∃ v t, (∃ F, ∀ g, F ≤ g → reduceRun g p fn y x env l vs.length i u h = .ok v t) ∧ h <+: t.heap ∧ rep t.heap r v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h acc u r hpre hl hf hu hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have : r = acc := by simpa [Js.reduce] using hm.symm
+    subst this
+    refine ⟨u, ⟨env, h⟩, ⟨1, fun g hg => ?_⟩, List.prefix_refl _, hu⟩
+    obtain ⟨g', rfl, -⟩ := succ_of_le hg
+    simp [reduceRun, hn]
+  | cons q rest ih =>
+    intro i h acc u r hpre hl hf hu hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨n, hn, hm'⟩ := bind_eq (show Aeneas.Std.bind (f acc q) _ = ok r from hm)
+    obtain ⟨c, t, he, v, rfl, hpt, rv⟩ := hcb ⟨env, h⟩ ⟨henv.symm, hpre⟩ u w acc q n hu hq hn
+    obtain ⟨v', t', ⟨G, hG⟩, hpt', rv'⟩ := ih (i + 1) t.heap n v r (hpre.trans hpt) (lookup_mono hpt hl)
+      (hd' ▸ ht.imp fun _ _ r => mono hpt r) rv hm'
+    obtain ⟨F, hF⟩ := he
+    refine ⟨v', t', ⟨F + G + 1, fun g hg => ?_⟩, hpt.trans hpt', rv'⟩
+    obtain ⟨g', rfl, hg'⟩ := succ_of_le hg
+    simp only [reduceRun, if_neg hlt, hl, hi, hF g' (by omega), hG g' (by omega)]
+end reduce
+
+theorem Evals.reduce {p s a i g fn y x l vs u s₂ s₃ v t} (he : Evals p s a (.ref l) s₂) (hi : Evals p s₂ i u s₃)
+    (hg : p g = some fn) (hp : fn.params = [y, x]) (hl : s₃.heap[l]? = some (.array vs))
+    (hr : ∃ F, ∀ f, F ≤ f → reduceRun f p fn y x s₃.env l vs.length 0 u s₃.heap = .ok v t) :
+    Evals p s (.reduce a i g) v { s₃ with heap := t.heap } := by
+  obtain ⟨F, hF⟩ := he
+  obtain ⟨G, hG⟩ := hi
+  obtain ⟨H, hH⟩ := hr
+  refine ⟨F + G + H + 1, fun f hf => ?_⟩
+  obtain ⟨d, rfl, hd⟩ := succ_of_le hf
+  simp only [eval, hF d (by omega), hG d (by omega), hg, hl, hp, hH d (by omega)]
+
+theorem SimE.reduce {p s a i g fn y x α β} {_ : TyRep α} {_ : TyRep β} {xs : List α} {acc r : β} {f : β → α → Result β}
+    (hx : SimE p s a xs) (hi : SimE p s i acc) (h : Js.reduce f acc xs = ok r) (hg : p g = Option.some fn) (hp : fn.params = [y, x])
+    (hcb : Cb2 p s fn y x f) : SimE p s (.reduce a i g) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, e, h₂, l, vs, rfl, hl, hf⟩ := hx s₁ h₁
+  obtain ⟨u, s₃, ei, h₃, ru⟩ := hi s₂ (h₁.trans h₂)
+  have hl' := lookup_mono h₃.2 hl
+  have hf' := hf.imp fun _ _ r => mono h₃.2 r
+  have hc : Cb2 p ⟨s₃.env, s₃.heap⟩ fn y x f := fun s' e => hcb s' (((h₁.trans h₂).trans h₃).trans e)
+  obtain ⟨v', t, hr, hpt, rv⟩ := hof_reduce (s := ⟨s₃.env, s₃.heap⟩) (env := s₃.env) rfl hc xs 0 s₃.heap acc u r (List.prefix_refl _) hl' (by simpa using hf') ru h
+  exact ⟨v', { s₃ with heap := t.heap }, Evals.reduce e ei hg hp hl' hr, (h₂.trans h₃).trans ⟨rfl, hpt⟩, rv⟩
+
+section moreprims2
+variable {p : Prog} {s : St} {x y z : Expr}
+theorem SimE.at_str {o i} {a : List Nat} {b : Js.Num} (ho : SimE p s o a) (hi : SimE p s i b) :
+    SimE (α := Opt .undef (List Nat)) p s (.index o i) (Js.charAt? a b) := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, eo, h₂, rfl⟩ := ho s₁ h₁
+  obtain ⟨n, s₃, ei, h₃, x, rfl, hx⟩ := hi s₂ (h₁.trans h₂)
+  obtain ⟨F, hF⟩ := eo
+  obtain ⟨G, hG⟩ := ei
+  refine ⟨(x.index.bind (a[·]?)).elim .undef (fun u => .str [u]), s₃, ⟨F + G + 1, fun f hf => ?_⟩, h₂.trans h₃, ?_⟩
+  · obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [eval, hF g (by omega), hG g (by omega)]
+  · by_cases hb : b.val < 0
+    · have : x.index = Option.none := by
+        rcases hx with rfl | ⟨h0, rfl⟩
+        · exact F64.index_ofInt_neg hb
+        · omega
+      simp only [Js.charAt?, Js.at_, hb, ite_true, this]
+      exact rfl
+    · have hn := F64.index_isInt hx (by omega)
+      simp only [Js.charAt?, Js.at_, hb, ite_false, hn, Option.bind_some]
+      cases a[b.val.toNat]? with
+      | none => exact rfl
+      | some u => exact rfl
+theorem SimE.replace {a b c r : List Nat} (hx : SimE p s x a) (hy : SimE p s y b) (hz : SimE p s z c) (h : Js.replace a b c = ok r) :
+    SimE p s (.prim .replace [x, y, z]) r := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro _ _ ⟨_, _, _, rfl, rfl, rfl, rfl⟩
+  exact ⟨_, _, by simp [primV, okStr_ok h], List.prefix_refl _, rfl⟩
+theorem SimE.replaceAll {a b c r : List Nat} (hx : SimE p s x a) (hy : SimE p s y b) (hz : SimE p s z c) (h : Js.replaceAll a b c = ok r) :
+    SimE p s (.prim .replaceAll [x, y, z]) r := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro _ _ ⟨_, _, _, rfl, rfl, rfl, rfl⟩
+  exact ⟨_, _, by simp [primV, okStr_ok h], List.prefix_refl _, rfl⟩
+theorem SimE.substring {a : List Nat} {i j : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) (hz : SimE p s z j) :
+    SimE p s (.prim .substring [x, y, z]) (Js.substring a i j) := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro _ _ ⟨_, v, w, rfl, rfl, ri, rj⟩
+  exact ⟨_, _, by simp [primV, num_arg ri, num_arg rj], List.prefix_refl _, rfl⟩
+theorem SimE.indexOfStr {a : List (List Nat)} {b : List Nat} {r : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.indexOf a b = ok r) :
+    SimE p s (.prim .indexOfStr [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, rfl⟩
+  exact ⟨numVal r, _, by simp [primV, hl, strs_of hf, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.concat_arr {α} {_ : TyRep α} {a b : List α} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .concat [x, y]) (a ++ b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, ⟨m, ws, rfl, hm, hg⟩⟩
+  refine ⟨.ref h.length, h ++ [.array (vs ++ ws)], by simp [primV, hl, hm], List.prefix_append _ _, h.length, vs ++ ws, rfl, by simp, ?_⟩
+  exact List.rel_append (hf.imp fun _ _ r => mono (List.prefix_append _ _) r) (hg.imp fun _ _ r => mono (List.prefix_append _ _) r)
+end moreprims2
+
+/-! Functions that return nothing. -/
+instance : TyRep Unit := ⟨fun _ _ v => v = .undef, fun _ h => h⟩
+def RetU (h : Heap) (c : Cmp) (s : St) : Prop := (c = .normal ∨ c = .ret .undef) ∧ h <+: s.heap
+theorem wprun_unit {p fn a h} {r : Unit} (hb : Wp p ⟨fn.env0 a, h⟩ fn.body (RetU h)) :
+    WpRun p fn a h fun v s => h <+: s.heap ∧ rep s.heap r v := by
+  obtain ⟨c, s', ⟨F, hF⟩, hc, hp⟩ := hb
+  refine ⟨.undef, s', ⟨F + 1, fun f hf => ?_⟩, hp, rfl⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  have := hF g hg
+  simp only [Fn.env0] at this
+  rcases hc with rfl | rfl <;> simp only [run, this]
+theorem post_unit {h} {a : Unit} : Post (RetU h) h a := fun v _ hb hr => by
+  have : v = .undef := hr
+  subst this
+  exact ⟨Or.inr rfl, hb⟩
+
 /-- Calling a function whose bridge is known. -/
 theorem sim_call {p s g args} {vs' : Heap → List Val → Prop} {fn α} {_ : TyRep α} {r : α} (hg : p g = some fn)
     (ha : ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ args vs s₂ ∧ Ext s₁ s₂ ∧ vs' s₂.heap vs)
@@ -1720,6 +1853,10 @@ elab "carry " k:term : tactic => withMainContext do
         replaceMainGoal [← g'.tryClear d.fvarId]
     else if ty.isAppOfArity ``Core.Fr 3 && (ty.getArg! 1) == old then
       let g ← getMainGoal
+      -- A callback's own variables aren't in the loop's frame, and it doesn't need the frame.
+      if isUpd && !listHas (ty.getArg! 2) x then
+        replaceMainGoal [← g.tryClear d.fvarId]
+        continue
       let pf ← if isFr then do
           let W2 := ty.getArg! 2
           let hs ← mkDecideProof (← inferSubset W W2)

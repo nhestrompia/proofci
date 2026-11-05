@@ -19,10 +19,11 @@ const STRING_METHODS = {
   "startsWith/1": "startsWith", "endsWith/1": "endsWith", "includes/1": "strIncludes", "trim/0": "trim", "trimStart/0": "trimStart",
   "trimEnd/0": "trimEnd", "toLowerCase/0": "toLower", "toUpperCase/0": "toUpper", "slice/1": "sliceFrom", "slice/2": "slice",
   "indexOf/1": "strIndexOf", "charAt/1": "charAt", "split/1": "split",
+  "replace/2": "replace", "replaceAll/2": "replaceAll", "substring/2": "substring",
 };
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };
 const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach"]);
-const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice" };
+const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr" };
 
 export function lower(root, targets, { paths } = {}) {
   const files = [...new Set([...targets.map(t => join(root, t.split("::")[0])), ...(ts.sys.fileExists(join(root, "src/prelude.ts")) ? [join(root, "src/prelude.ts")] : [])])];
@@ -278,7 +279,21 @@ export function lower(root, targets, { paths } = {}) {
         });
         return `.record [${fields.join(", ")}]`;
       }
-      if (ts.isArrayLiteralExpression(e)) return `.array [${e.elements.map(E).join(", ")}]`;
+      if (ts.isArrayLiteralExpression(e)) {
+        if (!e.elements.some(ts.isSpreadElement)) return `.array [${e.elements.map(E).join(", ")}]`;
+        // `[...a, b, ...c]`: a run of plain elements is an array of its own.
+        const parts = [];
+        let run = [];
+        const flush = () => { if (run.length) parts.push(`.array [${run.join(", ")}]`); run = []; };
+        for (const el of e.elements) {
+          if (ts.isSpreadElement(el)) {
+            if (!checker.isArrayType(checker.getTypeAtLocation(el.expression))) throw new Error("a spread of something other than an array");
+            flush(); parts.push(E(el.expression));
+          } else run.push(E(el));
+        }
+        flush();
+        return parts.length === 1 ? `.prim .concat [${parts[0]}, .array []]` : parts.reduce((a, b) => `.prim .concat [${a}, ${b}]`);
+      }
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && MATH[e.expression.name.text]) {
         return `.math ${MATH[e.expression.name.text]} (${E(e.arguments[0])})`;
       }

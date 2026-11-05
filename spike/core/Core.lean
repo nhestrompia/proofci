@@ -43,7 +43,8 @@ to JavaScript is tested against Node rather than proved. -/
 inductive Prim where
   | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
-  | min | max | abs | includes | join | split | append
+  | min | max | abs | includes | join | split | append | concat
+  | replace | replaceAll | substring | indexOfStr
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -253,6 +254,19 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .join, h, [.ref l, .str sep] => match h[l]? with
     | some (.array xs) => (strsOf xs).map fun ss => (.str (Js.join ss sep), h)
     | _ => none
+  | .concat, h, [.ref l, .ref m] => match h[l]?, h[m]? with
+    | some (.array xs), some (.array ys) => some (.ref h.length, h ++ [.array (xs ++ ys)])
+    | _, _ => none
+  | .replace, h, [.str s, .str a, .str b] => (okStr (Js.replace s a b)).map (·, h)
+  | .replaceAll, h, [.str s, .str a, .str b] => (okStr (Js.replaceAll s a b)).map (·, h)
+  | .substring, h, [.str s, a, b] => match asNum a, asNum b with
+    | some a, some b => some (.str (Js.substring s a b), h)
+    | _, _ => none
+  | .indexOfStr, h, [.ref l, .str t] => match h[l]? with
+    | some (.array xs) => (strsOf xs).bind fun ss => match (Js.indexOf ss t).match with
+      | .ok n => some (numVal n, h)
+      | _ => none
+    | _ => none
   | .append, h, [.ref l, v] => match h[l]? with
     | some (.array xs) => some (.ref h.length, h ++ [.array (xs ++ [v])])
     | _ => none
@@ -281,6 +295,7 @@ def eval : Nat → Prog → St → Expr → Out Val
           | .ref l => match s₂.heap[l]? with
             | some (.array xs) => .ok ((n.index.bind (xs[·]?)).getD .undef) s₂
             | _ => .thrown typeError s₂
+          | .str c => .ok ((n.index.bind (c[·]?)).elim .undef (fun u => .str [u])) s₂
           | _ => .thrown typeError s₂
         | .ok _ s₂ => .thrown typeError s₂
         | .thrown v s₂ => .thrown v s₂

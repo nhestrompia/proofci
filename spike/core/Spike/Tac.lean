@@ -51,7 +51,7 @@ syntax "post" : tactic
 syntax "siml" : tactic
 syntax "simf" : tactic
 
-macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post) | (apply Core.post_loop; intro v s h1 h2; exact ⟨h1, h2⟩) | (apply Core.post_seqs; intro v s h1 h2; exact ⟨h1, h2⟩))
+macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post) | exact Core.post_unit | (apply Core.post_loop; intro v s h1 h2; exact ⟨h1, h2⟩) | (apply Core.post_seqs; intro v s h1 h2; exact ⟨h1, h2⟩))
 
 -- Variables, literals and options. Later rules are tried first.
 macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
@@ -66,16 +66,16 @@ macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_undef (by simp [nothi
 macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_null (by simp [nothingOk]))
 
 -- Arithmetic and strings
-macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.add; sim'; sim'; assumption))
-macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.sub; sim'; sim'; assumption))
-macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.mul; sim'; sim'; assumption))
-macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.neg; sim'; assumption))
 macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.concat; sim'; sim'))
 macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.badd; sim'; sim'))
 macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.bsub; sim'; sim'))
 macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.bmul; sim'; sim'))
 macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.bdiv; sim'; sim'; assumption))
 macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.brem; sim'; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.add; sim'; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.sub; sim'; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.mul; sim'; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.neg; sim'; assumption))
 macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit _ rfl)
 macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit ⟨_, by decide, by decide⟩ rfl)
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_str; sim'; assumption))
@@ -358,6 +358,7 @@ elab "crun_go" : tactic => withMainContext do
     else if (t.getArg! 3).isAppOf ``Core.WEnd' then evalTactic (← `(tactic| c_wend))
     else if branch then evalTactic split
     else if (t.getArg! 3).isAppOf ``Core.LoopQ then evalTactic (← `(tactic| c_loop_end))
+    else if (t.getArg! 3).isAppOf ``Core.RetU then evalTactic (← `(tactic| (exact Core.wp_nil ⟨Or.inl rfl, by assumption⟩)))
     else evalTactic (← `(tactic| c_nil))
   | ``Stmt.forOf => evalTactic (← `(tactic| c_for))
   | ``Stmt.whileL => evalTactic (← `(tactic| c_while))
@@ -489,5 +490,31 @@ macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.some_; sim'; assu
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.every; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.find; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.append; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.concat_arr; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.replace; sim'; sim'; sim'; assumption))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.replaceAll; sim'; sim'; sim'; assumption))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.substring; sim'; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.indexOfStr; sim'; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_str; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.at_str; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.at_; sim'; sim'))
+syntax "c_cb2" : tactic
+open Lean Elab Tactic in
+elab "c_cb2_t" : tactic => do
+  unless ← attempt (← `(tactic| c_cb2)) do throwError "STUCK in a callback"
+macro_rules | `(tactic| c_cb2) => `(tactic| (
+  unfold Cb2; intro s1 he u w b a r hu hw hf
+  clear_todo
+  carry he; clear he
+  apply enter2 (by decide); intro s2 s3 hu2 hu3 he2 he3 hh
+  have hv1 := V.mk' he2 hh hu
+  have hv2 := V.mk' he3 hh hw
+  have hb0 := base_of hh
+  carry hu2; carry hu3; clear hu2 hu3 he2 he3 hh
+  beta_reduce at hf
+  have hk : Todo _ _ := hf
+  clear hf
+  crun))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.reduce; sim'; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb2_t)))
 
 end Core

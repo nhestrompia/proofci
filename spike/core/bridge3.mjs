@@ -19,6 +19,8 @@ function leanType(t) {
     case "boolean": return "Bool";
     case "bigint": return "Int";
     case "record": case "enum": return t.lean;
+    case "void": return "Unit";
+    case "generic": return t.name;
     case "array": return `(List ${leanType(t.item)})`;
     case "optional": return `(Opt ${t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef"} ${leanType(t.inner)})`;
     default: throw new Error(`no encoding for ${t.kind}`);
@@ -26,6 +28,7 @@ function leanType(t) {
 }
 
 // The same type without the encoding marker: what the typed view itself uses.
+const generics = t => t.kind === "generic" ? [t.name] : t.kind === "array" ? generics(t.item) : t.kind === "optional" ? generics(t.inner) : [];
 const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
 
 // Key lists of record literals, reading nested ones separately.
@@ -240,12 +243,14 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
     const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
     const res = plain(sig.result), repRes = leanType(sig.result);
-    const head = `theorem ${key}_bridge {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
+    const tvars = [...new Set([...sig.params, sig.result].flatMap(generics))];
+    const tv = tvars.map(g => `{${g} : Type} [DecidableEq ${g}] [TyRep ${g}]`).join(" ");
+    const head = `theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) :
     WpRun prog ${key} [${Vs.join(", ")}] h fun v s => h <+: s.heap ∧ rep (α := ${repRes}) s.heap r v := by
   unfold ${sig.lean} at hr
 ${constants.map(c => `  try unfold ${c} at hr`).join("\n")}
-  apply wprun'
+  apply ${sig.result.kind === "void" ? "wprun_unit" : "wprun'"}
   have hb : Base h ⟨${key}.env0 [${Vs.join(", ")}], h⟩ := List.prefix_refl _
 ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}], h⟩ ${q("PARAM" + i)} (α := ${leanType(t)}) p${i} := ⟨v${i}, by simp [${key}, Fn.env0, Env.put], h${i}⟩`).join("\n")}
   generalize St.mk (${key}.env0 [${Vs.join(", ")}]) h = s0 at *
@@ -255,7 +260,7 @@ ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}],
     const n = sig.params.length;
     const args = sig.params.map((t, i) => `(h${i} : SimE (α := ${leanType(t)}) prog s e${i} p${i})`).join(" ");
     const call = n > 3 ? "" : `
-theorem ${key}_sim {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") : ""}} ${typed} {r : ${res}} ${args}
+theorem ${key}_sim ${tv} {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") : ""}} ${typed} {r : ${res}} ${args}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) : SimE (α := ${repRes}) prog s (.call ${q(key)} [${sig.params.map((_, i) => `e${i}`).join(", ")}]) r :=
   sim_call (fn := ${key}) (by simp [prog]) (${n === 0 ? "args0" : `args${n} ${sig.params.map((_, i) => `h${i}`).join(" ")}`}) (by
     rintro _ _ ${n === 0 ? "rfl" : `⟨${Vs.join(", ")}, rfl, ${sig.params.map((_, i) => `r${i}`).join(", ")}⟩`}

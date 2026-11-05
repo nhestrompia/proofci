@@ -370,7 +370,7 @@ class Translator {
     if (lean === "Unit") return { kind: "void" };
     if (lean === "Js.Str") return { kind: "string" };
     if (this.checker.isArrayType(type)) return { kind: "array", item: this.describe(this.checker.getTypeArguments(type)[0], node) };
-    if (type.flags & ts.TypeFlags.TypeParameter) return { kind: "generic" };
+    if (type.flags & ts.TypeFlags.TypeParameter) return { kind: "generic", name: type.symbol.name };
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
       return { kind: "optional", nothing, both: type.types.filter(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)).length > 1, inner: this.describe(this.checker.getNonNullableType(type), node) };
