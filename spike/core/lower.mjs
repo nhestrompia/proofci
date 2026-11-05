@@ -1,6 +1,6 @@
 // TypeScript to Core. A spike: it handles what the sample functions use and refuses
 // the rest. It reads types only to choose `==` forms, so it knows nothing about Lean.
-import ts from "/Users/nhestrompia/.t3/worktrees/proofci/typescript-support/typescript/node_modules/typescript/lib/typescript.js";
+import ts from "../../typescript/node_modules/typescript/lib/typescript.js";
 import { dirname, join, relative } from "node:path";
 
 const OPS = { "+": "add", "-": "sub", "*": "mul", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "===": "eq", "!==": "ne", "/": "div", "%": "rem" };

@@ -2,7 +2,7 @@
 import { writeFileSync, cpSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import ts from "/Users/nhestrompia/.t3/worktrees/proofci/typescript-support/typescript/node_modules/typescript/lib/typescript.js";
+import ts from "../../typescript/node_modules/typescript/lib/typescript.js";
 import { lower } from "./lower.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "work");

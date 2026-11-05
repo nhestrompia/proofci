@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lower } from "./lower.mjs";
-const { translate } = await import("/Users/nhestrompia/.t3/worktrees/proofci/typescript-support/typescript/translate.mjs");
+const { translate } = await import("../../typescript/translate.mjs");
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "work");
 const targets = process.argv.slice(2);
