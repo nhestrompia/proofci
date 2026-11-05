@@ -58,6 +58,7 @@ instance : NotNull ${e.lean} := ⟨by rintro _ _ _ rfl; rfl⟩
 theorem ${n}_inj {a b : ${e.lean}} (h : ${tag} a = ${tag} b) : a = b := by
   cases a <;> cases b <;> first | rfl | (simp [${tag}] at h)
 theorem ${n}_iff {a b : ${e.lean}} : ${tag} a = ${tag} b ↔ a = b := ⟨${n}_inj, fun e => by rw [e]⟩
+instance : Inj ${e.lean} := ⟨by rintro _ _ _ _ _ rfl rfl; simp [${n}_iff], by rintro _ _ _ rfl; simp, by rintro _ _ _ rfl; rfl⟩
 theorem ${n}_eq {p s x y} {a b : ${e.lean}} (hx : SimE p s x a) (hy : SimE p s y b) : SimC p s (.bin .eq x y) (a = b) :=
   sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary, ${n}_iff])
 theorem ${n}_ne {p s x y} {a b : ${e.lean}} (hx : SimE p s x a) (hy : SimE p s y b) : SimC p s (.bin .ne x y) (a ≠ b) :=

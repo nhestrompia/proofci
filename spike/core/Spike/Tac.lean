@@ -120,6 +120,7 @@ macro_rules | `(tactic| sim) => `(tactic| (apply SimE.conv; sim'; first | rfl | 
 macro_rules | `(tactic| sim) => `(tactic| sim')
 
 -- Truth
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_opt; sim_read; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.of_bool; sim_read))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.lt; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.gt; sim'; sim'))

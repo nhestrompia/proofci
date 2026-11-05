@@ -454,6 +454,39 @@ theorem SimC.ne_null_none {p s e α} {_ : TyRep α} {a : Opt .null α} (h : SimE
   subst ha
   exact sim_cmp h (SimE.lit_null (k := .null) (α := α) rfl) (fun _ _ _ h1 h2 => by cases h1; cases h2; rfl)
 
+/-- Values with one encoding each, none of them a number or nullish, so `===` is equality. -/
+class Inj (α : Type) [TyRep α] : Prop where
+  inj {h : Heap} {a b : α} {v w : Val} : rep h a v → rep h b w → (v = w ↔ a = b)
+  notNum {h : Heap} {a : α} {v : Val} : rep h a v → ∀ x, v ≠ .num x
+  notNull {h : Heap} {a : α} {v : Val} : rep h a v → nullish v = false
+instance : Inj (List Nat) := ⟨by rintro _ _ _ _ _ rfl rfl; simp, by rintro _ _ _ rfl; simp, by rintro _ _ _ rfl; rfl⟩
+instance : Inj Bool := ⟨by rintro _ _ _ _ _ rfl rfl; simp, by rintro _ _ _ rfl; simp, by rintro _ _ _ rfl; rfl⟩
+instance : Inj Int := ⟨by rintro _ _ _ _ _ rfl rfl; simp, by rintro _ _ _ rfl; simp, by rintro _ _ _ rfl; rfl⟩
+
+theorem binary_eq_of_not_num {v w : Val} (hv : ∀ x, v ≠ .num x) : binary .eq v w = some (.bool (decide (v = w))) := by
+  cases v <;> cases w <;> first | rfl | (exact absurd rfl (hv _))
+theorem SimC.eq_opt {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α} {_ : Decidable (a = Option.some b)}
+    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) : SimC p s (.bin .eq x y) (a = Option.some b) := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ex, h₂, rv⟩ := hx s₁ h₁
+  obtain ⟨w, s₃, ey, h₃, rw⟩ := hy s₂ (h₁.trans h₂)
+  refine ⟨s₃, Evals.bin ex ey ?_, h₂.trans h₃⟩
+  have hv' := mono h₃.2 rv
+  generalize s₃.heap = h at hv' rw
+  revert hv'
+  refine Option.casesOn (motive := fun o => ∀ (d : Decidable (o = Option.some b)), optRep k h o v → binary .eq v w = some (.bool (@decide _ d))) a ?_ ?_ _
+  · intro d hr
+    have hn := nothing_nullish hr
+    have hw := Inj.notNull rw
+    have hne : v ≠ w := fun he => by subst he; simp [hn] at hw
+    have hnn : ∀ x, v ≠ .num x := fun x he => by subst he; simp [nullish] at hn
+    rw [binary_eq_of_not_num hnn]
+    simp [hne]
+  · intro c d hr
+    have hr' : rep h c v := hr
+    rw [binary_eq_of_not_num (Inj.notNum hr')]
+    simp [Inj.inj hr' rw]
+
 /-- `c` is known, so only one side runs. -/
 theorem SimE.cond_t {p s c a b P α} {_ : TyRep α} {x : α} (hc : SimB p s c P) (hp : P) (ha : SimE p s a x) :
     SimE p s (.cond c a b) x := by
