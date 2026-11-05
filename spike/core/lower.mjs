@@ -150,6 +150,7 @@ export function lower(root, targets) {
       }
       if (ts.isNewExpression(e)) { useClass(e.expression.text); }
       if (ts.isNewExpression(e)) return `.call ${lean(`${e.expression.text}.__new`)} [${(e.arguments ?? []).map(E).join(", ")}]`;
+      if (ts.isTypeOfExpression(e)) return `.typeOf (${E(e.expression)})`;
       if (ts.isConditionalExpression(e)) return `.cond (${E(e.condition)}) (${E(e.whenTrue)}) (${E(e.whenFalse)})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken) return `.not (${E(e.operand)})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(e.operand) && Number(e.operand.text) !== 0) return `.lit (.num ${num(-Number(e.operand.text))})`;
@@ -225,6 +226,12 @@ export function lower(root, targets) {
         info[key] = { loop, item: x, carried: assigned.filter(v => taken.has(v) && v !== x) };
         loops.push(`def ${loop} : List Stmt := [${body.join(", ")}]`);
         out.push(`.forOf ${lean(x)} (${arr}) ${loop}`); return;
+      }
+      if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "pop") {
+        out.push(`.pop (${E(s.expression.expression.expression)})`); return;
+      }
+      if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && s.expression.expression.getText() === "__stuck") {
+        out.push(`.expr (.call "__stuck" [])`); return;
       }
       if (ts.isExpressionStatement(s) && ts.isAwaitExpression(s.expression)) { out.push(".await"); return; }
       if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "push") {

@@ -41,6 +41,7 @@ inductive Expr where
   | bin (op : Op) (a b : Expr)
   | isNullish (e : Expr)
   | not (e : Expr)
+  | typeOf (e : Expr)
   | neg (e : Expr)
   | math (f : F64 → F64) (e : Expr)
   | or (a b : Expr)
@@ -59,6 +60,7 @@ inductive Stmt where
   | setIndex (o i e : Expr)
   | expr (e : Expr)
   | push (o e : Expr)
+  | pop (o : Expr)
   | ite (c : Expr) (t e : List Stmt)
   | forOf (x : String) (e : Expr) (body : List Stmt)
   | ret (e : Expr)
@@ -118,6 +120,16 @@ def strLt : List Nat → List Nat → Bool
   | [], _ :: _ => true
   | _ :: _, [] => false
   | x :: xs, y :: ys => if x = y then strLt xs ys else decide (x < y)
+
+/-- `typeof`, as a string of code units. -/
+def typeName : Val → List Nat
+  | .undef => "undefined".toList.map Char.toNat
+  | .null | .ref _ => "object".toList.map Char.toNat
+  | .bool _ => "boolean".toList.map Char.toNat
+  | .num _ => "number".toList.map Char.toNat
+  | .big _ => "bigint".toList.map Char.toNat
+  | .str _ => "string".toList.map Char.toNat
+  | .fn _ _ => "function".toList.map Char.toNat
 
 def className (s : List Nat) : String := String.ofList (s.map Char.ofNat)
 
@@ -179,6 +191,7 @@ def eval : Nat → Prog → St → Expr → Out Val
       | .ok (.ref l) s' => match s'.heap[l]? with
         | some (.array xs) => .ok (.num (F64.ofInt xs.length)) s'
         | _ => .thrown typeError s'
+      | .ok (.str c) s' => .ok (.num (F64.ofInt c.length)) s'
       | .ok _ s' => .thrown typeError s'
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
@@ -193,6 +206,10 @@ def eval : Nat → Prog → St → Expr → Out Val
       | .stuck => .stuck
     | .isNullish a => match eval f p s a with
       | .ok v s' => .ok (.bool (nullish v)) s'
+      | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .typeOf a => match eval f p s a with
+      | .ok v s' => .ok (.str (typeName v)) s'
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
     | .neg a => match eval f p s a with
@@ -332,6 +349,13 @@ def exec : Nat → Prog → St → Stmt → Out Cmp
     | .expr e => match eval f p s e with
       | .ok _ s' => .ok .normal s'
       | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .pop o => match eval f p s o with
+      | .ok (.ref l) s₁ => match s₁.heap[l]? with
+        | some (.array xs) => .ok .normal { s₁ with heap := s₁.heap.set l (.array xs.dropLast) }
+        | _ => .thrown typeError s₁
+      | .ok _ s₁ => .thrown typeError s₁
+      | .thrown v s₁ => .thrown v s₁
       | .stuck => .stuck
     | .push o e => match eval f p s o with
       | .ok (.ref l) s₁ => match eval f p s₁ e with

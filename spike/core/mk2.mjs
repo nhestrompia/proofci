@@ -7,10 +7,10 @@ import { lower } from "./lower.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "work");
 for (const f of ["prelude", "features", "async"]) cpSync(join(here, `fixtures/${f}.ts`), join(root, `src/${f}.ts`));
-const F = ["overrideSeen", "counterTwice", "loopCaptures", "scaled", "indexed", "positives", "total", "anyOver", "firstNegative", "positivesLoop", "sumPlusOne", "dispatch", "growBoth", "treeSum"];
+const F = ["amountOf", "mapGrows", "mapShrinks", "clamp01", "overrideSeen", "counterTwice", "loopCaptures", "scaled", "indexed", "positives", "total", "anyOver", "firstNegative", "positivesLoop", "sumPlusOne", "dispatch", "growBoth", "treeSum"];
 const A = ["withdrawStale", "withdrawSafe", "twoWaits"];
 const targets = [...F.map(f => `src/features.ts::${f}`), ...A.map(f => `src/async.ts::${f}`)];
-const { names, lean } = lower(root, targets);
+const { names, lean } = lower(root, [...targets, "src/ledger.ts::transfer", "src/ledger.ts::sumAmounts", "src/phases.ts::getActiveSpendingPhase", "src/config/price.ts::deriveAuctionPricing"]);
 writeFileSync(join(here, "Spike/Gen.lean"), lean);
 const load = async f => { const out = join(root, `${f}.mjs`);
   ts.sys.writeFile(out, ts.transpileModule(ts.sys.readFile(join(root, `src/${f}.ts`)), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
@@ -30,6 +30,7 @@ const show = v => {
 function encoder() { const seen = new Map(), heap = [];
   const val = v => { if (v === undefined) return ".undef"; if (v === null) return ".null"; if (typeof v === "boolean") return `(.bool ${v})`;
     if (typeof v === "number") return `(.num (F64.ofBits ${bitsOf(v)}))`;
+    if (typeof v === "string") return `(.str [${[...v].map(c => c.charCodeAt(0)).join(", ")}])`;
     if (seen.has(v)) return `(.ref ${seen.get(v)})`;
     const slot = heap.length; seen.set(v, slot); heap.push(null);
     heap[slot] = Array.isArray(v) ? `.array [${v.map(val).join(", ")}]` : `.record [${Object.entries(v).map(([k, x]) => `(${JSON.stringify(k)}, ${val(x)})`).join(", ")}]`;
@@ -41,7 +42,7 @@ const arr = () => Array.from({ length: rand(5) }, num);
 const tree = d => (d === 0 || rand(3) === 0) ? null : { value: num(), left: tree(d - 1), right: tree(d - 1) };
 const sharedTree = () => { const s = tree(2); return { value: num(), left: s, right: s }; };
 const lines = ["import Core", "import Spike.Gen", "import Spike.Show", "open Core Gen Spike", ""]; const expected = [];
-const inputs = { overrideSeen: () => [], counterTwice: () => [num()], loopCaptures: () => [arr()], scaled: () => [arr(), num()], indexed: () => [arr()], positives: () => [arr()], total: () => [arr()],
+const inputs = { amountOf: () => [[num(), "abc", "", null, undefined, true, { a: 1 }][rand(7)]], mapGrows: () => [arr()], mapShrinks: () => [arr()], clamp01: () => [num()], overrideSeen: () => [], counterTwice: () => [num()], loopCaptures: () => [arr()], scaled: () => [arr(), num()], indexed: () => [arr()], positives: () => [arr()], total: () => [arr()],
   anyOver: () => [arr(), num()], firstNegative: () => [arr()], positivesLoop: () => [arr()], sumPlusOne: () => [arr()], dispatch: () => [num()], growBoth: () => [num()], treeSum: () => [rand(2) ? sharedTree() : tree(3)] };
 for (const f of F) for (let i = 0; i < 60; i += 1) {
   const args = inputs[f](); const { val, heap } = encoder(); const enc = args.map(val);

@@ -129,3 +129,26 @@ export function overrideSeen(): number {
   const s = new Sub();
   return s.g();
 }
+
+/** `unknown` needs no type mapping: only what the code tests. */
+export function amountOf(x: unknown): number {
+  if (typeof x === "number") return x;
+  if (typeof x === "string") return x.length;
+  return 0;
+}
+
+/** A callback that grows the array: `map` must still stop at the original length. */
+export function mapGrows(xs: number[]): number[] {
+  return xs.map(x => { xs.push(x); return x; });
+}
+
+/** A callback that shrinks the array: `map` skips what no longer exists. */
+export function mapShrinks(xs: number[]): number[] {
+  return xs.map(x => { xs.pop(); return x; });
+}
+
+export function clamp01(x: number): number {
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
