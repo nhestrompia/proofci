@@ -1,6 +1,7 @@
 import Core
 import Spike.Rules
 import Spike.Safe
+import Spike.LoopInd
 open Aeneas Aeneas.Std Result Lean Elab Tactic Meta
 
 /-! The general bridge. `TyRep h a v` says value `v` in heap `h` stands for typed value `a`.
@@ -1475,6 +1476,153 @@ theorem step_join1 {p s c x e cs Φ P α} {_ : TyRep α} {tj : α}
     obtain ⟨r, s₄, hrest, hΦ⟩ := k { s₃ with env := s₃.env.put x w } ⟨w, by simp [Env.put], rw⟩
       ⟨h₂.2.trans h₃.2, fun y hy => by simp [Env.put, hy, h₃.1, h₂.1]⟩
     exact ⟨r, s₄, ExecsL.cons_normal (Execs.ite_true ev htv (ExecsL.cons_normal (Execs.set ew) (ExecsL.nil _ _))) hrest, hΦ⟩
+
+/-! `while`, and `for` with a step. One turn is `if (c) body else break`, then the step. -/
+
+/-- The step's end must be a plain fall-through. -/
+def WEnd' (Q : Cmp → St → Prop) (c : Cmp) (t : St) : Prop := c = .normal ∧ Q c t
+def SeqS (p : Prog) (st : List Stmt) (Ψ : Cmp → St → Prop) (r : Cmp) (t : St) : Prop :=
+  match r with
+  | .normal | .cont => Wp p t st (WEnd' Ψ)
+  | r => Ψ r t
+
+def Wh (p : Prog) (c : Expr) (b st : List Stmt) (s : St) (r : Cmp) (s' : St) : Prop :=
+  ∃ F, ∀ f, F ≤ f → whileRun f p c b st s = .ok r s'
+
+theorem execs_single {p s st r s'} (h : ExecsL p s [st] r s') : Execs p s st r s' := by
+  obtain ⟨F, hF⟩ := h
+  refine ⟨F + 1, fun f hf => ?_⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  have h1 := hF (g + 1 + 1) (by omega)
+  simp only [execList] at h1
+  cases he : exec (g + 1) p s st with
+  | ok r' t =>
+    rw [he] at h1
+    cases r' with
+    | normal =>
+      simp only [execList] at h1
+      exact h1
+    | _ => simpa using h1
+  | thrown v t => rw [he] at h1; simp at h1
+  | stuck => rw [he] at h1; simp at h1
+
+/-- The next thing `whileRun` does after a turn ended with `r` in state `t`. -/
+def afterTurn (f : Nat) (p : Prog) (c : Expr) (b st : List Stmt) (r : Cmp) (t : St) : Out Cmp :=
+  match r with
+  | .normal | .cont => match execList f p t st with
+    | .ok .normal s₃ => whileRun f p c b st s₃
+    | .ok r s₃ => .ok r s₃
+    | .thrown v s₃ => .thrown v s₃
+    | .stuck => .stuck
+  | .brk => .ok .normal t
+  | r => .ok r t
+
+theorem while_turn {g p s c b st r t} (hg : 2 ≤ g) (h : exec (g + 1) p s (.ite c b [.brk]) = .ok r t) :
+    whileRun (g + 1) p c b st s = afterTurn g p c b st r t := by
+  simp only [exec] at h
+  simp only [whileRun]
+  cases hev : eval g p s c with
+  | ok v s₁ =>
+    rw [hev] at h
+    simp only at h ⊢
+    cases ht : truthy v with
+    | true =>
+      rw [ht] at h
+      simp only [ite_true] at h ⊢
+      cases hb : execList g p s₁ b with
+      | ok r' t' =>
+        rw [hb] at h
+        cases h
+        cases r <;> rfl
+      | thrown v t' => rw [hb] at h; simp at h
+      | stuck => rw [hb] at h; simp at h
+    | false =>
+      rw [ht] at h
+      simp only [Bool.false_eq_true, if_false] at h ⊢
+      obtain ⟨g', rfl⟩ : ∃ g', g = g' + 1 := ⟨g - 1, by omega⟩
+      obtain ⟨g'', rfl⟩ : ∃ g'', g' = g'' + 1 := ⟨g' - 1, by omega⟩
+      simp only [execList, exec] at h
+      cases h
+      rfl
+  | thrown v s₁ => rw [hev] at h; simp at h
+  | stuck => rw [hev] at h; simp at h
+
+theorem step_while {S β : Type} {p s c body st cs Φ W} {B : S → Result (ControlFlow S β)}
+    {R : S → St → Prop} {Zb : β → St → Prop} {Zr : β → Val → St → Prop} {a0 : S} {res : β}
+    (hl : loop B a0 = ok res) (hinit : R a0 s)
+    (hturn : ∀ a s' y, Fr s s' W → R a s' → B a = ok y →
+      Wp p s' [.ite c body [.brk]]
+        (SeqS p st (LoopQ (T := Unit) (fun _ a => a) (fun a t => Fr s' t W ∧ R a t) (fun r t => Fr s' t W ∧ Zb r t)
+          (fun r v t => s'.heap <+: t.heap ∧ Zr r v t) [] y)))
+    (k : ∀ s', Fr s s' W → Zb res s' → Wp p s' cs Φ) (kr : ∀ v s', s.heap <+: s'.heap → Zr res v s' → Φ (.ret v) s') :
+    Wp p s (.whileL c body st :: cs) Φ := by
+  let Q : S → β → Prop := fun a r => ∀ s', Fr s s' W → R a s' → ∃ c' s₂, Wh p c body st s' c' s₂ ∧
+    ((c' = .normal ∧ Fr s s₂ W ∧ Zb r s₂) ∨ ∃ v, c' = .ret v ∧ s.heap <+: s₂.heap ∧ Zr r v s₂)
+  -- Turning one turn's result into `whileRun`'s, for all large fuel.
+  have base : ∀ {s' r t}, Execs p s' (.ite c body [.brk]) r t → ∃ F, ∀ f, F ≤ f →
+      whileRun (f + 1) p c body st s' = afterTurn f p c body st r t := by
+    intro s' r t ⟨F, hF⟩
+    exact ⟨F + 2, fun f hf => while_turn (by omega) (hF _ (by omega))⟩
+  have key : ∀ a r, loop B a = ok r → Q a r := by
+    refine loop_ind Q fun a y hy => ?_
+    cases y with
+    | done r =>
+      intro s' hf hR
+      obtain ⟨c', t, he, hΦ⟩ := hturn a s' (.done r) hf hR hy
+      obtain ⟨F, hF⟩ := base (execs_single he)
+      cases c' with
+      | normal =>
+        obtain ⟨c2, t2, -, ⟨rfl, hq⟩⟩ : ∃ c2 t2, ExecsL p t st c2 t2 ∧ _ := hΦ
+        rcases hq with ⟨h, -⟩ | ⟨v, h, -⟩ <;> cases h
+      | cont =>
+        obtain ⟨c2, t2, -, ⟨rfl, hq⟩⟩ : ∃ c2 t2, ExecsL p t st c2 t2 ∧ _ := hΦ
+        rcases hq with ⟨h, -⟩ | ⟨v, h, -⟩ <;> cases h
+      | brk =>
+        rcases hΦ with ⟨-, hf', hz⟩ | ⟨v, h, -⟩
+        · refine ⟨.normal, t, ⟨F + 1, fun f h' => ?_⟩, Or.inl ⟨rfl, hf.trans hf', hz⟩⟩
+          obtain ⟨g, rfl, hg⟩ := succ_of_le h'
+          rw [hF g hg]; rfl
+        · cases h
+      | ret v =>
+        rcases hΦ with ⟨h, -⟩ | ⟨w, h, hp, hz⟩
+        · cases h
+        · cases h
+          refine ⟨.ret v, t, ⟨F + 1, fun f h' => ?_⟩, Or.inr ⟨v, rfl, hf.1.trans hp, hz⟩⟩
+          obtain ⟨g, rfl, hg⟩ := succ_of_le h'
+          rw [hF g hg]; rfl
+    | cont a' =>
+      intro r ih s' hf hR
+      obtain ⟨c', t, he, hΦ⟩ := hturn a s' (.cont a') hf hR hy
+      obtain ⟨F, hF⟩ := base (execs_single he)
+      have go : ∀ (hc : c' = .normal ∨ c' = .cont), Wp p t st (WEnd' (LoopQ (T := Unit) (fun _ a => a) (fun a t => Fr s' t W ∧ R a t) (fun r t => Fr s' t W ∧ Zb r t)
+          (fun r v t => s'.heap <+: t.heap ∧ Zr r v t) [] (.cont a'))) →
+          ∃ c₃ s₂, Wh p c body st s' c₃ s₂ ∧ ((c₃ = .normal ∧ Fr s s₂ W ∧ Zb r s₂) ∨ ∃ v, c₃ = .ret v ∧ s.heap <+: s₂.heap ∧ Zr r v s₂) := by
+        intro hc hw
+        obtain ⟨c2, t2, ⟨G, hG⟩, rfl, a2, ha, -, hf2, hR2⟩ := hw
+        have ha' : a' = a2 := ha
+        subst ha'
+        obtain ⟨c3, s₃, ⟨H, hH⟩, hz⟩ := ih t2 (hf.trans hf2) hR2
+        refine ⟨c3, s₃, ⟨F + G + H + 1, fun f h' => ?_⟩, hz⟩
+        obtain ⟨g, rfl, hg⟩ := succ_of_le h'
+        rw [hF g (by omega)]
+        rcases hc with rfl | rfl <;> simp only [afterTurn, hG g (by omega), hH g (by omega)]
+      cases c' with
+      | normal => exact go (Or.inl rfl) hΦ
+      | cont => exact go (Or.inr rfl) hΦ
+      | brk => obtain ⟨_, -, h, -⟩ := hΦ; rcases h with h | h <;> cases h
+      | ret v => obtain ⟨_, -, h, -⟩ := hΦ; rcases h with h | h <;> cases h
+  obtain ⟨c', t, ⟨F, hF⟩, hz⟩ := key a0 res hl s (Fr.refl _ _) hinit
+  have hex : Execs p s (.whileL c body st) c' t := ⟨F + 1, fun f h' => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le h'
+    simp only [exec, hF g hg]⟩
+  rcases hz with ⟨rfl, hf', hb⟩ | ⟨w, rfl, hp, hr⟩
+  · obtain ⟨r, s₃, hrest, hΦ'⟩ := k t hf' hb
+    exact ⟨r, s₃, ExecsL.cons_normal hex hrest, hΦ'⟩
+  · exact ⟨_, t, ExecsL.cons_exit hex (by simp), kr w t hp hr⟩
+
+theorem post_seqs {T S σ β : Type} {α} {_ : TyRep α} {p st} {mk : List T → σ → S} {R Zb} {Zr : β → Val → St → Prop} {rest r h} {a : α}
+    (hz : ∀ v s, h <+: s.heap → rep s.heap a v → Zr r v s) : Post (SeqS p st (LoopQ mk R Zb Zr rest (.done r))) h a :=
+  fun v s hb hr => Or.inr ⟨v, rfl, hz v s hb hr⟩
 
 /-- Calling a function whose bridge is known. -/
 theorem sim_call {p s g args} {vs' : Heap → List Val → Prop} {fn α} {_ : TyRep α} {r : α} (hg : p g = some fn)

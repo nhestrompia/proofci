@@ -263,7 +263,7 @@ export function lower(root, targets, { paths } = {}) {
         const copies = [...(e.__const ?? [])].map(c => `(${lean(c.name)}, ${E(ts.factory.createIdentifier(c.name) && idOf(c))})`);
         return `.closure ${lean(name)} (.record [("__up", .var "__scope")${copies.length ? ", " : ""}${copies.join(", ")}])`;
       }
-      if (ts.isNewExpression(e)) { useClass(e.expression.text); }
+      if (ts.isNewExpression(e)) { if (!classDecl(e.expression.getText())) throw new Error("`new` on a class outside this code"); useClass(e.expression.text); }
       if (ts.isNewExpression(e)) return `.call ${lean(`${e.expression.text}.__new`)} [${(e.arguments ?? []).map(E).join(", ")}]`;
       if (ts.isTypeOfExpression(e)) return `.typeOf (${E(e.expression)})`;
       if (ts.isConditionalExpression(e)) return `.cond (${E(e.condition)}) (${E(e.whenTrue)}) (${E(e.whenFalse)})`;
@@ -392,7 +392,11 @@ export function lower(root, targets, { paths } = {}) {
       }
       if (ts.isBreakStatement(s)) { if (s.label) throw new Error("a labelled `break`"); out.push(".brk"); return; }
       if (ts.isContinueStatement(s)) { if (s.label) throw new Error("a labelled `continue`"); out.push(".cont"); return; }
-      if (ts.isThrowStatement(s)) { out.push(`.throw (${E(s.expression)})`); return; }
+      if (ts.isThrowStatement(s)) {
+        // The built-in errors have no behaviour a return value can see, and a bridge covers no thrown path.
+        if (ts.isNewExpression(s.expression) && /^(Range|Type|Syntax|Reference|URI|Eval)?Error$/.test(s.expression.expression.getText())) { out.push(`.throw (.lit (.str ${UNITS("Error")}))`); return; }
+        out.push(`.throw (${E(s.expression)})`); return;
+      }
       if (ts.isIfStatement(s)) {
         const c = E(s.expression), t = [], f = [];
         S(s.thenStatement, t); if (s.elseStatement) S(s.elseStatement, f);
@@ -445,7 +449,9 @@ export function lower(root, targets, { paths } = {}) {
         }
         const idx = loops.length; loops.push(null);
         const loop = `${key}_loop${idx}`;
-        const c = E(s.condition ?? ts.factory.createTrue()), body = [], step = [];
+        const test = ts.isWhileStatement(s) ? s.expression : s.condition;
+        if (!test) throw new Error("a `for` with no condition");
+        const c = E(test), body = [], step = [];
         S(s.statement, body);
         if (ts.isForStatement(s) && s.incrementor) S({ __expr: s.incrementor }, step);
         loops[idx] = `def ${loop} : List Stmt := [${body.join(", ")}]\n\ndef ${loop}_step : List Stmt := [${step.join(", ")}]`;

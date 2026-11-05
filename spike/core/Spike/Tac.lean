@@ -45,7 +45,7 @@ syntax "post" : tactic
 syntax "siml" : tactic
 syntax "simf" : tactic
 
-macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post) | (apply Core.post_loop; intro v s h1 h2; exact ⟨h1, h2⟩))
+macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post) | (apply Core.post_loop; intro v s h1 h2; exact ⟨h1, h2⟩) | (apply Core.post_seqs; intro v s h1 h2; exact ⟨h1, h2⟩))
 
 -- Variables, literals and options. Later rules are tried first.
 macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
@@ -217,6 +217,8 @@ syntax "c_ret" : tactic
 syntax "c_ite" : tactic
 syntax "c_ite_lock" : tactic
 syntax "c_join" : tactic
+syntax "c_seqs" : tactic
+syntax "c_wend" : tactic
 syntax "c_loop_end" : tactic
 syntax "l_conj" : tactic
 syntax "c_join1" : tactic
@@ -241,12 +243,12 @@ def todoHead : TacticM (Option (Lean.Expr × Option Name)) := withMainContext do
     let some d := d | continue
     let ty ← instantiateMVars d.type
     unless ty.isAppOf ``Core.Todo do continue
-    let m := ty.getArg! 1
+    let m := (ty.getArg! 1).consumeMData
     if m.isAppOf ``Aeneas.Std.bind || m.isAppOf ``Bind.bind then
       let n := m.getAppNumArgs
-      let inner := m.getArg! (n - 2)
-      let f := m.getArg! (n - 1)
-      return some (inner, if f.isLambda then some f.bindingName! else none)
+      let inner := (m.getArg! (n - 2)).consumeMData
+      let f := (m.getArg! (n - 1)).consumeMData
+      return some (inner, if f.isLambda then some f.bindingName! else some Name.anonymous)
     return some (m, none)
   return none
 
@@ -268,8 +270,23 @@ elab "v_step" : tactic => do
   evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
   evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx) | skip)))
 
+/-- Reduces the pending step when it matches on a known constructor, as after a loop. -/
+def todoReduce : TacticM Unit := withMainContext do
+  for d in (← getLCtx).decls.toList.reverse do
+    let some d := d | continue
+    let ty ← instantiateMVars d.type
+    unless ty.isAppOf ``Core.Todo do continue
+    let m := (ty.getArg! 1).consumeMData
+    if m.getAppFn.isConstOf ``Aeneas.Std.uncurry then
+      let some u ← unfoldDefinition? m | return
+      let m' ← whnfCore u
+      let g ← (← getMainGoal).replaceLocalDeclDefEq d.fvarId (mkAppN ty.getAppFn #[ty.getArg! 0, m', ty.getArg! 2])
+      replaceMainGoal [g]
+    return
+
 /-- Consumes pure steps up to the end of one source statement. -/
 partial def vdrain : TacticM Unit := do
+  todoReduce
   let some (m, binder) ← todoHead | return
   if headIs m ``Aeneas.Std.Result.fail then evalTactic (← `(tactic| v_fail)); return
   if binder.isNone then
@@ -279,7 +296,7 @@ partial def vdrain : TacticM Unit := do
   evalTactic (← `(tactic| v_leaf))
   if headIs m ``Aeneas.Std.Result.ok then
     if let some b := binder then
-      unless b.toString.startsWith "tmp" || b.isInternal do return
+      unless b.toString.startsWith "tmp" || b.isInternal || b.isAnonymous do return
   if (← getGoals).isEmpty then return
   vdrain
 
@@ -331,6 +348,8 @@ elab "crun_go" : tactic => withMainContext do
   match kind with
   | `nil =>
     if (t.getArg! 3).isAppOf ``Core.Seq then evalTactic (← `(tactic| c_nil))
+    else if (t.getArg! 3).isAppOf ``Core.SeqS then evalTactic (← `(tactic| c_seqs))
+    else if (t.getArg! 3).isAppOf ``Core.WEnd' then evalTactic (← `(tactic| c_wend))
     else if branch then evalTactic split
     else if (t.getArg! 3).isAppOf ``Core.LoopQ then evalTactic (← `(tactic| c_loop_end))
     else evalTactic (← `(tactic| c_nil))
@@ -417,7 +436,9 @@ macro_rules | `(tactic| b_lock) => `(tactic| (
 macro_rules | `(tactic| l_conj) => `(tactic| repeat' (first | trivial | assumption | (apply V.nil_cast; assumption) | apply And.intro))
 macro_rules | `(tactic| c_loop_end) => `(tactic| (apply wp_nil; (first | refine ⟨(), rfl, Or.inl rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inl rfl, ?_, ?_⟩); assumption; l_conj))
 macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; refine Or.inl ⟨rfl, ?_, ?_⟩; assumption; l_conj))
-macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; (first | refine ⟨(), rfl, Or.inr rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inr rfl, ?_, ?_⟩); assumption; l_conj))
+macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; first | (show Wp _ _ _ _; crun) | ((first | refine ⟨(), rfl, Or.inr rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inr rfl, ?_, ?_⟩); assumption; l_conj)))
+macro_rules | `(tactic| c_seqs) => `(tactic| (apply wp_nil; show Wp _ _ _ _; crun))
+macro_rules | `(tactic| c_wend) => `(tactic| (apply wp_nil; refine ⟨rfl, _, rfl, Or.inl rfl, ?_, ?_⟩; assumption; l_conj))
 elab "clear_todo" : tactic => withMainContext do
   for d in (← getLCtx).decls.toList.reverse do
     let some d := d | continue
