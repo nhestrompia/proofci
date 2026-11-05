@@ -1782,6 +1782,7 @@ theorem ite_pos_imp {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : 
   fun e => k (ite_pos_of h e)
 theorem ite_neg_imp {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop} (h : ¬c) (k : b = ok r → G) : (if c then a else b) = ok r → G :=
   fun e => k (ite_neg_of h e)
+theorem some_inj {α} {a b : α} (h : some a = some b) : a = b := Option.some.inj h
 theorem bind_intro {α β : Type} {G : Prop} {x : Result α} {f : α → Result β} {r : β}
     (k : ∀ a, x = ok a → f a = ok r → G) : Aeneas.Std.bind x f = ok r → G := by
   intro h

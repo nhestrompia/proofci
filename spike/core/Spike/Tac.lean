@@ -271,10 +271,37 @@ def headIs (e : Lean.Expr) (n : Name) : Bool := e.getAppFn.isConstOf n
 def isBranch (e : Lean.Expr) : MetaM Bool := do
   return headIs e ``ite || headIs e ``dite || (← Lean.Meta.isMatcherApp e)
 
+/-- Reading `xs[i]!` twice gives two names for one value. This keeps the first. -/
+elab "dedup_some" : tactic => withMainContext do
+  let decls := (← getLCtx).decls.toList.reverse.filterMap id
+  let isSomeEq (t : Lean.Expr) : Bool := t.isAppOfArity ``Eq 3 && (t.getArg! 2).isAppOfArity ``Option.some 2
+  let mut newest : Option LocalDecl := none
+  for d in decls do
+    if d.isImplementationDetail then continue
+    let t ← instantiateMVars d.type
+    if t.isAppOf ``Core.Todo then continue
+    if isSomeEq t then newest := some d
+    break
+  let some n := newest | return
+  let tn ← instantiateMVars n.type
+  let r := (tn.getArg! 2).getArg! 1
+  unless r.isFVar do return
+  for d in decls do
+    if d.fvarId == n.fvarId || d.isImplementationDetail then continue
+    let t ← instantiateMVars d.type
+    if isSomeEq t && t.getArg! 1 == tn.getArg! 1 then
+      let e ← mkEqTrans (← mkEqSymm n.toExpr) d.toExpr
+      let pf ← mkAppM ``Core.some_inj #[e]
+      let g ← getMainGoal
+      let (h, g') ← (← g.assert `heq (← inferType pf) pf).intro1P
+      let g'' ← Lean.Meta.subst g' h
+      replaceMainGoal [g'']
+      return
+
 elab "v_step" : tactic => do
   revertTodo
   evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
-  evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx) | skip)))
+  evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx; try dedup_some) | skip)))
 
 /-- Reduces the pending step when it matches on a known constructor, as after a loop. -/
 def todoReduce : TacticM Unit := withMainContext do

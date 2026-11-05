@@ -93,7 +93,7 @@ function viewLoops(text) {
   return loops;
 }
 
-function loopRules(l, meta, retType) {
+function loopRules(l, meta, retType, tv) {
   const K = meta.name;
   const parts = splitTop(unparen(l.pat), ",");
   const types = splitTop(l.type, "×");
@@ -116,9 +116,9 @@ function loopRules(l, meta, retType) {
     : conj("r", carried, carriedTy, "s");
   const zr = isSum ? `match r with\n  | .inl a => rep (α := ${retType ?? unparen(sum[0])}) s.heap a v\n  | .inr _ => False` : "False";
   const mk = !isFor ? "" : vars.length ? "(fun l a => (l, a))" : "(fun l _ => l)";
-  const defs = `def ${K}_R (st : ${sigma}) (s : St) : Prop := ${conj("st", vars, tys, "s")}
-def ${K}_Zb (r : ${beta}) (s : St) : Prop := ${zb}
-def ${K}_Zr (r : ${beta}) (v : Val) (s : St) : Prop := ${zr}`;
+  const defs = `def ${K}_R ${tv} (st : ${sigma}) (s : St) : Prop := ${conj("st", vars, tys, "s")}
+def ${K}_Zb ${tv} (r : ${beta}) (s : St) : Prop := ${zb}
+def ${K}_Zr ${tv} (r : ${beta}) (v : Val) (s : St) : Prop := ${zr}`;
   const a0 = vars.length ? "" : " (a0 := ())";
   const after = isSum
     ? `rcases res with b1 | ${rPat(carried.length)}`
@@ -238,7 +238,9 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const defText = source.slice(defAt, source.indexOf("\n\n", defAt) < 0 ? undefined : source.indexOf("\n\n", defAt));
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
     if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
-    const loopText = vl.map((l, i) => loopRules(l, ml[i], leanType(sig.result))).join("\n");
+    const tvars0 = [...new Set([...sig.params, sig.result].flatMap(generics))];
+    const tv0 = tvars0.map(g => `{${g} : Type} [TyRep ${g}]`).join(" ");
+    const loopText = vl.map((l, i) => loopRules(l, ml[i], leanType(sig.result), tv0)).join("\n");
     const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
     const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
     const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
