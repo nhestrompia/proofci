@@ -465,8 +465,8 @@ instance : Inj Int := ⟨by rintro _ _ _ _ _ rfl rfl; simp, by rintro _ _ _ rfl;
 
 theorem binary_eq_of_not_num {v w : Val} (hv : ∀ x, v ≠ .num x) : binary .eq v w = some (.bool (decide (v = w))) := by
   cases v <;> cases w <;> first | rfl | (exact absurd rfl (hv _))
-theorem SimC.eq_opt {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α} {_ : Decidable (a = Option.some b)}
-    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) : SimC p s (.bin .eq x y) (a = Option.some b) := by
+theorem SimC.eq_opt {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α}
+    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) : @SimC p s (.bin .eq x y) (a = Option.some b) (Classical.propDecidable _) := by
   intro s₁ h₁
   obtain ⟨v, s₂, ex, h₂, rv⟩ := hx s₁ h₁
   obtain ⟨w, s₃, ey, h₃, rw⟩ := hy s₂ (h₁.trans h₂)
@@ -1275,6 +1275,190 @@ theorem SimE.append {b : Expr} {xs : List α} {y : α} (hx : SimE p s a xs) (hy 
   exact forall2_snoc (hf.imp fun _ _ r => mono (List.prefix_append _ _) r) (mono (List.prefix_append _ _) rw)
 end hofrules
 
+/-! Loops. A loop body may assign the variables in `W`; everything else is framed out. -/
+
+def Fr (s0 s : St) (W : List String) : Prop := s0.heap <+: s.heap ∧ ∀ y, y ∉ W → s.env y = s0.env y
+theorem Fr.refl (s W) : Fr s s W := ⟨List.prefix_refl _, fun _ _ => rfl⟩
+theorem Fr.upd {s0 s s' W x} (f : Fr s0 s W) (k : Upd s s' x) (hx : x ∈ W) : Fr s0 s' W :=
+  ⟨f.1.trans k.1, fun y hy => by rw [k.2 y (fun e => hy (e ▸ hx))]; exact f.2 y hy⟩
+theorem Fr.ext {s0 s s' W} (f : Fr s0 s W) (k : Ext s s') : Fr s0 s' W :=
+  ⟨f.1.trans k.2, fun y hy => by rw [k.1]; exact f.2 y hy⟩
+theorem Fr.trans {a b c W} (f : Fr a b W) (g : Fr b c W) : Fr a c W :=
+  ⟨f.1.trans g.1, fun y hy => by rw [g.2 y hy]; exact f.2 y hy⟩
+theorem V.fr {s0 s W y α} {_ : TyRep α} {a : α} (k : Fr s0 s W) (hy : y ∉ W) (h : V s0 y a) : V s y a := by
+  obtain ⟨v, he, hr⟩ := h
+  exact ⟨v, by rw [k.2 y hy]; exact he, mono k.1 hr⟩
+
+/-- What the end of a loop body must establish, given what the typed step returned. -/
+def LoopQ {T S σ β : Type} (mk : List T → σ → S) (R : σ → St → Prop) (Zb : β → St → Prop) (Zr : β → Val → St → Prop)
+    (rest : List T) (y : ControlFlow S β) (c : Cmp) (s : St) : Prop :=
+  match y with
+  | .cont st => ∃ a, st = mk rest a ∧ (c = .normal ∨ c = .cont) ∧ R a s
+  | .done r => (c = .brk ∧ Zb r s) ∨ ∃ v, c = .ret v ∧ Zr r v s
+
+theorem Iterates.cont {p x l i b s xs item s₁ r s₂} (hl : s.heap[l]? = some (.array xs))
+    (hi : xs[i]? = some item) (he : ExecsL p { s with env := s.env.put x item } b .cont s₁)
+    (ht : Iterates p x (.ref l) (i + 1) b s₁ r s₂) : Iterates p x (.ref l) i b s r s₂ := by
+  obtain ⟨F, hF⟩ := he
+  obtain ⟨G, hG⟩ := ht
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [iterate, hl, hi, hF g (by omega), hG g (by omega)]⟩
+
+theorem sim_for {T S σ β : Type} {_ : TyRep T} {p x l vs body h} {mk : List T → σ → S} {B : S → Result (ControlFlow S β)}
+    {R : σ → St → Prop} {Zb : β → St → Prop} {Zr : β → Val → St → Prop}
+    (hpre : ∀ a s, R a s → h <+: s.heap) (harr : h[l]? = some (.array vs))
+    (hnil : ∀ a s y, R a s → B (mk [] a) = ok y → ∃ r, y = .done r ∧ Zb r s)
+    (hcons : ∀ q rest a s w y, R a s → rep s.heap q w → B (mk (q :: rest) a) = ok y →
+      Wp p { s with env := s.env.put x w } body (LoopQ mk R Zb Zr rest y)) :
+    ∀ (rest : List T) i a s r, List.Forall₂ (rep h) rest (vs.drop i) → R a s → loop B (mk rest a) = ok r →
+      ∃ c s', Iterates p x (.ref l) i body s c s' ∧ ((c = .normal ∧ Zb r s') ∨ ∃ v, c = .ret v ∧ Zr r v s') := by
+  intro rest
+  induction rest with
+  | nil =>
+    intro i a s r hf hR hl
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have harr' := lookup_mono (hpre a s hR) harr
+    unfold loop at hl
+    obtain ⟨y, hb, hrest⟩ := bind_ok_inv' hl
+    obtain ⟨r', rfl, hz⟩ := hnil a s y hR hb
+    have : r' = r := by simpa using hrest
+    subst this
+    exact ⟨_, s, Iterates.done harr' (by simpa using hn), Or.inl ⟨rfl, hz⟩⟩
+  | cons q rest ih =>
+    intro i a s r hf hR hl
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have harr' := lookup_mono (hpre a s hR) harr
+    unfold loop at hl
+    obtain ⟨y, hb, hrest⟩ := bind_ok_inv' hl
+    obtain ⟨c, s', he, hQ⟩ := hcons q rest a s w y hR (mono (hpre a s hR) hq) hb
+    cases y with
+    | cont st =>
+      obtain ⟨a', rfl, hc, hR'⟩ := hQ
+      have hrest' : loop B (mk rest a') = ok r := by simpa using hrest
+      obtain ⟨c', s₂, hit, hz⟩ := ih (i + 1) a' s' r (hd' ▸ ht) hR' hrest'
+      rcases hc with rfl | rfl
+      · exact ⟨c', s₂, Iterates.next harr' hi he hit, hz⟩
+      · exact ⟨c', s₂, Iterates.cont harr' hi he hit, hz⟩
+    | done r' =>
+      have : r' = r := by simpa using hrest
+      subst this
+      rcases hQ with ⟨rfl, hz⟩ | ⟨v, rfl, hz⟩
+      · exact ⟨_, s', Iterates.brk harr' hi he, Or.inl ⟨rfl, hz⟩⟩
+      · exact ⟨_, s', Iterates.exit harr' hi he, Or.inr ⟨v, rfl, hz⟩⟩
+
+/-- Everything after the loop starts from the state `step_for` leaves. -/
+theorem step_for {T S σ β : Type} {_ : TyRep T} {p s x e body cs Φ W} {mk : List T → σ → S} {B : S → Result (ControlFlow S β)}
+    {R : σ → St → Prop} {Zb : β → St → Prop} {Zr : β → Val → St → Prop} {xs : List T} {a0 : σ} {res : β}
+    (hl : loop B (mk xs a0) = ok res) (he : SimE p s e xs) (hinit : ∀ s₂, Ext s s₂ → R a0 s₂)
+    (hnil : ∀ a s' y, Fr s s' W → R a s' → B (mk [] a) = ok y → ∃ r, y = .done r ∧ Zb r s')
+    (hcons : ∀ q rest a s' w y, Fr s s' W → R a s' → rep s'.heap q w → B (mk (q :: rest) a) = ok y →
+      Wp p { s' with env := s'.env.put x w } body
+        (LoopQ mk (fun a t => Fr s' t W ∧ R a t) (fun r t => Fr s' t W ∧ Zb r t) Zr rest y))
+    (k : ∀ s', Fr s s' W → Zb res s' → Wp p s' cs Φ) (kr : ∀ v s', Zr res v s' → Φ (.ret v) s') :
+    Wp p s (.forOf x e body :: cs) Φ := by
+  obtain ⟨v, s₂, ev, h₂, l, vs, rfl, hl', hf⟩ := he s (Ext.refl _)
+  have hs₂ : Fr s s₂ W := ⟨h₂.2, fun y _ => by rw [h₂.1]⟩
+  have hit := sim_for (h := s₂.heap) (mk := mk) (B := B) (x := x) (p := p) (body := body) (vs := vs) (l := l)
+    (R := fun a t => Fr s₂ t W ∧ Fr s t W ∧ R a t) (Zb := fun r t => Fr s t W ∧ Zb r t) (Zr := Zr)
+    (fun a t h => h.1.1) hl'
+    (fun a t y h hb => by
+      obtain ⟨r, rfl, hz⟩ := hnil a t y h.2.1 h.2.2 hb
+      exact ⟨r, rfl, h.2.1, hz⟩)
+    (fun q rest a t w y h hw hb => by
+      obtain ⟨c, s', he', hQ⟩ := hcons q rest a t w y h.2.1 h.2.2 hw hb
+      refine ⟨c, s', he', ?_⟩
+      cases y with
+      | cont st =>
+        obtain ⟨a', rfl, hc, hf', hR'⟩ := hQ
+        exact ⟨a', rfl, hc, h.1.trans hf', h.2.1.trans hf', hR'⟩
+      | done r =>
+        rcases hQ with ⟨hb', hf', hz⟩ | hz
+        · exact Or.inl ⟨hb', h.2.1.trans hf', hz⟩
+        · exact Or.inr hz)
+    xs 0 a0 s₂ res (by simpa using hf) ⟨Fr.refl _ _, hs₂, hinit s₂ h₂⟩ hl
+  obtain ⟨c, s', hi, hz⟩ := hit
+  have hex : Execs p s (.forOf x e body) c s' := Execs.forOf ev hi
+  rcases hz with ⟨rfl, hf', hb⟩ | ⟨w, rfl, hr⟩
+  · obtain ⟨r, s₃, hrest, hΦ⟩ := k s' hf' hb
+    exact ⟨r, s₃, ExecsL.cons_normal hex hrest, hΦ⟩
+  · exact ⟨_, s', ExecsL.cons_exit hex (by simp), kr w s' hr⟩
+
+theorem seq_exit {p cs Φ r s} (hr : r ≠ .normal) (h : Φ r s) : Seq p cs Φ r s := by simpa [Seq, hr] using h
+theorem step_brk {p s cs Φ} (h : Φ .brk s) : Wp p s (.brk :: cs) Φ :=
+  ⟨_, s, ExecsL.cons_exit (Execs.brk _ _) (by simp), h⟩
+theorem step_cont {p s cs Φ} (h : Φ .cont s) : Wp p s (.cont :: cs) Φ := by
+  refine ⟨_, s, ExecsL.cons_exit ⟨1, fun f hf => ?_⟩ (by simp), h⟩
+  obtain ⟨g, rfl, -⟩ := succ_of_le hf
+  simp only [exec]
+theorem wp_nil {p s Φ} (h : Φ .normal s) : Wp p s [] Φ := ⟨_, s, ExecsL.nil _ _, h⟩
+theorem post_loop {T S σ β : Type} {α} {_ : TyRep α} {mk : List T → σ → S} {R Zb} {Zr : β → Val → St → Prop} {rest r h} {a : α}
+    (hz : ∀ v s, h <+: s.heap → rep s.heap a v → Zr r v s) : Post (LoopQ mk R Zb Zr rest (.done r)) h a :=
+  fun v s hb hr => Or.inr ⟨v, rfl, hz v s hb hr⟩
+
+/-- A step of the typed function that is still to be walked. -/
+def Todo {α : Type} (m : Result α) (r : α) : Prop := m = ok r
+theorem todo_ok {α : Type} {G : Prop} {a b : α} (k : a = b → G) : Todo (ok a) b → G := fun h => k (by simpa [Todo] using h)
+theorem todo_fail {α : Type} {G : Prop} {e} {r : α} : Todo (Result.fail e : Result α) r → G := by
+  intro h; simp [Todo] at h
+theorem todo_bind {α β : Type} {G : Prop} {x : Result α} {f : α → Result β} {r : β}
+    (k : ∀ a, x = ok a → Todo (f a) r → G) : Todo (Aeneas.Std.bind x f) r → G := by
+  intro h
+  obtain ⟨a, ha, hf⟩ := bind_ok_inv' h
+  exact k a ha hf
+theorem todo_ite {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop}
+    (t : c → Todo a r → G) (f : ¬c → Todo b r → G) : Todo (if c then a else b) r → G := by
+  by_cases h : c
+  · simp only [Todo, h, ite_true]; exact t h
+  · simp only [Todo, h, ite_false]; exact f h
+theorem todo_pos {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop} (h : c)
+    (t : Todo a r → G) : Todo (if c then a else b) r → G := by
+  simp only [Todo, h, ite_true]; exact t
+theorem todo_neg {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop} (h : ¬c)
+    (t : Todo b r → G) : Todo (if c then a else b) r → G := by
+  simp only [Todo, h, ite_false]; exact t
+
+/-- `if (c) x = e`, with both sides joined into one value, so paths don't multiply. The
+typed function's `if` is the fact `hj`. -/
+theorem step_join {p s c x e e' cs Φ P α} {_ : TyRep α} {tj : α}
+    (hc : SimB p s c P) (ht : P → ∀ s', Ext s s' → SimE p s' e tj) (hf : ¬P → ∀ s', Ext s s' → SimE p s' e' tj)
+    (k : ∀ s', V s' x tj → Upd s s' x → Wp p s' cs Φ) :
+    Wp p s (.ite c [.set x e] [.set x e'] :: cs) Φ := by
+  obtain ⟨v, s₂, ev, h₂, hv⟩ := hc s (Ext.refl _)
+  have go : ∀ (b : List Stmt) (e₀ : Expr), b = [.set x e₀] → SimE p s₂ e₀ tj →
+      ∃ s₃, ExecsL p s₂ b .normal s₃ ∧ V s₃ x tj ∧ Upd s s₃ x := by
+    rintro _ e₀ rfl he
+    obtain ⟨w, s₃, ew, h₃, rw⟩ := he s₂ (Ext.refl _)
+    refine ⟨{ s₃ with env := s₃.env.put x w }, ExecsL.cons_normal (Execs.set ew) (ExecsL.nil _ _), ⟨w, by simp [Env.put], rw⟩,
+      h₂.2.trans h₃.2, fun y hy => ?_⟩
+    simp [Env.put, hy, h₃.1, h₂.1]
+  cases htv : truthy v
+  · have hn : ¬P := fun hp => by simp [hv.mpr hp] at htv
+    obtain ⟨s₃, eb, hvv, hu⟩ := go _ e' rfl (hf hn s₂ h₂)
+    obtain ⟨r, s₄, hrest, hΦ⟩ := k s₃ hvv hu
+    exact ⟨r, s₄, ExecsL.cons_normal (Execs.ite_false ev htv eb) hrest, hΦ⟩
+  · have hp : P := hv.mp htv
+    obtain ⟨s₃, eb, hvv, hu⟩ := go _ e rfl (ht hp s₂ h₂)
+    obtain ⟨r, s₄, hrest, hΦ⟩ := k s₃ hvv hu
+    exact ⟨r, s₄, ExecsL.cons_normal (Execs.ite_true ev htv eb) hrest, hΦ⟩
+
+theorem step_join1 {p s c x e cs Φ P α} {_ : TyRep α} {tj : α}
+    (hc : SimB p s c P) (ht : P → ∀ s', Ext s s' → SimE p s' e tj) (hf : ¬P → V s x tj)
+    (k : ∀ s', V s' x tj → Upd s s' x → Wp p s' cs Φ) :
+    Wp p s (.ite c [.set x e] [] :: cs) Φ := by
+  obtain ⟨v, s₂, ev, h₂, hv⟩ := hc s (Ext.refl _)
+  cases htv : truthy v
+  · have hn : ¬P := fun hp => by simp [hv.mpr hp] at htv
+    have hu : Upd s s₂ x := ⟨h₂.2, fun y _ => by rw [h₂.1]⟩
+    obtain ⟨r, s₄, hrest, hΦ⟩ := k s₂ ((hf hn).ext h₂) hu
+    exact ⟨r, s₄, ExecsL.cons_normal (Execs.ite_false ev htv (ExecsL.nil _ _)) hrest, hΦ⟩
+  · have hp : P := hv.mp htv
+    obtain ⟨w, s₃, ew, h₃, rw⟩ := ht hp s₂ h₂ s₂ (Ext.refl _)
+    obtain ⟨r, s₄, hrest, hΦ⟩ := k { s₃ with env := s₃.env.put x w } ⟨w, by simp [Env.put], rw⟩
+      ⟨h₂.2.trans h₃.2, fun y hy => by simp [Env.put, hy, h₃.1, h₂.1]⟩
+    exact ⟨r, s₄, ExecsL.cons_normal (Execs.ite_true ev htv (ExecsL.cons_normal (Execs.set ew) (ExecsL.nil _ _))) hrest, hΦ⟩
+
 /-- Calling a function whose bridge is known. -/
 theorem sim_call {p s g args} {vs' : Heap → List Val → Prop} {fn α} {_ : TyRep α} {r : α} (hg : p g = some fn)
     (ha : ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ args vs s₂ ∧ Ext s₁ s₂ ∧ vs' s₂.heap vs)
@@ -1338,6 +1522,14 @@ elab "carry " k:term : tactic => withMainContext do
         let pf ← mkAppM ``Core.V.ext #[kE, d.toExpr]
         let (_, g') ← (← g.assert d.userName (← inferType pf) pf).intro1P
         replaceMainGoal [← g'.tryClear d.fvarId]
+    else if ty.isAppOfArity ``Core.Fr 3 && (ty.getArg! 1) == old then
+      let g ← getMainGoal
+      let pf ← if isUpd then do
+          let hx ← mkDecideProof (← mkAppOptM ``Membership.mem #[none, none, none, ty.getArg! 2, x])
+          mkAppM ``Core.Fr.upd #[d.toExpr, kE, hx]
+        else mkAppM ``Core.Fr.ext #[d.toExpr, kE]
+      let (_, g') ← (← g.assert d.userName (← inferType pf) pf).intro1P
+      replaceMainGoal [← g'.tryClear d.fvarId]
     else if ty.isAppOfArity ``Core.Base 2 && (ty.getArg! 1) == old then
       let g ← getMainGoal
       let pre ← mkAppM ``List.IsPrefix.trans #[d.toExpr, heap]

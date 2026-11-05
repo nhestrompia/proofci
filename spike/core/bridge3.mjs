@@ -149,8 +149,9 @@ ${constants.map(c => `  try unfold ${c} at hr`).join("\n")}
   have hb : Base h ⟨${key}.env0 [${Vs.join(", ")}], h⟩ := List.prefix_refl _
 ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}], h⟩ ${q("PARAM" + i)} (α := ${leanType(t)}) p${i} := ⟨v${i}, by simp [${key}, Fn.env0, Env.put], h${i}⟩`).join("\n")}
   generalize St.mk (${key}.env0 [${Vs.join(", ")}]) h = s0 at *
-  vsplit hr
-  all_goals crun`;
+  have hk : Todo _ _ := hr
+  clear hr
+  crun`;
     const n = sig.params.length;
     const args = sig.params.map((t, i) => `(h${i} : SimE (α := ${leanType(t)}) prog s e${i} p${i})`).join(" ");
     const call = n > 3 ? "" : `
