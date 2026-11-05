@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { differential } from "./differential.mjs";
 import { translate } from "./translate.mjs";
@@ -14,7 +14,10 @@ function run(source, extra = {}, target = "f") {
   const root = join(dir, `p${count++}`);
   mkdirSync(root);
   writeFileSync(join(root, "a.ts"), source);
-  for (const [path, text] of Object.entries(extra)) writeFileSync(join(root, path), text);
+  for (const [path, text] of Object.entries(extra)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
   return translate({ root, module: "M", targets: [`a.ts::${target}`] });
 }
 
@@ -70,10 +73,51 @@ test("types the model can't represent exactly are rejected", () => {
     ["export function f(a: symbol) { return 1; }", /type `symbol`/],
     ["export function f(a: [number, number]) { return 1; }", /not supported/],
     ["interface A { x: number; g(): void } export function f(a: A) { return 1; }", /plain field/],
-    ["interface A { x: number } interface B extends A { y: number } export function f(a: B) { return 1; }", /extends/],
     ["export function f(...a: number[]) { return 1; }", /rest parameters/],
   ];
   for (const [source, pattern] of cases) rejects(source, pattern);
+});
+
+test("`extends` flattens into one record, and the base is still a different type", () => {
+  emits("interface A { x: number } interface B extends A { y: number } export function f(a: B) { return a.x + a.y; }", "structure a.B where", "x : Js.Num", "y : Js.Num");
+  rejects("interface A { x: number; g(): void } interface B extends A { y: number } export function f(a: B) { return a.y; }", /plain field/);
+  rejects(`interface A { x: number } interface B extends A { y: number }
+    function g(a: A) { return a.x; }
+    export function f(b: B) { return g(b); }`, /not supported|different|record/);
+});
+
+test("each use of a generic type is its own structure", () => {
+  const result = run(`interface Box<T> { value: T }
+    export function f(a: Box<number>, b: Box<string>) { return a.value + b.value.length; }`);
+  assert.equal([...result.source.matchAll(/structure a\.Box_\w+ where/g)].length, 2, result.source);
+  rejects("interface Box<T> { value: T } export function f<T>(a: Box<T>) { return 1; }", /type parameter/);
+  emits("interface L<T = number> { value: T } export function f(a: L) { return a.value; }", "value : Js.Num");
+  emits("type P<T> = { value: T; next: T | null }; export function f(a: P<string>) { return a.value; }", "next : (Option Js.Str)");
+  emits("interface Box<T> { value: T } export function f(a: number): Box<number> { return { value: a }; }", "Box_");
+  rejects("interface T<A> { next: T<A> | null } export function f(a: T<number>) { return 1; }", /recursive/);
+});
+
+test("data types from declaration files come in under the package's name", () => {
+  const manifest = JSON.stringify({ name: "@acme/lib", version: "1.2.3" });
+  const package_ = { "node_modules/@acme/lib/package.json": manifest,
+    "node_modules/@acme/lib/index.d.ts": `export interface Base { id: string } export interface Item extends Base { price: number; note?: string }
+      export type Mode = "on" | "off"; export declare class C { x: number; m(): void } export declare function g(a: number): number;` };
+  const result = run(`import type { Item, Mode } from "@acme/lib";
+    export function f(a: Item, m: Mode) { return m === "on" ? a.price : 0; }`, package_);
+  assert.ok(result.source.includes("structure Proofci.Package._acme.lib.index.Item where"), result.source);
+  assert.ok(result.source.includes("inductive Proofci.Package._acme.lib.index.Mode where"), result.source);
+  assert.ok(result.source.includes("note : (Option Js.Str)"), result.source);
+  assert.deepEqual(result.packages, { "@acme/lib": "1.2.3" });
+  rejects(`import type { C } from "@acme/lib"; export function f(a: C) { return a.x; }`, /not supported/, package_);
+  rejects(`import { g } from "@acme/lib"; export function f(a: number) { return g(a); }`, /no source/, package_);
+});
+
+test("a local declaration file can give a type but not a function", () => {
+  const declared = { "b.d.ts": "export interface P { x: number } export function g(a: number): number;" };
+  const result = run(`import type { P } from "./b"; export function f(a: P) { return a.x; }`, declared);
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.ok(result.source.includes("x : Js.Num"), result.source);
+  rejects(`import { g } from "./b"; export function f(a: number) { return g(a); }`, /no source/, declared);
 });
 
 test("structural typing can't smuggle one record in as another", () => {

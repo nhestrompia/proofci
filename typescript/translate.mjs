@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import ts from "typescript";
 import { protectedPaths } from "./paths.mjs";
 
@@ -117,7 +117,9 @@ class Translator {
     this.checker = this.program.getTypeChecker();
     this.lenient = ts.createProgram(this.files, { ...OPTIONS, ...LENIENT, paths });
     this.anonymous = new Map(); // key -> shape of an inline object type
-    this.types = new Map();      // declaration -> { lean, text }
+    this.types = new Map();      // declaration, or instantiation key -> { lean, text }
+    this.typeOwners = new Map(); // Lean name -> the declaration that took it
+    this.packages = new Map();   // package.json path -> { name, version }, for declared types
     this.functions = new Map();  // declaration -> { lean, text } (null while in progress)
     this.constants = new Map();
     this.fileChecks = new Map();
@@ -262,7 +264,7 @@ class Translator {
     const declaration = symbol?.declarations?.[0];
     const library = declaration && this.program.isSourceFileDefaultLibrary(declaration.getSourceFile());
     if (declaration && !library && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
-      return `_root_.${this.declareType(declaration, type)}`;
+      return `_root_.${this.declareType(declaration, type, node)}`;
     }
     if (type.flags & TypeFlags.Object && (symbol?.name === "__type" || symbol?.name === "__object")) {
       return `_root_.${this.declareAnonymous(type, node).lean}`;
@@ -292,22 +294,76 @@ class Translator {
     return field.node.questionToken && !lean.startsWith("(Option ") ? `(Option ${lean})` : lean;
   }
 
-  declareType(declaration, type) {
-    if (this.types.has(declaration)) {
-      const known = this.types.get(declaration);
+  // The package a declaration file ships in, by the nearest manifest with a name.
+  packageOf(file) {
+    const path = realpathSync(file.fileName);
+    if (!(path === this.repository || path.startsWith(this.repository + sep))) {
+      throw new Unsupported(`${file.fileName} is outside the translated package`);
+    }
+    for (let dir = dirname(path); dir.startsWith(this.repository); dir = dirname(dir)) {
+      const manifest = join(dir, "package.json");
+      if (!existsSync(manifest)) continue;
+      if (!this.packages.has(manifest)) {
+        const { name: package_, version } = JSON.parse(readFileSync(manifest, "utf8"));
+        this.packages.set(manifest, package_ ? { name: package_, version, dir } : null);
+      }
+      if (this.packages.get(manifest)) return this.packages.get(manifest);
+    }
+    return undefined;
+  }
+
+  // A type in a declaration file has no code of its own, so what a file check
+  // looks for can't be there. Its fields are a claim about values, as they are
+  // for any declared type. The name leaves out the version and the install
+  // layout, so a guarantee about the type survives a package update or a
+  // different package manager, as long as the type keeps its shape.
+  leanTypeName(declaration) {
+    const file = declaration.getSourceFile();
+    const found = file.isDeclarationFile ? this.packageOf(file) : undefined;
+    if (!found) return this.leanName(declaration, declaration.name.text);
+    const inside = relative(found.dir, realpathSync(file.fileName)).replace(/\.d\.[cm]?ts$/, "");
+    const parts = [...found.name.split("/"), ...inside.split(sep)]
+      .map(part => part.replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1")).map(name);
+    return `Proofci.Package.${parts.join(".")}.${name(declaration.name.text)}`;
+  }
+
+  // Each use of a generic type is its own Lean type, so `Page<string>` and
+  // `Page<number>` are separate structures. Nothing else needs an argument.
+  instantiation(declaration, type, node) {
+    if (!declaration.typeParameters?.length) return { key: declaration, suffix: "" };
+    const argumentTypes = type.aliasTypeArguments ?? (type.objectFlags & ts.ObjectFlags.Reference ? this.checker.getTypeArguments(type) : []);
+    const given = argumentTypes.slice(0, declaration.typeParameters.length);
+    if (given.length !== declaration.typeParameters.length) throw this.fail(node, "this use of a generic type has no arguments to read");
+    if (given.some(arg => arg.flags & ts.TypeFlags.TypeParameter)) throw this.fail(node, "a generic type over a type parameter is not supported yet");
+    const text = given.map(arg => this.type(arg, node)).join(",");
+    const hash = createHash("sha256").update(text).digest("hex").slice(0, 10);
+    return { key: `${this.leanTypeName(declaration)}<${text}>`, suffix: `_${hash}` };
+  }
+
+  declareType(declaration, type, node = declaration) {
+    const { key, suffix } = this.instantiation(declaration, type, node);
+    if (this.types.has(key)) {
+      const known = this.types.get(key);
       if (!known) throw this.fail(declaration, "recursive types are not supported yet");
       return known.lean;
     }
-    this.checkFile(declaration.getSourceFile());
-    this.checkDeclaration(declaration);
-    if (declaration.typeParameters?.length) throw this.fail(declaration, "generic types are not supported yet");
-    if (declaration.heritageClauses?.length) throw this.fail(declaration, "`extends` on a type is not supported yet");
-    this.types.set(declaration, null);
-    const lean = this.leanName(declaration, declaration.name.text);
+    const file = declaration.getSourceFile();
+    if (file.isDeclarationFile) this.packageOf(file);
+    else {
+      this.checkFile(file);
+      this.checkDeclaration(declaration);
+    }
+    const lean = `${this.leanTypeName(declaration)}${suffix}`;
+    // Two installed versions of a package can both declare a type at this name.
+    if ((this.typeOwners.get(lean) ?? declaration) !== declaration) {
+      throw this.fail(declaration, `two declarations of \`${declaration.name.text}\` would share a Lean name`);
+    }
+    this.typeOwners.set(lean, declaration);
+    this.types.set(key, null);
     let shape;
     if (type.isUnion()) shape = this.declareUnion(declaration, type, lean);
     else shape = this.declareRecord(declaration, type, lean);
-    this.types.set(declaration, { lean, ...shape });
+    this.types.set(key, { lean, ...shape });
     this.order.push(shape.text);
     return lean;
   }
@@ -418,7 +474,8 @@ class Translator {
     const symbol = type.aliasSymbol ?? type.symbol;
     if (symbol?.name === "__type" || symbol?.name === "__object") return this.declareAnonymous(type, symbol.declarations?.[0]);
     const declaration = symbol?.declarations?.[0];
-    return declaration ? this.types.get(declaration) : undefined;
+    if (!declaration) return undefined;
+    return this.types.get(declaration.typeParameters?.length ? this.instantiation(declaration, type, declaration).key : declaration);
   }
 
   // ------------------------------------------------------------ constants
@@ -2112,8 +2169,9 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   }
   const header = ["import Aeneas", "import ProofciJs", "", "open Aeneas Aeneas.Std Result", ""];
   const reached = [...translator.fileChecks.keys()];
+  const packages = Object.fromEntries([...translator.packages.values()].filter(Boolean).map(p => [p.name, p.version]));
   const local = file => relative(translator.root, realpathSync(file));
-  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures,
+  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, packages,
     files: reached.map(f => local(f.fileName)),
     imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
 }
