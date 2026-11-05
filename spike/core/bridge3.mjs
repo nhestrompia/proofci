@@ -57,22 +57,11 @@ instance : TyRep ${e.lean} := ⟨fun _ a v => v = .str (${tag} a), fun _ h => h�
 instance : NotNull ${e.lean} := ⟨by rintro _ _ _ rfl; rfl⟩
 theorem ${n}_inj {a b : ${e.lean}} (h : ${tag} a = ${tag} b) : a = b := by
   cases a <;> cases b <;> first | rfl | (simp [${tag}] at h)
+theorem ${n}_iff {a b : ${e.lean}} : ${tag} a = ${tag} b ↔ a = b := ⟨${n}_inj, fun e => by rw [e]⟩
 theorem ${n}_eq {p s x y} {a b : ${e.lean}} (hx : SimE p s x a) (hy : SimE p s y b) : SimC p s (.bin .eq x y) (a = b) :=
-  sim_cmp hx hy (by
-    rintro _ _ _ rfl rfl
-    have : decide ((${tag} a) = (${tag} b)) = decide (a = b) := by
-      by_cases h : a = b
-      · simp [h]
-      · simp [h, fun e => h (${n}_inj e)]
-    simp [binary, ← this])
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary, ${n}_iff])
 theorem ${n}_ne {p s x y} {a b : ${e.lean}} (hx : SimE p s x a) (hy : SimE p s y b) : SimC p s (.bin .ne x y) (a ≠ b) :=
-  sim_cmp hx hy (by
-    rintro _ _ _ rfl rfl
-    have : decide ((${tag} a) ≠ (${tag} b)) = decide (a ≠ b) := by
-      by_cases h : a = b
-      · simp [h]
-      · simp [h, fun e => h (${n}_inj e)]
-    simp [binary, ← this])
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary, ${n}_iff])
 macro_rules | \`(tactic| simc) => \`(tactic| (apply ${n}_eq; sim'; sim'))
 macro_rules | \`(tactic| simc) => \`(tactic| (apply ${n}_ne; sim'; sim'))
 ${e.tags.map(t => `theorem ${n}_lit_${short(t.tag)} {p s} : SimE p s (.lit (.str ${units(t.tag)})) ${e.lean}.${t.lean} := fun s₁ _ => ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, rfl⟩
@@ -95,6 +84,7 @@ instance : IsObj ${r.lean} := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩`];
     lines.push(`theorem ${n}_get_${i} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.field o ${q(f.name)}) a.${f.lean} :=
   sim_field h (${open})
 macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_get_${i}; sim'))
+macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${n}_get_${i}; sim_read))
 theorem ${n}_opt_${i} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.optField o ${q(f.name)}) a.${f.lean} :=
   sim_optField h (${open})
 macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
@@ -118,7 +108,7 @@ macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
     SimE p s (.record [${keys.map((k, i) => `(${q(k)}, e${i})`).join(", ")}]) (${value} : ${r.lean}) :=
   sim_record (${chain}) (by
     rintro _ _ ⟨${destruct}, rfl⟩
-    exact ⟨_, _, rfl, by simp, ${fields.join(", ")}⟩)
+    exact ⟨_, [${keys.map((k, i) => `(${q(k)}, v${i})`).join(", ")}], rfl, by simp, ${fields.join(", ")}⟩)
 macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_lit_${si} <;> sim))`);
   });
   return lines.join("\n");
@@ -168,7 +158,8 @@ theorem ${key}_sim {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") :
   sim_call (fn := ${key}) (by simp [prog]) (${n === 0 ? "args0" : `args${n} ${sig.params.map((_, i) => `h${i}`).join(" ")}`}) (by
     rintro _ _ ${n === 0 ? "rfl" : `⟨${Vs.join(", ")}, rfl, ${sig.params.map((_, i) => `r${i}`).join(", ")}⟩`}
     exact ${key}_bridge ${sig.params.map((_, i) => `r${i}`).join(" ")} hr)
-macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))`;
+macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))
+macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))`;
     const params = JSON.parse(`[${lean.slice(lean.indexOf(`def ${key} : Fn`)).match(/params := \[(.*?)\]/)[1]}]`);
     return head.replaceAll(/"PARAM(\d+)"/g, (_, i) => q(params[i])) + call;
   });

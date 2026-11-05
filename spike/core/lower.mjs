@@ -141,10 +141,10 @@ export function lower(root, targets, { paths } = {}) {
           throw new Error("template part that is neither a string nor a number");
         };
         const lit = t => `.lit (.str ${UNITS(t)})`;
-        // Right-nested, as in the typed view.
+        // Left-nested, as in the typed view.
         const items = [lit(e.head.text)];
         for (const span of e.templateSpans) items.push(part(span.expression), lit(span.literal.text));
-        return items.reduceRight((rest, item) => rest === null ? item : `.bin .add (${item}) (${rest})`, null);
+        return items.reduce((sum, item) => `.bin .add (${sum}) (${item})`);
       }
       if (ts.isNumericLiteral(e)) return `.lit (.num ${num(Number(e.text.replace(/_/g, "")))})`;
       if (ts.isBigIntLiteral(e)) return `.lit (.big ${e.text.replace(/n$/, "").replace(/_/g, "")})`;

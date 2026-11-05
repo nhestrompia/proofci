@@ -514,6 +514,40 @@ theorem SimB.or_both {p s a b P Q} (ha : SimB p s a P) (hb : SimB p s b Q) : Sim
   by_cases hp : P
   · exact (SimB.or_t ha hp).iff (by simp [hp])
   · exact (SimB.or_f ha hp hb).iff (by simp [hp])
+theorem SimC.of_bool {p s e} {a : Bool} (h : SimE p s e a) : SimC p s e (a = true) := by
+  intro s₁ hx
+  obtain ⟨v, s₂, he, hk, rfl⟩ := h s₁ hx
+  exact ⟨s₂, by simpa using he, hk⟩
+theorem SimC.and {p s a b P Q} {_ : Decidable P} {_ : Decidable Q} (ha : SimC p s a P) (hb : SimC p s b Q) :
+    SimC p s (.and a b) (P ∧ Q) := by
+  intro s₁ h₁
+  obtain ⟨s₂, e, h₂⟩ := ha s₁ h₁
+  by_cases hp : P
+  · obtain ⟨s₃, e', h₃⟩ := hb s₂ (h₁.trans h₂)
+    refine ⟨s₃, ?_, h₂.trans h₃⟩
+    have := Evals.and_true (a := a) e (by simp [truthy, hp]) e'
+    simpa [hp] using this
+  · refine ⟨s₂, ?_, h₂⟩
+    have := Evals.and_false (b := b) e (by simp [truthy, hp])
+    simpa [hp] using this
+theorem SimC.or {p s a b P Q} {_ : Decidable P} {_ : Decidable Q} (ha : SimC p s a P) (hb : SimC p s b Q) :
+    SimC p s (.or a b) (P ∨ Q) := by
+  intro s₁ h₁
+  obtain ⟨s₂, e, h₂⟩ := ha s₁ h₁
+  by_cases hp : P
+  · refine ⟨s₂, ?_, h₂⟩
+    have := Evals.or_true (b := b) e (by simp [truthy, hp])
+    simpa [hp] using this
+  · obtain ⟨s₃, e', h₃⟩ := hb s₂ (h₁.trans h₂)
+    refine ⟨s₃, ?_, h₂.trans h₃⟩
+    have := Evals.or_false (a := a) e (by simp [truthy, hp]) e'
+    simpa [hp] using this
+theorem SimE.cond_ite {p s c a b P α} {_ : TyRep α} {_ : Decidable P} {x y : α} (hc : SimB p s c P) (ha : SimE p s a x) (hb : SimE p s b y) :
+    SimE p s (.cond c a b) (if P then x else y) := by
+  by_cases hp : P
+  · simpa [hp] using SimE.cond_t hc hp ha
+  · simpa [hp] using SimE.cond_f hc hp hb
+
 /-- `a || b` and `a && b` as values, with the left side's truth known. -/
 theorem SimE.or_true {p s a b P α} {_ : TyRep α} {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : P) : SimE p s (.or a b) x :=
   SimE.or_t ha hb hp fun _ _ _ _ _ a b => Evals.unique a b
@@ -593,6 +627,12 @@ theorem SimE.len_str {p s e} {a : List Nat} {r : Js.Num} (hx : SimE p s e a) (h 
   refine ⟨.num (F64.ofInt a.length), s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, _, rfl, Or.inl (by rw [hl])⟩
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
   simp [eval, hF g hg]
+theorem SimE.len_lit {p s c} (a : Js.Num) (h : a.val = (c : List Nat).length) : SimE p s (.length (.lit (.str c))) a := by
+  intro s₁ _
+  refine ⟨.num (F64.ofInt c.length), s₁, ⟨1 + 1, fun f hf => ?_⟩, Ext.refl _, _, rfl, Or.inl (by rw [h])⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  obtain ⟨g', rfl, -⟩ := succ_of_le hg
+  simp [eval]
 theorem SimE.len_arr {p s e α} {_ : TyRep α} {a : List α} {r : Js.Num} (hx : SimE p s e a) (h : Js.len a = ok r) :
     SimE p s (.length e) r := by
   intro s₁ h₁
@@ -708,6 +748,8 @@ theorem SimE.array {p s es α} {_ : TyRep α} {xs : List α} (h : SimL p s es xs
   intro s₁ h₁
   obtain ⟨vs, s₂, el, h₂, hl⟩ := h s₁ h₁
   refine ⟨_, _, Evals.array el, h₂.trans ⟨rfl, List.prefix_append _ _⟩, _, vs, rfl, by simp, hl.imp fun _ _ r => mono (List.prefix_append _ _) r⟩
+
+theorem SimE.nil_str {p s} : SimE (α := List (List Nat)) p s (.array []) [] := SimE.array siml_nil
 
 def Args1 {α} [TyRep α] (a : α) (h : Heap) (vs : List Val) : Prop := ∃ v, vs = [v] ∧ rep h a v
 def Args2 {α β} [TyRep α] [TyRep β] (a : α) (b : β) (h : Heap) (vs : List Val) : Prop := ∃ v w, vs = [v, w] ∧ rep h a v ∧ rep h b w

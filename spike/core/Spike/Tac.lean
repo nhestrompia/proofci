@@ -9,9 +9,9 @@ namespace Core
 syntax "isnone" : tactic
 macro_rules | `(tactic| isnone) => `(tactic| first | rfl | assumption | (simp_all; done))
 syntax "known" : tactic
-macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | (simp_all; done))
+macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | tauto | (simp_all; done))
 syntax "refuted" : tactic
-macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | (simp_all; done))
+macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | tauto | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | tauto))
 
 syntax "vsplit " ident : tactic
 macro_rules
@@ -27,6 +27,8 @@ macro_rules
 syntax "sim" : tactic
 syntax "sim'" : tactic
 syntax "sim0" : tactic
+syntax "sim_read" : tactic
+syntax "sim_v" : tactic
 syntax "simb" : tactic
 syntax "simc" : tactic
 syntax "post" : tactic
@@ -57,6 +59,8 @@ macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.bsub; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.bmul; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.bdiv; sim'; sim'; assumption))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.brem; sim'; sim'; assumption))
+macro_rules | `(tactic| sim0) => `(tactic| exact SimE.len_lit _ rfl)
+macro_rules | `(tactic| sim0) => `(tactic| exact SimE.len_lit ⟨_, by decide, by decide⟩ rfl)
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.len_str; sim'; assumption))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.len_arr; sim'; assumption))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.at_; sim'; sim'))
@@ -77,7 +81,7 @@ macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.abs; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.join; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.split; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.array (siml_nil (α := List Nat)))
+macro_rules | `(tactic| sim0) => `(tactic| exact SimE.nil_str)
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trim; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trimStart; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trimEnd; sim'))
@@ -86,6 +90,7 @@ macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.toUpper; sim'; assumption
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.of_c; simc))
 
 -- Branching values
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.cond_ite; simb; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.cond_t; simb; known; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.cond_f; simb; known; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.or_true; sim'; simb; known))
@@ -93,7 +98,7 @@ macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.or_false; simb; known; si
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.and_true; simb; known; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.and_false; sim'; simb; known))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.coalesce_none; sim'; isnone; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.coalesce_some; sim'; infer_instance))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.coalesce_some; sim_v; infer_instance))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.optField_none; sim'; isnone; simp [nothingOk]))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.array; siml))
 macro_rules | `(tactic| siml) => `(tactic| exact siml_nil)
@@ -107,11 +112,15 @@ macro_rules | `(tactic| sim') => `(tactic| (apply SimE.up up_null; sim0))
 macro_rules | `(tactic| sim') => `(tactic| (apply SimE.some; sim0))
 macro_rules | `(tactic| sim') => `(tactic| sim0)
 
+-- A value of unknown type that isn't nullish here, so an option is read through.
+macro_rules | `(tactic| sim_v) => `(tactic| first | (apply SimE.some_inv; apply SimE.var; assumption) | (apply SimE.unwrap; sim0; assumption) | sim0)
+
 -- A known target may differ from what the code computes only by shape.
-macro_rules | `(tactic| sim) => `(tactic| (apply SimE.conv; sim'; simp [List.append_assoc]))
+macro_rules | `(tactic| sim) => `(tactic| (apply SimE.conv; sim'; first | rfl | (simp [List.append_assoc]; done) | (simp_all; done)))
 macro_rules | `(tactic| sim) => `(tactic| sim')
 
 -- Truth
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.of_bool; sim_read))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.lt; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.gt; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.le; sim'; sim'))
@@ -131,17 +140,27 @@ macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_big; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimB.lt_str; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimB.gt_str; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimB.isNullish_none; sim'; isnone))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimB.isNullish_some; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimB.isNullish_some; sim_v; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_undef_none; sim'; isnone))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_null_none; sim'; isnone))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_undef_none; sim'; isnone))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_null_none; sim'; isnone))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_nothing_some rfl; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_nothing_some rfl; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_nothing_some; rfl; sim_v; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_nothing_some; rfl; sim_v; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.not; simb))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.and; simc; simc))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.or; simc; simc))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.var; assumption))
+macro_rules | `(tactic| sim_read) => `(tactic| exact SimE.lit_bool _)
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.startsWith; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.endsWith; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.includes_str; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
 
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.none; sim'; isnone))
-macro_rules | `(tactic| simb) => `(tactic| (apply SimB.obj; sim'; infer_instance))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.obj; sim_v; infer_instance))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.big; sim'))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.num; sim'))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.str; sim'))
