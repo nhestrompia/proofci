@@ -1355,13 +1355,13 @@ theorem step_for {T S σ β : Type} {_ : TyRep T} {p s x e body cs Φ W} {mk : L
     (hnil : ∀ a s' y, Fr s s' W → R a s' → B (mk [] a) = ok y → ∃ r, y = .done r ∧ Zb r s')
     (hcons : ∀ q rest a s' w y, Fr s s' W → R a s' → rep s'.heap q w → B (mk (q :: rest) a) = ok y →
       Wp p { s' with env := s'.env.put x w } body
-        (LoopQ mk (fun a t => Fr s' t W ∧ R a t) (fun r t => Fr s' t W ∧ Zb r t) Zr rest y))
-    (k : ∀ s', Fr s s' W → Zb res s' → Wp p s' cs Φ) (kr : ∀ v s', Zr res v s' → Φ (.ret v) s') :
+        (LoopQ mk (fun a t => Fr s' t W ∧ R a t) (fun r t => Fr s' t W ∧ Zb r t) (fun r v t => s'.heap <+: t.heap ∧ Zr r v t) rest y))
+    (k : ∀ s', Fr s s' W → Zb res s' → Wp p s' cs Φ) (kr : ∀ v s', s.heap <+: s'.heap → Zr res v s' → Φ (.ret v) s') :
     Wp p s (.forOf x e body :: cs) Φ := by
   obtain ⟨v, s₂, ev, h₂, l, vs, rfl, hl', hf⟩ := he s (Ext.refl _)
   have hs₂ : Fr s s₂ W := ⟨h₂.2, fun y _ => by rw [h₂.1]⟩
   have hit := sim_for (h := s₂.heap) (mk := mk) (B := B) (x := x) (p := p) (body := body) (vs := vs) (l := l)
-    (R := fun a t => Fr s₂ t W ∧ Fr s t W ∧ R a t) (Zb := fun r t => Fr s t W ∧ Zb r t) (Zr := Zr)
+    (R := fun a t => Fr s₂ t W ∧ Fr s t W ∧ R a t) (Zb := fun r t => Fr s t W ∧ Zb r t) (Zr := fun r v t => s.heap <+: t.heap ∧ Zr r v t)
     (fun a t h => h.1.1) hl'
     (fun a t y h hb => by
       obtain ⟨r, rfl, hz⟩ := hnil a t y h.2.1 h.2.2 hb
@@ -1374,16 +1374,16 @@ theorem step_for {T S σ β : Type} {_ : TyRep T} {p s x e body cs Φ W} {mk : L
         obtain ⟨a', rfl, hc, hf', hR'⟩ := hQ
         exact ⟨a', rfl, hc, h.1.trans hf', h.2.1.trans hf', hR'⟩
       | done r =>
-        rcases hQ with ⟨hb', hf', hz⟩ | hz
+        rcases hQ with ⟨hb', hf', hz⟩ | ⟨v', hc', hp', hz⟩
         · exact Or.inl ⟨hb', h.2.1.trans hf', hz⟩
-        · exact Or.inr hz)
+        · exact Or.inr ⟨v', hc', h.2.1.1.trans hp', hz⟩)
     xs 0 a0 s₂ res (by simpa using hf) ⟨Fr.refl _ _, hs₂, hinit s₂ h₂⟩ hl
   obtain ⟨c, s', hi, hz⟩ := hit
   have hex : Execs p s (.forOf x e body) c s' := Execs.forOf ev hi
-  rcases hz with ⟨rfl, hf', hb⟩ | ⟨w, rfl, hr⟩
+  rcases hz with ⟨rfl, hf', hb⟩ | ⟨w, rfl, hp', hr⟩
   · obtain ⟨r, s₃, hrest, hΦ⟩ := k s' hf' hb
     exact ⟨r, s₃, ExecsL.cons_normal hex hrest, hΦ⟩
-  · exact ⟨_, s', ExecsL.cons_exit hex (by simp), kr w s' hr⟩
+  · exact ⟨_, s', ExecsL.cons_exit hex (by simp), kr w s' hp' hr⟩
 
 theorem seq_exit {p cs Φ r s} (hr : r ≠ .normal) (h : Φ r s) : Seq p cs Φ r s := by simpa [Seq, hr] using h
 theorem step_brk {p s cs Φ} (h : Φ .brk s) : Wp p s (.brk :: cs) Φ :=
@@ -1396,6 +1396,23 @@ theorem wp_nil {p s Φ} (h : Φ .normal s) : Wp p s [] Φ := ⟨_, s, ExecsL.nil
 theorem post_loop {T S σ β : Type} {α} {_ : TyRep α} {mk : List T → σ → S} {R Zb} {Zr : β → Val → St → Prop} {rest r h} {a : α}
     (hz : ∀ v s, h <+: s.heap → rep s.heap a v → Zr r v s) : Post (LoopQ mk R Zb Zr rest (.done r)) h a :=
   fun v s hb hr => Or.inr ⟨v, rfl, hz v s hb hr⟩
+
+/-- Entering a loop body or a callback: one more variable, nothing else changes. -/
+theorem enter {p s x w body Φ} (k : ∀ s', Upd s s' x → s'.env x = some w → s'.heap = s.heap → Wp p s' body Φ) :
+    Wp p ⟨s.env.put x w, s.heap⟩ body Φ :=
+  k _ ⟨List.prefix_refl _, fun y hy => by simp [Env.put, hy]⟩ (by simp [Env.put]) rfl
+theorem V.mk' {s x w α} {_ : TyRep α} {a : α} {h : Heap} (he : s.env x = some w) (hh : s.heap = h) (r : rep h a w) : V s x a :=
+  ⟨w, he, hh ▸ r⟩
+theorem Fr.sub {a b c : St} {W W2} (f : Fr a b W) (g : Fr b c W2) (hs : ∀ y ∈ W2, y ∈ W) : Fr a c W :=
+  ⟨f.1.trans g.1, fun y hy => by rw [g.2 y (fun h => hy (hs y h))]; exact f.2 y hy⟩
+theorem base_of {h : Heap} {s : St} (e : s.heap = h) : Base h s := by subst e; exact List.prefix_refl _
+theorem V.nil_cast {s x A B} {_ : TyRep A} {_ : TyRep B} (h : V (α := List A) s x []) : V (α := List B) s x [] := by
+  obtain ⟨v, e, l, vs, rfl, hl, hf⟩ := h
+  have : vs = [] := List.forall₂_nil_left_iff.mp hf
+  subst this
+  exact ⟨_, e, l, [], rfl, hl, .nil⟩
+theorem post_use {α} {_ : TyRep α} {Φ : Cmp → St → Prop} {h s s'} {a : α} {v} (ho : Post Φ h a) (hb : Base h s)
+    (hp : s.heap <+: s'.heap) (hz : rep s'.heap a v) : Φ (.ret v) s' := ho v s' (List.IsPrefix.trans hb hp) hz
 
 /-- A step of the typed function that is still to be walked. -/
 def Todo {α : Type} (m : Result α) (r : α) : Prop := m = ok r
@@ -1501,7 +1518,18 @@ def carryHeap (kE : Lean.Expr) : MetaM Lean.Expr := do
   let t ← whnfR (← instantiateMVars (← inferType kE))
   let t' ← whnfCore (← unfoldDefinition t)
   let k' ← mkExpectedTypeHint kE t'
-  if t.isAppOf ``Core.Upd then mkAppM ``And.left #[k'] else mkAppM ``And.right #[k']
+  if t.isAppOf ``Core.Upd || t.isAppOf ``Core.Fr then mkAppM ``And.left #[k'] else mkAppM ``And.right #[k']
+
+/-- Whether a literal list of strings contains a literal string. -/
+partial def listHas (l y : Lean.Expr) : Bool :=
+  if l.isAppOfArity ``List.cons 3 then l.getArg! 1 == y || listHas (l.getArg! 2) y else false
+
+/-- `∀ y ∈ W2, y ∈ W`, as a proposition. -/
+def inferSubset (W W2 : Lean.Expr) : MetaM Lean.Expr := do
+  withLocalDeclD `y (mkConst ``String) fun y => do
+    let m2 ← mkAppOptM ``Membership.mem #[none, none, none, W2, y]
+    let m1 ← mkAppOptM ``Membership.mem #[none, none, none, W, y]
+    mkForallFVars #[y] (← mkArrow m2 m1)
 
 /-- Moves every fact about variables across a step. -/
 elab "carry " k:term : tactic => withMainContext do
@@ -1510,7 +1538,9 @@ elab "carry " k:term : tactic => withMainContext do
   let old := kT.getArg! 0
   let new := kT.getArg! 1
   let isUpd := kT.isAppOf ``Core.Upd
+  let isFr := kT.isAppOf ``Core.Fr
   let x := if isUpd then kT.getArg! 2 else mkNatLit 0
+  let W := if isFr then kT.getArg! 2 else mkNatLit 0
   let heap ← carryHeap kE
   for d in ← getLCtx do
     if d.isImplementationDetail then continue
@@ -1518,7 +1548,15 @@ elab "carry " k:term : tactic => withMainContext do
     if ty.isAppOfArity ``Core.V 5 && (ty.getArg! 0) == old then
       let y := ty.getArg! 1
       let g ← getMainGoal
-      if isUpd then
+      if isFr then
+        if listHas W y then
+          replaceMainGoal [← g.tryClear d.fvarId]
+          continue
+        let ne ← mkDecideProof (mkNot (← mkAppOptM ``Membership.mem #[none, none, none, W, y]))
+        let pf ← mkAppM ``Core.V.fr #[kE, ne, d.toExpr]
+        let (_, g') ← (← g.assert d.userName (← inferType pf) pf).intro1P
+        replaceMainGoal [← g'.tryClear d.fvarId]
+      else if isUpd then
         if y == x then
           replaceMainGoal [← g.tryClear d.fvarId]
           continue
@@ -1532,7 +1570,11 @@ elab "carry " k:term : tactic => withMainContext do
         replaceMainGoal [← g'.tryClear d.fvarId]
     else if ty.isAppOfArity ``Core.Fr 3 && (ty.getArg! 1) == old then
       let g ← getMainGoal
-      let pf ← if isUpd then do
+      let pf ← if isFr then do
+          let W2 := ty.getArg! 2
+          let hs ← mkDecideProof (← inferSubset W W2)
+          mkAppM ``Core.Fr.sub #[d.toExpr, kE, hs]
+        else if isUpd then do
           let hx ← mkDecideProof (← mkAppOptM ``Membership.mem #[none, none, none, ty.getArg! 2, x])
           mkAppM ``Core.Fr.upd #[d.toExpr, kE, hx]
         else mkAppM ``Core.Fr.ext #[d.toExpr, kE]

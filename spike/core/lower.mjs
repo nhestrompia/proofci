@@ -20,6 +20,8 @@ const STRING_METHODS = {
   "trimEnd/0": "trimEnd", "toLowerCase/0": "toLower", "toUpperCase/0": "toUpper", "slice/1": "sliceFrom", "slice/2": "slice",
   "indexOf/1": "strIndexOf", "charAt/1": "charAt", "split/1": "split",
 };
+const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };
+const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach"]);
 const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice" };
 
 export function lower(root, targets, { paths } = {}) {
@@ -37,6 +39,7 @@ export function lower(root, targets, { paths } = {}) {
   };
 
   const decls = new Map();
+  const loopMeta = [];
   const lambdas = { count: 0 };
   const aliases = new Map();
   const classes = new Set();
@@ -97,8 +100,60 @@ export function lower(root, targets, { paths } = {}) {
     const capturedConst = new Set();           // `const` variables, copied when the lambda is made
     const isConst = d => ts.isVariableDeclaration(d) && (d.parent.flags & ts.NodeFlags.Const) !== 0;
     let hasLambda = false;
+    // An arrow written in place as an array method's callback runs here and now, in this
+    // function's variables, so it needs no closure.
+    const isFnExpr = n => ts.isArrowFunction(n) || ts.isFunctionExpression(n);
+    const isInlineCb = n => {
+      const c = n.parent;
+      if (!ts.isCallExpression(c) || c.arguments[0] !== n || !ts.isPropertyAccessExpression(c.expression)) return false;
+      const m = c.expression.name.text;
+      return (HOF[m] || m === "reduce" || m === "forEach") && checker.isArrayType(checker.getTypeAtLocation(c.expression.expression));
+    };
+    const walk = (n, f) => { f(n); ts.forEachChild(n, c => walk(c, f)); };
+    // A callback must not write outer variables: its writes wouldn't outlive the turn.
+    const checkPure = cb => walk(cb.body, n => {
+      const outer = id => { const d = resolve(id)?.valueDeclaration; return !d || !isInside(d, cb); };
+      if (ts.isBinaryExpression(n) && ts.isAssignmentOperator(n.operatorToken.kind)) {
+        const t = n.left;
+        if (!ts.isIdentifier(t) || outer(t)) throw new Error("a callback that writes outside itself");
+      }
+      if ((ts.isPostfixUnaryExpression(n) || ts.isPrefixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) {
+        if (!ts.isIdentifier(n.operand) || outer(n.operand)) throw new Error("a callback that writes outside itself");
+      }
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ["push", "pop", "shift", "unshift", "splice", "sort", "reverse"].includes(n.expression.name.text)) {
+        const r = n.expression.expression;
+        if (!ts.isIdentifier(r) || outer(r)) throw new Error("a callback that writes outside itself");
+      }
+    });
+    // `xs.push(v)` as a new array is the same as JavaScript only if nothing else holds `xs`.
+    const ownedArray = sym => {
+      const d = sym?.valueDeclaration;
+      if (!d || !ts.isVariableDeclaration(d) || !d.initializer) return false;
+      let init = d.initializer;
+      while (ts.isAsExpression(init) || ts.isParenthesizedExpression(init) || ts.isSatisfiesExpression(init)) init = init.expression;
+      if (!ts.isArrayLiteralExpression(init)) return false;
+      let ok = true;
+      walk(decl.body, n => {
+        if (!ts.isIdentifier(n) || n === d.name || resolve(n) !== sym) return;
+        let u = n;
+        while (ts.isParenthesizedExpression(u.parent) || ts.isAsExpression(u.parent) || ts.isNonNullExpression(u.parent)) u = u.parent;
+        const p = u.parent;
+        if (ts.isPropertyAccessExpression(p) && p.expression === u && (READS.has(p.name.text) || p.name.text === "push")) return;
+        if (ts.isElementAccessExpression(p) && p.expression === u) {
+          if (ts.isBinaryExpression(p.parent) && p.parent.left === p && ts.isAssignmentOperator(p.parent.operatorToken.kind)) ok = false;
+          return;
+        }
+        if (ts.isReturnStatement(p) || ts.isSpreadElement(p)) return;
+        if (ts.isForOfStatement(p) && p.expression === u) {
+          walk(p.statement, m => { if (ts.isIdentifier(m) && resolve(m) === sym) ok = false; });
+          return;
+        }
+        ok = false;
+      });
+      return ok;
+    };
     const visitCapt = n => {
-      if (ts.isArrowFunction(n)) {
+      if (ts.isArrowFunction(n) && !isInlineCb(n)) {
         hasLambda = true;
         const look = m => {
           if (ts.isIdentifier(m)) {
@@ -129,6 +184,31 @@ export function lower(root, targets, { paths } = {}) {
       return arg;
     });
     const loops = [];
+    let cbCount = 0, inForEach = false;
+    const callback = (fn, count) => {
+      const name = `${key}_cb${cbCount++}`;
+      if (isFnExpr(fn)) {
+        if (fn.parameters.length !== count || !fn.parameters.every(p => ts.isIdentifier(p.name) && !p.initializer)) throw new Error("a callback with this parameter shape");
+        checkPure(fn);
+        const params = fn.parameters.map(p => bind(p.name));
+        const body = [];
+        if (ts.isBlock(fn.body)) S(fn.body, body); else body.push(`.ret (${E(fn.body)})`);
+        done.set(name, `def ${name} : Fn := { params := [${params.map(lean).join(", ")}], body := [${body.join(", ")}] }`);
+        decls.set(name, null);
+        return name;
+      }
+      if (ts.isIdentifier(fn) && count === 1) {
+        const d = resolve(fn)?.valueDeclaration;
+        if (d && ts.isFunctionDeclaration(d) && d.parameters.length === 1) {
+          if (!done.has(fnKey(d))) { done.set(fnKey(d), null); queue.push(d); }
+          const x = `__cb${cbCount}`;
+          done.set(name, `def ${name} : Fn := { params := [${lean(x)}], body := [.ret (.call ${lean(fnKey(d))} [.var ${lean(x)}])] }`);
+          decls.set(name, null);
+          return name;
+        }
+      }
+      throw new Error("a callback that isn't written in place");
+    };
     const idOf = sym => ({ __sym: sym });
     const E = e => {
       if (e.__sym) return scope.has(e.__sym) ? `.var ${lean(scope.get(e.__sym))}` : `.field (.var "__env") ${lean(e.__sym.name)}`;
@@ -206,6 +286,12 @@ export function lower(root, targets, { paths } = {}) {
         return `.prim .${e.expression.name.text} [${e.arguments.map(E).join(", ")}]`;
       }
       if (ts.isCallExpression(e) && e.expression.getText() === "String" && e.arguments.length === 1) return `.prim .numStr [${E(e.arguments[0])}]`;
+      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && !e.expression.questionDotToken && !e.questionDotToken
+        && checker.isArrayType(checker.getTypeAtLocation(e.expression.expression))) {
+        const m = e.expression.name.text, recv = e.expression.expression;
+        if (HOF[m] && e.arguments.length === 1) return `.hof .${HOF[m]} (${E(recv)}) ${lean(callback(e.arguments[0], 1))}`;
+        if (m === "reduce" && e.arguments.length === 2) return `.reduce (${E(recv)}) (${E(e.arguments[1])}) ${lean(callback(e.arguments[0], 2))}`;
+      }
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && !e.expression.questionDotToken && !e.questionDotToken) {
         const m = `${e.expression.name.text}/${e.arguments.length}`, recv = e.expression.expression;
         const t = checker.getTypeAtLocation(recv);
@@ -255,6 +341,31 @@ export function lower(root, targets, { paths } = {}) {
       throw new Error(`expression: ${e.getText()}`);
     };
     const S = (s, out) => {
+      if (s.__decls) { S({ declarationList: s.__decls, __var: true }, out); return; }
+      if (s.__expr) { S({ expression: s.__expr, __stmt: true }, out); return; }
+      if (s.__var) {
+        for (const d of s.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name)) throw new Error("this declaration pattern");
+          out.push(`.set ${lean(bind(d.name))} (${d.initializer ? E(d.initializer) : ".lit .undef"})`);
+        }
+        return;
+      }
+      if (s.__stmt) {
+        const e = s.expression;
+        if ((ts.isPostfixUnaryExpression(e) || ts.isPrefixUnaryExpression(e)) && ts.isIdentifier(e.operand) && (e.operator === ts.SyntaxKind.PlusPlusToken || e.operator === ts.SyntaxKind.MinusMinusToken)) {
+          const n = lean(scope.get(resolve(e.operand)));
+          out.push(`.set ${n} (.bin .${e.operator === ts.SyntaxKind.PlusPlusToken ? "add" : "sub"} (.var ${n}) (.lit (.num (F64.ofInt (1)))))`);
+          return;
+        }
+        if (ts.isBinaryExpression(e)) {
+          const { left, right, operatorToken: t } = e, op = t.getText();
+          const value = op === "=" ? E(right) : op === "+=" ? `.bin .add (${E(left)}) (${E(right)})` : op === "-=" ? `.bin .sub (${E(left)}) (${E(right)})` : null;
+          if (value === null || !ts.isIdentifier(left)) throw new Error("this `for` step");
+          out.push(`.set ${lean(scope.get(resolve(left)))} (${value})`);
+          return;
+        }
+        throw new Error("this `for` step");
+      }
       if (ts.isBlock(s)) { for (const c of s.statements) S(c, out); return; }
       if (ts.isVariableStatement(s)) {
         for (const d of s.declarationList.declarations) {
@@ -275,8 +386,12 @@ export function lower(root, targets, { paths } = {}) {
         }
         return;
       }
-      if (ts.isReturnStatement(s)) { out.push(`.ret (${s.expression ? E(s.expression) : ".lit .undef"})`); return; }
-      if (ts.isBreakStatement(s)) { out.push(".brk"); return; }
+      if (ts.isReturnStatement(s)) {
+        if (inForEach) { if (s.expression) throw new Error("a value returned from `forEach`"); out.push(".cont"); return; }
+        out.push(`.ret (${s.expression ? E(s.expression) : ".lit .undef"})`); return;
+      }
+      if (ts.isBreakStatement(s)) { if (s.label) throw new Error("a labelled `break`"); out.push(".brk"); return; }
+      if (ts.isContinueStatement(s)) { if (s.label) throw new Error("a labelled `continue`"); out.push(".cont"); return; }
       if (ts.isThrowStatement(s)) { out.push(`.throw (${E(s.expression)})`); return; }
       if (ts.isIfStatement(s)) {
         const c = E(s.expression), t = [], f = [];
@@ -322,15 +437,31 @@ export function lower(root, targets, { paths } = {}) {
         return;
       }
       if (ts.isEmptyStatement?.(s)) return;
-      if (ts.isForStatement(s) || ts.isWhileStatement(s) || ts.isDoStatement(s)) throw new Error("for, while and do loops");
+      if (ts.isDoStatement(s)) throw new Error("`do` loops");
+      if (ts.isForStatement(s) || ts.isWhileStatement(s)) {
+        if (ts.isForStatement(s) && s.initializer) {
+          if (!ts.isVariableDeclarationList(s.initializer)) throw new Error("this `for` initializer");
+          S(ts.factory.createVariableStatement ? { __decls: s.initializer } : s, out);
+        }
+        const idx = loops.length; loops.push(null);
+        const loop = `${key}_loop${idx}`;
+        const c = E(s.condition ?? ts.factory.createTrue()), body = [], step = [];
+        S(s.statement, body);
+        if (ts.isForStatement(s) && s.incrementor) S({ __expr: s.incrementor }, step);
+        loops[idx] = `def ${loop} : List Stmt := [${body.join(", ")}]\n\ndef ${loop}_step : List Stmt := [${step.join(", ")}]`;
+        loopMeta.push({ key, idx, name: loop, kind: "while", item: null, text: body.join(" ") + step.join(" ") });
+        out.push(`.whileL (${c}) ${loop} ${loop}_step`); return;
+      }
       if (ts.isTryStatement(s)) throw new Error("try");
       if (ts.isForOfStatement(s)) {
         const x = bind(s.initializer.declarations[0].name), arr = E(s.expression), body = [];
+        const idx = loops.length; loops.push(null);
         S(s.statement, body);
-        const loop = `${key}_loop${loops.length}`;
+        const loop = `${key}_loop${idx}`;
         const assigned = [...new Set(body.join(" ").match(/\.set "[^"]+"/g)?.map(m => m.slice(6, -1)) ?? [])];
         info[key] = { loop, item: x, carried: assigned.filter(v => taken.has(v) && v !== x) };
-        loops.push(`def ${loop} : List Stmt := [${body.join(", ")}]`);
+        loops[idx] = `def ${loop} : List Stmt := [${body.join(", ")}]`;
+        loopMeta.push({ key, idx, name: loop, kind: "for", item: x, text: body.join(" ") });
         out.push(`.forOf ${lean(x)} (${arr}) ${loop}`); return;
       }
       if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "pop") {
@@ -340,12 +471,32 @@ export function lower(root, targets, { paths } = {}) {
         out.push(`.expr (.call "__stuck" [])`); return;
       }
       if (ts.isExpressionStatement(s) && ts.isAwaitExpression(s.expression)) { out.push(".await"); return; }
+      if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "forEach"
+        && s.expression.arguments.length === 1 && isFnExpr(s.expression.arguments[0]) && checker.isArrayType(checker.getTypeAtLocation(s.expression.expression.expression))) {
+        const fn = s.expression.arguments[0];
+        if (fn.parameters.length !== 1 || !ts.isIdentifier(fn.parameters[0].name)) throw new Error("a `forEach` with this parameter shape");
+        const x = bind(fn.parameters[0].name), arr = E(s.expression.expression.expression), body = [];
+        const idx = loops.length; loops.push(null);
+        const was = inForEach; inForEach = true;
+        if (ts.isBlock(fn.body)) S(fn.body, body); else S({ expression: fn.body, __plain: true, kind: ts.SyntaxKind.ExpressionStatement }, body);
+        inForEach = was;
+        const loop = `${key}_loop${idx}`;
+        loops[idx] = `def ${loop} : List Stmt := [${body.join(", ")}]`;
+        loopMeta.push({ key, idx, name: loop, kind: "for", item: x, text: body.join(" ") });
+        out.push(`.forOf ${lean(x)} (${arr}) ${loop}`); return;
+      }
       if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "push") {
+        const r = s.expression.expression.expression;
+        if (ts.isIdentifier(r) && scope.has(resolve(r)) && s.expression.arguments.length === 1 && ownedArray(resolve(r))) {
+          const n = lean(scope.get(resolve(r)));
+          out.push(`.set ${n} (.prim .append [.var ${n}, ${E(s.expression.arguments[0])}])`); return;
+        }
         out.push(`.push (${E(s.expression.expression.expression)}) (${E(s.expression.arguments[0])})`); return;
       }
       if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && s.expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
         out.push(`.expr (.call ${lean(`${parentOf(decl)}.__init`)} [.var "this", ${s.expression.arguments.map(E).join(", ")}])`.replace(", ])", "])")); return;
       }
+      if (ts.isExpressionStatement(s) && (ts.isPostfixUnaryExpression(s.expression) || ts.isPrefixUnaryExpression(s.expression))) { S({ __expr: s.expression }, out); return; }
       if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression)) {
         const { left, right, operatorToken: t } = s.expression;
         const op = t.getText();
@@ -395,6 +546,18 @@ export function lower(root, targets, { paths } = {}) {
   while (queue.length) lowerFn(queue.shift());
   const defs = [...done.values(), ...extras];
   const prog = `def prog : Prog := fun fname => match fname with\n${[...done.keys()].map(k => `  | ${lean(k)} => some ${k}`).concat([...aliases].filter(([k]) => !done.has(k)).map(([k, v]) => `  | ${lean(k)} => some ${v}`)).join("\n")}\n  | _ => none`;
-  const sources = [...decls].map(([key, d]) => ({ key, file: relative(root, d.getSourceFile().fileName), name: d.__top ?? d.name.text }));
-  return { names, info, sources, lean: `import Core\nopen Core\nset_option maxRecDepth 100000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
+  const sources = [...decls].filter(([, d]) => d).map(([key, d]) => ({ key, file: relative(root, d.getSourceFile().fileName), name: d.__top ?? d.name.text }));
+  // Every variable a loop can assign, through the loops nested in it.
+  const defsOf = name => { const m = loopMeta.find(l => l.name === name); return m ? m.text : ""; };
+  for (const l of loopMeta) {
+    const seen = new Set([l.name]);
+    let text = l.text;
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const m of text.matchAll(/\b(\w+_loop\d+)\b/g)) if (!seen.has(m[1])) { seen.add(m[1]); text += " " + defsOf(m[1]); grew = true; }
+    }
+    l.W = [...new Set([...(l.item ? [l.item] : []), ...[...text.matchAll(/\.set "([^"]+)"/g)].map(m => m[1])])];
+    delete l.text;
+  }
+  return { names, info, sources, loops: loopMeta, lean: `import Core\nopen Core\nset_option maxRecDepth 100000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
 }

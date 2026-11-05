@@ -45,10 +45,11 @@ syntax "post" : tactic
 syntax "siml" : tactic
 syntax "simf" : tactic
 
-macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post))
+macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post) | (apply Core.post_loop; intro v s h1 h2; exact ⟨h1, h2⟩))
 
 -- Variables, literals and options. Later rules are tried first.
 macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
+macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.var; apply V.nil_cast; assumption))
 macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.var; assumption))
 macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_num ⟨_, by decide, by decide⟩ rfl)
 macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_num _ rfl)
@@ -216,6 +217,8 @@ syntax "c_ret" : tactic
 syntax "c_ite" : tactic
 syntax "c_ite_lock" : tactic
 syntax "c_join" : tactic
+syntax "c_loop_end" : tactic
+syntax "l_conj" : tactic
 syntax "c_join1" : tactic
 syntax "c_join2" : tactic
 syntax "c_for" : tactic
@@ -294,8 +297,16 @@ syntax "b_lock" : tactic
 syntax "b_join" : tactic
 
 /-- Runs `a`, keeping nothing if it fails. -/
-def attempt (a : TSyntax `tactic) : TacticM Bool :=
-  (do evalTactic a; pure true) <|> pure false
+def attempt (a : TSyntax `tactic) : TacticM Bool := do
+  let saved ← Tactic.saveState
+  try
+    evalTactic a
+    pure true
+  catch e =>
+    if (← IO.getEnv "BRIDGE_TRACE").isSome then
+      IO.eprintln s!"ATTEMPT FAILED {← e.toMessageData.toString}"
+    saved.restore
+    pure false
 
 /-- Each statement has a first part that can be retried and a rest that can't, so a failure
 late in a function doesn't re-explore everything before it. -/
@@ -319,8 +330,10 @@ elab "crun_go" : tactic => withMainContext do
   let split ← `(tactic| c_split)
   match kind with
   | `nil =>
-    if (t.getArg! 3).isAppOf ``Core.Seq || !branch then evalTactic (← `(tactic| c_nil))
-    else evalTactic split
+    if (t.getArg! 3).isAppOf ``Core.Seq then evalTactic (← `(tactic| c_nil))
+    else if branch then evalTactic split
+    else if (t.getArg! 3).isAppOf ``Core.LoopQ then evalTactic (← `(tactic| c_loop_end))
+    else evalTactic (← `(tactic| c_nil))
   | ``Stmt.forOf => evalTactic (← `(tactic| c_for))
   | ``Stmt.whileL => evalTactic (← `(tactic| c_while))
   | ``Stmt.brk => evalTactic (← `(tactic| c_brk))
@@ -404,8 +417,15 @@ macro_rules | `(tactic| b_ite) => `(tactic| (
 macro_rules | `(tactic| b_lock) => `(tactic| (
   (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))
   (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))))
-macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; fail "STUCK break"))
-macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; fail "STUCK continue"))
+macro_rules | `(tactic| l_conj) => `(tactic| repeat' (first | trivial | assumption | (apply V.nil_cast; assumption) | apply And.intro))
+macro_rules | `(tactic| c_loop_end) => `(tactic| (apply wp_nil; first | refine ⟨(), rfl, Or.inl rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inl rfl, ?_, ?_⟩; assumption; l_conj))
+macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; refine Or.inl ⟨rfl, ?_, ?_⟩; assumption; l_conj))
+macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; first | refine ⟨(), rfl, Or.inr rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inr rfl, ?_, ?_⟩; assumption; l_conj))
+elab "clear_todo" : tactic => withMainContext do
+  for d in (← getLCtx).decls.toList.reverse do
+    let some d := d | continue
+    if (← instantiateMVars d.type).isAppOf ``Core.Todo then
+      replaceMainGoal [← (← getMainGoal).clear d.fvarId]
 elab "v_keep" : tactic => do
   revertTodo
   evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
@@ -424,5 +444,31 @@ macro_rules | `(tactic| c_join2) => `(tactic| (
   (focus (intro hp s' he; carry he; clear he; have hj' := Core.ite_neg_of hp hj; vsplit hj'; all_goals sim))))
 macro_rules | `(tactic| c_join) => `(tactic| first | c_join1 | c_join2)
 macro_rules | `(tactic| b_join) => `(tactic| (intro s' hv hu; carry hu; clear hu; crun))
+
+syntax "prog_lookup" : tactic
+macro_rules | `(tactic| prog_lookup) => `(tactic| fail "no such function")
+macro_rules | `(tactic| s_hof) => `(tactic| fail "no callback rule")
+syntax "c_cb" : tactic
+open Lean Elab Tactic in
+elab "c_cb_t" : tactic => do
+  unless ← attempt (← `(tactic| c_cb)) do throwError "STUCK in a callback"
+macro_rules | `(tactic| c_cb) => `(tactic| (
+  unfold Cb; intro s1 he w a r hw hf
+  clear_todo
+  carry he; clear he
+  apply enter; intro s2 hu he2 hh
+  have hv := V.mk' he2 hh hw
+  have hb0 := base_of hh
+  carry hu; clear hu he2 hh
+  beta_reduce at hf
+  have hk : Todo _ _ := hf
+  clear hf
+  crun))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.map; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.filter; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.some_; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.every; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.find; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.append; sim'; sim'))
 
 end Core

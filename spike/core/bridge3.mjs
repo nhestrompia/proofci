@@ -48,6 +48,92 @@ function recordShapes(lean) {
   return [...shapes].map(k => JSON.parse(k));
 }
 
+// Reads the loops of a typed function, in source order.
+function splitTop(text, sep) {
+  const parts = []; let depth = 0, at = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if ("([{".includes(c)) depth++; else if (")]}".includes(c)) depth--;
+    else if (depth === 0 && text.startsWith(sep, i)) { parts.push(text.slice(at, i)); at = i + sep.length; i += sep.length - 1; }
+  }
+  parts.push(text.slice(at));
+  return parts.map(p => p.trim());
+}
+const unparen = t => { t = t.trim(); while (t.startsWith("(") && t.endsWith(")")) { let d = 0, whole = true; for (let i = 0; i < t.length - 1; i++) { if (t[i] === "(") d++; if (t[i] === ")") d--; if (d === 0) { whole = false; break; } } if (!whole) break; t = t.slice(1, -1).trim(); } return t; };
+const base = n => n.replace(/[«»]/g, "").replace(/_\d+$/, "");
+const pathOf = (root, i, n) => n === 1 ? root : (i === n - 1 ? root + ".2".repeat(i) : root + ".2".repeat(i) + ".1");
+
+function viewLoops(text) {
+  const loops = [];
+  const mark = "(Aeneas.Std.loop (fun (state : ";
+  for (let at = text.indexOf(mark); at >= 0; at = text.indexOf(mark, at + 1)) {
+    const lineStart = text.lastIndexOf("\n", at) + 1;
+    const binder = text.slice(lineStart, at).match(/let (.+?) ← $/)?.[1] ?? "_";
+    const tStart = at + mark.length, tEnd = text.indexOf(") => match state with | ", tStart);
+    const type = text.slice(tStart, tEnd);
+    const pStart = tEnd + ") => match state with | ".length, pEnd = text.indexOf(" => do", pStart);
+    const pat = text.slice(pStart, pEnd);
+    let depth = 0, close = at, str = false;
+    for (let i = at; i < text.length; i++) {
+      const c = text[i];
+      if (str) { if (c === '"') str = false; continue; }
+      if (c === '"') str = true;
+      else if (c === "(") depth++;
+      else if (c === ")") { depth--; if (depth === 0) { close = i; break; } }
+    }
+    const inner = text.slice(at, close);
+    const rs = inner.lastIndexOf(" : Result ");
+    const result = unparen(inner.slice(rs + 10));
+    const inr = text.slice(close).match(/\| \.inr (.+?) =>/)?.[1];
+    loops.push({ binder, type, pat, result, inr });
+  }
+  return loops;
+}
+
+function loopRules(l, meta, retType) {
+  const K = meta.name;
+  const parts = splitTop(unparen(l.pat), ",");
+  const types = splitTop(l.type, "×");
+  const isFor = meta.kind === "for";
+  const list = isFor ? parts[0] : null;
+  const vars = isFor ? parts.slice(1) : parts, tys = isFor ? types.slice(1) : types;
+  const T = isFor ? unparen(types[0]).replace(/^List /, "") : null;
+  const sigma = tys.length ? tys.join(" × ") : "Unit";
+  const conj = (root, names, ts, s) => names.length ? names.map((n, i) => `V (α := ${ts[i]}) ${s} ${q(base(n))} ${pathOf(root, i, names.length)}`).join(" ∧ ") : "True";
+  const isSum = l.result.startsWith("Sum ");
+  const sum = isSum ? splitTop(l.result.slice(4), " ") : null;
+  const carried = isSum ? (l.inr && l.inr !== "_" ? splitTop(unparen(l.inr), ",") : []) : (l.binder === "_" || /^tmp\d+$/.test(l.binder) ? [] : splitTop(unparen(l.binder), ","));
+  const carriedTy = isSum ? (sum[1] === "(Unit)" || sum[1] === "Unit" ? [] : splitTop(unparen(sum[1]), "×")) : (carried.length ? splitTop(l.result, "×") : []);
+  const beta = isSum ? `Sum ${sum[0]} ${sum[1]}` : l.result;
+  const W = `[${meta.W.map(q).join(", ")}]`;
+  const pattern = n => n === 0 ? "_" : n === 1 ? "a1" : `⟨${Array.from({ length: n }, (_, i) => `a${i + 1}`).join(", ")}⟩`;
+  const rPat = n => n === 0 ? "_" : n === 1 ? "b1" : `⟨${Array.from({ length: n }, (_, i) => `b${i + 1}`).join(", ")}⟩`;
+  const zb = isSum
+    ? `match r with\n  | .inr y => ${conj("y", carried, carriedTy, "s")}\n  | .inl _ => False`
+    : conj("r", carried, carriedTy, "s");
+  const zr = isSum ? `match r with\n  | .inl a => rep (α := ${retType ?? unparen(sum[0])}) s.heap a v\n  | .inr _ => False` : "False";
+  const mk = !isFor ? "" : vars.length ? "(fun l a => (l, a))" : "(fun l _ => l)";
+  const defs = `def ${K}_R (st : ${sigma}) (s : St) : Prop := ${conj("st", vars, tys, "s")}
+def ${K}_Zb (r : ${beta}) (s : St) : Prop := ${zb}
+def ${K}_Zr (r : ${beta}) (v : Val) (s : St) : Prop := ${zr}`;
+  if (!isFor) return defs;
+  const a0 = vars.length ? "" : " (a0 := ())";
+  const after = isSum
+    ? `rcases res with b1 | ${rPat(carried.length)}`
+    : carried.length > 1 ? `rcases res with ${rPat(carried.length)}` : "skip";
+  const kr = isSum ? `(rcases res with b1 | _); (focus (dsimp only [${K}_Zr] at hz; have hk' := hk; unfold Todo at hk'; dsimp only at hk'; vsplit hk'; refine post_use ?_ ?_ hpre hz; post; assumption)); (focus (exact False.elim hz))` : "exact False.elim hz";
+  return `${defs}
+macro_rules | \`(tactic| c_for) => \`(tactic| (
+  v_keep; intro res hl hk
+  apply step_for (mk := ${mk}) (R := ${K}_R) (Zb := ${K}_Zb) (Zr := ${K}_Zr) (W := ${W})${a0} hl
+  sim
+  (focus (intro s2 he; carry he; clear he; l_conj))
+  (focus (intro ${pattern(vars.length)} s3 y hf hR hb; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); dsimp only at hb; vsplit hb; all_goals (refine ⟨_, rfl, ?_⟩; dsimp only [${K}_Zb]; l_conj)))
+  (focus (intro q rest ${pattern(vars.length) === "_" ? "_" : "st"} s3 w y hf hR hw hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; apply enter; intro s4 hu he2 hh; have hvq := V.mk' (α := ${T}) he2 hh hw; have hb0 := base_of hh; have hfr : Fr s3 s4 ${W} := Fr.upd (Fr.refl _ _) hu (by decide); carry hu; clear hu he2 hh; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))
+  (focus (intro s5 hf hz; ${isSum ? `(rcases res with b1 | ${rPat(carried.length)}); exact False.elim hz; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; dsimp only at hk; crun` : `${after}; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; crun`}))
+  (focus (intro v s6 hpre hz; ${kr}))))`;
+}
+
 function enumRules(e) {
   const n = short(e.lean);
   const tag = `${n}_tag`;
@@ -116,7 +202,7 @@ macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${si} <;> sim))`);
 }
 
 export function generate(root, target, paths) {
-  const { names: coreNames, callees, lean, sources } = lower(root, [target], { paths });
+  const { names: coreNames, lean, sources, loops: loopMeta } = lower(root, [target], { paths });
   const targets = sources.map(s => `${s.file}::${s.name}`);
   const view = translate({ root, module: "V", paths, targets });
   for (const t of targets) if (view.failures[t]) throw new Error(`callee rejected: ${view.failures[t]}`);
@@ -135,7 +221,15 @@ export function generate(root, target, paths) {
   // Callees first: the view lists a function after what it calls.
   const position = s => source.indexOf(`def ${s.sig.lean} `);
   const ordered = [...sigs].sort((a, b) => position(a) - position(b));
+  const cbNames = [...lean.matchAll(/^def (\S+_cb\d+) : Fn/gm)].map(m => m[1]);
+  const cbRules = cbNames.map(n => `theorem ${n}_prog : prog ${q(n)} = some ${n} := by simp [prog]
+macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n");
   const theorems = ordered.map(({ key, sig }) => {
+    const defAt = source.indexOf(`def ${sig.lean} `);
+    const defText = source.slice(defAt, source.indexOf("\n\n", defAt) < 0 ? undefined : source.indexOf("\n\n", defAt));
+    const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
+    if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
+    const loopText = vl.map((l, i) => loopRules(l, ml[i], leanType(sig.result))).join("\n");
     const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
     const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
     const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
@@ -163,7 +257,7 @@ theorem ${key}_sim {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") :
 macro_rules | \`(tactic| s_call) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))`;
     const params = JSON.parse(`[${lean.slice(lean.indexOf(`def ${key} : Fn`)).match(/params := \[(.*?)\]/)[1]}]`);
-    return head.replaceAll(/"PARAM(\d+)"/g, (_, i) => q(params[i])) + call;
+    return (loopText ? loopText + "\n" : "") + head.replaceAll(/"PARAM(\d+)"/g, (_, i) => q(params[i])) + call;
   });
   const core = lean.replace(/^import Core\nopen Core\n/, "").replace(/^namespace Gen\n/m, "").replace(/^end Gen\n/m, "");
   return { keys: coreNames, text: `import Spike.Tac
@@ -174,6 +268,8 @@ set_option maxRecDepth 100000
 ${source}
 ${core}
 ${rules.join("\n\n")}
+
+${cbRules}
 
 ${theorems.join("\n\n")}
 ${ordered.map(o => `#print axioms ${o.key}_bridge`).join("\n")}
