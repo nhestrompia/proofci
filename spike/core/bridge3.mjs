@@ -66,7 +66,7 @@ theorem ${n}_ne {p s x y} {a b : ${e.lean}} (hx : SimE p s x a) (hy : SimE p s y
 macro_rules | \`(tactic| simc) => \`(tactic| (apply ${n}_eq; sim'; sim'))
 macro_rules | \`(tactic| simc) => \`(tactic| (apply ${n}_ne; sim'; sim'))
 ${e.tags.map(t => `theorem ${n}_lit_${short(t.tag)} {p s} : SimE p s (.lit (.str ${units(t.tag)})) ${e.lean}.${t.lean} := fun s₁ _ => ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, rfl⟩
-macro_rules | \`(tactic| sim0) => \`(tactic| exact ${n}_lit_${short(t.tag)})`).join("\n")}`;
+macro_rules | \`(tactic| s_lit) => \`(tactic| exact ${n}_lit_${short(t.tag)})`).join("\n")}`;
 }
 
 function recordRules(r, shapes) {
@@ -84,11 +84,11 @@ instance : IsObj ${r.lean} := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩`];
     const open = `by rintro _ _ ⟨l, fs, rfl, hl, ${names}⟩; exact ⟨_, by simp [readField, hl], hf⟩`;
     lines.push(`theorem ${n}_get_${i} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.field o ${q(f.name)}) a.${f.lean} :=
   sim_field h (${open})
-macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_get_${i}; sim'))
+macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${n}_get_${i}; sim'))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${n}_get_${i}; sim_read))
 theorem ${n}_opt_${i} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.optField o ${q(f.name)}) a.${f.lean} :=
   sim_optField h (${open})
-macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
+macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
   });
   // A literal, for each set of keys that the function writes.
   shapes.forEach((keys, si) => {
@@ -110,7 +110,7 @@ macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
   sim_record (${chain}) (by
     rintro _ _ ⟨${destruct}, rfl⟩
     exact ⟨_, [${keys.map((k, i) => `(${q(k)}, v${i})`).join(", ")}], rfl, by simp, ${fields.join(", ")}⟩)
-macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_lit_${si} <;> sim))`);
+macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${si} <;> sim))`);
   });
   return lines.join("\n");
 }
@@ -160,7 +160,7 @@ theorem ${key}_sim {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") :
   sim_call (fn := ${key}) (by simp [prog]) (${n === 0 ? "args0" : `args${n} ${sig.params.map((_, i) => `h${i}`).join(" ")}`}) (by
     rintro _ _ ${n === 0 ? "rfl" : `⟨${Vs.join(", ")}, rfl, ${sig.params.map((_, i) => `r${i}`).join(", ")}⟩`}
     exact ${key}_bridge ${sig.params.map((_, i) => `r${i}`).join(" ")} hr)
-macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))
+macro_rules | \`(tactic| s_call) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))`;
     const params = JSON.parse(`[${lean.slice(lean.indexOf(`def ${key} : Fn`)).match(/params := \[(.*?)\]/)[1]}]`);
     return head.replaceAll(/"PARAM(\d+)"/g, (_, i) => q(params[i])) + call;
@@ -168,7 +168,7 @@ macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${key}_sim; ${sig.params
   const core = lean.replace(/^import Core\nopen Core\n/, "").replace(/^namespace Gen\n/m, "").replace(/^end Gen\n/m, "");
   return { keys: coreNames, text: `import Spike.Tac
 open Aeneas Aeneas.Std Result Core Core.TyRep
-set_option maxHeartbeats 2000000
+set_option maxHeartbeats 20000000
 set_option maxRecDepth 100000
 
 ${source}

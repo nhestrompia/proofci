@@ -19,7 +19,7 @@ macro_rules
     | (revert $h:ident; with_reducible refine Core.ok_intro ?_; intro e; subst e)
     | (revert $h:ident; with_reducible exact Core.fail_intro)
     | ((revert $h:ident; with_reducible refine Core.bind_intro ?_; intro tmp hx hk; vsplit hx) <;> vsplit hk)
-    | (revert $h:ident; with_reducible refine Core.ite_intro ?_ ?_ <;> (intro hc hk; vsplit hk))
+    | (revert $h:ident; (with_reducible refine Core.ite_intro ?_ ?_) <;> (intro hc hk; vsplit hk))
     | (split at $h:ident <;> vsplit $h)
     | (rw [Core.unwrap_iff] at $h:ident)
     | skip)
@@ -28,6 +28,16 @@ syntax "sim" : tactic
 syntax "sim'" : tactic
 syntax "sim0" : tactic
 syntax "sim_read" : tactic
+syntax "s_hof" : tactic
+syntax "s_var" : tactic
+syntax "s_lit" : tactic
+syntax "s_bin" : tactic
+syntax "s_prim" : tactic
+syntax "s_field" : tactic
+syntax "s_rec" : tactic
+syntax "s_call" : tactic
+syntax "s_branch" : tactic
+syntax "s_misc" : tactic
 syntax "sim_v" : tactic
 syntax "simb" : tactic
 syntax "simc" : tactic
@@ -38,69 +48,69 @@ syntax "simf" : tactic
 macro_rules | `(tactic| post) => `(tactic| first | exact Core.post_ret | (apply Core.post_seq; post))
 
 -- Variables, literals and options. Later rules are tried first.
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.var; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_num ⟨_, by decide, by decide⟩ rfl)
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_num _ rfl)
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_big _)
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_bool _)
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_str _)
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_undef (by simp [nothingOk]))
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.lit_null (by simp [nothingOk]))
+macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
+macro_rules | `(tactic| s_var) => `(tactic| (apply SimE.var; assumption))
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_num ⟨_, by decide, by decide⟩ rfl)
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_num _ rfl)
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_big _)
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_bool _)
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_str _)
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_undef (by simp [nothingOk]))
+macro_rules | `(tactic| s_lit) => `(tactic| exact SimE.lit_null (by simp [nothingOk]))
 
 -- Arithmetic and strings
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.add; sim'; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.sub; sim'; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.mul; sim'; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.neg; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.concat; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.badd; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.bsub; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.bmul; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.bdiv; sim'; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.brem; sim'; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.len_lit _ rfl)
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.len_lit ⟨_, by decide, by decide⟩ rfl)
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.len_str; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.len_arr; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.at_; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.startsWith; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.endsWith; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.includes_str; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.slice_str; sim'; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.sliceFrom_str; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.slice_arr; sim'; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.sliceFrom_arr; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.strIndexOf; sim'; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.charAt; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.numStr; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.min; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.max; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.abs; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.join; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.split; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| exact SimE.nil_str)
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trim; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trimStart; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trimEnd; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.toLower; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.toUpper; sim'; assumption))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.of_c; simc))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.add; sim'; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.sub; sim'; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.mul; sim'; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.neg; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.concat; sim'; sim'))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.badd; sim'; sim'))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.bsub; sim'; sim'))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.bmul; sim'; sim'))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.bdiv; sim'; sim'; assumption))
+macro_rules | `(tactic| s_bin) => `(tactic| (apply SimE.brem; sim'; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit _ rfl)
+macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit ⟨_, by decide, by decide⟩ rfl)
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_str; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_arr; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.startsWith; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.endsWith; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.includes_str; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.slice_str; sim'; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.sliceFrom_str; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.slice_arr; sim'; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.sliceFrom_arr; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.strIndexOf; sim'; sim'; assumption))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.charAt; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.numStr; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.min; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.max; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.abs; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.join; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.split; sim'; sim'))
+macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.nil_str)
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.trim; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.trimStart; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.trimEnd; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toLower; sim'; assumption))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toUpper; sim'; assumption))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.of_c; simc))
 
 -- Branching values
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.cond_ite; simb; sim'; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.cond_t; simb; known; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.cond_f; simb; known; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.or_true; sim'; simb; known))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.or_false; simb; known; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.and_true; simb; known; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.and_false; sim'; simb; known))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.coalesce_none; sim'; isnone; sim'))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.coalesce_some; sim_v; infer_instance))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.optField_none; sim'; isnone; simp [nothingOk]))
-macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.array; siml))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_ite; simb; sim'; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_t; simb; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_f; simb; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.or_true; sim'; simb; known))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.or_false; simb; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.and_true; simb; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.and_false; sim'; simb; known))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.coalesce_none; sim'; isnone; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.coalesce_some; sim_v; infer_instance))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.optField_none; sim'; isnone; simp [nothingOk]))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.array; siml))
 macro_rules | `(tactic| siml) => `(tactic| exact siml_nil)
 macro_rules | `(tactic| siml) => `(tactic| (apply siml_cons; sim'; siml))
 
@@ -116,6 +126,28 @@ macro_rules | `(tactic| sim') => `(tactic| sim0)
 macro_rules | `(tactic| sim_v) => `(tactic| first | (apply SimE.some_inv; apply SimE.var; assumption) | (apply SimE.unwrap; sim0; assumption) | sim0)
 
 -- A known target may differ from what the code computes only by shape.
+-- The expression's head picks the rules to try.
+open Lean Elab Tactic Meta in
+elab "sim0_go" : tactic => withMainContext do
+  let t ← whnfR (← instantiateMVars (← (← getMainGoal).getType))
+  let e ← whnfR (t.getArg! 2)
+  let n := e.getAppFn.constName?.getD .anonymous
+  let tac ← match n with
+    | ``Expr.var => `(tactic| s_var)
+    | ``Expr.lit => `(tactic| s_lit)
+    | ``Expr.bin => `(tactic| first | s_bin | s_misc)
+    | ``Expr.prim => `(tactic| s_prim)
+    | ``Expr.field => `(tactic| s_field)
+    | ``Expr.optField => `(tactic| first | s_field | s_misc)
+    | ``Expr.record => `(tactic| s_rec)
+    | ``Expr.call => `(tactic| s_call)
+    | ``Expr.hof => `(tactic| s_hof)
+    | ``Expr.reduce => `(tactic| s_hof)
+    | ``Expr.cond | ``Expr.or | ``Expr.and | ``Expr.coalesce => `(tactic| first | s_branch | s_misc)
+    | _ => `(tactic| s_misc)
+  evalTactic tac
+macro_rules | `(tactic| sim0) => `(tactic| sim0_go)
+
 macro_rules | `(tactic| sim) => `(tactic| (apply SimE.conv; sim'; first | rfl | (simp [List.append_assoc]; done) | (simp_all; done)))
 macro_rules | `(tactic| sim) => `(tactic| sim')
 
@@ -184,7 +216,10 @@ syntax "c_ret" : tactic
 syntax "c_ite" : tactic
 syntax "c_ite_lock" : tactic
 syntax "c_join" : tactic
+syntax "c_join1" : tactic
+syntax "c_join2" : tactic
 syntax "c_for" : tactic
+syntax "c_while" : tactic
 syntax "c_brk" : tactic
 syntax "c_cont" : tactic
 syntax "v_split" : tactic
@@ -251,7 +286,19 @@ elab "vall_go" : tactic => do
     if binder.isNone || (← isBranch m) || headIs m ``Aeneas.Std.loop then return
     evalTactic (← `(tactic| v_leaf))
 
-/-- A statement ends the walk only through a rule below. -/
+syntax "c_split" : tactic
+syntax "b_set" : tactic
+syntax "b_expr" : tactic
+syntax "b_ite" : tactic
+syntax "b_lock" : tactic
+syntax "b_join" : tactic
+
+/-- Runs `a`, keeping nothing if it fails. -/
+def attempt (a : TSyntax `tactic) : TacticM Bool :=
+  (do evalTactic a; pure true) <|> pure false
+
+/-- Each statement has a first part that can be retried and a rest that can't, so a failure
+late in a function doesn't re-explore everything before it. -/
 elab "crun_go" : tactic => withMainContext do
   vdrain
   if (← getGoals).isEmpty then return
@@ -269,28 +316,46 @@ elab "crun_go" : tactic => withMainContext do
   let tail := match pending with
     | some (_, b) => b.isNone
     | none => false
-  let tac ← match kind with
-    | `nil => if branch then `(tactic| (focus (v_split; all_goals crun))) else `(tactic| c_nil)
-    | ``Stmt.ite =>
-      if branch && tail then
-        match pending with
-        | some (m, _) =>
-          if headIs m ``ite then `(tactic| c_ite_lock) else `(tactic| (focus (v_split; all_goals crun)))
-        | none => `(tactic| c_ite)
-      else if branch then `(tactic| first | c_join | (v_split; all_goals crun))
-      else `(tactic| c_ite)
-    | ``Stmt.forOf => `(tactic| c_for)
-    | ``Stmt.brk => `(tactic| c_brk)
-    | ``Stmt.cont => `(tactic| c_cont)
-    | n =>
-      if branch then `(tactic| (focus (v_split; all_goals crun)))
-      else match n with
-        | ``Stmt.set => `(tactic| c_set)
-        | ``Stmt.expr => `(tactic| c_expr)
-        | ``Stmt.ret => `(tactic| c_ret)
-        | ``Stmt.throw => throwError "STUCK on a throw the typed function doesn't take"
-        | n => throwError "STUCK on statement {n}"
-  evalTactic tac
+  let split ← `(tactic| c_split)
+  match kind with
+  | `nil =>
+    if (t.getArg! 3).isAppOf ``Core.Seq || !branch then evalTactic (← `(tactic| c_nil))
+    else evalTactic split
+  | ``Stmt.forOf => evalTactic (← `(tactic| c_for))
+  | ``Stmt.whileL => evalTactic (← `(tactic| c_while))
+  | ``Stmt.brk => evalTactic (← `(tactic| c_brk))
+  | ``Stmt.cont => evalTactic (← `(tactic| c_cont))
+  | ``Stmt.throw =>
+    if branch then evalTactic split else throwError "STUCK on a throw the typed function doesn't take"
+  | ``Stmt.set | ``Stmt.expr | ``Stmt.ret | ``Stmt.ite =>
+    if kind == ``Stmt.ite && branch && !tail then
+      if ← attempt (← `(tactic| c_join)) then
+        evalTactic (← `(tactic| b_join))
+        return
+    let (first_, rest) ← match kind with
+      | ``Stmt.set => pure (← `(tactic| (apply step_set; sim)), ← `(tactic| b_set))
+      | ``Stmt.expr => pure (← `(tactic| (apply step_expr; sim)), ← `(tactic| b_expr))
+      | ``Stmt.ret => pure (← `(tactic| (apply step_ret; post; assumption; sim)), ← `(tactic| skip))
+      | _ =>
+        let lock := match pending with
+          | some (m, _) => tail && headIs m ``ite
+          | none => false
+        pure (← `(tactic| (apply step_ite; simb)), ← if lock then `(tactic| b_lock) else `(tactic| b_ite))
+    if ← attempt first_ then evalTactic rest; return
+    if !tail then
+      evalTactic (← `(tactic| vall))
+      if ← attempt first_ then evalTactic rest; return
+    if (← todoHead).isSome then
+      if let some (m, _) ← todoHead then
+        if ← isBranch m then evalTactic split; return
+    let report ← match kind with
+      | ``Stmt.set => `(tactic| (apply step_set; first | sim | fail "STUCK"))
+      | ``Stmt.expr => `(tactic| (apply step_expr; first | sim | fail "STUCK"))
+      | ``Stmt.ret => `(tactic| (apply step_ret; post; assumption; first | sim | fail "STUCK"))
+      | _ => `(tactic| (apply step_ite; first | simb | fail "STUCK"))
+    evalTactic report
+    throwError "STUCK"
+  | n => throwError "STUCK on statement {n}"
 
 macro_rules | `(tactic| crun) => `(tactic| crun_go)
 macro_rules | `(tactic| vall) => `(tactic| vall_go)
@@ -307,39 +372,57 @@ macro_rules | `(tactic| v_ok) => `(tactic| v_ok_go)
 macro_rules | `(tactic| v_fail) => `(tactic| v_fail_go)
 elab "v_ite_go" : tactic => do
   revertTodo
-  evalTactic (← `(tactic| with_reducible refine Core.todo_ite ?_ ?_ <;> intro hc hk))
+  evalTactic (← `(tactic| (with_reducible refine Core.todo_ite ?_ ?_) <;> intro hc hk))
 elab "v_decide_go" : tactic => do
   revertTodo
-  evalTactic (← `(tactic| first
-    | (with_reducible refine Core.todo_pos ?_ ?_; known; intro hk)
-    | (with_reducible refine Core.todo_neg ?_ ?_; known; intro hk)
-    | (with_reducible refine Core.todo_ite ?_ ?_ <;> intro hc hk)))
+  let pos ← `(tactic| (with_reducible refine Core.todo_pos ?_ ?_))
+  let neg ← `(tactic| (with_reducible refine Core.todo_neg ?_ ?_))
+  let settled ← (do evalTactic pos; evalTactic (← `(tactic| assumption)); pure true)
+    <|> (do evalTactic neg; evalTactic (← `(tactic| assumption)); pure true)
+    <|> (do evalTactic pos; evalTactic (← `(tactic| known)); pure true)
+    <|> (do evalTactic neg; evalTactic (← `(tactic| known)); pure true)
+    <|> pure false
+  if settled then evalTactic (← `(tactic| (intro hk; crun)))
+  else evalTactic (← `(tactic| ((with_reducible refine Core.todo_ite ?_ ?_) <;> (intro hc hk; first | (exfalso; refuted) | crun))))
 elab "v_split_go" : tactic => do
   revertTodo
   let some (_, _) := some (0, 0) | return
   evalTactic (← `(tactic| first
     | (with_reducible refine Core.todo_bind ?_; intro tmp hx hk; vsplit hx)
-    | (with_reducible refine Core.todo_ite ?_ ?_ <;> intro hc hk)
+    | ((with_reducible refine Core.todo_ite ?_ ?_) <;> intro hc hk)
     | (intro hz; unfold Todo at hz; split at hz <;> (have hk : Todo _ _ := hz; clear hz))))
 macro_rules | `(tactic| v_split) => `(tactic| v_split_go)
 macro_rules | `(tactic| seq_out) => `(tactic| first | (apply seq_exit; simp; seq_out) | skip)
 
 macro_rules | `(tactic| c_nil) => `(tactic| (apply step_nil; crun))
-macro_rules | `(tactic| c_set) => `(tactic| (apply step_set; (first | sim | (vall; sim) | fail "STUCK"); intro s' hv hk; carry hk; clear hk; crun))
-macro_rules | `(tactic| c_expr) => `(tactic| (apply step_expr; (first | sim | (vall; sim) | fail "STUCK"); intro s' hk; carry hk; clear hk; crun))
-macro_rules | `(tactic| c_ret) => `(tactic| (apply step_ret; post; assumption; first | sim | (vall; sim) | fail "STUCK"))
-macro_rules | `(tactic| c_ite) => `(tactic| (
-  apply step_ite
-  first | simb | (vall; simb) | fail "STUCK"
+macro_rules | `(tactic| c_split) => `(tactic| (focus (v_split; all_goals (first | (exfalso; refuted) | crun))))
+macro_rules | `(tactic| b_set) => `(tactic| (intro s' hv hk; carry hk; clear hk; crun))
+macro_rules | `(tactic| b_expr) => `(tactic| (intro s' hk; carry hk; clear hk; crun))
+macro_rules | `(tactic| b_ite) => `(tactic| (
   (focus (intro hp s' hk; first | (exfalso; refuted) | (carry hk; clear hk; crun)))
   (focus (intro hp s' hk; first | (exfalso; refuted) | (carry hk; clear hk; crun)))))
-macro_rules | `(tactic| c_ite_lock) => `(tactic| (
-  apply step_ite
-  first | simb | (vall; simb) | fail "STUCK"
-  (focus (intro hp s' hk; carry hk; clear hk; v_decide_go; all_goals (first | (exfalso; refuted) | crun)))
-  (focus (intro hp s' hk; carry hk; clear hk; v_decide_go; all_goals (first | (exfalso; refuted) | crun)))))
+macro_rules | `(tactic| b_lock) => `(tactic| (
+  (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))
+  (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))))
 macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; fail "STUCK break"))
 macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; fail "STUCK continue"))
-macro_rules | `(tactic| c_join) => `(tactic| fail)
+elab "v_keep" : tactic => do
+  revertTodo
+  evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
+syntax "j_side" : tactic
+macro_rules | `(tactic| c_join1) => `(tactic| (
+  v_keep; intro tj hj hk
+  apply step_join1 (tj := tj)
+  simb
+  (focus (intro hp s' he; carry he; clear he; have hj' := Core.ite_pos_of hp hj; vsplit hj'; all_goals sim))
+  (focus (intro hp; have hj' := Core.ite_neg_of hp hj; vsplit hj'; all_goals assumption))))
+macro_rules | `(tactic| c_join2) => `(tactic| (
+  v_keep; intro tj hj hk
+  apply step_join (tj := tj)
+  simb
+  (focus (intro hp s' he; carry he; clear he; have hj' := Core.ite_pos_of hp hj; vsplit hj'; all_goals sim))
+  (focus (intro hp s' he; carry he; clear he; have hj' := Core.ite_neg_of hp hj; vsplit hj'; all_goals sim))))
+macro_rules | `(tactic| c_join) => `(tactic| first | c_join1 | c_join2)
+macro_rules | `(tactic| b_join) => `(tactic| (intro s' hv hu; carry hu; clear hu; crun))
 
 end Core

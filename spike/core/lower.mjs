@@ -396,5 +396,5 @@ export function lower(root, targets, { paths } = {}) {
   const defs = [...done.values(), ...extras];
   const prog = `def prog : Prog := fun fname => match fname with\n${[...done.keys()].map(k => `  | ${lean(k)} => some ${k}`).concat([...aliases].filter(([k]) => !done.has(k)).map(([k, v]) => `  | ${lean(k)} => some ${v}`)).join("\n")}\n  | _ => none`;
   const sources = [...decls].map(([key, d]) => ({ key, file: relative(root, d.getSourceFile().fileName), name: d.__top ?? d.name.text }));
-  return { names, info, sources, lean: `import Core\nopen Core\nset_option maxRecDepth 4000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
+  return { names, info, sources, lean: `import Core\nopen Core\nset_option maxRecDepth 100000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
 }

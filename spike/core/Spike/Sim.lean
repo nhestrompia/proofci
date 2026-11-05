@@ -1476,6 +1476,14 @@ theorem ite_intro {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α
   · simp only [h, ite_false]; exact f h
 theorem unwrap_iff {α} {x : Option α} {r : α} : Js.unwrap x = ok r ↔ x = some r := by
   cases x <;> simp [Js.unwrap]
+theorem ite_pos_of {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} (h : c) (e : (if c then a else b) = ok r) : a = ok r := by
+  simpa [h] using e
+theorem ite_neg_of {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} (h : ¬c) (e : (if c then a else b) = ok r) : b = ok r := by
+  simpa [h] using e
+theorem ite_pos_imp {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop} (h : c) (k : a = ok r → G) : (if c then a else b) = ok r → G :=
+  fun e => k (ite_pos_of h e)
+theorem ite_neg_imp {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop} (h : ¬c) (k : b = ok r → G) : (if c then a else b) = ok r → G :=
+  fun e => k (ite_neg_of h e)
 theorem bind_intro {α β : Type} {G : Prop} {x : Result α} {f : α → Result β} {r : β}
     (k : ∀ a, x = ok a → f a = ok r → G) : Aeneas.Std.bind x f = ok r → G := by
   intro h
