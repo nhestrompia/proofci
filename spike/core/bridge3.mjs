@@ -25,6 +25,29 @@ function leanType(t) {
   }
 }
 
+// The same type without the encoding marker: what the typed view itself uses.
+const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
+
+// Key lists of record literals, reading nested ones separately.
+function recordShapes(lean) {
+  const shapes = new Set();
+  for (let at = lean.indexOf(".record ["); at >= 0; at = lean.indexOf(".record [", at + 1)) {
+    let i = at + 8, depth = 0, str = false;
+    const keys = [];
+    for (; i < lean.length; i++) {
+      const c = lean[i];
+      if (str) { if (c === '"') str = false; continue; }
+      if (c === '"') {
+        if (depth === 2 && lean[i - 1] === "(") keys.push(JSON.parse(lean.slice(i, lean.indexOf('"', i + 1) + 1)));
+        str = true;
+      } else if ("[(".includes(c)) depth++;
+      else if ("])".includes(c)) { depth--; if (depth === 0) break; }
+    }
+    if (keys.length) shapes.add(JSON.stringify(keys));
+  }
+  return [...shapes].map(k => JSON.parse(k));
+}
+
 function enumRules(e) {
   const n = short(e.lean);
   const tag = `${n}_tag`;
@@ -58,8 +81,7 @@ macro_rules | \`(tactic| sim0) => \`(tactic| exact ${n}_lit_${short(t.tag)})`).j
 
 function recordRules(r, shapes) {
   const n = short(r.lean);
-  const a = f => `(a.${f.lean} : ${leanType(f.type)})`;
-  const view = f => `(rep h ${a(f)} ((fs.lookup ${q(f.name)}).getD .undef))`;
+  const view = f => `(rep (α := ${leanType(f.type)}) h a.${f.lean} ((fs.lookup ${q(f.name)}).getD .undef))`;
   const pats = r.fields.map((_, i) => `f${i}`);
   const lines = [`instance : TyRep ${r.lean} where
   rep h a v := ∃ l fs, v = .ref l ∧ h[l]? = some (.record fs) ∧ ${r.fields.map(view).join(" ∧ ")}
@@ -83,7 +105,7 @@ macro_rules | \`(tactic| sim0) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
     if (!keys.every(k => known.has(k))) return;
     if (r.fields.some(f => !keys.includes(f.name) && f.type.kind !== "optional")) return;
     const args = keys.map((_, i) => `x${i}`), es = keys.map((_, i) => `e${i}`);
-    const typed = keys.map((k, i) => `{x${i} : ${leanType(known.get(k).type)}}`).join(" ");
+    const typed = keys.map((k, i) => `{x${i} : ${plain(known.get(k).type)}}`).join(" ");
     const hyps = keys.map((k, i) => `(h${i} : SimE (α := ${leanType(known.get(k).type)}) p s e${i} x${i})`).join(" ");
     const value = `{ ${r.fields.map(f => keys.includes(f.name) ? `${f.lean} := x${keys.indexOf(f.name)}` : `${f.lean} := none`).join(", ")} }`;
     const chain = keys.reduceRight((rest, _, i) => `simf_cons h${i} (${rest})`, "simf_nil");
@@ -115,7 +137,7 @@ export function generate(root, target, paths) {
   };
   const sigs = sources.map(s => ({ ...s, sig: view.signatures[`${s.file}::${s.name}`] }));
   for (const { sig } of sigs) { sig.params.forEach(scan); scan(sig.result); }
-  const shapes = [...new Set([...lean.matchAll(/\.record \[(\("[^]*?)\]/g)].map(m => JSON.stringify([...m[1].matchAll(/\("([^"]+)", /g)].map(k => k[1]))))].map(s => JSON.parse(s));
+  const shapes = recordShapes(lean);
   const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : recordRules(t, shapes));
   const source = view.source.replace(/^import.*\n/gm, "").replace(/^open Aeneas.*\n/m, "");
   const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]);
@@ -124,13 +146,14 @@ export function generate(root, target, paths) {
   const ordered = [...sigs].sort((a, b) => position(a) - position(b));
   const theorems = ordered.map(({ key, sig }) => {
     const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
-    const typed = sig.params.map((t, i) => `{p${i} : ${leanType(t)}}`).join(" ");
+    const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
     const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
-    const res = leanType(sig.result);
+    const res = plain(sig.result), repRes = leanType(sig.result);
     const head = `theorem ${key}_bridge {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) :
-    WpRun prog ${key} [${Vs.join(", ")}] h fun v s => h <+: s.heap ∧ rep s.heap r v := by
-  unfold ${[...constants, sig.lean].join(" ")} at hr
+    WpRun prog ${key} [${Vs.join(", ")}] h fun v s => h <+: s.heap ∧ rep (α := ${repRes}) s.heap r v := by
+  unfold ${sig.lean} at hr
+${constants.map(c => `  try unfold ${c} at hr`).join("\n")}
   apply wprun'
   have hb : Base h ⟨${key}.env0 [${Vs.join(", ")}], h⟩ := List.prefix_refl _
 ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}], h⟩ ${q("PARAM" + i)} (α := ${leanType(t)}) p${i} := ⟨v${i}, by simp [${key}, Fn.env0, Env.put], h${i}⟩`).join("\n")}
@@ -141,7 +164,7 @@ ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}],
     const args = sig.params.map((t, i) => `(h${i} : SimE (α := ${leanType(t)}) prog s e${i} p${i})`).join(" ");
     const call = n > 3 ? "" : `
 theorem ${key}_sim {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") : ""}} ${typed} {r : ${res}} ${args}
-    (hr : ${sig.lean} ${P.join(" ")} = ok r) : SimE prog s (.call ${q(key)} [${sig.params.map((_, i) => `e${i}`).join(", ")}]) r :=
+    (hr : ${sig.lean} ${P.join(" ")} = ok r) : SimE (α := ${repRes}) prog s (.call ${q(key)} [${sig.params.map((_, i) => `e${i}`).join(", ")}]) r :=
   sim_call (fn := ${key}) (by simp [prog]) (${n === 0 ? "args0" : `args${n} ${sig.params.map((_, i) => `h${i}`).join(" ")}`}) (by
     rintro _ _ ${n === 0 ? "rfl" : `⟨${Vs.join(", ")}, rfl, ${sig.params.map((_, i) => `r${i}`).join(", ")}⟩`}
     exact ${key}_bridge ${sig.params.map((_, i) => `r${i}`).join(" ")} hr)

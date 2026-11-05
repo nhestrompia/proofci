@@ -16,10 +16,10 @@ macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | (s
 syntax "vsplit " ident : tactic
 macro_rules
   | `(tactic| vsplit $h:ident) => `(tactic| first
-    | (revert $h:ident; refine Core.ok_intro ?_; intro e; subst e)
-    | (revert $h:ident; exact Core.fail_intro)
-    | ((revert $h:ident; refine Core.bind_intro ?_; intro tmp hx hk; vsplit hx) <;> vsplit hk)
-    | (revert $h:ident; refine Core.ite_intro ?_ ?_ <;> (intro hc hk; vsplit hk))
+    | (revert $h:ident; with_reducible refine Core.ok_intro ?_; intro e; subst e)
+    | (revert $h:ident; with_reducible exact Core.fail_intro)
+    | ((revert $h:ident; with_reducible refine Core.bind_intro ?_; intro tmp hx hk; vsplit hx) <;> vsplit hk)
+    | (revert $h:ident; with_reducible refine Core.ite_intro ?_ ?_ <;> (intro hc hk; vsplit hk))
     | (split at $h:ident <;> vsplit $h)
     | (rw [Core.unwrap_iff] at $h:ident)
     | skip)
@@ -30,7 +30,6 @@ syntax "sim0" : tactic
 syntax "simb" : tactic
 syntax "simc" : tactic
 syntax "post" : tactic
-syntax "crun" : tactic
 syntax "siml" : tactic
 syntax "simf" : tactic
 
@@ -65,6 +64,20 @@ macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.startsWith; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.endsWith; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimC.includes_str; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.slice_str; sim'; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.sliceFrom_str; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.slice_arr; sim'; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.sliceFrom_arr; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.strIndexOf; sim'; sim'; assumption))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.charAt; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.numStr; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.min; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.max; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.abs; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.join; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.split; sim'; sim'))
+macro_rules | `(tactic| sim0) => `(tactic| exact SimE.array (siml_nil (α := List Nat)))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trim; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trimStart; sim'))
 macro_rules | `(tactic| sim0) => `(tactic| (apply SimE.trimEnd; sim'))
@@ -142,14 +155,34 @@ macro_rules | `(tactic| simb) => `(tactic| (apply SimB.and_both; simb; simb))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.or_both; simb; simb))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.of_c; simc))
 
--- Statements
-macro_rules | `(tactic| crun) => `(tactic| (apply step_nil; crun))
-macro_rules | `(tactic| crun) => `(tactic| (apply step_set; sim; intro s' hv hk; carry hk; clear hk; crun))
-macro_rules | `(tactic| crun) => `(tactic| (apply step_expr; sim; intro s' hk; carry hk; clear hk; crun))
-macro_rules | `(tactic| crun) => `(tactic| (apply step_ret; post; assumption; sim))
-macro_rules | `(tactic| crun) => `(tactic| (
+-- Statements. The statement's kind picks the rule, so a failure names the real problem.
+syntax "c_nil" : tactic
+syntax "c_set" : tactic
+syntax "c_expr" : tactic
+syntax "c_ret" : tactic
+syntax "c_ite" : tactic
+open Lean Elab Tactic Meta in
+elab "crun" : tactic => withMainContext do
+  let t ← whnfR (← instantiateMVars (← (← getMainGoal).getType))
+  let cs ← whnfD (t.getArg! 2)
+  let stmtKind ← if cs.isAppOf ``List.nil then pure `nil else do
+    let c ← whnfD (cs.getArg! 1)
+    pure c.getAppFn.constName!
+  let tac ← match stmtKind with
+    | `nil => `(tactic| c_nil)
+    | ``Stmt.set => `(tactic| c_set)
+    | ``Stmt.expr => `(tactic| c_expr)
+    | ``Stmt.ret => `(tactic| c_ret)
+    | ``Stmt.ite => `(tactic| c_ite)
+    | n => throwError "STUCK on statement {n}"
+  evalTactic tac
+macro_rules | `(tactic| c_nil) => `(tactic| (apply step_nil; crun))
+macro_rules | `(tactic| c_set) => `(tactic| (apply step_set; (first | sim | fail "STUCK"); intro s' hv hk; carry hk; clear hk; crun))
+macro_rules | `(tactic| c_expr) => `(tactic| (apply step_expr; (first | sim | fail "STUCK"); intro s' hk; carry hk; clear hk; crun))
+macro_rules | `(tactic| c_ret) => `(tactic| (apply step_ret; post; assumption; first | sim | fail "STUCK"))
+macro_rules | `(tactic| c_ite) => `(tactic| (
   apply step_ite
-  simb
+  first | simb | fail "STUCK"
   intro hp s' hk; first | (exfalso; refuted) | (carry hk; clear hk; crun)
   intro hp s' hk; first | (exfalso; refuted) | (carry hk; clear hk; crun)))
 

@@ -760,6 +760,91 @@ theorem SimE.toUpper {r} (hx : SimE p s x a) (h : Js.toUpper a = ok r) : SimE p 
   by refine sim_prim (args1 hx) ?_; rintro _ _ ⟨_, rfl, rfl⟩; exact ⟨_, _, by simp [primV, okStr_ok h], List.prefix_refl _, rfl⟩
 end prims
 
+section moreprims
+variable {p : Prog} {s : St} {x y z : Expr}
+theorem num_arg {v : Val} {a : Js.Num} {h : Heap} (r : rep h a v) : asNum v = some a := by
+  obtain ⟨x, rfl, hi⟩ := r; exact asNum_isInt hi
+theorem SimE.slice_str {a : List Nat} {i j : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) (hz : SimE p s z j) :
+    SimE p s (.prim .slice [x, y, z]) (Js.slice a i j) := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro _ _ ⟨_, v, w, rfl, rfl, ri, rj⟩
+  exact ⟨_, _, by simp [primV, num_arg ri, num_arg rj], List.prefix_refl _, rfl⟩
+theorem SimE.sliceFrom_str {a : List Nat} {i : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) :
+    SimE p s (.prim .sliceFrom [x, y]) (Js.sliceFrom a i) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, v, rfl, rfl, ri⟩
+  exact ⟨_, _, by simp [primV, num_arg ri], List.prefix_refl _, rfl⟩
+theorem SimE.slice_arr {α} {_ : TyRep α} {a : List α} {i j : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) (hz : SimE p s z j) :
+    SimE p s (.prim .slice [x, y, z]) (Js.slice a i j) := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro h _ ⟨_, v, w, rfl, ⟨l, vs, rfl, hl, hf⟩, ri, rj⟩
+  have hlen := hf.length_eq
+  refine ⟨.ref h.length, h ++ [.array (Js.slice vs i j)], by simp [primV, hl, num_arg ri, num_arg rj], List.prefix_append _ _, h.length, Js.slice vs i j, rfl, by simp, ?_⟩
+  have hd : List.Forall₂ (rep (h ++ [.array (Js.slice vs i j)])) a vs := hf.imp fun _ _ r => mono (List.prefix_append _ _) r
+  simp only [Js.slice, hlen]
+  exact List.forall₂_drop _ (List.forall₂_take _ hd)
+theorem SimE.sliceFrom_arr {α} {_ : TyRep α} {a : List α} {i : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) :
+    SimE p s (.prim .sliceFrom [x, y]) (Js.sliceFrom a i) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, v, rfl, ⟨l, vs, rfl, hl, hf⟩, ri⟩
+  have hlen := hf.length_eq
+  refine ⟨.ref h.length, h ++ [.array (Js.sliceFrom vs i)], by simp [primV, hl, num_arg ri], List.prefix_append _ _, h.length, Js.sliceFrom vs i, rfl, by simp, ?_⟩
+  have hd : List.Forall₂ (rep (h ++ [.array (Js.sliceFrom vs i)])) a vs := hf.imp fun _ _ r => mono (List.prefix_append _ _) r
+  simp only [Js.sliceFrom, hlen]
+  exact List.forall₂_drop _ hd
+theorem SimE.strIndexOf {a b : List Nat} {r : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.strIndexOf a b = ok r) :
+    SimE p s (.prim .strIndexOf [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, rfl, rfl⟩
+  exact ⟨numVal r, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.charAt {a : List Nat} {i : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) :
+    SimE p s (.prim .charAt [x, y]) (Js.charAt a i) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, v, rfl, rfl, ri⟩
+  exact ⟨_, _, by simp [primV, num_arg ri], List.prefix_refl _, rfl⟩
+theorem SimE.numStr {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numStr [x]) (Js.numStr a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro _ _ ⟨v, rfl, ri⟩
+  exact ⟨_, _, by simp [primV, num_arg ri], List.prefix_refl _, rfl⟩
+theorem SimE.min {a b : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) : SimE p s (.prim .min [x, y]) (Js.min a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨v, w, rfl, ri, rj⟩
+  exact ⟨numVal (Js.min a b), _, by simp [primV, num_arg ri, num_arg rj], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.max {a b : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) : SimE p s (.prim .max [x, y]) (Js.max a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨v, w, rfl, ri, rj⟩
+  exact ⟨numVal (Js.max a b), _, by simp [primV, num_arg ri, num_arg rj], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.abs {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .abs [x]) (Js.abs a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro _ _ ⟨v, rfl, ri⟩
+  exact ⟨numVal (Js.abs a), _, by simp [primV, num_arg ri], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem strs_of {h : Heap} : ∀ {xs : List (List Nat)} {vs : List Val}, List.Forall₂ (rep h) xs vs → strsOf vs = some xs
+  | _, _, .nil => rfl
+  | _, _, .cons (a := a) (l₁ := l) hab t => by
+    have hv : _ = Val.str a := hab
+    subst hv
+    simp [strsOf, strs_of t]
+theorem SimE.join {a : List (List Nat)} {b : List Nat} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .join [x, y]) (Js.join a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, rfl⟩
+  exact ⟨_, _, by simp [primV, hl, strs_of hf], List.prefix_refl _, rfl⟩
+theorem SimE.includes_arr {a : List (List Nat)} {b : List Nat} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .includes [x, y]) (Js.includes a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, rfl⟩
+  exact ⟨_, _, by simp [primV, hl, strs_of hf], List.prefix_refl _, rfl⟩
+theorem forall_strs {h : Heap} (xs : List (List Nat)) : List.Forall₂ (rep h) xs (xs.map .str) := by
+  induction xs with
+  | nil => exact .nil
+  | cons a t ih => exact .cons rfl ih
+theorem SimE.split {a b : List Nat} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .split [x, y]) (Js.split a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, _, rfl, rfl, rfl⟩
+  exact ⟨.ref h.length, h ++ [.array ((Js.split a b).map .str)], by simp [primV], List.prefix_append _ _, h.length, (Js.split a b).map .str, rfl, by simp, forall_strs _⟩
+end moreprims
+
 /-! Statements -/
 
 def Wp (p : Prog) (s : St) (c : List Stmt) (Φ : Cmp → St → Prop) : Prop := ∃ r s', ExecsL p s c r s' ∧ Φ r s'
