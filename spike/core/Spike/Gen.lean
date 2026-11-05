@@ -268,7 +268,7 @@ def Doubled_new : Fn := { params := ["size"], body := [
     .expr (.call "Doubled.__init" [.var "this", .var "size"]),
     .ret (.var "this")] }
 
-def prog : Prog := fun name => match name with
+def prog : Prog := fun fname => match fname with
   | "src_features_amountOf" => some src_features_amountOf
   | "src_features_mapGrows" => some src_features_mapGrows
   | "src_features_mapShrinks" => some src_features_mapShrinks

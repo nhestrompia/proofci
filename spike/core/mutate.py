@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Plants mistranslations in the typed view of functions that have a bridge. Each mutant
+keeps the same Core and the same proof, so a sound bridge must fail to check.
+usage: mutate.py <dir with F*.lean, F*.res, index.json> <out dir> [per kind]"""
+import json, os, re, sys, random
+src, out, per = sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 8
+os.makedirs(out, exist_ok=True)
+index = [x for x in json.load(open(f"{src}/index.json")) if x["ok"]]
+good = []
+for x in index:
+    n = f"F{x['i']}"
+    r = open(f"{src}/{n}.res").read().split()[0] if os.path.exists(f"{src}/{n}.res") else "1"
+    if r == "0" and "sorryAx" not in open(f"{src}/{n}.out").read():
+        good.append(n)
+def numbump(m):
+    return f"Js.Num.mk ({int(m.group(1)) + 1}) (of_decide_eq_true rfl) (of_decide_eq_true rfl)"
+KINDS = {
+    "lt-le": (r"\.val < ", ".val ≤ "),
+    "le-lt": (r"\.val ≤ ", ".val < "),
+    "gt-ge": (r"\.val > ", ".val ≥ "),
+    "add-sub": (r"\bJs\.add\b", "Js.sub"),
+    "sub-add": (r"\bJs\.sub\b", "Js.add"),
+    "string": (r'js!"([^"]*)"', r'js!"\1q"'),
+    "number": (r"Js\.Num\.mk \((\d+)\) \(of_decide_eq_true rfl\) \(of_decide_eq_true rfl\)", numbump),
+    "negate-if": (r"\bif (.+?) then$", r"if ¬(\1) then"),
+    "true-false": (r"Result\.ok true\b", "Result.ok false"),
+    "false-true": (r"Result\.ok false\b", "Result.ok true"),
+    "starts-ends": (r"\bJs\.startsWith\b", "Js.endsWith"),
+    "trim": (r"\bJs\.trim\b", "Js.trimStart"),
+    "lower-upper": (r"\bJs\.toLower\b", "Js.toUpper"),
+    "append-order": (r"\(js!\"([^\"]*)\"\) \+\+ ", r'(js!"\1 ") ++ '),
+    "eq-ne": (r" = true then", " = false then"),
+}
+rng = random.Random(20261105)
+made = []
+for kind, (pat, rep) in KINDS.items():
+    names = good[:]
+    rng.shuffle(names)
+    count = 0
+    for n in names:
+        if count >= per:
+            break
+        text = open(f"{src}/{n}.lean").read()
+        cut = text.index("set_option maxRecDepth 4000") if "set_option maxRecDepth 4000" in text else None
+        head = text.find("def ")
+        lines = text[:cut].split("\n")
+        body = [i for i, l in enumerate(lines) if re.search(pat, l) and not l.startswith(("structure", "inductive"))]
+        if not body:
+            continue
+        i = rng.choice(body)
+        lines[i] = re.sub(pat, rep, lines[i], count=1)
+        mutant = "\n".join(lines) + text[cut:]
+        if mutant == text:
+            continue
+        name = f"F{len(made)}"
+        open(f"{out}/{name}.lean", "w").write(mutant)
+        made.append({"name": name, "kind": kind, "from": n, "line": lines[i].strip()[:110]})
+        count += 1
+json.dump(made, open(f"{out}/mutants.json", "w"), indent=0)
+print(len(good), "bridged functions,", len(made), "mutants")
