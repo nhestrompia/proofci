@@ -99,6 +99,10 @@ theorem wpe_record {p s es Ψ}
     (h : WpF p s es fun vs s' => Ψ (.ref s'.heap.length) { s' with heap := s'.heap ++ [.record vs] }) :
     WpE p s (.record es) Ψ := by
   obtain ⟨vs, s', he, hr⟩ := h; exact ⟨_, _, Evals.record he, hr⟩
+theorem wpe_array {p s es Ψ}
+    (h : WpA p s es fun vs s' => Ψ (.ref s'.heap.length) { s' with heap := s'.heap ++ [.array vs] }) :
+    WpE p s (.array es) Ψ := by
+  obtain ⟨vs, s', he, hr⟩ := h; exact ⟨_, _, Evals.array he, hr⟩
 theorem wpe_call {p s g args fn Ψ} (hg : p g = some fn)
     (h : WpA p s args fun vs s₁ => WpRun p fn vs s₁.heap fun v s₂ => Ψ v { s₁ with heap := s₂.heap }) :
     WpE p s (.call g args) Ψ := by
@@ -137,6 +141,11 @@ theorem wprun_void {p fn a h Ψ}
   have := hF g hg
   simp only [Fn.env0] at this
   simp only [this]
+
+theorem WpRun.mono {p fn a h} {Ψ Ψ' : Val → St → Prop} (hr : WpRun p fn a h Ψ) (k : ∀ v s, Ψ v s → Ψ' v s) :
+    WpRun p fn a h Ψ' := by
+  obtain ⟨v, s, he, hΨ⟩ := hr
+  exact ⟨v, s, he, k _ _ hΨ⟩
 
 theorem wps_set {p s x e Φ} (h : WpE p s e fun v s' => Φ .normal { s' with env := s'.env.put x v }) :
     WpS p s (.set x e) Φ := by
@@ -334,7 +343,7 @@ macro "core_step" : tactic => `(tactic| first
   | apply Core.wps_set | apply Core.wps_setField | apply Core.wps_push | apply Core.wps_expr | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
   | apply Core.wpe_lit | apply Core.wpe_var | apply Core.wpe_field | apply Core.wpe_bin | apply Core.wpe_isNullish
   | apply Core.wpe_not | apply Core.wpe_neg | apply Core.wpe_math | apply Core.wpe_length | apply Core.wpe_cond | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
-  | apply Core.wpe_call' | apply Core.wpe_closure | apply Core.wpe_callV | apply Core.wpe_callM | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
+  | apply Core.wpe_call' | apply Core.wpe_closure | apply Core.wpe_callV | apply Core.wpe_callM | apply Core.wpe_record | apply Core.wpe_array | apply Core.wpf_cons | apply Core.wpf_nil
   | apply Core.wpa_cons | apply Core.wpa_nil)
 
 macro "core_simp" : tactic => `(tactic| simp (disch := omega) [List.getElem?_concat_length, Core.Env.put, Core.Fn.env0, Core.readField, Core.binary, Core.truthy, Core.nullish, List.lookup, Core.strLt_eq, *])
