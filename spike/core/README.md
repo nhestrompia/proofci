@@ -19,7 +19,7 @@ shows feasibility, not coverage.
 | Does a user's proof reach JavaScript? | Yes: `transfer_conserves` from `ts-bank` carries through a bridge to a statement about Core |
 | Do closures, classes and `async` run correctly? | 1,140 runs: 1,109 match Node, 31 stop in the model, none wrong |
 | Can they be proved? | Yes, see below |
-| Do proofs scale? | The first method failed at 10 statements. Stepwise proofs check 640 statements in 13 s |
+| Do proofs scale? | The first method failed at 10 statements. Stepwise proofs check 640 statements in 17 s |
 | Do bridges work on unseen functions? | 6 of 10 after adding coverage, on the integer model and on doubles |
 
 ## What was proved on Core
@@ -47,8 +47,8 @@ statement as a closed step on an abstract state:
 
 | Shape | Size | Time |
 |---|---|---|
-| Straight line | 640 statements | 13 s |
-| Early returns | 320 branches | 9 s |
+| Straight line | 640 statements | 17 s |
+| Early returns | 320 branches | 12 s |
 | Consecutive `if`s that rejoin | 160, about 2^160 paths if taken apart | 9 s |
 
 These are generated number-only functions. Times include about 4 s of startup.
