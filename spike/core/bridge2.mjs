@@ -45,8 +45,8 @@ for (const target of targets) {
         "  · intro hn; rw [if_neg hn] at hj", "    exact (Result.ok_injective hj).symm",
         `  intro ${s} vt' keeps${n}`, `  replace va := VarIs.keep keeps${n} (by decide) va`, `  replace hh := keeps${n}.1.trans hh`, "  clear vt hj", "  rename' vt' => vt");
     } else if ((m = st.match(/^\.ite \(\.bin \.eq \(\.var "a"\) \(\.lit /))) {
-      L.push("  by_cases hc : _ := Classical.em _".slice(0, 0) + "  split at hr", "  · rename_i hc", "    have := Result.ok_injective hr; subst this",
-        "    exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl", "  rename_i hc",
+      L.push("  by_cases hc : _ := Classical.em _".slice(0, 0) + "  revert hr; refine Core.ite_intro ?_ ?_", "  · intro hc hr", "    have := Result.ok_injective hr; subst this",
+        "    exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl", "  intro hc hr",
         "  refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_");
     } else if ((m = st.match(/^\.ret \(\.var "t"\)$/))) {
       L.push("  have := Result.ok_injective hr; subst this", "  exact step_ret (NumE.var vt) ⟨_, rfl, hh, rfl⟩");

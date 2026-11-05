@@ -81,6 +81,13 @@ theorem step_join' {p s x c e cs Φ} {P : Prop} [Decidable P] {tj old : Js.Num}
   · simpa [h] using hv
   · rw [hn h]; simpa [h] using hv
 
+/-- Splits only the outermost `if`, so a long chain costs one step per link. -/
+theorem ite_intro {α : Type} {c : Prop} [Decidable c] {a b r : Result α} {G : Prop}
+    (t : c → a = r → G) (f : ¬c → b = r → G) : (if c then a else b) = r → G := by
+  by_cases h : c
+  · simp only [h, ite_true]; exact t h
+  · simp only [h, ite_false]; exact f h
+
 theorem step_exit_true {p s c e cs t v Φ} {P : Prop} [Decidable P] (hc : SimB p s c P) (hp : P)
     (he : Evals p s e v s) (ho : Φ (.ret v) s) (ht : t = [.ret e]) : Wp p s (.ite c t [] :: cs) Φ := by
   subst ht

@@ -13,1925 +13,1925 @@ theorem src_scale_chain320_bridge {h p0 r} (hr : src.scale.chain320 p0 = ok r) :
     simp [VarIs, Fn.env0, hp, Env.put]
   have hh : (St.mk (src_scale_chain320.env0 [.num (F64.ofInt p0.val)]) h).heap = h := rfl
   generalize St.mk (src_scale_chain320.env0 [.num (F64.ofInt p0.val)]) h = s0 at va hh
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
-  split at hr
-  · rename_i hc
+  revert hr; refine Core.ite_intro ?_ ?_
+  · intro hc hr
     have := Result.ok_injective hr; subst this
     exact step_exit_true (SimB.eq_lit (NumE.var va)) hc (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩ rfl
-  rename_i hc
+  intro hc hr
   refine step_exit_false (SimB.eq_lit (NumE.var va)) hc ?_
   have := Result.ok_injective hr; subst this
   exact step_ret (NumE.lit _ rfl) ⟨_, rfl, hh, rfl⟩
