@@ -150,3 +150,118 @@ theorem neg_ofInt_nonzero {b : Int} (hb : b ≠ 0) : (ofInt b).neg = ofInt (-b) 
     simp [this, hmod, hdiv, hto]
 
 end Core.F64
+
+namespace Core.F64
+
+/-- A number that stands for integer `a`. `-0` stands for 0, which is how the typed view
+reads it: `===`, ordering and indexing can't tell them apart. -/
+def IsInt (x : F64) (a : Int) : Prop := x = ofInt a ∨ (a = 0 ∧ x = fin true 0)
+
+theorem round_zero (neg extra sticky) : round neg 0 extra sticky = fin neg 0 := by
+  simp [round]
+
+/-- A product of two units has every low bit clear, so rounding keeps a safe integer. -/
+theorem round_mul_exact {neg : Bool} {m : Nat} (h0 : 0 < m) (hm : m < 2 ^ 53) :
+    round neg (m * unit * unit) 1074 false = fin neg (m * unit) := by
+  have hu : unit = 2 ^ 1074 := rfl
+  have huu : unit * unit = 2 ^ 2148 := by rw [hu, ← Nat.pow_add]
+  have hn : m * unit * unit = m * 2 ^ 2148 := by rw [Nat.mul_assoc, huu]
+  have hne : m * 2 ^ 2148 ≠ 0 := Nat.mul_ne_zero (by omega) (by positivity)
+  have hlt : m * 2 ^ 2148 < 2 ^ 2201 := by
+    calc m * 2 ^ 2148 < 2 ^ 53 * 2 ^ 2148 := Nat.mul_lt_mul_of_pos_right hm (by positivity)
+      _ = 2 ^ 2201 := by rw [← Nat.pow_add]
+  have hlog : Nat.log2 (m * 2 ^ 2148) < 2201 := (Nat.log2_lt hne).mpr hlt
+  have hlimit : ¬ limit ≤ m * unit := by
+    have h1 : m * unit < 2 ^ 1127 := by
+      calc m * unit < 2 ^ 53 * unit := Nat.mul_lt_mul_of_pos_right hm unit_pos
+        _ = 2 ^ 1127 := by rw [hu, ← Nat.pow_add]
+    have h2 : (2 : Nat) ^ 1127 ≤ limit := Nat.pow_le_pow_right (by decide) (by decide)
+    omega
+  rw [hn]
+  unfold round
+  rw [if_neg hne]
+  simp only
+  generalize hs : max (Nat.log2 (m * 2 ^ 2148) + 1 - 53) 1074 = s
+  have hs1 : 1074 ≤ s := by omega
+  have hs2 : s ≤ 2148 := by omega
+  have hs0 : s ≠ 0 := by omega
+  have hdvd : 2 ^ s ∣ m * 2 ^ 2148 := Dvd.dvd.mul_left (Nat.pow_dvd_pow 2 hs2) m
+  have hrest : (m * 2 ^ 2148) % 2 ^ s = 0 := Nat.mod_eq_zero_of_dvd hdvd
+  have hhalf : 0 < 2 ^ (s - 1) := by positivity
+  have hback : (m * 2 ^ 2148) / 2 ^ s * 2 ^ (s - 1074) = m * unit := by
+    have he : 2148 - s + s = 2148 := by omega
+    have hsplit : (2 : Nat) ^ 2148 = 2 ^ (2148 - s) * 2 ^ s := by rw [← Nat.pow_add, he]
+    have hdiv : (m * 2 ^ 2148) / 2 ^ s = m * 2 ^ (2148 - s) := by
+      rw [hsplit, ← Nat.mul_assoc, Nat.mul_div_cancel _ (by positivity)]
+    have he : 2148 - s + (s - 1074) = 1074 := by omega
+    rw [hdiv, Nat.mul_assoc, ← Nat.pow_add, he, hu]
+  have h1 : decide (2 ^ (s - 1) < 0) = false := by simp
+  have h2 : decide (0 = 2 ^ (s - 1)) = false := by simp
+  rw [if_neg hs0]
+  simp only [hrest, h1, h2, Bool.false_or, Bool.false_and, Bool.false_eq_true, ite_false, hback, if_neg hlimit]
+
+theorem mul_isInt {a b : Int} (hlo : -9007199254740991 ≤ a * b) (hhi : a * b ≤ 9007199254740991) :
+    IsInt ((ofInt a).mul (ofInt b)) (a * b) := by
+  simp only [ofInt, mul]
+  by_cases hab : a * b = 0
+  · have hz : a.natAbs * unit * (b.natAbs * unit) = 0 := by
+      have : a.natAbs * b.natAbs = 0 := by rw [← Int.natAbs_mul, hab]; rfl
+      calc a.natAbs * unit * (b.natAbs * unit) = (a.natAbs * b.natAbs) * (unit * unit) := by ring
+        _ = 0 := by rw [this, Nat.zero_mul]
+    rw [hz, round_zero]
+    cases hs : (decide (a < 0) != decide (b < 0))
+    · exact Or.inl (by simp [ofInt, hab])
+    · exact Or.inr ⟨hab, rfl⟩
+  · have hm : a.natAbs * unit * (b.natAbs * unit) = (a * b).natAbs * unit * unit := by
+      rw [Int.natAbs_mul]; ring
+    rw [hm, round_mul_exact (by have := Int.natAbs_pos.mpr hab; omega) (by omega)]
+    left
+    have hsign : (decide (a < 0) != decide (b < 0)) = decide (a * b < 0) := by
+      have ha : a ≠ 0 := fun h => hab (by simp [h])
+      have hb : b ≠ 0 := fun h => hab (by simp [h])
+      by_cases h1 : a < 0 <;> by_cases h2 : b < 0
+      · have : 0 < a * b := mul_pos_of_neg_of_neg h1 h2
+        simp [h1, h2]; omega
+      · have : a * b < 0 := mul_neg_of_neg_of_pos h1 (by omega)
+        simp [h1, h2, this]
+      · have : a * b < 0 := mul_neg_of_pos_of_neg (by omega) h2
+        simp [h1, h2, this]
+      · have : 0 < a * b := mul_pos (by omega) (by omega)
+        simp [h1, h2]; omega
+    simp [ofInt, hsign]
+
+/-- `-0` is invisible to ordering and `===`, so comparisons survive `IsInt`. -/
+theorem lt_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) : x.lt y = decide (a < b) := by
+  rcases hx with rfl | ⟨rfl, rfl⟩ <;> rcases hy with rfl | ⟨rfl, rfl⟩
+  · exact lt_ofInt a b
+  · simpa [ofInt, lt, signed_ofInt, signed] using lt_ofInt a 0
+  · simpa [ofInt, lt, signed_ofInt, signed] using lt_ofInt 0 b
+  · simp [lt, signed]
+
+theorem eq_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) : x.eq y = decide (a = b) := by
+  rcases hx with rfl | ⟨rfl, rfl⟩ <;> rcases hy with rfl | ⟨rfl, rfl⟩
+  · exact eq_ofInt a b
+  · simpa [ofInt, eq, le.eq', signed_ofInt, signed] using eq_ofInt a 0
+  · simpa [ofInt, eq, le.eq', signed_ofInt, signed] using eq_ofInt 0 b
+  · simp [eq, le.eq', signed]
+
+theorem add_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b)
+    (hlo : -9007199254740991 ≤ a + b) (hhi : a + b ≤ 9007199254740991) : IsInt (x.add y) (a + b) := by
+  rcases hx with rfl | ⟨rfl, rfl⟩ <;> rcases hy with rfl | ⟨rfl, rfl⟩
+  · exact Or.inl (add_ofInt hlo hhi)
+  · -- `x - 0` is defined as `x + (-0)`, so this case is `sub_ofInt`.
+    have h := sub_ofInt (a := a) (b := 0) (by omega) (by omega)
+    have hneg : (ofInt 0).neg = fin true 0 := by simp [ofInt, neg]
+    unfold sub at h
+    rw [hneg] at h
+    exact Or.inl (by simpa using h)
+  · have h := sub_ofInt (a := b) (b := 0) (by omega) (by omega)
+    have hneg : (ofInt 0).neg = fin true 0 := by simp [ofInt, neg]
+    unfold sub at h
+    rw [hneg] at h
+    have hc : (fin true 0).add (ofInt b) = (ofInt b).add (fin true 0) := by
+      simp only [ofInt, add, Int.add_comm, Bool.and_comm]
+    exact Or.inl (by rw [hc]; simpa using h)
+  · exact Or.inr ⟨by omega, by simp [add, signed]⟩
+
+end Core.F64
