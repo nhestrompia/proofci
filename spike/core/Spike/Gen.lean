@@ -3,331 +3,223 @@ open Core
 set_option maxRecDepth 4000
 namespace Gen
 
-def src_scale_chain320 : Fn := { params := ["a"], body := [
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (0))))) [.ret (.lit (.num (F64.ofInt (0))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (1))))) [.ret (.lit (.num (F64.ofInt (2))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (2))))) [.ret (.lit (.num (F64.ofInt (4))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (3))))) [.ret (.lit (.num (F64.ofInt (6))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (4))))) [.ret (.lit (.num (F64.ofInt (8))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (5))))) [.ret (.lit (.num (F64.ofInt (10))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (6))))) [.ret (.lit (.num (F64.ofInt (12))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (7))))) [.ret (.lit (.num (F64.ofInt (14))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (8))))) [.ret (.lit (.num (F64.ofInt (16))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (9))))) [.ret (.lit (.num (F64.ofInt (18))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (10))))) [.ret (.lit (.num (F64.ofInt (20))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (11))))) [.ret (.lit (.num (F64.ofInt (22))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (12))))) [.ret (.lit (.num (F64.ofInt (24))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (13))))) [.ret (.lit (.num (F64.ofInt (26))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (14))))) [.ret (.lit (.num (F64.ofInt (28))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (15))))) [.ret (.lit (.num (F64.ofInt (30))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (16))))) [.ret (.lit (.num (F64.ofInt (32))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (17))))) [.ret (.lit (.num (F64.ofInt (34))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (18))))) [.ret (.lit (.num (F64.ofInt (36))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (19))))) [.ret (.lit (.num (F64.ofInt (38))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (20))))) [.ret (.lit (.num (F64.ofInt (40))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (21))))) [.ret (.lit (.num (F64.ofInt (42))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (22))))) [.ret (.lit (.num (F64.ofInt (44))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (23))))) [.ret (.lit (.num (F64.ofInt (46))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (24))))) [.ret (.lit (.num (F64.ofInt (48))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (25))))) [.ret (.lit (.num (F64.ofInt (50))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (26))))) [.ret (.lit (.num (F64.ofInt (52))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (27))))) [.ret (.lit (.num (F64.ofInt (54))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (28))))) [.ret (.lit (.num (F64.ofInt (56))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (29))))) [.ret (.lit (.num (F64.ofInt (58))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (30))))) [.ret (.lit (.num (F64.ofInt (60))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (31))))) [.ret (.lit (.num (F64.ofInt (62))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (32))))) [.ret (.lit (.num (F64.ofInt (64))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (33))))) [.ret (.lit (.num (F64.ofInt (66))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (34))))) [.ret (.lit (.num (F64.ofInt (68))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (35))))) [.ret (.lit (.num (F64.ofInt (70))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (36))))) [.ret (.lit (.num (F64.ofInt (72))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (37))))) [.ret (.lit (.num (F64.ofInt (74))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (38))))) [.ret (.lit (.num (F64.ofInt (76))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (39))))) [.ret (.lit (.num (F64.ofInt (78))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (40))))) [.ret (.lit (.num (F64.ofInt (80))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (41))))) [.ret (.lit (.num (F64.ofInt (82))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (42))))) [.ret (.lit (.num (F64.ofInt (84))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (43))))) [.ret (.lit (.num (F64.ofInt (86))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (44))))) [.ret (.lit (.num (F64.ofInt (88))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (45))))) [.ret (.lit (.num (F64.ofInt (90))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (46))))) [.ret (.lit (.num (F64.ofInt (92))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (47))))) [.ret (.lit (.num (F64.ofInt (94))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (48))))) [.ret (.lit (.num (F64.ofInt (96))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (49))))) [.ret (.lit (.num (F64.ofInt (98))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (50))))) [.ret (.lit (.num (F64.ofInt (100))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (51))))) [.ret (.lit (.num (F64.ofInt (102))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (52))))) [.ret (.lit (.num (F64.ofInt (104))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (53))))) [.ret (.lit (.num (F64.ofInt (106))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (54))))) [.ret (.lit (.num (F64.ofInt (108))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (55))))) [.ret (.lit (.num (F64.ofInt (110))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (56))))) [.ret (.lit (.num (F64.ofInt (112))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (57))))) [.ret (.lit (.num (F64.ofInt (114))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (58))))) [.ret (.lit (.num (F64.ofInt (116))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (59))))) [.ret (.lit (.num (F64.ofInt (118))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (60))))) [.ret (.lit (.num (F64.ofInt (120))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (61))))) [.ret (.lit (.num (F64.ofInt (122))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (62))))) [.ret (.lit (.num (F64.ofInt (124))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (63))))) [.ret (.lit (.num (F64.ofInt (126))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (64))))) [.ret (.lit (.num (F64.ofInt (128))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (65))))) [.ret (.lit (.num (F64.ofInt (130))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (66))))) [.ret (.lit (.num (F64.ofInt (132))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (67))))) [.ret (.lit (.num (F64.ofInt (134))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (68))))) [.ret (.lit (.num (F64.ofInt (136))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (69))))) [.ret (.lit (.num (F64.ofInt (138))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (70))))) [.ret (.lit (.num (F64.ofInt (140))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (71))))) [.ret (.lit (.num (F64.ofInt (142))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (72))))) [.ret (.lit (.num (F64.ofInt (144))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (73))))) [.ret (.lit (.num (F64.ofInt (146))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (74))))) [.ret (.lit (.num (F64.ofInt (148))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (75))))) [.ret (.lit (.num (F64.ofInt (150))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (76))))) [.ret (.lit (.num (F64.ofInt (152))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (77))))) [.ret (.lit (.num (F64.ofInt (154))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (78))))) [.ret (.lit (.num (F64.ofInt (156))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (79))))) [.ret (.lit (.num (F64.ofInt (158))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (80))))) [.ret (.lit (.num (F64.ofInt (160))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (81))))) [.ret (.lit (.num (F64.ofInt (162))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (82))))) [.ret (.lit (.num (F64.ofInt (164))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (83))))) [.ret (.lit (.num (F64.ofInt (166))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (84))))) [.ret (.lit (.num (F64.ofInt (168))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (85))))) [.ret (.lit (.num (F64.ofInt (170))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (86))))) [.ret (.lit (.num (F64.ofInt (172))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (87))))) [.ret (.lit (.num (F64.ofInt (174))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (88))))) [.ret (.lit (.num (F64.ofInt (176))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (89))))) [.ret (.lit (.num (F64.ofInt (178))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (90))))) [.ret (.lit (.num (F64.ofInt (180))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (91))))) [.ret (.lit (.num (F64.ofInt (182))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (92))))) [.ret (.lit (.num (F64.ofInt (184))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (93))))) [.ret (.lit (.num (F64.ofInt (186))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (94))))) [.ret (.lit (.num (F64.ofInt (188))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (95))))) [.ret (.lit (.num (F64.ofInt (190))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (96))))) [.ret (.lit (.num (F64.ofInt (192))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (97))))) [.ret (.lit (.num (F64.ofInt (194))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (98))))) [.ret (.lit (.num (F64.ofInt (196))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (99))))) [.ret (.lit (.num (F64.ofInt (198))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (100))))) [.ret (.lit (.num (F64.ofInt (200))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (101))))) [.ret (.lit (.num (F64.ofInt (202))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (102))))) [.ret (.lit (.num (F64.ofInt (204))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (103))))) [.ret (.lit (.num (F64.ofInt (206))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (104))))) [.ret (.lit (.num (F64.ofInt (208))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (105))))) [.ret (.lit (.num (F64.ofInt (210))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (106))))) [.ret (.lit (.num (F64.ofInt (212))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (107))))) [.ret (.lit (.num (F64.ofInt (214))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (108))))) [.ret (.lit (.num (F64.ofInt (216))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (109))))) [.ret (.lit (.num (F64.ofInt (218))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (110))))) [.ret (.lit (.num (F64.ofInt (220))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (111))))) [.ret (.lit (.num (F64.ofInt (222))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (112))))) [.ret (.lit (.num (F64.ofInt (224))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (113))))) [.ret (.lit (.num (F64.ofInt (226))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (114))))) [.ret (.lit (.num (F64.ofInt (228))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (115))))) [.ret (.lit (.num (F64.ofInt (230))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (116))))) [.ret (.lit (.num (F64.ofInt (232))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (117))))) [.ret (.lit (.num (F64.ofInt (234))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (118))))) [.ret (.lit (.num (F64.ofInt (236))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (119))))) [.ret (.lit (.num (F64.ofInt (238))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (120))))) [.ret (.lit (.num (F64.ofInt (240))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (121))))) [.ret (.lit (.num (F64.ofInt (242))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (122))))) [.ret (.lit (.num (F64.ofInt (244))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (123))))) [.ret (.lit (.num (F64.ofInt (246))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (124))))) [.ret (.lit (.num (F64.ofInt (248))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (125))))) [.ret (.lit (.num (F64.ofInt (250))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (126))))) [.ret (.lit (.num (F64.ofInt (252))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (127))))) [.ret (.lit (.num (F64.ofInt (254))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (128))))) [.ret (.lit (.num (F64.ofInt (256))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (129))))) [.ret (.lit (.num (F64.ofInt (258))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (130))))) [.ret (.lit (.num (F64.ofInt (260))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (131))))) [.ret (.lit (.num (F64.ofInt (262))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (132))))) [.ret (.lit (.num (F64.ofInt (264))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (133))))) [.ret (.lit (.num (F64.ofInt (266))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (134))))) [.ret (.lit (.num (F64.ofInt (268))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (135))))) [.ret (.lit (.num (F64.ofInt (270))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (136))))) [.ret (.lit (.num (F64.ofInt (272))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (137))))) [.ret (.lit (.num (F64.ofInt (274))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (138))))) [.ret (.lit (.num (F64.ofInt (276))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (139))))) [.ret (.lit (.num (F64.ofInt (278))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (140))))) [.ret (.lit (.num (F64.ofInt (280))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (141))))) [.ret (.lit (.num (F64.ofInt (282))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (142))))) [.ret (.lit (.num (F64.ofInt (284))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (143))))) [.ret (.lit (.num (F64.ofInt (286))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (144))))) [.ret (.lit (.num (F64.ofInt (288))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (145))))) [.ret (.lit (.num (F64.ofInt (290))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (146))))) [.ret (.lit (.num (F64.ofInt (292))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (147))))) [.ret (.lit (.num (F64.ofInt (294))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (148))))) [.ret (.lit (.num (F64.ofInt (296))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (149))))) [.ret (.lit (.num (F64.ofInt (298))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (150))))) [.ret (.lit (.num (F64.ofInt (300))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (151))))) [.ret (.lit (.num (F64.ofInt (302))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (152))))) [.ret (.lit (.num (F64.ofInt (304))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (153))))) [.ret (.lit (.num (F64.ofInt (306))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (154))))) [.ret (.lit (.num (F64.ofInt (308))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (155))))) [.ret (.lit (.num (F64.ofInt (310))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (156))))) [.ret (.lit (.num (F64.ofInt (312))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (157))))) [.ret (.lit (.num (F64.ofInt (314))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (158))))) [.ret (.lit (.num (F64.ofInt (316))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (159))))) [.ret (.lit (.num (F64.ofInt (318))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (160))))) [.ret (.lit (.num (F64.ofInt (320))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (161))))) [.ret (.lit (.num (F64.ofInt (322))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (162))))) [.ret (.lit (.num (F64.ofInt (324))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (163))))) [.ret (.lit (.num (F64.ofInt (326))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (164))))) [.ret (.lit (.num (F64.ofInt (328))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (165))))) [.ret (.lit (.num (F64.ofInt (330))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (166))))) [.ret (.lit (.num (F64.ofInt (332))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (167))))) [.ret (.lit (.num (F64.ofInt (334))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (168))))) [.ret (.lit (.num (F64.ofInt (336))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (169))))) [.ret (.lit (.num (F64.ofInt (338))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (170))))) [.ret (.lit (.num (F64.ofInt (340))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (171))))) [.ret (.lit (.num (F64.ofInt (342))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (172))))) [.ret (.lit (.num (F64.ofInt (344))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (173))))) [.ret (.lit (.num (F64.ofInt (346))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (174))))) [.ret (.lit (.num (F64.ofInt (348))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (175))))) [.ret (.lit (.num (F64.ofInt (350))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (176))))) [.ret (.lit (.num (F64.ofInt (352))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (177))))) [.ret (.lit (.num (F64.ofInt (354))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (178))))) [.ret (.lit (.num (F64.ofInt (356))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (179))))) [.ret (.lit (.num (F64.ofInt (358))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (180))))) [.ret (.lit (.num (F64.ofInt (360))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (181))))) [.ret (.lit (.num (F64.ofInt (362))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (182))))) [.ret (.lit (.num (F64.ofInt (364))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (183))))) [.ret (.lit (.num (F64.ofInt (366))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (184))))) [.ret (.lit (.num (F64.ofInt (368))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (185))))) [.ret (.lit (.num (F64.ofInt (370))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (186))))) [.ret (.lit (.num (F64.ofInt (372))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (187))))) [.ret (.lit (.num (F64.ofInt (374))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (188))))) [.ret (.lit (.num (F64.ofInt (376))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (189))))) [.ret (.lit (.num (F64.ofInt (378))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (190))))) [.ret (.lit (.num (F64.ofInt (380))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (191))))) [.ret (.lit (.num (F64.ofInt (382))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (192))))) [.ret (.lit (.num (F64.ofInt (384))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (193))))) [.ret (.lit (.num (F64.ofInt (386))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (194))))) [.ret (.lit (.num (F64.ofInt (388))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (195))))) [.ret (.lit (.num (F64.ofInt (390))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (196))))) [.ret (.lit (.num (F64.ofInt (392))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (197))))) [.ret (.lit (.num (F64.ofInt (394))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (198))))) [.ret (.lit (.num (F64.ofInt (396))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (199))))) [.ret (.lit (.num (F64.ofInt (398))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (200))))) [.ret (.lit (.num (F64.ofInt (400))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (201))))) [.ret (.lit (.num (F64.ofInt (402))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (202))))) [.ret (.lit (.num (F64.ofInt (404))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (203))))) [.ret (.lit (.num (F64.ofInt (406))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (204))))) [.ret (.lit (.num (F64.ofInt (408))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (205))))) [.ret (.lit (.num (F64.ofInt (410))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (206))))) [.ret (.lit (.num (F64.ofInt (412))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (207))))) [.ret (.lit (.num (F64.ofInt (414))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (208))))) [.ret (.lit (.num (F64.ofInt (416))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (209))))) [.ret (.lit (.num (F64.ofInt (418))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (210))))) [.ret (.lit (.num (F64.ofInt (420))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (211))))) [.ret (.lit (.num (F64.ofInt (422))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (212))))) [.ret (.lit (.num (F64.ofInt (424))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (213))))) [.ret (.lit (.num (F64.ofInt (426))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (214))))) [.ret (.lit (.num (F64.ofInt (428))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (215))))) [.ret (.lit (.num (F64.ofInt (430))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (216))))) [.ret (.lit (.num (F64.ofInt (432))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (217))))) [.ret (.lit (.num (F64.ofInt (434))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (218))))) [.ret (.lit (.num (F64.ofInt (436))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (219))))) [.ret (.lit (.num (F64.ofInt (438))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (220))))) [.ret (.lit (.num (F64.ofInt (440))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (221))))) [.ret (.lit (.num (F64.ofInt (442))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (222))))) [.ret (.lit (.num (F64.ofInt (444))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (223))))) [.ret (.lit (.num (F64.ofInt (446))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (224))))) [.ret (.lit (.num (F64.ofInt (448))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (225))))) [.ret (.lit (.num (F64.ofInt (450))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (226))))) [.ret (.lit (.num (F64.ofInt (452))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (227))))) [.ret (.lit (.num (F64.ofInt (454))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (228))))) [.ret (.lit (.num (F64.ofInt (456))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (229))))) [.ret (.lit (.num (F64.ofInt (458))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (230))))) [.ret (.lit (.num (F64.ofInt (460))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (231))))) [.ret (.lit (.num (F64.ofInt (462))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (232))))) [.ret (.lit (.num (F64.ofInt (464))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (233))))) [.ret (.lit (.num (F64.ofInt (466))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (234))))) [.ret (.lit (.num (F64.ofInt (468))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (235))))) [.ret (.lit (.num (F64.ofInt (470))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (236))))) [.ret (.lit (.num (F64.ofInt (472))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (237))))) [.ret (.lit (.num (F64.ofInt (474))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (238))))) [.ret (.lit (.num (F64.ofInt (476))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (239))))) [.ret (.lit (.num (F64.ofInt (478))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (240))))) [.ret (.lit (.num (F64.ofInt (480))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (241))))) [.ret (.lit (.num (F64.ofInt (482))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (242))))) [.ret (.lit (.num (F64.ofInt (484))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (243))))) [.ret (.lit (.num (F64.ofInt (486))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (244))))) [.ret (.lit (.num (F64.ofInt (488))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (245))))) [.ret (.lit (.num (F64.ofInt (490))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (246))))) [.ret (.lit (.num (F64.ofInt (492))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (247))))) [.ret (.lit (.num (F64.ofInt (494))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (248))))) [.ret (.lit (.num (F64.ofInt (496))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (249))))) [.ret (.lit (.num (F64.ofInt (498))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (250))))) [.ret (.lit (.num (F64.ofInt (500))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (251))))) [.ret (.lit (.num (F64.ofInt (502))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (252))))) [.ret (.lit (.num (F64.ofInt (504))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (253))))) [.ret (.lit (.num (F64.ofInt (506))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (254))))) [.ret (.lit (.num (F64.ofInt (508))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (255))))) [.ret (.lit (.num (F64.ofInt (510))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (256))))) [.ret (.lit (.num (F64.ofInt (512))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (257))))) [.ret (.lit (.num (F64.ofInt (514))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (258))))) [.ret (.lit (.num (F64.ofInt (516))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (259))))) [.ret (.lit (.num (F64.ofInt (518))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (260))))) [.ret (.lit (.num (F64.ofInt (520))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (261))))) [.ret (.lit (.num (F64.ofInt (522))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (262))))) [.ret (.lit (.num (F64.ofInt (524))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (263))))) [.ret (.lit (.num (F64.ofInt (526))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (264))))) [.ret (.lit (.num (F64.ofInt (528))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (265))))) [.ret (.lit (.num (F64.ofInt (530))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (266))))) [.ret (.lit (.num (F64.ofInt (532))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (267))))) [.ret (.lit (.num (F64.ofInt (534))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (268))))) [.ret (.lit (.num (F64.ofInt (536))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (269))))) [.ret (.lit (.num (F64.ofInt (538))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (270))))) [.ret (.lit (.num (F64.ofInt (540))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (271))))) [.ret (.lit (.num (F64.ofInt (542))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (272))))) [.ret (.lit (.num (F64.ofInt (544))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (273))))) [.ret (.lit (.num (F64.ofInt (546))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (274))))) [.ret (.lit (.num (F64.ofInt (548))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (275))))) [.ret (.lit (.num (F64.ofInt (550))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (276))))) [.ret (.lit (.num (F64.ofInt (552))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (277))))) [.ret (.lit (.num (F64.ofInt (554))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (278))))) [.ret (.lit (.num (F64.ofInt (556))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (279))))) [.ret (.lit (.num (F64.ofInt (558))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (280))))) [.ret (.lit (.num (F64.ofInt (560))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (281))))) [.ret (.lit (.num (F64.ofInt (562))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (282))))) [.ret (.lit (.num (F64.ofInt (564))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (283))))) [.ret (.lit (.num (F64.ofInt (566))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (284))))) [.ret (.lit (.num (F64.ofInt (568))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (285))))) [.ret (.lit (.num (F64.ofInt (570))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (286))))) [.ret (.lit (.num (F64.ofInt (572))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (287))))) [.ret (.lit (.num (F64.ofInt (574))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (288))))) [.ret (.lit (.num (F64.ofInt (576))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (289))))) [.ret (.lit (.num (F64.ofInt (578))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (290))))) [.ret (.lit (.num (F64.ofInt (580))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (291))))) [.ret (.lit (.num (F64.ofInt (582))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (292))))) [.ret (.lit (.num (F64.ofInt (584))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (293))))) [.ret (.lit (.num (F64.ofInt (586))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (294))))) [.ret (.lit (.num (F64.ofInt (588))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (295))))) [.ret (.lit (.num (F64.ofInt (590))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (296))))) [.ret (.lit (.num (F64.ofInt (592))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (297))))) [.ret (.lit (.num (F64.ofInt (594))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (298))))) [.ret (.lit (.num (F64.ofInt (596))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (299))))) [.ret (.lit (.num (F64.ofInt (598))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (300))))) [.ret (.lit (.num (F64.ofInt (600))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (301))))) [.ret (.lit (.num (F64.ofInt (602))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (302))))) [.ret (.lit (.num (F64.ofInt (604))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (303))))) [.ret (.lit (.num (F64.ofInt (606))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (304))))) [.ret (.lit (.num (F64.ofInt (608))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (305))))) [.ret (.lit (.num (F64.ofInt (610))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (306))))) [.ret (.lit (.num (F64.ofInt (612))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (307))))) [.ret (.lit (.num (F64.ofInt (614))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (308))))) [.ret (.lit (.num (F64.ofInt (616))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (309))))) [.ret (.lit (.num (F64.ofInt (618))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (310))))) [.ret (.lit (.num (F64.ofInt (620))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (311))))) [.ret (.lit (.num (F64.ofInt (622))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (312))))) [.ret (.lit (.num (F64.ofInt (624))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (313))))) [.ret (.lit (.num (F64.ofInt (626))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (314))))) [.ret (.lit (.num (F64.ofInt (628))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (315))))) [.ret (.lit (.num (F64.ofInt (630))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (316))))) [.ret (.lit (.num (F64.ofInt (632))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (317))))) [.ret (.lit (.num (F64.ofInt (634))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (318))))) [.ret (.lit (.num (F64.ofInt (636))))] [],
-    .ite (.bin .eq (.var "a") (.lit (.num (F64.ofInt (319))))) [.ret (.lit (.num (F64.ofInt (638))))] [],
-    .ret (.lit (.num (F64.ofInt (-1))))] }
+def src_features_counterTwice : Fn := { params := ["start"], body := [
+    .set "__scope" (.record []),
+    .setField (.var "__scope") "n" (.var "start"),
+    .set "bump" (.closure "src_features_counterTwice_lambda0" (.record [("__up", .var "__scope")])),
+    .set "out" (.array []),
+    .push (.var "out") (.callV (.var "bump") []),
+    .push (.var "out") (.callV (.var "bump") []),
+    .setField (.var "__scope") "n" (.bin .add (.field (.var "__scope") "n") (.lit (.num (F64.ofInt (10))))),
+    .push (.var "out") (.callV (.var "bump") []),
+    .ret (.var "out")] }
+
+def src_features_loopCaptures_loop0 : List Stmt := [.push (.var "fs") (.closure "src_features_loopCaptures_lambda1" (.record [("__up", .var "__scope"), ("x", .var "x")]))]
+
+def src_features_loopCaptures_loop1 : List Stmt := [.set "total" (.bin .add (.var "total") (.callV (.var "f") []))]
+
+def src_features_loopCaptures : Fn := { params := ["xs"], body := [
+    .set "__scope" (.record []),
+    .set "fs" (.array []),
+    .forOf "x" (.var "xs") src_features_loopCaptures_loop0,
+    .set "total" (.lit (.num (F64.ofInt (0)))),
+    .forOf "f" (.var "fs") src_features_loopCaptures_loop1,
+    .ret (.var "total")] }
+
+def src_features_scaled : Fn := { params := ["xs", "k"], body := [
+    .set "__scope" (.record [("k", .var "k")]),
+    .ret (.call "src_prelude_jsMap" [.var "xs", .closure "src_features_scaled_lambda2" (.record [("__up", .var "__scope")])])] }
+
+def src_features_indexed : Fn := { params := ["xs"], body := [
+    .set "__scope" (.record []),
+    .ret (.call "src_prelude_jsMap" [.var "xs", .closure "src_features_indexed_lambda3" (.record [("__up", .var "__scope")])])] }
+
+def src_features_positives : Fn := { params := ["xs"], body := [
+    .set "__scope" (.record []),
+    .ret (.call "src_prelude_jsFilter" [.var "xs", .closure "src_features_positives_lambda4" (.record [("__up", .var "__scope")])])] }
+
+def src_features_total : Fn := { params := ["xs"], body := [
+    .set "__scope" (.record []),
+    .ret (.call "src_prelude_jsReduce" [.var "xs", .closure "src_features_total_lambda5" (.record [("__up", .var "__scope")]), .lit (.num (F64.ofInt (0)))])] }
+
+def src_features_anyOver : Fn := { params := ["xs", "limit"], body := [
+    .set "__scope" (.record [("limit", .var "limit")]),
+    .ret (.call "src_prelude_jsSome" [.var "xs", .closure "src_features_anyOver_lambda6" (.record [("__up", .var "__scope")])])] }
+
+def src_features_firstNegative_loop0 : List Stmt := [.ite (.bin .lt (.var "x") (.lit (.num (F64.ofInt (0))))) [.ret (.var "x")] []]
+
+def src_features_firstNegative : Fn := { params := ["xs"], body := [
+    .forOf "x" (.var "xs") src_features_firstNegative_loop0,
+    .ret (.lit .null)] }
+
+def src_features_positivesLoop_loop0 : List Stmt := [.ite (.bin .gt (.var "x") (.lit (.num (F64.ofInt (0))))) [.push (.var "out") (.var "x")] []]
+
+def src_features_positivesLoop : Fn := { params := ["xs"], body := [
+    .set "out" (.array []),
+    .forOf "x" (.var "xs") src_features_positivesLoop_loop0,
+    .ret (.var "out")] }
+
+def src_features_sumPlusOne : Fn := { params := ["xs"], body := [
+    .ret (.bin .add (.call "src_features_sumAll" [.var "xs"]) (.lit (.num (F64.ofInt (1)))))] }
+
+def src_features_dispatch : Fn := { params := ["n"], body := [
+    .set "a" (.call "Shape.__new" [.var "n"]),
+    .set "b" (.call "Doubled.__new" [.var "n"]),
+    .ret (.bin .add (.bin .mul (.callM (.var "a") "describe" []) (.lit (.num (F64.ofInt (1000))))) (.callM (.var "b") "describe" []))] }
+
+def src_features_growBoth : Fn := { params := ["n"], body := [
+    .set "s" (.call "Shape.__new" [.var "n"]),
+    .set "same" (.var "s"),
+    .setField (.var "same") "size" (.bin .add (.field (.var "same") "size") (.lit (.num (F64.ofInt (1))))),
+    .ret (.callM (.var "s") "area" [])] }
+
+def src_features_treeSum : Fn := { params := ["t"], body := [
+    .ite (.bin .eq (.var "t") (.lit .null)) [.ret (.lit (.num (F64.ofInt (0))))] [],
+    .ret (.bin .add (.bin .add (.field (.var "t") "value") (.call "src_features_treeSum" [.field (.var "t") "left"])) (.call "src_features_treeSum" [.field (.var "t") "right"]))] }
+
+def src_async_withdrawStale_segs : List (List Stmt) := [[.set "b" (.field (.var "a") "balance"), .push (.field (.var "a") "log") (.var "amount")],
+  [.setField (.var "a") "balance" (.bin .sub (.var "b") (.var "amount")), .push (.field (.var "a") "log") (.neg (.var "amount"))]]
+
+def src_async_withdrawStale : Fn := { params := ["a", "amount"], body := [] }
+
+def src_async_withdrawSafe_segs : List (List Stmt) := [[.push (.field (.var "a") "log") (.var "amount")],
+  [.setField (.var "a") "balance" (.bin .sub (.field (.var "a") "balance") (.var "amount")), .push (.field (.var "a") "log") (.neg (.var "amount"))]]
+
+def src_async_withdrawSafe : Fn := { params := ["a", "amount"], body := [] }
+
+def src_async_twoWaits_segs : List (List Stmt) := [[.push (.field (.var "a") "log") (.var "amount")],
+  [.push (.field (.var "a") "log") (.bin .add (.var "amount") (.lit (.num (F64.ofInt (1)))))],
+  [.push (.field (.var "a") "log") (.bin .add (.var "amount") (.lit (.num (F64.ofInt (2)))))]]
+
+def src_async_twoWaits : Fn := { params := ["a", "amount"], body := [] }
+
+def src_features_counterTwice_lambda0 : Fn := { params := ["__env"], body := [
+    .setField (.field (.var "__env") "__up") "n" (.bin .add (.field (.field (.var "__env") "__up") "n") (.lit (.num (F64.ofInt (1))))),
+    .ret (.field (.field (.var "__env") "__up") "n")] }
+
+def src_features_loopCaptures_lambda1 : Fn := { params := ["__env"], body := [
+    .ret (.bin .mul (.field (.var "__env") "x") (.lit (.num (F64.ofInt (2)))))] }
+
+def src_prelude_jsMap_loop0 : List Stmt := [.push (.var "out") (.callV (.var "f") [.var "x", .var "i", .var "xs"]), .set "i" (.bin .add (.var "i") (.lit (.num (F64.ofInt (1)))))]
+
+def src_prelude_jsMap : Fn := { params := ["xs", "f"], body := [
+    .set "out" (.array []),
+    .set "i" (.lit (.num (F64.ofInt (0)))),
+    .forOf "x" (.var "xs") src_prelude_jsMap_loop0,
+    .ret (.var "out")] }
+
+def src_features_scaled_lambda2 : Fn := { params := ["__env", "x"], body := [
+    .ret (.bin .mul (.var "x") (.field (.field (.var "__env") "__up") "k"))] }
+
+def src_features_indexed_lambda3 : Fn := { params := ["__env", "x", "i"], body := [
+    .ret (.bin .add (.var "x") (.var "i"))] }
+
+def src_prelude_jsFilter_loop0 : List Stmt := [.ite (.callV (.var "f") [.var "x", .var "i", .var "xs"]) [.push (.var "out") (.var "x")] [], .set "i" (.bin .add (.var "i") (.lit (.num (F64.ofInt (1)))))]
+
+def src_prelude_jsFilter : Fn := { params := ["xs", "f"], body := [
+    .set "out" (.array []),
+    .set "i" (.lit (.num (F64.ofInt (0)))),
+    .forOf "x" (.var "xs") src_prelude_jsFilter_loop0,
+    .ret (.var "out")] }
+
+def src_features_positives_lambda4 : Fn := { params := ["__env", "x"], body := [
+    .ret (.bin .gt (.var "x") (.lit (.num (F64.ofInt (0)))))] }
+
+def src_prelude_jsReduce_loop0 : List Stmt := [.set "acc" (.callV (.var "f") [.var "acc", .var "x", .var "i", .var "xs"]), .set "i" (.bin .add (.var "i") (.lit (.num (F64.ofInt (1)))))]
+
+def src_prelude_jsReduce : Fn := { params := ["xs", "f", "init"], body := [
+    .set "acc" (.var "init"),
+    .set "i" (.lit (.num (F64.ofInt (0)))),
+    .forOf "x" (.var "xs") src_prelude_jsReduce_loop0,
+    .ret (.var "acc")] }
+
+def src_features_total_lambda5 : Fn := { params := ["__env", "acc", "x"], body := [
+    .ret (.bin .add (.var "acc") (.var "x"))] }
+
+def src_prelude_jsSome_loop0 : List Stmt := [.ite (.callV (.var "f") [.var "x", .var "i", .var "xs"]) [.ret (.lit (.bool true))] [], .set "i" (.bin .add (.var "i") (.lit (.num (F64.ofInt (1)))))]
+
+def src_prelude_jsSome : Fn := { params := ["xs", "f"], body := [
+    .set "i" (.lit (.num (F64.ofInt (0)))),
+    .forOf "x" (.var "xs") src_prelude_jsSome_loop0,
+    .ret (.lit (.bool false))] }
+
+def src_features_anyOver_lambda6 : Fn := { params := ["__env", "x"], body := [
+    .ret (.bin .gt (.var "x") (.field (.field (.var "__env") "__up") "limit"))] }
+
+def src_features_sumAll_loop0 : List Stmt := [.set "t" (.bin .add (.var "t") (.var "x"))]
+
+def src_features_sumAll : Fn := { params := ["xs"], body := [
+    .set "t" (.lit (.num (F64.ofInt (0)))),
+    .forOf "x" (.var "xs") src_features_sumAll_loop0,
+    .ret (.var "t")] }
+
+def Shape_area : Fn := { params := ["this"], body := [
+    .ret (.bin .mul (.field (.var "this") "size") (.field (.var "this") "size"))] }
+
+def Shape_describe : Fn := { params := ["this"], body := [
+    .ret (.bin .add (.callM (.var "this") "area" []) (.lit (.num (F64.ofInt (1)))))] }
+
+def Shape___init : Fn := { params := ["this", "size"], body := [
+    .setField (.var "this") "size" (.var "size")] }
+
+def Doubled_area : Fn := { params := ["this"], body := [
+    .ret (.bin .add (.call "Shape.area" [.var "this"]) (.lit (.num (F64.ofInt (100)))))] }
+
+def Doubled___init : Fn := { params := ["this", "size"], body := [
+    .expr (.call "Shape.__init" [.var "this", .bin .mul (.var "size") (.lit (.num (F64.ofInt (2))))])] }
+
+def Shape_new : Fn := { params := ["size"], body := [
+    .set "this" (.record [("__class", .lit (.str [83, 104, 97, 112, 101]))]),
+    .expr (.call "Shape.__init" [.var "this", .var "size"]),
+    .ret (.var "this")] }
+
+def Doubled_new : Fn := { params := ["size"], body := [
+    .set "this" (.record [("__class", .lit (.str [68, 111, 117, 98, 108, 101, 100]))]),
+    .expr (.call "Doubled.__init" [.var "this", .var "size"]),
+    .ret (.var "this")] }
 
 def prog : Prog := fun name => match name with
-  | "src_scale_chain320" => some src_scale_chain320
+  | "src_features_counterTwice" => some src_features_counterTwice
+  | "src_features_loopCaptures" => some src_features_loopCaptures
+  | "src_features_scaled" => some src_features_scaled
+  | "src_features_indexed" => some src_features_indexed
+  | "src_features_positives" => some src_features_positives
+  | "src_features_total" => some src_features_total
+  | "src_features_anyOver" => some src_features_anyOver
+  | "src_features_firstNegative" => some src_features_firstNegative
+  | "src_features_positivesLoop" => some src_features_positivesLoop
+  | "src_features_sumPlusOne" => some src_features_sumPlusOne
+  | "src_features_dispatch" => some src_features_dispatch
+  | "src_features_growBoth" => some src_features_growBoth
+  | "src_features_treeSum" => some src_features_treeSum
+  | "src_async_withdrawStale" => some src_async_withdrawStale
+  | "src_async_withdrawSafe" => some src_async_withdrawSafe
+  | "src_async_twoWaits" => some src_async_twoWaits
+  | "src_features_counterTwice_lambda0" => some src_features_counterTwice_lambda0
+  | "src_features_loopCaptures_lambda1" => some src_features_loopCaptures_lambda1
+  | "src_prelude_jsMap" => some src_prelude_jsMap
+  | "src_features_scaled_lambda2" => some src_features_scaled_lambda2
+  | "src_features_indexed_lambda3" => some src_features_indexed_lambda3
+  | "src_prelude_jsFilter" => some src_prelude_jsFilter
+  | "src_features_positives_lambda4" => some src_features_positives_lambda4
+  | "src_prelude_jsReduce" => some src_prelude_jsReduce
+  | "src_features_total_lambda5" => some src_features_total_lambda5
+  | "src_prelude_jsSome" => some src_prelude_jsSome
+  | "src_features_anyOver_lambda6" => some src_features_anyOver_lambda6
+  | "src_features_sumAll" => some src_features_sumAll
+  | "Shape_area" => some Shape_area
+  | "Shape_describe" => some Shape_describe
+  | "Shape___init" => some Shape___init
+  | "Doubled_area" => some Doubled_area
+  | "Doubled___init" => some Doubled___init
+  | "Shape.area" => some Shape_area
+  | "Shape.describe" => some Shape_describe
+  | "Shape.__init" => some Shape___init
+  | "Shape.__new" => some Shape_new
+  | "Doubled.area" => some Doubled_area
+  | "Doubled.describe" => some Shape_describe
+  | "Doubled.__init" => some Doubled___init
+  | "Doubled.__new" => some Doubled_new
   | _ => none
 
 end Gen

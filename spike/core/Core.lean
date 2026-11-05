@@ -20,6 +20,7 @@ inductive Val where
   | big (n : Int)
   | str (s : List Nat)
   | ref (l : Loc)
+  | fn (name : String) (env : Val)
   deriving DecidableEq, Repr
 
 inductive Obj where
@@ -48,12 +49,16 @@ inductive Expr where
   | record (fields : List (String × Expr))
   | array (items : List Expr)
   | call (f : String) (args : List Expr)
+  | closure (name : String) (env : Expr)
+  | callV (f : Expr) (args : List Expr)
+  | callM (o : Expr) (m : String) (args : List Expr)
 
 inductive Stmt where
   | set (x : String) (e : Expr)
   | setField (o : Expr) (f : String) (e : Expr)
   | setIndex (o i e : Expr)
   | expr (e : Expr)
+  | push (o e : Expr)
   | ite (c : Expr) (t e : List Stmt)
   | forOf (x : String) (e : Expr) (body : List Stmt)
   | ret (e : Expr)
@@ -95,7 +100,7 @@ def truthy : Val → Bool
     | _ => true
   | .big n => n != 0
   | .str s => !s.isEmpty
-  | .ref _ => true
+  | .ref _ | .fn _ _ => true
 
 def nullish : Val → Bool
   | .undef | .null => true
@@ -113,6 +118,8 @@ def strLt : List Nat → List Nat → Bool
   | [], _ :: _ => true
   | _ :: _, [] => false
   | x :: xs, y :: ys => if x = y then strLt xs ys else decide (x < y)
+
+def className (s : List Nat) : String := String.ofList (s.map Char.ofNat)
 
 def binary : Op → Val → Val → Option Val
   | .add, .num a, .num b => some (.num (a.add b))
@@ -222,6 +229,37 @@ def eval : Nat → Prog → St → Expr → Out Val
       | .ok vs s' => .ok (.ref s'.heap.length) { s' with heap := s'.heap ++ [.array vs] }
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
+    | .closure g e => match eval f p s e with
+      | .ok v s' => .ok (.fn g v) s'
+      | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .callV c args => match eval f p s c with
+      | .ok (.fn g env) s₁ => match evalList f p s₁ args with
+        | .ok vs s₂ => match p g with
+          | some fn => match run f p fn (env :: vs) s₂.heap with
+            | .ok v r => .ok v { s₂ with heap := r.heap }
+            | .thrown v r => .thrown v { s₂ with heap := r.heap }
+            | .stuck => .stuck
+          | none => .stuck
+        | .thrown v s₂ => .thrown v s₂
+        | .stuck => .stuck
+      | .ok _ s₁ => .thrown typeError s₁
+      | .thrown v s₁ => .thrown v s₁
+      | .stuck => .stuck
+    | .callM o m args => match eval f p s o with
+      | .ok v s₁ => match evalList f p s₁ args with
+        | .ok vs s₂ => match readField s₂.heap v "__class" with
+          | some (.str c) => match p (className c ++ "." ++ m) with
+            | some fn => match run f p fn (v :: vs) s₂.heap with
+              | .ok r t => .ok r { s₂ with heap := t.heap }
+              | .thrown r t => .thrown r { s₂ with heap := t.heap }
+              | .stuck => .stuck
+            | none => .thrown typeError s₂
+          | _ => .thrown typeError s₂
+        | .thrown v s₂ => .thrown v s₂
+        | .stuck => .stuck
+      | .thrown v s₁ => .thrown v s₁
+      | .stuck => .stuck
     | .call g args => match evalList f p s args with
       | .ok vs s' => match p g with
         | some fn => match run f p fn vs s'.heap with
@@ -295,6 +333,16 @@ def exec : Nat → Prog → St → Stmt → Out Cmp
       | .ok _ s' => .ok .normal s'
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
+    | .push o e => match eval f p s o with
+      | .ok (.ref l) s₁ => match eval f p s₁ e with
+        | .ok v s₂ => match s₂.heap[l]? with
+          | some (.array xs) => .ok .normal { s₂ with heap := s₂.heap.set l (.array (xs ++ [v])) }
+          | _ => .thrown typeError s₂
+        | .thrown v s₂ => .thrown v s₂
+        | .stuck => .stuck
+      | .ok _ s₁ => .thrown typeError s₁
+      | .thrown v s₁ => .thrown v s₁
+      | .stuck => .stuck
     | .ite c t e => match eval f p s c with
       | .ok v s' => execList f p s' (if truthy v then t else e)
       | .thrown v s' => .thrown v s'
@@ -350,5 +398,30 @@ def run : Nat → Prog → Fn → List Val → Heap → Out Val
     | .stuck => .stuck
 
 end
+
+/-! `async`: a function split at each `await`. A job runs one piece, then waits its turn. -/
+
+structure Job where
+  segs : List (List Stmt)
+  env : Env
+
+/-- Runs jobs in microtask order: each `await` of a settled value is one turn of the queue. -/
+def drain : Nat → Prog → List Job → Heap → Out Unit
+  | 0, _, _, _ => .stuck
+  | _ + 1, _, [], h => .ok () ⟨fun _ => none, h⟩
+  | f + 1, p, j :: rest, h => match j.segs with
+    | [] => drain f p rest h
+    | seg :: more => match execList f p ⟨j.env, h⟩ seg with
+      | .ok .normal s =>
+        if more.isEmpty then drain f p rest s.heap
+        else drain f p (rest ++ [⟨more, s.env⟩]) s.heap
+      | .ok _ s => drain f p rest s.heap
+      | .thrown v s => .thrown v s
+      | .stuck => .stuck
+
+/-- `Promise.all` over calls: each runs up to its first `await`, in order, then the queue. -/
+def startAll (calls : List (List (List Stmt) × List String × List Val)) : List Job :=
+  calls.map fun (segs, params, args) =>
+    ⟨segs, (params.zip args).foldl (fun e (x, v) => e.put x v) (fun _ => none)⟩
 
 end Core
