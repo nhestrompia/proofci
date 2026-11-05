@@ -12,12 +12,22 @@ elab "clear_todo" : tactic => withMainContext do
     let some d := d | continue
     if (← instantiateMVars d.type).isAppOf ``Core.Todo then
       replaceMainGoal [← (← getMainGoal).clear d.fvarId]
+open Lean Elab Tactic Meta in
+/-- `tauto` is exponential in the size of the conditions, so it only runs on small ones. -/
+elab "small_logic" : tactic => withMainContext do
+  let mut n := 0
+  for d in (← getLCtx) do
+    if d.isImplementationDetail then continue
+    let t ← instantiateMVars d.type
+    unless t.isAppOf ``Or || t.isAppOf ``And || t.isAppOf ``Not do continue
+    n := n + t.sizeWithoutSharing
+  if n > 300 then throwError "too large for tauto"
 syntax "isnone" : tactic
 macro_rules | `(tactic| isnone) => `(tactic| first | rfl | assumption | (simp_all; done))
 syntax "known" : tactic
-macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | tauto | (clear_todo; simp_all; done))
+macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | (small_logic; tauto) | (clear_todo; simp_all; done))
 syntax "refuted" : tactic
-macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | tauto | (clear_todo; simp_all; done) | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | tauto))
+macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | (small_logic; tauto) | (clear_todo; simp_all; done) | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | (small_logic; tauto)))
 
 syntax "vsplit " ident : tactic
 macro_rules
