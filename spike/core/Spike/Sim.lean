@@ -85,16 +85,30 @@ theorem lookup_mono {h h' : Heap} (hp : h <+: h') {l : Nat} {o : Obj} (hl : h[l]
 instance : TyRep Js.Num := ⟨fun _ a v => ∃ x, v = .num x ∧ Core.F64.IsInt x a.val, fun _ h => h⟩
 instance : TyRep Int := ⟨fun _ a v => v = .big a, fun _ h => h⟩
 instance : TyRep Bool := ⟨fun _ a v => v = .bool a, fun _ h => h⟩
-instance {α} [TyRep α] : TyRep (Option α) where
-  rep h a v := match a with
-    | none => v = .undef ∨ v = .null
-    | some x => rep h x v
-  mono hp := by
-    intro hr
-    rename_i a v
-    cases a with
-    | none => exact hr
-    | some x => exact mono hp hr
+/-- Which nullish value a type allows. The translator keeps this, and `===` depends on it. -/
+inductive Nothing where
+  | undef | null | both
+  deriving DecidableEq, Repr
+def nothingOk : Nothing → Val → Prop
+  | .undef, v => v = .undef
+  | .null, v => v = .null
+  | .both, v => v = .undef ∨ v = .null
+theorem nothing_nullish {k v} (h : nothingOk k v) : nullish v = true := by
+  cases k <;> simp only [nothingOk] at h
+  · subst h; rfl
+  · subst h; rfl
+  · rcases h with rfl | rfl <;> rfl
+/-- An option whose encoding is fixed by the declared type. -/
+def Opt (_k : Nothing) (α : Type) : Type := Option α
+def optRep {α} [TyRep α] (k : Nothing) (h : Heap) : Option α → Val → Prop
+  | none, v => nothingOk k v
+  | some x, v => rep h x v
+theorem optRep_mono {α} {_ : TyRep α} {k} {h h' : Heap} (hp : h <+: h') {a : Option α} {v} (r : optRep k h a v) : optRep k h' a v := by
+  cases a with
+  | none => exact r
+  | some x => exact mono hp r
+instance {k α} [TyRep α] : TyRep (Opt k α) := ⟨optRep k, fun hp r => optRep_mono hp r⟩
+instance {α} [TyRep α] : TyRep (Option α) := inferInstanceAs (TyRep (Opt .both α))
 instance {α} [TyRep α] : TyRep (List α) where
   rep h xs v := ∃ l vs, v = .ref l ∧ h[l]? = some (.array vs) ∧ List.Forall₂ (rep h) xs vs
   mono hp := by
@@ -122,25 +136,25 @@ def V (s : St) (x : String) {α} [TyRep α] (a : α) : Prop := ∃ v, s.env x = 
 
 def Upd (s s' : St) (x : String) : Prop := s.heap <+: s'.heap ∧ ∀ y, y ≠ x → s'.env y = s.env y
 
-theorem V.upd {s s' x y α} [TyRep α] {a : α} (k : Upd s s' x) (hne : y ≠ x) (h : V s y a) : V s' y a := by
+theorem V.upd {s s' x y α} {_ : TyRep α} {a : α} (k : Upd s s' x) (hne : y ≠ x) (h : V s y a) : V s' y a := by
   obtain ⟨v, he, hr⟩ := h
   exact ⟨v, by rw [k.2 y hne]; exact he, mono k.1 hr⟩
-theorem V.ext {s s' y α} [TyRep α] {a : α} (k : Ext s s') (h : V s y a) : V s' y a := by
+theorem V.ext {s s' y α} {_ : TyRep α} {a : α} (k : Ext s s') (h : V s y a) : V s' y a := by
   obtain ⟨v, he, hr⟩ := h
   exact ⟨v, by rw [k.1]; exact he, mono k.2 hr⟩
 
-theorem SimB.of_c {p s e P} [Decidable P] (h : SimC p s e P) : SimB p s e P := by
+theorem SimB.of_c {p s e P} {_ : Decidable P} (h : SimC p s e P) : SimB p s e P := by
   intro s₁ hx
   obtain ⟨s₂, he, hk⟩ := h s₁ hx
   exact ⟨_, s₂, he, hk, by simp [truthy]⟩
-theorem SimE.of_c {p s e P} [Decidable P] (h : SimC p s e P) : SimE p s e (decide P) := by
+theorem SimE.of_c {p s e P} {_ : Decidable P} (h : SimC p s e P) : SimE p s e (decide P) := by
   intro s₁ hx
   obtain ⟨s₂, he, hk⟩ := h s₁ hx
   exact ⟨_, s₂, he, hk, rfl⟩
 
 /-! Reading -/
 
-theorem SimE.var {p s x α} [TyRep α] {a : α} (h : V s x a) : SimE p s (.var x) a := by
+theorem SimE.var {p s x α} {_ : TyRep α} {a : α} (h : V s x a) : SimE p s (.var x) a := by
   intro s₁ hx
   obtain ⟨v, he, hr⟩ := h
   exact ⟨v, s₁, Evals.var (by rw [hx.1]; exact he), Ext.refl _, mono hx.2 hr⟩
@@ -155,12 +169,12 @@ theorem SimE.lit_bool {p s} (b : Bool) : SimE p s (.lit (.bool b)) b := fun s₁
   ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, rfl⟩
 theorem SimE.lit_str {p s} (c : List Nat) : SimE p s (.lit (.str c)) c := fun s₁ _ =>
   ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, rfl⟩
-theorem SimE.lit_undef {p s α} [TyRep α] : SimE p s (.lit .undef) (Option.none : Option α) := fun s₁ _ =>
-  ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, Or.inl rfl⟩
-theorem SimE.lit_null {p s α} [TyRep α] : SimE p s (.lit .null) (Option.none : Option α) := fun s₁ _ =>
-  ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, Or.inr rfl⟩
-theorem SimE.some {p s e α} [TyRep α] {a : α} (h : SimE p s e a) : SimE p s e (some a) := h
-theorem SimE.conv {p s e α} [TyRep α] {a b : α} (h : SimE p s e a) (hab : a = b) : SimE p s e b := hab ▸ h
+theorem SimE.lit_undef {p s k α} [TyRep α] (hk : nothingOk k .undef) : SimE (α := Opt k α) p s (.lit .undef) Option.none := fun s₁ _ =>
+  ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, hk⟩
+theorem SimE.lit_null {p s k α} [TyRep α] (hk : nothingOk k .null) : SimE (α := Opt k α) p s (.lit .null) Option.none := fun s₁ _ =>
+  ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, hk⟩
+theorem SimE.some {p s e k α} {_ : TyRep α} {a : α} (h : SimE p s e a) : SimE (α := Opt k α) p s e (Option.some a) := h
+theorem SimE.conv {p s e α} {_ : TyRep α} {a b : α} (h : SimE p s e a) (hab : a = b) : SimE p s e b := hab ▸ h
 
 def Fn.env0 (fn : Fn) (args : List Val) : Env :=
   let env : Env := (fn.params.zip args).foldl (fun e (x, v) => e.put x v) (fun _ => none)
@@ -177,7 +191,7 @@ theorem Runs.of {p fn args h v s'} (hb : ExecsL p ⟨fn.env0 args, h⟩ fn.body 
     simp only [this]⟩
 
 /-- A general binary step on typed operands. -/
-theorem sim_bin {p s op x y α β γ} [TyRep α] [TyRep β] [TyRep γ] {a : α} {b : β} {r : γ}
+theorem sim_bin {p s op x y α β γ} {_ : TyRep α} {_ : TyRep β} {_ : TyRep γ} {a : α} {b : β} {r : γ}
     (hx : SimE p s x a) (hy : SimE p s y b)
     (hf : ∀ h v w, rep h a v → rep h b w → ∃ u, binary op v w = some u ∧ rep h r u) :
     SimE p s (.bin op x y) r := by
@@ -187,7 +201,7 @@ theorem sim_bin {p s op x y α β γ} [TyRep α] [TyRep β] [TyRep γ] {a : α} 
   obtain ⟨u, hb, ru⟩ := hf _ v w (mono h₃.2 rv) rw
   exact ⟨u, s₃, Evals.bin ex ey hb, h₂.trans h₃, ru⟩
 
-theorem sim_cmp {p s op x y α β} [TyRep α] [TyRep β] {a : α} {b : β} {P : Prop} [Decidable P]
+theorem sim_cmp {p s op x y α β} {_ : TyRep α} {_ : TyRep β} {a : α} {b : β} {P : Prop} [Decidable P]
     (hx : SimE p s x a) (hy : SimE p s y b)
     (hf : ∀ h v w, rep h a v → rep h b w → binary op v w = some (.bool (decide P))) :
     SimC p s (.bin op x y) P := by
@@ -220,6 +234,12 @@ theorem SimE.mul {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js
   have hlo : -9007199254740991 ≤ a.val * b.val := hv ▸ r.lo
   have hhi : a.val * b.val ≤ 9007199254740991 := hv ▸ r.hi
   exact ⟨_, rfl, _, rfl, hv ▸ F64.mul_isInt' hx hy hlo hhi⟩
+
+theorem SimE.neg {p s e} {a r : Js.Num} (hx : SimE p s e a) (h : Js.neg a = ok r) : SimE p s (.neg e) r := by
+  have hv : r.val = -a.val := by simp only [Js.neg, Js.mk] at h; split at h <;> simp_all; subst h; rfl
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, x, rfl, hi⟩ := hx s₁ h₁
+  exact ⟨_, s₂, Evals.neg ev, h₂, _, rfl, hv ▸ F64.neg_isInt hi⟩
 
 theorem SimE.badd {p s x y} {a b : Int} (hx : SimE p s x a) (hy : SimE p s y b) : SimE p s (.bin .add x y) (a + b) := by
   refine sim_bin hx hy ?_; rintro _ _ _ rfl rfl; exact ⟨_, rfl, rfl⟩
@@ -320,30 +340,45 @@ theorem SimB.big {p s e} {a : Int} (h : SimE p s e a) : SimB p s e (a ≠ 0) := 
   intro s₁ hx
   obtain ⟨v, s₂, he, hk, rfl⟩ := h s₁ hx
   exact ⟨_, s₂, he, hk, by simp [truthy]⟩
-theorem SimB.none {p s e α} [TyRep α] {a : Option α} (h : SimE p s e a) (ha : a = Option.none) : SimB p s e False := by
+theorem nullish_not_truthy {v} (h : nullish v = true) : truthy v = false := by
+  cases v <;> simp_all [nullish, truthy]
+theorem SimB.none {p s e k α} {_ : TyRep α} {a : Opt k α} (h : SimE p s e a) (ha : a = Option.none) : SimB p s e False := by
   intro s₁ hx
   subst ha
   obtain ⟨v, s₂, he, hk, rv⟩ := h s₁ hx
   refine ⟨v, s₂, he, hk, ?_⟩
-  rcases rv with rfl | rfl <;> simp [truthy]
+  simp [nullish_not_truthy (nothing_nullish rv)]
 
 /-- Values that are always objects. -/
 class IsObj (α : Type) [TyRep α] : Prop where
   ref {h : Heap} {a : α} {v : Val} : rep h a v → ∃ l, v = .ref l
 instance {α} [TyRep α] : IsObj (List α) := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩
 
-theorem SimB.obj {p s e α} [TyRep α] [IsObj α] {a : α} (h : SimE p s e a) : SimB p s e True := by
+theorem SimB.obj {p s e α} {_ : TyRep α} {a : α} (h : SimE p s e a) (hobj : IsObj α) : SimB p s e True := by
   intro s₁ hx
   obtain ⟨v, s₂, he, hk, rv⟩ := h s₁ hx
   obtain ⟨l, rfl⟩ := IsObj.ref rv
   exact ⟨_, s₂, he, hk, by simp [truthy]⟩
-theorem SimE.some_inv {p s e α} [TyRep α] {a : α} (h : SimE p s e (Option.some a)) : SimE p s e a := h
-theorem SimE.unwrap {p s e α} [TyRep α] {x : Option α} {a : α} (h : SimE p s e x) (hx : x = Option.some a) : SimE p s e a := by
+theorem SimE.some_inv {p s e k α} {_ : TyRep α} {a : α} (h : SimE (α := Opt k α) p s e (Option.some a)) : SimE p s e a := h
+theorem SimE.unwrap {p s e k α} {_ : TyRep α} {x : Opt k α} {a : α} (h : SimE p s e x) (hx : x = Option.some a) : SimE p s e a := by
   subst hx; exact h
-theorem SimE.of_eq_some {p s e α} [TyRep α] {x : Option α} {a : α} (h : SimE p s e a) (hx : x = Option.some a) : SimE p s e x := by
+theorem SimE.of_eq_some {p s e k α} {_ : TyRep α} {x : Opt k α} {a : α} (hx : x = Option.some a) (h : SimE p s e a) : SimE p s e x := by
   subst hx; exact h
-theorem SimE.of_eq_none {p s e α} [TyRep α] {x : Option α} (h : SimE p s e (Option.none : Option α)) (hx : x = Option.none) : SimE p s e x := by
+theorem SimE.of_eq_none {p s e k α} {_ : TyRep α} {x : Opt k α} (h : SimE (α := Opt k α) p s e Option.none) (hx : x = Option.none) : SimE p s e x := by
   subst hx; exact h
+/-- A value whose type allows one nullish form also fits a type that allows both. -/
+theorem up_rep {k k' α} {_ : TyRep α} (hk : ∀ v, nothingOk k v → nothingOk k' v) {a : Option α} {h v}
+    (r : optRep k h a v) : optRep k' h a v := by
+  cases a with
+  | none => exact hk v r
+  | some x => exact r
+theorem SimE.up {p s e k k' α} {_ : TyRep α} (hk : ∀ v, nothingOk k v → nothingOk k' v) {a : Option α}
+    (h : SimE (α := Opt k α) p s e a) : SimE (α := Opt k' α) p s e a := by
+  intro s₁ hx
+  obtain ⟨v, s₂, ev, hk', rv⟩ := h s₁ hx
+  exact ⟨v, s₂, ev, hk', up_rep hk rv⟩
+theorem up_undef (v) (h : nothingOk .undef v) : nothingOk .both v := Or.inl h
+theorem up_null (v) (h : nothingOk .null v) : nothingOk .both v := Or.inr h
 
 theorem SimB.not {p s e P} (h : SimB p s e P) : SimB p s (.not e) (¬P) := by
   intro s₁ hx
@@ -363,12 +398,12 @@ theorem SimC.not {p s e P} (h : SimB p s e P) [Decidable P] : SimC p s (.not e) 
       simp [this]
     · simp [ht.mp htv]
   rw [← this]; exact Evals.not he
-theorem SimB.isNullish_none {p s e α} [TyRep α] {a : Option α} (h : SimE p s e a) (ha : a = Option.none) : SimC p s (.isNullish e) True := by
+theorem SimB.isNullish_none {p s e k α} {_ : TyRep α} {a : Opt k α} (h : SimE p s e a) (ha : a = Option.none) : SimC p s (.isNullish e) True := by
   intro s₁ hx
   subst ha
   obtain ⟨v, s₂, he, hk, rv⟩ := h s₁ hx
   refine ⟨s₂, ?_, hk⟩
-  have : nullish v = decide True := by rcases rv with rfl | rfl <;> rfl
+  have : nullish v = decide True := by simpa using nothing_nullish rv
   rw [← this]; exact Evals.isNullish he
 
 /-- A non-nullish value: everything a typed value can be except an absent option. -/
@@ -379,28 +414,61 @@ instance : NotNull Int := ⟨by rintro _ _ _ rfl; rfl⟩
 instance : NotNull Bool := ⟨by rintro _ _ _ rfl; rfl⟩
 instance : NotNull (List Nat) := ⟨by rintro _ _ _ rfl; rfl⟩
 instance {α} [TyRep α] [IsObj α] : NotNull α := ⟨fun h => by obtain ⟨l, rfl⟩ := IsObj.ref h; rfl⟩
-theorem SimB.isNullish_some {p s e α} [TyRep α] [NotNull α] {a : α} (h : SimE p s e a) : SimC p s (.isNullish e) False := by
+theorem SimB.isNullish_some {p s e α} {_ : TyRep α} {a : α} (h : SimE p s e a) (hn : NotNull α) : SimC p s (.isNullish e) False := by
   intro s₁ hx
   obtain ⟨v, s₂, he, hk, rv⟩ := h s₁ hx
   refine ⟨s₂, ?_, hk⟩
   have : nullish v = decide False := by rw [NotNull.ok rv]; rfl
   rw [← this]; exact Evals.isNullish he
 
+theorem SimC.eq_undef_none {p s e α} {_ : TyRep α} {a : Opt .undef α} (h : SimE p s e a) (ha : a = Option.none) :
+    SimC p s (.bin .eq e (.lit .undef)) True := by
+  subst ha
+  exact sim_cmp h (SimE.lit_undef (k := .undef) (α := α) rfl) (fun _ _ _ h1 h2 => by cases h1; cases h2; rfl)
+theorem SimC.eq_null_none {p s e α} {_ : TyRep α} {a : Opt .null α} (h : SimE p s e a) (ha : a = Option.none) :
+    SimC p s (.bin .eq e (.lit .null)) True := by
+  subst ha
+  exact sim_cmp h (SimE.lit_null (k := .null) (α := α) rfl) (fun _ _ _ h1 h2 => by cases h1; cases h2; rfl)
+theorem SimC.eq_nothing_some {p s e w α} {_ : TyRep α} {a : α} (hw : nullish w = true) (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.bin .eq e (.lit w)) False := by
+  intro s₁ hx
+  obtain ⟨v, s₂, ev, hk, rv⟩ := h s₁ hx
+  have hne : v ≠ w := fun he => by subst he; simp [NotNull.ok rv] at hw
+  have hb : binary .eq v w = some (.bool (decide False)) := by
+    cases v <;> cases w <;> simp_all [binary, nullish]
+  exact ⟨s₂, Evals.bin ev (Evals.lit _ _ _) hb, hk⟩
+theorem SimC.ne_nothing_some {p s e w α} {_ : TyRep α} {a : α} (hw : nullish w = true) (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.bin .ne e (.lit w)) True := by
+  intro s₁ hx
+  obtain ⟨v, s₂, ev, hk, rv⟩ := h s₁ hx
+  have hne : v ≠ w := fun he => by subst he; simp [NotNull.ok rv] at hw
+  have hb : binary .ne v w = some (.bool (decide True)) := by
+    cases v <;> cases w <;> simp_all [binary, nullish]
+  exact ⟨s₂, Evals.bin ev (Evals.lit _ _ _) hb, hk⟩
+theorem SimC.ne_undef_none {p s e α} {_ : TyRep α} {a : Opt .undef α} (h : SimE p s e a) (ha : a = Option.none) :
+    SimC p s (.bin .ne e (.lit .undef)) False := by
+  subst ha
+  exact sim_cmp h (SimE.lit_undef (k := .undef) (α := α) rfl) (fun _ _ _ h1 h2 => by cases h1; cases h2; rfl)
+theorem SimC.ne_null_none {p s e α} {_ : TyRep α} {a : Opt .null α} (h : SimE p s e a) (ha : a = Option.none) :
+    SimC p s (.bin .ne e (.lit .null)) False := by
+  subst ha
+  exact sim_cmp h (SimE.lit_null (k := .null) (α := α) rfl) (fun _ _ _ h1 h2 => by cases h1; cases h2; rfl)
+
 /-- `c` is known, so only one side runs. -/
-theorem SimE.cond_t {p s c a b P α} [TyRep α] {x : α} (hc : SimB p s c P) (hp : P) (ha : SimE p s a x) :
+theorem SimE.cond_t {p s c a b P α} {_ : TyRep α} {x : α} (hc : SimB p s c P) (hp : P) (ha : SimE p s a x) :
     SimE p s (.cond c a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, ec, h₂, ht⟩ := hc s₁ h₁
   obtain ⟨w, s₃, ea, h₃, rw⟩ := ha s₂ (h₁.trans h₂)
   exact ⟨w, s₃, Evals.cond_true ec (ht.mpr hp) ea, h₂.trans h₃, rw⟩
-theorem SimE.cond_f {p s c a b P α} [TyRep α] {x : α} (hc : SimB p s c P) (hp : ¬P) (hb : SimE p s b x) :
+theorem SimE.cond_f {p s c a b P α} {_ : TyRep α} {x : α} (hc : SimB p s c P) (hp : ¬P) (hb : SimE p s b x) :
     SimE p s (.cond c a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, ec, h₂, ht⟩ := hc s₁ h₁
   obtain ⟨w, s₃, eb, h₃, rw⟩ := hb s₂ (h₁.trans h₂)
   have : truthy v = false := by cases h : truthy v <;> simp_all
   exact ⟨w, s₃, Evals.cond_false ec this eb, h₂.trans h₃, rw⟩
-theorem SimE.or_t {p s a b P} {α} [TyRep α] {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : P)
+theorem SimE.or_t {p s a b P} {α} {_ : TyRep α} {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : P)
     (hu : ∀ s₁ s₂ s₃ v w, Evals p s₁ a v s₂ → Evals p s₁ a w s₃ → v = w ∧ s₂ = s₃) : SimE p s (.or a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := ha s₁ h₁
@@ -438,21 +506,29 @@ theorem SimB.iff {p s e P Q} (h : SimB p s e P) (hi : P ↔ Q) : SimB p s e Q :=
   obtain ⟨v, s₂, he, hk, ht⟩ := h s₁ hx
   exact ⟨v, s₂, he, hk, ht.trans hi⟩
 
+theorem SimB.and_both {p s a b P Q} (ha : SimB p s a P) (hb : SimB p s b Q) : SimB p s (.and a b) (P ∧ Q) := by
+  by_cases hp : P
+  · exact (SimB.and_t ha hp hb).iff (by simp [hp])
+  · exact (SimB.and_f ha hp).iff (by simp [hp])
+theorem SimB.or_both {p s a b P Q} (ha : SimB p s a P) (hb : SimB p s b Q) : SimB p s (.or a b) (P ∨ Q) := by
+  by_cases hp : P
+  · exact (SimB.or_t ha hp).iff (by simp [hp])
+  · exact (SimB.or_f ha hp hb).iff (by simp [hp])
 /-- `a || b` and `a && b` as values, with the left side's truth known. -/
-theorem SimE.or_true {p s a b P α} [TyRep α] {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : P) : SimE p s (.or a b) x :=
+theorem SimE.or_true {p s a b P α} {_ : TyRep α} {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : P) : SimE p s (.or a b) x :=
   SimE.or_t ha hb hp fun _ _ _ _ _ a b => Evals.unique a b
-theorem SimE.or_false {p s a b P α} [TyRep α] {x : α} (ha : SimB p s a P) (hp : ¬P) (hb : SimE p s b x) : SimE p s (.or a b) x := by
+theorem SimE.or_false {p s a b P α} {_ : TyRep α} {x : α} (ha : SimB p s a P) (hp : ¬P) (hb : SimE p s b x) : SimE p s (.or a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, ht⟩ := ha s₁ h₁
   obtain ⟨w, s₃, e', h₃, rw⟩ := hb s₂ (h₁.trans h₂)
   have : truthy v = false := by cases h : truthy v <;> simp_all
   exact ⟨w, s₃, Evals.or_false e this e', h₂.trans h₃, rw⟩
-theorem SimE.and_true {p s a b P α} [TyRep α] {x : α} (ha : SimB p s a P) (hp : P) (hb : SimE p s b x) : SimE p s (.and a b) x := by
+theorem SimE.and_true {p s a b P α} {_ : TyRep α} {x : α} (ha : SimB p s a P) (hp : P) (hb : SimE p s b x) : SimE p s (.and a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, ht⟩ := ha s₁ h₁
   obtain ⟨w, s₃, e', h₃, rw⟩ := hb s₂ (h₁.trans h₂)
   exact ⟨w, s₃, Evals.and_true e (ht.mpr hp) e', h₂.trans h₃, rw⟩
-theorem SimE.and_false {p s a b P α} [TyRep α] {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : ¬P) : SimE p s (.and a b) x := by
+theorem SimE.and_false {p s a b P α} {_ : TyRep α} {x : α} (ha : SimE p s a x) (hb : SimB p s a P) (hp : ¬P) : SimE p s (.and a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := ha s₁ h₁
   obtain ⟨w, s₃, e', h₃, ht⟩ := hb s₁ h₁
@@ -460,14 +536,14 @@ theorem SimE.and_false {p s a b P α} [TyRep α] {x : α} (ha : SimE p s a x) (h
   have : truthy v = false := by cases h : truthy v <;> simp_all
   exact ⟨v, s₂, Evals.and_false e this, h₂, rv⟩
 
-theorem SimE.coalesce_some {p s a b α} [TyRep α] [NotNull α] {x : α} (ha : SimE p s a x) : SimE p s (.coalesce a b) x := by
+theorem SimE.coalesce_some {p s a b α} {_ : TyRep α} {x : α} (ha : SimE p s a x) (hn : NotNull α) : SimE p s (.coalesce a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := ha s₁ h₁
   obtain ⟨F, hF⟩ := e
   refine ⟨v, s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, rv⟩
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
   simp [eval, hF g hg, NotNull.ok rv]
-theorem SimE.coalesce_none {p s a b α β} [TyRep α] [TyRep β] {o : Option α} {y : β} (ha : SimE p s a o) (ho : o = Option.none)
+theorem SimE.coalesce_none {p s a b k α β} {_ : TyRep α} {_ : TyRep β} {o : Opt k α} {y : β} (ha : SimE p s a o) (ho : o = Option.none)
     (hb : SimE p s b y) : SimE p s (.coalesce a b) y := by
   subst ho
   intro s₁ h₁
@@ -477,18 +553,18 @@ theorem SimE.coalesce_none {p s a b α β} [TyRep α] [TyRep β] {o : Option α}
   obtain ⟨G, hG⟩ := e'
   refine ⟨w, s₃, ⟨F + G + 1, fun f hf => ?_⟩, h₂.trans h₃, rw⟩
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
-  have hn : nullish v = true := by rcases rv with rfl | rfl <;> rfl
+  have hn : nullish v = true := nothing_nullish rv
   simp [eval, hF g (by omega), hn, hG g (by omega)]
 
 /-! Fields, arrays and built-ins -/
 
-theorem sim_field {p s o k α β} [TyRep α] [TyRep β] {a : α} {b : β} (hx : SimE p s o a)
+theorem sim_field {p s o k α β} {_ : TyRep α} {_ : TyRep β} {a : α} {b : β} (hx : SimE p s o a)
     (hf : ∀ h v, rep h a v → ∃ r, readField h v k = some r ∧ rep h b r) : SimE p s (.field o k) b := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := hx s₁ h₁
   obtain ⟨r, hr, rb⟩ := hf _ v rv
   exact ⟨r, s₂, Evals.field e hr, h₂, rb⟩
-theorem sim_optField {p s o k α β} [TyRep α] [TyRep β] [NotNull α] {a : α} {b : β} (hx : SimE p s o a)
+theorem sim_optField {p s o k α β} {_ : TyRep α} {_ : TyRep β} [NotNull α] {a : α} {b : β} (hx : SimE p s o a)
     (hf : ∀ h v, rep h a v → ∃ r, readField h v k = some r ∧ rep h b r) : SimE p s (.optField o k) b := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := hx s₁ h₁
@@ -497,15 +573,15 @@ theorem sim_optField {p s o k α β} [TyRep α] [TyRep β] [NotNull α] {a : α}
   refine ⟨r, s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, rb⟩
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
   simp [eval, hF g hg, NotNull.ok rv, hr]
-theorem SimE.optField_none {p s o k α β} [TyRep α] [TyRep β] {a : Option α} (hx : SimE p s o a) (ha : a = Option.none) :
-    SimE p s (.optField o k) (Option.none : Option β) := by
+theorem SimE.optField_none {p s o f k k' α β} {_ : TyRep α} {_ : TyRep β} {a : Opt k α} (hx : SimE p s o a) (ha : a = Option.none)
+    (hk : nothingOk k' .undef) : SimE (α := Opt k' β) p s (.optField o f) Option.none := by
   subst ha
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := hx s₁ h₁
   obtain ⟨F, hF⟩ := e
-  refine ⟨.undef, s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, Or.inl rfl⟩
+  refine ⟨.undef, s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, hk⟩
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
-  have hn : nullish v = true := by rcases rv with rfl | rfl <;> rfl
+  have hn : nullish v = true := nothing_nullish rv
   simp [eval, hF g hg, hn]
 
 theorem SimE.len_str {p s e} {a : List Nat} {r : Js.Num} (hx : SimE p s e a) (h : Js.len a = ok r) :
@@ -517,7 +593,7 @@ theorem SimE.len_str {p s e} {a : List Nat} {r : Js.Num} (hx : SimE p s e a) (h 
   refine ⟨.num (F64.ofInt a.length), s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, _, rfl, Or.inl (by rw [hl])⟩
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
   simp [eval, hF g hg]
-theorem SimE.len_arr {p s e α} [TyRep α] {a : List α} {r : Js.Num} (hx : SimE p s e a) (h : Js.len a = ok r) :
+theorem SimE.len_arr {p s e α} {_ : TyRep α} {a : List α} {r : Js.Num} (hx : SimE p s e a) (h : Js.len a = ok r) :
     SimE p s (.length e) r := by
   intro s₁ h₁
   obtain ⟨v, s₂, ev, h₂, l, vs, rfl, hl, hf⟩ := hx s₁ h₁
@@ -544,8 +620,8 @@ theorem F64.index_ofInt_neg {a : Int} (h : a < 0) : (F64.ofInt a).index = Option
   have : a.natAbs * F64.unit ≠ 0 := Nat.mul_ne_zero (by omega) (by omega)
   simp [F64.ofInt, F64.index, h, this]
 
-theorem SimE.at_ {p s o i α} [TyRep α] {a : List α} {b : Js.Num} (ho : SimE p s o a) (hi : SimE p s i b) :
-    SimE p s (.index o i) (Js.at_ a b) := by
+theorem SimE.at_ {p s o i α} {_ : TyRep α} {a : List α} {b : Js.Num} (ho : SimE p s o a) (hi : SimE p s i b) :
+    SimE (α := Opt .undef α) p s (.index o i) (Js.at_ a b) := by
   intro s₁ h₁
   obtain ⟨v, s₂, eo, h₂, l, vs, rfl, hl, hf⟩ := ho s₁ h₁
   obtain ⟨n, s₃, ei, h₃, x, rfl, hx⟩ := hi s₂ (h₁.trans h₂)
@@ -558,7 +634,7 @@ theorem SimE.at_ {p s o i α} [TyRep α] {a : List α} {b : Js.Num} (ho : SimE p
       · exact F64.index_ofInt_neg hb
       · omega
     simp only [Js.at_, hb, ite_true, this]
-    exact Or.inl rfl
+    exact rfl
   · have hn := F64.index_isInt hx (by omega)
     simp only [Js.at_, hb, ite_false, hn, Option.bind_some]
     by_cases hlt : b.val.toNat < a.length
@@ -568,7 +644,7 @@ theorem SimE.at_ {p s o i α} [TyRep α] {a : List α} {b : Js.Num} (ho : SimE p
     · have h1 : a[b.val.toNat]? = none := by simp; omega
       have h2 : vs[b.val.toNat]? = none := by simp; rw [← hf'.length_eq]; omega
       simp only [h1, h2, Option.getD_none]
-      exact Or.inl rfl
+      exact rfl
 
 theorem asNum_isInt {x : F64} {a : Js.Num} (h : Core.F64.IsInt x a.val) : asNum (.num x) = some a := by
   have key : ∀ (s : Bool) (n : Nat) (i : Int), F64.signed s n = i → (∀ hl hh, (⟨i, hl, hh⟩ : Js.Num) = a) →
@@ -593,7 +669,7 @@ theorem asNum_isInt {x : F64} {a : Js.Num} (h : Core.F64.IsInt x a.val) : asNum 
     cases a; simp_all
 
 /-- A built-in on typed arguments. -/
-theorem sim_prim {p s op es} {vs' : Heap → List Val → Prop} {α} [TyRep α] {r : α}
+theorem sim_prim {p s op es} {vs' : Heap → List Val → Prop} {α} {_ : TyRep α} {r : α}
     (ha : ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ es vs s₂ ∧ Ext s₁ s₂ ∧ vs' s₂.heap vs)
     (hf : ∀ h vs, vs' h vs → ∃ v h', primV op h vs = some (v, h') ∧ h <+: h' ∧ rep h' r v) :
     SimE p s (.prim op es) r := by
@@ -605,23 +681,54 @@ theorem sim_prim {p s op es} {vs' : Heap → List Val → Prop} {α} [TyRep α] 
   obtain ⟨g, rfl, hg⟩ := succ_of_le hf
   simp [eval, hF g hg, hp]
 
+def SimF (p : Prog) (s : St) (es : List (String × Expr)) (Q : Heap → List (String × Val) → Prop) : Prop :=
+  ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsF p s₁ es vs s₂ ∧ Ext s₁ s₂ ∧ Q s₂.heap vs
+theorem simf_nil {p s} : SimF p s [] (fun _ vs => vs = []) := fun s₁ _ => ⟨[], s₁, EvalsF.nil _ _, Ext.refl _, rfl⟩
+theorem simf_cons {p s k e es α} {Q : Heap → List (String × Val) → Prop} {_ : TyRep α} {a : α} (h : SimE p s e a) (t : SimF p s es Q) :
+    SimF p s ((k, e) :: es) (fun h vs => ∃ v tail, vs = (k, v) :: tail ∧ rep h a v ∧ Q h tail) := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rv⟩ := h s₁ h₁
+  obtain ⟨vs, s₃, ef, h₃, hq⟩ := t s₂ (h₁.trans h₂)
+  exact ⟨(k, v) :: vs, s₃, EvalsF.cons ev ef, h₂.trans h₃, v, vs, rfl, mono h₃.2 rv, hq⟩
+theorem sim_record {p s es α} {Q : Heap → List (String × Val) → Prop} {_ : TyRep α} {X : α} (hf : SimF p s es Q)
+    (hq : ∀ h vs, Q h vs → rep (h ++ [.record vs]) X (.ref h.length)) : SimE p s (.record es) X := by
+  intro s₁ h₁
+  obtain ⟨vs, s₂, ef, h₂, hv⟩ := hf s₁ h₁
+  exact ⟨_, _, Evals.record ef, h₂.trans ⟨rfl, List.prefix_append _ _⟩, hq _ _ hv⟩
+
+def SimL {α} [TyRep α] (p : Prog) (s : St) (es : List Expr) (xs : List α) : Prop :=
+  ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ es vs s₂ ∧ Ext s₁ s₂ ∧ List.Forall₂ (rep s₂.heap) xs vs
+theorem siml_nil {p s α} {_ : TyRep α} : SimL p s [] ([] : List α) := fun s₁ _ => ⟨[], s₁, EvalsL.nil _ _, Ext.refl _, .nil⟩
+theorem siml_cons {p s e es α} {_ : TyRep α} {a : α} {xs : List α} (h : SimE p s e a) (t : SimL p s es xs) : SimL p s (e :: es) (a :: xs) := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rv⟩ := h s₁ h₁
+  obtain ⟨vs, s₃, el, h₃, hl⟩ := t s₂ (h₁.trans h₂)
+  exact ⟨v :: vs, s₃, EvalsL.cons ev el, h₂.trans h₃, .cons (mono h₃.2 rv) hl⟩
+theorem SimE.array {p s es α} {_ : TyRep α} {xs : List α} (h : SimL p s es xs) : SimE p s (.array es) xs := by
+  intro s₁ h₁
+  obtain ⟨vs, s₂, el, h₂, hl⟩ := h s₁ h₁
+  refine ⟨_, _, Evals.array el, h₂.trans ⟨rfl, List.prefix_append _ _⟩, _, vs, rfl, by simp, hl.imp fun _ _ r => mono (List.prefix_append _ _) r⟩
+
 def Args1 {α} [TyRep α] (a : α) (h : Heap) (vs : List Val) : Prop := ∃ v, vs = [v] ∧ rep h a v
 def Args2 {α β} [TyRep α] [TyRep β] (a : α) (b : β) (h : Heap) (vs : List Val) : Prop := ∃ v w, vs = [v, w] ∧ rep h a v ∧ rep h b w
 def Args3 {α β γ} [TyRep α] [TyRep β] [TyRep γ] (a : α) (b : β) (c : γ) (h : Heap) (vs : List Val) : Prop :=
   ∃ v w u, vs = [v, w, u] ∧ rep h a v ∧ rep h b w ∧ rep h c u
 
-theorem args1 {p s x α} [TyRep α] {a : α} (hx : SimE p s x a) :
+theorem args0 {p s} : ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [] vs s₂ ∧ Ext s₁ s₂ ∧ (fun (_ : Heap) (vs : List Val) => vs = []) s₂.heap vs :=
+  fun s₁ _ => ⟨[], s₁, EvalsL.nil _ _, Ext.refl _, rfl⟩
+
+theorem args1 {p s x α} {_ : TyRep α} {a : α} (hx : SimE p s x a) :
     ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [x] vs s₂ ∧ Ext s₁ s₂ ∧ Args1 a s₂.heap vs := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := hx s₁ h₁
   exact ⟨[v], s₂, EvalsL.cons e (EvalsL.nil _ _), h₂, v, rfl, rv⟩
-theorem args2 {p s x y α β} [TyRep α] [TyRep β] {a : α} {b : β} (hx : SimE p s x a) (hy : SimE p s y b) :
+theorem args2 {p s x y α β} {_ : TyRep α} {_ : TyRep β} {a : α} {b : β} (hx : SimE p s x a) (hy : SimE p s y b) :
     ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [x, y] vs s₂ ∧ Ext s₁ s₂ ∧ Args2 a b s₂.heap vs := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := hx s₁ h₁
   obtain ⟨w, s₃, e', h₃, rw⟩ := hy s₂ (h₁.trans h₂)
   exact ⟨[v, w], s₃, EvalsL.cons e (EvalsL.cons e' (EvalsL.nil _ _)), h₂.trans h₃, v, w, rfl, mono h₃.2 rv, rw⟩
-theorem args3 {p s x y z α β γ} [TyRep α] [TyRep β] [TyRep γ] {a : α} {b : β} {c : γ} (hx : SimE p s x a) (hy : SimE p s y b) (hz : SimE p s z c) :
+theorem args3 {p s x y z α β γ} {_ : TyRep α} {_ : TyRep β} {_ : TyRep γ} {a : α} {b : β} {c : γ} (hx : SimE p s x a) (hy : SimE p s y b) (hz : SimE p s z c) :
     ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [x, y, z] vs s₂ ∧ Ext s₁ s₂ ∧ Args3 a b c s₂.heap vs := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := hx s₁ h₁
@@ -666,28 +773,31 @@ def Seq (p : Prog) (cs : List Stmt) (Φ : Cmp → St → Prop) (r : Cmp) (s : St
 def Base (h : Heap) (s : St) : Prop := h <+: s.heap
 def Ret {α} [TyRep α] (h : Heap) (a : α) (c : Cmp) (s : St) : Prop :=
   ∃ v, c = .ret v ∧ h <+: s.heap ∧ rep s.heap a v
+theorem wprun' {p fn a h α} {_ : TyRep α} {r : α} (hb : Wp p ⟨fn.env0 a, h⟩ fn.body (Ret h r)) :
+    WpRun p fn a h fun v s => h <+: s.heap ∧ rep s.heap r v := by
+  obtain ⟨c, s', he, v, rfl, hr⟩ := hb; exact ⟨_, _, Runs.of he, hr⟩
 
 /-- `Φ` accepts returning `a`. -/
 def Post {α} [TyRep α] (Φ : Cmp → St → Prop) (h : Heap) (a : α) : Prop :=
   ∀ v s, h <+: s.heap → rep s.heap a v → Φ (.ret v) s
-theorem post_ret {α} [TyRep α] {h : Heap} {a : α} : Post (Ret h a) h a := fun v _ hb hr => ⟨v, rfl, hb, hr⟩
-theorem post_seq {α} [TyRep α] {p cs Φ h} {a : α} (k : Post Φ h a) : Post (Seq p cs Φ) h a := fun v s hb hr => by
+theorem post_ret {α} {_ : TyRep α} {h : Heap} {a : α} : Post (Ret h a) h a := fun v _ hb hr => ⟨v, rfl, hb, hr⟩
+theorem post_seq {α} {_ : TyRep α} {p cs Φ h} {a : α} (k : Post Φ h a) : Post (Seq p cs Φ) h a := fun v s hb hr => by
   simpa [Seq] using k v s hb hr
 
-theorem step_set {p s x e cs Φ α} [TyRep α] {a : α} (he : SimE p s e a)
+theorem step_set {p s x e cs Φ α} {_ : TyRep α} {a : α} (he : SimE p s e a)
     (k : ∀ s', V s' x a → Upd s s' x → Wp p s' cs Φ) : Wp p s (.set x e :: cs) Φ := by
   obtain ⟨v, s₂, ev, h₂, rv⟩ := he s (Ext.refl _)
   obtain ⟨r, s₃, hrest, hΦ⟩ := k { s₂ with env := s₂.env.put x v } ⟨v, by simp [Env.put], rv⟩
     ⟨h₂.2, fun y hy => by simp [Env.put, hy, h₂.1]⟩
   exact ⟨r, s₃, ExecsL.cons_normal (Execs.set ev) hrest, hΦ⟩
 
-theorem step_expr {p s e cs Φ α} [TyRep α] {a : α} (he : SimE p s e a)
+theorem step_expr {p s e cs Φ α} {_ : TyRep α} {a : α} (he : SimE p s e a)
     (k : ∀ s', Ext s s' → Wp p s' cs Φ) : Wp p s (.expr e :: cs) Φ := by
   obtain ⟨v, s₂, ev, h₂, rv⟩ := he s (Ext.refl _)
   obtain ⟨r, s₃, hrest, hΦ⟩ := k s₂ h₂
   exact ⟨r, s₃, ExecsL.cons_normal (Execs.expr ev) hrest, hΦ⟩
 
-theorem step_ret {p s e cs Φ h α} [TyRep α] {a : α} (he : SimE p s e a) (hb : Base h s) (ho : Post Φ h a) :
+theorem step_ret {p s e cs Φ h α} {_ : TyRep α} {a : α} (ho : Post Φ h a) (hb : Base h s) (he : SimE p s e a) :
     Wp p s (.ret e :: cs) Φ := by
   obtain ⟨v, s₂, ev, h₂, rv⟩ := he s (Ext.refl _)
   exact ⟨_, s₂, ExecsL.cons_exit (Execs.ret ev) (by simp), ho v s₂ (List.IsPrefix.trans hb h₂.2) rv⟩
@@ -724,7 +834,7 @@ theorem wprun {p fn a h Ψ}
   obtain ⟨c, s', he, v, rfl, hr⟩ := hb; exact ⟨_, _, Runs.of he, hr⟩
 
 /-- Calling a function whose bridge is known. -/
-theorem sim_call {p s g args} {vs' : Heap → List Val → Prop} {fn α} [TyRep α] {r : α} (hg : p g = some fn)
+theorem sim_call {p s g args} {vs' : Heap → List Val → Prop} {fn α} {_ : TyRep α} {r : α} (hg : p g = some fn)
     (ha : ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ args vs s₂ ∧ Ext s₁ s₂ ∧ vs' s₂.heap vs)
     (hb : ∀ h vs, vs' h vs → WpRun p fn vs h fun v s => h <+: s.heap ∧ rep s.heap r v) :
     SimE p s (.call g args) r := by
@@ -738,6 +848,8 @@ theorem ite_intro {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α
   by_cases h : c
   · simp only [h, ite_true]; exact t h
   · simp only [h, ite_false]; exact f h
+theorem unwrap_iff {α} {x : Option α} {r : α} : Js.unwrap x = ok r ↔ x = some r := by
+  cases x <;> simp [Js.unwrap]
 theorem bind_intro {α β : Type} {G : Prop} {x : Result α} {f : α → Result β} {r : β}
     (k : ∀ a, x = ok a → f a = ok r → G) : Aeneas.Std.bind x f = ok r → G := by
   intro h
@@ -752,7 +864,7 @@ end Core
 
 /-- The heap half of a step's fact. -/
 def carryHeap (kE : Lean.Expr) : MetaM Lean.Expr := do
-  let t ← whnfR (← inferType kE)
+  let t ← whnfR (← instantiateMVars (← inferType kE))
   let t' ← whnfCore (← unfoldDefinition t)
   let k' ← mkExpectedTypeHint kE t'
   if t.isAppOf ``Core.Upd then mkAppM ``And.left #[k'] else mkAppM ``And.right #[k']
@@ -760,7 +872,7 @@ def carryHeap (kE : Lean.Expr) : MetaM Lean.Expr := do
 /-- Moves every fact about variables across a step. -/
 elab "carry " k:term : tactic => withMainContext do
   let kE ← Tactic.elabTerm k none
-  let kT ← whnfR (← inferType kE)
+  let kT ← whnfR (← instantiateMVars (← inferType kE))
   let old := kT.getArg! 0
   let new := kT.getArg! 1
   let isUpd := kT.isAppOf ``Core.Upd
