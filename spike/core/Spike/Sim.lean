@@ -1692,6 +1692,7 @@ elab "carry " k:term : tactic => withMainContext do
   let heap ← carryHeap kE
   for d in ← getLCtx do
     if d.isImplementationDetail then continue
+    unless d.type.isAppOf ``Core.V || d.type.isAppOf ``Core.Fr || d.type.isAppOf ``Core.Base do continue
     let ty ← instantiateMVars d.type
     if ty.isAppOfArity ``Core.V 5 && (ty.getArg! 0) == old then
       let y := ty.getArg! 1

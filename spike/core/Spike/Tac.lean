@@ -6,12 +6,18 @@ and each `if` or `match` becomes one case per path. `crun` then walks Core, one 
 a time. New rules are added with `macro_rules`, so a type brings its own rules. -/
 namespace Core
 
+open Lean Elab Tactic Meta in
+elab "clear_todo" : tactic => withMainContext do
+  for d in (← getLCtx).decls.toList.reverse do
+    let some d := d | continue
+    if (← instantiateMVars d.type).isAppOf ``Core.Todo then
+      replaceMainGoal [← (← getMainGoal).clear d.fvarId]
 syntax "isnone" : tactic
 macro_rules | `(tactic| isnone) => `(tactic| first | rfl | assumption | (simp_all; done))
 syntax "known" : tactic
-macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | tauto | (simp_all; done))
+macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | tauto | (clear_todo; simp_all; done))
 syntax "refuted" : tactic
-macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | tauto | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | tauto))
+macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | tauto | (clear_todo; simp_all; done) | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | tauto))
 
 syntax "vsplit " ident : tactic
 macro_rules
@@ -439,11 +445,6 @@ macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; refine Or.
 macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; first | (show Wp _ _ _ _; crun) | ((first | refine ⟨(), rfl, Or.inr rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inr rfl, ?_, ?_⟩); assumption; l_conj)))
 macro_rules | `(tactic| c_seqs) => `(tactic| (apply wp_nil; show Wp _ _ _ _; crun))
 macro_rules | `(tactic| c_wend) => `(tactic| (apply wp_nil; refine ⟨rfl, _, rfl, Or.inl rfl, ?_, ?_⟩; assumption; l_conj))
-elab "clear_todo" : tactic => withMainContext do
-  for d in (← getLCtx).decls.toList.reverse do
-    let some d := d | continue
-    if (← instantiateMVars d.type).isAppOf ``Core.Todo then
-      replaceMainGoal [← (← getMainGoal).clear d.fvarId]
 elab "v_keep" : tactic => do
   revertTodo
   evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
