@@ -1,4 +1,5 @@
 import F64
+import ProofciJs
 
 /-! # Core: one definition of what the code means (spike)
 
@@ -7,7 +8,7 @@ and calls. Nothing here depends on types or on Aeneas, so unions, `any` and alia
 need no special treatment. Variables are function-scoped: lowering gives every
 declaration its own name.
 
-Spike limits: no closures, classes or async yet. -/
+Variables are function-scoped: lowering gives every declaration its own name. -/
 
 namespace Core
 
@@ -20,7 +21,7 @@ inductive Val where
   | big (n : Int)
   | str (s : List Nat)
   | ref (l : Loc)
-  | fn (name : String) (env : Val)
+  | fn (fname : String) (env : Val)
   deriving DecidableEq, Repr
 
 inductive Obj where
@@ -30,6 +31,14 @@ inductive Obj where
 
 inductive Op where
   | add | sub | mul | lt | le | gt | ge | eq | ne | div | rem
+  deriving DecidableEq, Repr
+
+/-- Built-in methods. Each is defined once, on the runtime's own functions, so conformance
+to JavaScript is tested against Node rather than proved. -/
+inductive Prim where
+  | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
+  | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
+  | min | max | abs | includes | join | split
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -50,9 +59,12 @@ inductive Expr where
   | record (fields : List (String × Expr))
   | array (items : List Expr)
   | call (f : String) (args : List Expr)
-  | closure (name : String) (env : Expr)
+  | closure (fname : String) (env : Expr)
   | callV (f : Expr) (args : List Expr)
   | callM (o : Expr) (m : String) (args : List Expr)
+  | prim (op : Prim) (args : List Expr)
+  | optField (e : Expr) (f : String)
+  | coalesce (a b : Expr)
 
 inductive Stmt where
   | set (x : String) (e : Expr)
@@ -147,6 +159,9 @@ def binary : Op → Val → Val → Option Val
   | .ne, .num a, .num b => some (.bool (!a.eq b))
   | .lt, .str a, .str b => some (.bool (strLt a b))
   | .gt, .str a, .str b => some (.bool (strLt b a))
+  | .add, .str a, .str b => some (.str (a ++ b))
+  | .le, .str a, .str b => some (.bool (!strLt b a))
+  | .ge, .str a, .str b => some (.bool (!strLt a b))
   | .add, .big a, .big b => some (.big (a + b))
   | .sub, .big a, .big b => some (.big (a - b))
   | .mul, .big a, .big b => some (.big (a * b))
@@ -158,6 +173,74 @@ def binary : Op → Val → Val → Option Val
   | .rem, .big a, .big b => if b = 0 then none else some (.big (a.tmod b))
   | .eq, a, b => some (.bool (decide (a = b)))
   | .ne, a, b => some (.bool (decide (a ≠ b)))
+  | _, _, _ => none
+
+/-- A number that is a safe integer, as the runtime's `Num`. -/
+def asNum : Val → Option Js.Num
+  | .num x => match x with
+    | .fin s n =>
+      if n % F64.unit = 0 then
+        let i := F64.signed s (n / F64.unit)
+        if h : -9007199254740991 ≤ i ∧ i ≤ 9007199254740991 then some ⟨i, h.1, h.2⟩ else none
+      else none
+    | _ => none
+  | _ => none
+
+def numVal (a : Js.Num) : Val := .num (F64.ofInt a.val)
+
+def okStr (r : Aeneas.Std.Result (List Nat)) : Option Val :=
+  match r.match with
+  | .ok r => some (.str r)
+  | _ => none
+
+/-- Reads an array of strings. -/
+def strsOf : List Val → Option (List (List Nat))
+  | [] => some []
+  | .str s :: rest => (strsOf rest).map (s :: ·)
+  | _ => none
+
+/-- A built-in on values. `none` leaves the model, for example a fractional `slice` bound,
+and evaluation stops there, so it can't give a wrong answer. -/
+def primV : Prim → Heap → List Val → Option (Val × Heap)
+  | .startsWith, h, [.str s, .str t] => some (.bool (Js.startsWith s t), h)
+  | .endsWith, h, [.str s, .str t] => some (.bool (Js.endsWith s t), h)
+  | .strIncludes, h, [.str s, .str t] => some (.bool (Js.strIncludes s t), h)
+  | .trim, h, [.str s] => some (.str (Js.trim s), h)
+  | .trimStart, h, [.str s] => some (.str (Js.trimStart s), h)
+  | .trimEnd, h, [.str s] => some (.str (Js.trimEnd s), h)
+  | .toLower, h, [.str s] => (okStr (Js.toLower s)).map (·, h)
+  | .toUpper, h, [.str s] => (okStr (Js.toUpper s)).map (·, h)
+  | .slice, h, [.str s, a, b] => match asNum a, asNum b with
+    | some a, some b => some (.str (Js.slice s a b), h)
+    | _, _ => none
+  | .sliceFrom, h, [.str s, a] => (asNum a).map fun a => (.str (Js.sliceFrom s a), h)
+  | .slice, h, [.ref l, a, b] => match h[l]?, asNum a, asNum b with
+    | some (.array xs), some a, some b => some (.ref h.length, h ++ [.array (Js.slice xs a b)])
+    | _, _, _ => none
+  | .sliceFrom, h, [.ref l, a] => match h[l]?, asNum a with
+    | some (.array xs), some a => some (.ref h.length, h ++ [.array (Js.sliceFrom xs a)])
+    | _, _ => none
+  | .strIndexOf, h, [.str s, .str t] => match (Js.strIndexOf s t).match with
+    | .ok n => some (numVal n, h)
+    | _ => none
+  | .charAt, h, [.str s, i] => (asNum i).map fun i => (.str (Js.charAt s i), h)
+  | .numStr, h, [v] => (asNum v).map fun a => (.str (Js.numStr a), h)
+  | .min, h, [a, b] => match asNum a, asNum b with
+    | some a, some b => some (numVal (Js.min a b), h)
+    | _, _ => none
+  | .max, h, [a, b] => match asNum a, asNum b with
+    | some a, some b => some (numVal (Js.max a b), h)
+    | _, _ => none
+  | .abs, h, [a] => (asNum a).map fun a => (numVal (Js.abs a), h)
+  | .includes, h, [.str s, .str t] => some (.bool (Js.strIncludes s t), h)
+  | .includes, h, [.ref l, .str t] => match h[l]? with
+    | some (.array xs) => (strsOf xs).map fun ss => (.bool (Js.includes ss t), h)
+    | _ => none
+  | .join, h, [.ref l, .str sep] => match h[l]? with
+    | some (.array xs) => (strsOf xs).map fun ss => (.str (Js.join ss sep), h)
+    | _ => none
+  | .split, h, [.str s, .str sep] =>
+    some (.ref h.length, h ++ [.array ((Js.split s sep).map .str)])
   | _, _, _ => none
 
 mutual
@@ -276,6 +359,22 @@ def eval : Nat → Prog → St → Expr → Out Val
         | .thrown v s₂ => .thrown v s₂
         | .stuck => .stuck
       | .thrown v s₁ => .thrown v s₁
+      | .stuck => .stuck
+    | .prim op args => match evalList f p s args with
+      | .ok vs s' => match primV op s'.heap vs with
+        | some (v, h) => .ok v { s' with heap := h }
+        | none => .stuck
+      | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .optField o k => match eval f p s o with
+      | .ok v s' => if nullish v then .ok .undef s' else match readField s'.heap v k with
+        | some r => .ok r s'
+        | none => .thrown typeError s'
+      | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .coalesce a b => match eval f p s a with
+      | .ok v s' => if nullish v then eval f p s' b else .ok v s'
+      | .thrown v s' => .thrown v s'
       | .stuck => .stuck
     | .call g args => match evalList f p s args with
       | .ok vs s' => match p g with
