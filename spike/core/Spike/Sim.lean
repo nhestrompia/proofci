@@ -993,6 +993,288 @@ theorem wprun {p fn a h Ψ}
     (hb : Wp p ⟨fn.env0 a, h⟩ fn.body fun c s => ∃ v, c = .ret v ∧ Ψ v s) : WpRun p fn a h Ψ := by
   obtain ⟨c, s', he, v, rfl, hr⟩ := hb; exact ⟨_, _, Runs.of he, hr⟩
 
+/-! Callbacks. `Cb` says the callback's body simulates `f` on any argument, in any extension
+of the current state, and in the caller's variables. -/
+
+def Cb (p : Prog) (s : St) (fn : Fn) (x : String) {α β} [TyRep α] [TyRep β] (f : α → Result β) : Prop :=
+  ∀ s', Ext s s' → ∀ w a r, rep s'.heap a w → f a = ok r → Wp p ⟨s'.env.put x w, s'.heap⟩ fn.body (Ret s'.heap r)
+
+def Hr (p : Prog) (k : Hof) (fn : Fn) (x : String) (env : Env) (l n i : Nat) (out : List Val) (h : Heap) (v : Val) (t : St) : Prop :=
+  ∃ F, ∀ f, F ≤ f → hofRun f p k fn x env l n i out h = .ok v t
+
+theorem Evals.hof {p s k a g fn x l vs s₂ v t} (he : Evals p s a (.ref l) s₂) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hl : s₂.heap[l]? = some (.array vs)) (hr : Hr p k fn x s₂.env l vs.length 0 [] s₂.heap v t) :
+    Evals p s (.hof k a g) v { s₂ with heap := t.heap } := by
+  obtain ⟨F, hF⟩ := he
+  obtain ⟨G, hG⟩ := hr
+  refine ⟨F + G + 1, fun f hf => ?_⟩
+  obtain ⟨d, rfl, hd⟩ := succ_of_le hf
+  simp only [eval, hF d (by omega), hg, hl, hp, hG d (by omega)]
+
+theorem forall2_snoc {α β} {R : α → β → Prop} {a b : List _} {x y} (h : List.Forall₂ R a b) (r : R x y) :
+    List.Forall₂ R (a ++ [x]) (b ++ [y]) := by
+  induction h with
+  | nil => exact .cons r .nil
+  | cons hab _ ih => exact .cons hab ih
+
+/-- The step all callback methods share: a turn, then the rest. -/
+theorem drop_cons {vs : List Val} {i w tail} (h : vs.drop i = w :: tail) : vs[i]? = some w ∧ vs.drop (i + 1) = tail := by
+  constructor
+  · have : (vs.drop i)[0]? = some w := by rw [h]; rfl
+    simpa using this
+  · have := congrArg List.tail h
+    simpa [List.tail_drop] using this
+theorem drop_nil {vs : List Val} {i} (h : vs.drop i = []) : vs.length ≤ i := List.drop_eq_nil_iff.mp h
+
+section hofs
+variable {p : Prog} {s : St} {fn : Fn} {x : String} {env : Env} {l : Nat} {vs : List Val}
+variable {α β} [TyRep α] [TyRep β]
+
+theorem bind_eq {γ δ : Type} {m : Result γ} {f : γ → Result δ} {r : δ} (h : Aeneas.Std.bind m f = ok r) : ∃ a, m = ok a ∧ f a = ok r :=
+  bind_ok_inv' h
+
+/-- Runs one callback and hands back the results the induction needs. -/
+theorem turn {f : α → Result β} {h : Heap} {w a r} (henv : s.env = env) (hpre : s.heap <+: h)
+    (hcb : Cb p s fn x f) (hw : rep h a w) (hf : f a = ok r) :
+    ∃ v t, ExecsL p ⟨env.put x w, h⟩ fn.body (.ret v) t ∧ h <+: t.heap ∧ rep t.heap r v := by
+  obtain ⟨c, t, he, v, rfl, hp, rv⟩ := hcb ⟨env, h⟩ ⟨henv.symm, hpre⟩ w a r hw hf
+  exact ⟨v, t, he, hp, rv⟩
+
+theorem hof_map {f : α → Result β} (henv : s.env = env) (hcb : Cb p s fn x f) :
+    ∀ (xs : List α) i h (out : List Val) (done ys : List β), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → List.Forall₂ (rep h) done out → Js.map f xs = ok ys →
+      ∃ v t, Hr p .map fn x env l vs.length i out h v t ∧ h <+: t.heap ∧ rep t.heap (done ++ ys) v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h out done ys hpre hl hf hd hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have : ys = [] := by simpa [Js.map] using hm.symm
+    subst this
+    refine ⟨.ref h.length, ⟨env, h ++ [.array out]⟩, ⟨1, fun f hf' => ?_⟩, List.prefix_append _ _, h.length, out, rfl, by simp, ?_⟩
+    · obtain ⟨g, rfl, -⟩ := succ_of_le hf'
+      simp [hofRun, hn]
+    · simpa using hd.imp fun _ _ r => mono (List.prefix_append _ _) r
+  | cons q rest ih =>
+    intro i h out done ys hpre hl hf hd hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨y, hy, hm'⟩ := bind_eq (show Aeneas.Std.bind (f q) _ = ok ys from hm)
+    obtain ⟨ys', hys, hm''⟩ := bind_eq hm'
+    have hyy : ys = y :: ys' := by simpa using hm''.symm
+    subst hyy
+    obtain ⟨v, t, he, hpt, rv⟩ := turn henv hpre hcb hq hy
+    obtain ⟨v', t', hr, hpt', rv'⟩ := ih (i + 1) t.heap (out ++ [v]) (done ++ [y]) ys' (hpre.trans hpt) (lookup_mono hpt hl)
+      (hd' ▸ ht.imp fun _ _ r => mono hpt r) (forall2_snoc (hd.imp fun _ _ r => mono hpt r) rv) hys
+    refine ⟨v', t', ?_, hpt.trans hpt', by simpa using rv'⟩
+    obtain ⟨F, hF⟩ := he
+    obtain ⟨G, hG⟩ := hr
+    refine ⟨F + G + 1, fun f hf' => ?_⟩
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+    simp only [hofRun, if_neg hlt, hl, hi, hF g (by omega), hG g (by omega)]
+
+theorem hof_filter {f : α → Result Bool} (henv : s.env = env) (hcb : Cb p s fn x f) :
+    ∀ (xs : List α) i h (out : List Val) (done ys : List α), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → List.Forall₂ (rep h) done out → Js.filter f xs = ok ys →
+      ∃ v t, Hr p .filter fn x env l vs.length i out h v t ∧ h <+: t.heap ∧ rep t.heap (done ++ ys) v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h out done ys hpre hl hf hd hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have : ys = [] := by simpa [Js.filter] using hm.symm
+    subst this
+    refine ⟨.ref h.length, ⟨env, h ++ [.array out]⟩, ⟨1, fun f hf' => ?_⟩, List.prefix_append _ _, h.length, out, rfl, by simp, ?_⟩
+    · obtain ⟨g, rfl, -⟩ := succ_of_le hf'
+      simp [hofRun, hn]
+    · simpa using hd.imp fun _ _ r => mono (List.prefix_append _ _) r
+  | cons q rest ih =>
+    intro i h out done ys hpre hl hf hd hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨keep, hy, hm'⟩ := bind_eq (show Aeneas.Std.bind (f q) _ = ok ys from hm)
+    obtain ⟨ys', hys, hm''⟩ := bind_eq hm'
+    have hyy : ys = (if keep then q :: ys' else ys') := by simpa using hm''.symm
+    subst hyy
+    obtain ⟨v, t, he, hpt, rv⟩ := turn henv hpre hcb hq hy
+    have hv : v = .bool keep := rv
+    subst hv
+    have hq' := mono hpt hq
+    have hdt := hd.imp fun _ _ r => mono hpt r
+    obtain ⟨v', t', hr, hpt', rv'⟩ := ih (i + 1) t.heap (if keep then out ++ [w] else out) (if keep then done ++ [q] else done) ys' (hpre.trans hpt) (lookup_mono hpt hl)
+      (hd' ▸ ht.imp fun _ _ r => mono hpt r) (by cases keep <;> simp [hdt, forall2_snoc hdt hq']) hys
+    refine ⟨v', t', ?_, hpt.trans hpt', by cases keep <;> simpa using rv'⟩
+    obtain ⟨F, hF⟩ := he
+    obtain ⟨G, hG⟩ := hr
+    refine ⟨F + G + 1, fun f hf' => ?_⟩
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+    have hT : truthy (.bool keep) = keep := rfl
+    simp only [hofRun, if_neg hlt, hl, hi, hF g (by omega), hT]
+    exact hG g (by omega)
+
+theorem hof_some {f : α → Result Bool} (henv : s.env = env) (hcb : Cb p s fn x f) :
+    ∀ (xs : List α) i h (out : List Val) (r : Bool), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → Js.some_ f xs = ok r →
+      ∃ v t, Hr p .some fn x env l vs.length i out h v t ∧ h <+: t.heap ∧ rep t.heap r v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h out r hpre hl hf hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have : r = false := by simpa [Js.some_] using hm.symm
+    subst this
+    refine ⟨_, ⟨env, h⟩, ⟨1, fun f hf' => ?_⟩, List.prefix_refl _, rfl⟩
+    obtain ⟨g, rfl, -⟩ := succ_of_le hf'
+    simp [hofRun, hn]
+  | cons q rest ih =>
+    intro i h out r hpre hl hf hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨hit, hy, hm'⟩ := bind_eq (show Aeneas.Std.bind (f q) _ = ok r from hm)
+    obtain ⟨v, t, he, hpt, rv⟩ := turn henv hpre hcb hq hy
+    have hv : v = .bool hit := rv
+    subst hv
+    obtain ⟨F, hF⟩ := he
+    cases hit with
+    | true =>
+      have : r = true := by simpa using hm'.symm
+      subst this
+      refine ⟨_, ⟨env, t.heap⟩, ⟨F + 1, fun f hf' => ?_⟩, hpt, rfl⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g hg, truthy]
+    | false =>
+      obtain ⟨v', t', ⟨G, hG⟩, hpt', rv'⟩ := ih (i + 1) t.heap out r (hpre.trans hpt) (lookup_mono hpt hl)
+        (hd' ▸ ht.imp fun _ _ r => mono hpt r) (by simpa using hm')
+      refine ⟨v', t', ⟨F + G + 1, fun f hf' => ?_⟩, hpt.trans hpt', rv'⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g (by omega), truthy, hG g (by omega)]
+
+theorem hof_every {f : α → Result Bool} (henv : s.env = env) (hcb : Cb p s fn x f) :
+    ∀ (xs : List α) i h (out : List Val) (r : Bool), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → Js.every f xs = ok r →
+      ∃ v t, Hr p .every fn x env l vs.length i out h v t ∧ h <+: t.heap ∧ rep t.heap r v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h out r hpre hl hf hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have : r = true := by simpa [Js.every] using hm.symm
+    subst this
+    refine ⟨_, ⟨env, h⟩, ⟨1, fun f hf' => ?_⟩, List.prefix_refl _, rfl⟩
+    obtain ⟨g, rfl, -⟩ := succ_of_le hf'
+    simp [hofRun, hn]
+  | cons q rest ih =>
+    intro i h out r hpre hl hf hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨hit, hy, hm'⟩ := bind_eq (show Aeneas.Std.bind (f q) _ = ok r from hm)
+    obtain ⟨v, t, he, hpt, rv⟩ := turn henv hpre hcb hq hy
+    have hv : v = .bool hit := rv
+    subst hv
+    obtain ⟨F, hF⟩ := he
+    cases hit with
+    | false =>
+      have : r = false := by simpa using hm'.symm
+      subst this
+      refine ⟨_, ⟨env, t.heap⟩, ⟨F + 1, fun f hf' => ?_⟩, hpt, rfl⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g hg, truthy]
+    | true =>
+      obtain ⟨v', t', ⟨G, hG⟩, hpt', rv'⟩ := ih (i + 1) t.heap out r (hpre.trans hpt) (lookup_mono hpt hl)
+        (hd' ▸ ht.imp fun _ _ r => mono hpt r) (by simpa using hm')
+      refine ⟨v', t', ⟨F + G + 1, fun f hf' => ?_⟩, hpt.trans hpt', rv'⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g (by omega), truthy, hG g (by omega)]
+
+theorem hof_find {f : α → Result Bool} (henv : s.env = env) (hcb : Cb p s fn x f) :
+    ∀ (xs : List α) i h (out : List Val) (r : Option α), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → Js.find f xs = ok r →
+      ∃ v t, Hr p .find fn x env l vs.length i out h v t ∧ h <+: t.heap ∧ rep (α := Opt .undef α) t.heap r v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h out r hpre hl hf hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have : r = none := by simpa [Js.find] using hm.symm
+    subst this
+    refine ⟨.undef, ⟨env, h⟩, ⟨1, fun f hf' => ?_⟩, List.prefix_refl _, rfl⟩
+    obtain ⟨g, rfl, -⟩ := succ_of_le hf'
+    simp [hofRun, hn]
+  | cons q rest ih =>
+    intro i h out r hpre hl hf hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨hit, hy, hm'⟩ := bind_eq (show Aeneas.Std.bind (f q) _ = ok r from hm)
+    obtain ⟨v, t, he, hpt, rv⟩ := turn henv hpre hcb hq hy
+    have hv : v = .bool hit := rv
+    subst hv
+    obtain ⟨F, hF⟩ := he
+    cases hit with
+    | true =>
+      have : r = some q := by simpa using hm'.symm
+      subst this
+      refine ⟨w, ⟨env, t.heap⟩, ⟨F + 1, fun f hf' => ?_⟩, hpt, mono hpt hq⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g hg, truthy]
+    | false =>
+      obtain ⟨v', t', ⟨G, hG⟩, hpt', rv'⟩ := ih (i + 1) t.heap out r (hpre.trans hpt) (lookup_mono hpt hl)
+        (hd' ▸ ht.imp fun _ _ r => mono hpt r) (by simpa using hm')
+      refine ⟨v', t', ⟨F + G + 1, fun f hf' => ?_⟩, hpt.trans hpt', rv'⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g (by omega), truthy, hG g (by omega)]
+end hofs
+
+/-- Enters a callback method: reads the array, then runs the turns. -/
+theorem sim_hof {p s k a g fn x α γ} {_ : TyRep α} {_ : TyRep γ} {xs : List α} {r : γ} (hx : SimE p s a xs)
+    (hg : p g = some fn) (hparams : fn.params = [x])
+    (hrun : ∀ s₂ l vs, Ext s s₂ → s₂.heap[l]? = some (.array vs) → List.Forall₂ (rep s₂.heap) xs vs →
+      ∃ v t, Hr p k fn x s₂.env l vs.length 0 [] s₂.heap v t ∧ s₂.heap <+: t.heap ∧ rep t.heap r v) :
+    SimE p s (.hof k a g) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, e, h₂, l, vs, rfl, hl, hf⟩ := hx s₁ h₁
+  obtain ⟨v', t, hr, hpt, rv⟩ := hrun s₂ l vs (h₁.trans h₂) hl hf
+  exact ⟨v', { s₂ with heap := t.heap }, Evals.hof e hg hparams hl hr, h₂.trans ⟨rfl, hpt⟩, rv⟩
+
+section hofrules
+variable {p : Prog} {s : St} {a : Expr} {g : String} {fn : Fn} {x : String} {α β} {_ : TyRep α} {_ : TyRep β}
+theorem SimE.map {xs : List α} {f : α → Result β} {ys} (hx : SimE p s a xs) (h : Js.map f xs = ok ys) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hcb : Cb p s fn x f) : SimE p s (.hof .map a g) ys :=
+  sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
+    have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
+    simpa using hof_map (env := s₂.env) (done := []) (out := []) rfl hc xs 0 s₂.heap _ (List.prefix_refl _) hl (by simpa using hf) .nil h
+theorem SimE.filter {xs : List α} {f : α → Result Bool} {ys} (hx : SimE p s a xs) (h : Js.filter f xs = ok ys) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hcb : Cb p s fn x f) : SimE p s (.hof .filter a g) ys :=
+  sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
+    have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
+    simpa using hof_filter (env := s₂.env) (done := []) (out := []) rfl hc xs 0 s₂.heap _ (List.prefix_refl _) hl (by simpa using hf) .nil h
+theorem SimE.some_ {xs : List α} {f : α → Result Bool} {r} (hx : SimE p s a xs) (h : Js.some_ f xs = ok r) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hcb : Cb p s fn x f) : SimE p s (.hof .some a g) r :=
+  sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
+    have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
+    exact hof_some (env := s₂.env) rfl hc xs 0 s₂.heap [] r (List.prefix_refl _) hl (by simpa using hf) h
+theorem SimE.every {xs : List α} {f : α → Result Bool} {r} (hx : SimE p s a xs) (h : Js.every f xs = ok r) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hcb : Cb p s fn x f) : SimE p s (.hof .every a g) r :=
+  sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
+    have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
+    exact hof_every (env := s₂.env) rfl hc xs 0 s₂.heap [] r (List.prefix_refl _) hl (by simpa using hf) h
+theorem SimE.find {xs : List α} {f : α → Result Bool} {r} (hx : SimE p s a xs) (h : Js.find f xs = ok r) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hcb : Cb p s fn x f) : SimE (α := Opt .undef α) p s (.hof .find a g) r :=
+  sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
+    have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
+    exact hof_find (env := s₂.env) rfl hc xs 0 s₂.heap [] r (List.prefix_refl _) hl (by simpa using hf) h
+theorem SimE.append {b : Expr} {xs : List α} {y : α} (hx : SimE p s a xs) (hy : SimE p s b y) :
+    SimE p s (.prim .append [a, b]) (xs ++ [y]) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, w, rfl, ⟨l, vs, rfl, hl, hf⟩, rw⟩
+  refine ⟨.ref h.length, h ++ [.array (vs ++ [w])], by simp [primV, hl], List.prefix_append _ _, h.length, vs ++ [w], rfl, by simp, ?_⟩
+  exact forall2_snoc (hf.imp fun _ _ r => mono (List.prefix_append _ _) r) (mono (List.prefix_append _ _) rw)
+end hofrules
+
 /-- Calling a function whose bridge is known. -/
 theorem sim_call {p s g args} {vs' : Heap → List Val → Prop} {fn α} {_ : TyRep α} {r : α} (hg : p g = some fn)
     (ha : ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ args vs s₂ ∧ Ext s₁ s₂ ∧ vs' s₂.heap vs)

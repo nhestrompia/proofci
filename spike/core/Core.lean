@@ -33,12 +33,17 @@ inductive Op where
   | add | sub | mul | lt | le | gt | ge | eq | ne | div | rem
   deriving DecidableEq, Repr
 
+/-- Array methods that take a callback. -/
+inductive Hof where
+  | map | filter | some | every | find
+  deriving DecidableEq, Repr
+
 /-- Built-in methods. Each is defined once, on the runtime's own functions, so conformance
 to JavaScript is tested against Node rather than proved. -/
 inductive Prim where
   | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
-  | min | max | abs | includes | join | split
+  | min | max | abs | includes | join | split | append
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -65,6 +70,13 @@ inductive Expr where
   | prim (op : Prim) (args : List Expr)
   | optField (e : Expr) (f : String)
   | coalesce (a b : Expr)
+  /-- `arr.map(x => ...)` with the arrow written in place. `body` names a function table
+  entry whose only parameter is `x`, and it runs in the caller's variables. Lowering gives
+  every declaration its own name and refuses a callback that assigns outer variables, so this
+  is the same as a closure called right here. -/
+  | hof (k : Hof) (arr : Expr) (body : String)
+  /-- `arr.reduce((acc, x) => ..., init)`, on the same terms. -/
+  | reduce (arr init : Expr) (body : String)
 
 inductive Stmt where
   | set (x : String) (e : Expr)
@@ -77,6 +89,8 @@ inductive Stmt where
   | forOf (x : String) (e : Expr) (body : List Stmt)
   | ret (e : Expr)
   | brk
+  | cont
+  | whileL (c : Expr) (body step : List Stmt)
   | throw (e : Expr)
 
 structure Fn where
@@ -100,7 +114,7 @@ inductive Out (α : Type) where
   | stuck
 
 inductive Cmp where
-  | normal | brk
+  | normal | brk | cont
   | ret (v : Val)
   deriving DecidableEq, Repr
 
@@ -239,6 +253,9 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .join, h, [.ref l, .str sep] => match h[l]? with
     | some (.array xs) => (strsOf xs).map fun ss => (.str (Js.join ss sep), h)
     | _ => none
+  | .append, h, [.ref l, v] => match h[l]? with
+    | some (.array xs) => some (.ref h.length, h ++ [.array (xs ++ [v])])
+    | _ => none
   | .split, h, [.str s, .str sep] =>
     some (.ref h.length, h ++ [.array ((Js.split s sep).map .str)])
   | _, _, _ => none
@@ -366,6 +383,33 @@ def eval : Nat → Prog → St → Expr → Out Val
         | none => .stuck
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
+    | .hof k a g => match eval f p s a with
+      | .ok (.ref l) s₁ => match p g, s₁.heap[l]? with
+        | some fn, some (.array xs) => match fn.params with
+          | [x] => match hofRun f p k fn x s₁.env l xs.length 0 [] s₁.heap with
+            | .ok v r => .ok v { s₁ with heap := r.heap }
+            | .thrown v r => .thrown v { s₁ with heap := r.heap }
+            | .stuck => .stuck
+          | _ => .stuck
+        | _, _ => .stuck
+      | .ok _ s₁ => .thrown typeError s₁
+      | .thrown v s₁ => .thrown v s₁
+      | .stuck => .stuck
+    | .reduce a i g => match eval f p s a with
+      | .ok (.ref l) s₁ => match eval f p s₁ i with
+        | .ok acc s₂ => match p g, s₂.heap[l]? with
+          | some fn, some (.array xs) => match fn.params with
+            | [y, x] => match reduceRun f p fn y x s₂.env l xs.length 0 acc s₂.heap with
+              | .ok v r => .ok v { s₂ with heap := r.heap }
+              | .thrown v r => .thrown v { s₂ with heap := r.heap }
+              | .stuck => .stuck
+            | _ => .stuck
+          | _, _ => .stuck
+        | .thrown v s₂ => .thrown v s₂
+        | .stuck => .stuck
+      | .ok _ s₁ => .thrown typeError s₁
+      | .thrown v s₁ => .thrown v s₁
+      | .stuck => .stuck
     | .optField o k => match eval f p s o with
       | .ok v s' => if nullish v then .ok .undef s' else match readField s'.heap v k with
         | some r => .ok r s'
@@ -479,6 +523,8 @@ def exec : Nat → Prog → St → Stmt → Out Cmp
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
     | .brk => .ok .brk s
+    | .cont => .ok .cont s
+    | .whileL c body step => whileRun f p c body step s
     | .throw e => match eval f p s e with
       | .ok v s' => .thrown v s'
       | .thrown v s' => .thrown v s'
@@ -502,12 +548,76 @@ def iterate : Nat → Prog → String → Val → Nat → List Stmt → St → O
         | none => .ok .normal s
         | some item => match execList f p { s with env := s.env.put x item } body with
           | .ok .normal s' => iterate f p x v (i + 1) body s'
+          | .ok .cont s' => iterate f p x v (i + 1) body s'
           | .ok .brk s' => .ok .normal s'
           | .ok r s' => .ok r s'
           | .thrown t s' => .thrown t s'
           | .stuck => .stuck
       | _ => .thrown typeError s
     | _ => .thrown typeError s
+
+/-- `while (c) body`, where `step` is what `for` runs after each turn, including after
+`continue`. -/
+def whileRun : Nat → Prog → Expr → List Stmt → List Stmt → St → Out Cmp
+  | 0, _, _, _, _, _ => .stuck
+  | f + 1, p, c, body, step, s => match eval f p s c with
+    | .ok v s₁ =>
+      if truthy v then
+        let again := fun s₂ => match execList f p s₂ step with
+          | .ok .normal s₃ => whileRun f p c body step s₃
+          | .ok r s₃ => .ok r s₃
+          | .thrown t s₃ => .thrown t s₃
+          | .stuck => .stuck
+        match execList f p s₁ body with
+        | .ok .normal s₂ => again s₂
+        | .ok .cont s₂ => again s₂
+        | .ok .brk s₂ => .ok .normal s₂
+        | .ok r s₂ => .ok r s₂
+        | .thrown t s₂ => .thrown t s₂
+        | .stuck => .stuck
+      else .ok .normal s₁
+    | .thrown t s₁ => .thrown t s₁
+    | .stuck => .stuck
+
+/-- One callback turn: reads slot `i` live, as the spec does. A slot that has gone missing
+would be a hole, which this model doesn't cover, so it stops. -/
+def hofRun : Nat → Prog → Hof → Fn → String → Env → Loc → Nat → Nat → List Val → Heap → Out Val
+  | 0, _, _, _, _, _, _, _, _, _, _ => .stuck
+  | f + 1, p, k, fn, x, env, l, n, i, out, h =>
+    if n ≤ i then
+      match k with
+      | .map | .filter => .ok (.ref h.length) ⟨env, h ++ [.array out]⟩
+      | .some => .ok (.bool false) ⟨env, h⟩
+      | .every => .ok (.bool true) ⟨env, h⟩
+      | .find => .ok .undef ⟨env, h⟩
+    else match h[l]? with
+      | some (.array xs) => match xs[i]? with
+        | some item => match execList f p ⟨env.put x item, h⟩ fn.body with
+          | .ok (.ret v) s => match k with
+            | .map => hofRun f p k fn x env l n (i + 1) (out ++ [v]) s.heap
+            | .filter => hofRun f p k fn x env l n (i + 1) (if truthy v then out ++ [item] else out) s.heap
+            | .some => if truthy v then .ok (.bool true) ⟨env, s.heap⟩ else hofRun f p k fn x env l n (i + 1) out s.heap
+            | .every => if truthy v then hofRun f p k fn x env l n (i + 1) out s.heap else .ok (.bool false) ⟨env, s.heap⟩
+            | .find => if truthy v then .ok item ⟨env, s.heap⟩ else hofRun f p k fn x env l n (i + 1) out s.heap
+          | .ok _ _ => .stuck
+          | .thrown v s => .thrown v s
+          | .stuck => .stuck
+        | none => .stuck
+      | _ => .stuck
+
+def reduceRun : Nat → Prog → Fn → String → String → Env → Loc → Nat → Nat → Val → Heap → Out Val
+  | 0, _, _, _, _, _, _, _, _, _, _ => .stuck
+  | f + 1, p, fn, y, x, env, l, n, i, acc, h =>
+    if n ≤ i then .ok acc ⟨env, h⟩
+    else match h[l]? with
+      | some (.array xs) => match xs[i]? with
+        | some item => match execList f p ⟨(env.put y acc).put x item, h⟩ fn.body with
+          | .ok (.ret v) s => reduceRun f p fn y x env l n (i + 1) v s.heap
+          | .ok _ _ => .stuck
+          | .thrown v s => .thrown v s
+          | .stuck => .stuck
+        | none => .stuck
+      | _ => .stuck
 
 def run : Nat → Prog → Fn → List Val → Heap → Out Val
   | 0, _, _, _, _ => .stuck
