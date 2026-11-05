@@ -61,7 +61,7 @@ theorem Evals.or_false {p s a b v w s₁ s₂} (ha : Evals p s a v s₁) (ht : t
 
 theorem Evals.index {p s o i v n l xs s₁ s₂} (ho : Evals p s o v s₁) (hi : Evals p s₁ i (.num n) s₂)
     (hv : v = .ref l) (hl : s₂.heap[l]? = some (.array xs)) :
-    Evals p s (.index o i) (if n < 0 then .undef else xs[n.toNat]?.getD .undef) s₂ := by
+    Evals p s (.index o i) ((n.index.bind (xs[·]?)).getD .undef) s₂ := by
   subst hv
   obtain ⟨F, hF⟩ := ho
   obtain ⟨G, hG⟩ := hi
@@ -154,6 +154,14 @@ end Core
 
 namespace Core
 
+theorem Evals.neg {p s a x s'} (ha : Evals p s a (.num x) s') : Evals p s (.neg a) (.num x.neg) s' := by
+  obtain ⟨F, hF⟩ := ha
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg]⟩
+
+theorem Evals.math {p s g a x s'} (ha : Evals p s a (.num x) s') : Evals p s (.math g a) (.num (g x)) s' := by
+  obtain ⟨F, hF⟩ := ha
+  exact ⟨F + 1, fun f hf => by obtain ⟨g', rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g' hg]⟩
+
 theorem Evals.not {p s a v s'} (ha : Evals p s a v s') : Evals p s (.not a) (.bool (!truthy v)) s' := by
   obtain ⟨F, hF⟩ := ha
   exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg]⟩
@@ -214,7 +222,7 @@ theorem EvalsL.cons {p s e es v vs s₁ s₂} (he : Evals p s e v s₁) (ht : Ev
     simp only [evalList, hF g (by omega), hG g (by omega)]⟩
 
 theorem Evals.length {p s o l xs s'} (ho : Evals p s o (.ref l) s') (hl : s'.heap[l]? = some (.array xs)) :
-    Evals p s (.length o) (.num xs.length) s' := by
+    Evals p s (.length o) (.num (F64.ofInt xs.length)) s' := by
   obtain ⟨F, hF⟩ := ho
   exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g hg, hl]⟩
 

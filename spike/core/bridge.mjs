@@ -91,7 +91,7 @@ for (const [target, sig] of Object.entries(view.signatures)) {
     const carried = loop.carried[0];
     const facts = sig.params.map((t, i) => `s.env ${JSON.stringify(key_param(i))} = some ${value(t, i)}`).join(" ∧ ");
     function key_param(i) { return JSON.parse(`[${lean.slice(lean.indexOf(`def ${key} :`)).match(/params := \[(.*?)\]/)[1]}]`)[i]; }
-    function value(t, i) { return t.kind === "array" ? `(.ref l${i})` : t.kind === "number" ? `(.num p${i}.val)` : `v${i}`; }
+    function value(t, i) { return t.kind === "array" ? `(.ref l${i})` : t.kind === "number" ? `(.num (F64.ofInt p${i}.val))` : `v${i}`; }
     const R = `(fun a s => s.heap = h ∧ ${facts} ∧ ∃ w, s.env ${JSON.stringify(carried)} = some w ∧ Enc.enc h a w)`;
     lines.push("  revert hr; refine Core.bind_intro ?_; intro res hl hr", "  shallow", "  all_goals core_run",
       `  refine wp_iter_loop hl hf${arr} ${R} ${R} ?_ ?_ (fun _ _ hR => hR.1) harr${arr} ?_ ?_`,

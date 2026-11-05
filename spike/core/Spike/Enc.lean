@@ -11,7 +11,7 @@ namespace Core
 class Enc (α : Type) where
   enc : Heap → α → Val → Prop
 
-instance : Enc Js.Num := ⟨fun _ a v => v = .num a.val⟩
+instance : Enc Js.Num := ⟨fun _ a v => v = .num (F64.ofInt a.val)⟩
 instance : Enc Int := ⟨fun _ a v => v = .big a⟩
 instance : Enc Bool := ⟨fun _ a v => v = .bool a⟩
 instance : Enc (List Nat) := ⟨fun _ a v => v = .str a⟩

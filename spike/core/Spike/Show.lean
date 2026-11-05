@@ -10,7 +10,7 @@ def showVal : Nat → Heap → Val → String
   | _ + 1, _, .undef => "undefined"
   | _ + 1, _, .null => "null"
   | _ + 1, _, .bool b => toString b
-  | _ + 1, _, .num n => toString n
+  | _ + 1, _, .num x => if x == .nan then "NaN" else s!"#{x.toBits}"
   | _ + 1, _, .big n => s!"{n}n"
   | _ + 1, _, .str s => "s[" ++ ",".intercalate (s.map toString) ++ "]"
   | f + 1, h, .ref l => match h[l]? with

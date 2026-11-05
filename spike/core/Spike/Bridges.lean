@@ -103,7 +103,7 @@ theorem src_phases_getActiveSpendingPhase_bridge {h p0 p1 v0 v1 r}
   revert hr; refine Core.bind_intro ?_; intro res hl hr
   shallow
   all_goals core_run
-  refine wp_iter_loop hl hf0 (fun a s => s.heap = h ∧ s.env "resolvedPhases" = some (.ref l0) ∧ s.env "age" = some (.num p1.val) ∧ ∃ w, s.env "active" = some w ∧ Enc.enc h a w) (fun a s => s.heap = h ∧ s.env "resolvedPhases" = some (.ref l0) ∧ s.env "age" = some (.num p1.val) ∧ ∃ w, s.env "active" = some w ∧ Enc.enc h a w) ?_ ?_ (fun _ _ hR => hR.1) harr0 ?_ ?_
+  refine wp_iter_loop hl hf0 (fun a s => s.heap = h ∧ s.env "resolvedPhases" = some (.ref l0) ∧ s.env "age" = some (.num (F64.ofInt p1.val)) ∧ ∃ w, s.env "active" = some w ∧ Enc.enc h a w) (fun a s => s.heap = h ∧ s.env "resolvedPhases" = some (.ref l0) ∧ s.env "age" = some (.num (F64.ofInt p1.val)) ∧ ∃ w, s.env "active" = some w ∧ Enc.enc h a w) ?_ ?_ (fun _ _ hR => hR.1) harr0 ?_ ?_
   · refine ⟨rfl, ?_⟩
     simp [Env.put, Fn.env0, *]
     first | done | exact enc_at hf0 0
@@ -146,3 +146,8 @@ theorem src_config_price_deriveAuctionPricing_bridge {h p0 v0 r}
   all_goals try simp only [bind_ok, Aeneas.Std.bind_assoc] at hr
   all_goals shallow
   all_goals core_run
+
+#print axioms src_ledger_transfer_bridge
+#print axioms src_ledger_sumAmounts_bridge
+#print axioms src_phases_getActiveSpendingPhase_bridge
+#print axioms src_config_price_deriveAuctionPricing_bridge

@@ -37,7 +37,7 @@ function encoder() {
     if (v === undefined) return ".undef";
     if (v === null) return ".null";
     if (typeof v === "boolean") return `(.bool ${v})`;
-    if (typeof v === "number") return `(.num (${v}))`;
+    if (typeof v === "number") return `(.num (F64.ofBits ${bitsOf(v)}))`;
     if (typeof v === "bigint") return `(.big (${v}))`;
     if (typeof v === "string") return `(.str [${[...v].map(c => c.charCodeAt(0)).join(", ")}])`;
     if (seen.has(v)) return `(.ref ${seen.get(v)})`;
@@ -47,12 +47,15 @@ function encoder() {
   };
   return { val, heap };
 }
+const view64 = new DataView(new ArrayBuffer(8));
+const bitsOf = x => { view64.setFloat64(0, x); return view64.getBigUint64(0); };
 // One text form for a value, the same on both sides. Key order isn't meaningful.
 const show = (v, depth = 0) => {
   if (v === undefined) return "undefined";
   if (v === null) return "null";
   if (typeof v === "bigint") return `${v}n`;
   if (typeof v === "string") return `s[${[...v].map(c => c.charCodeAt(0)).join(",")}]`;
+  if (typeof v === "number") return Number.isNaN(v) ? "NaN" : `#${bitsOf(v)}`;
   if (typeof v !== "object") return String(v);
   if (Array.isArray(v)) return `[${v.map(x => show(x)).join(",")}]`;
   return `{${Object.keys(v).sort().map(k => `${k}:${show(v[k])}`).join(",")}}`;

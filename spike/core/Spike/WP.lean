@@ -1,4 +1,5 @@
 import Spike.Phase
+import Spike.Safe
 open Core Aeneas Aeneas.Std Result
 
 /-! The bridge without hand-written steps. Each rule says what must hold after a step,
@@ -69,15 +70,23 @@ theorem wpe_cond {p s c a b Ψ}
     exact ⟨_, _, Evals.cond_true he ht hb, hr⟩
 theorem wpe_index {p s o i Ψ}
     (h : WpE p s o fun v s₁ => WpE p s₁ i fun n s₂ => ∃ l xs m, v = .ref l ∧ n = .num m ∧
-      s₂.heap[l]? = some (.array xs) ∧ Ψ (if m < 0 then .undef else xs[m.toNat]?.getD .undef) s₂) :
+      s₂.heap[l]? = some (.array xs) ∧ Ψ ((m.index.bind (xs[·]?)).getD .undef) s₂) :
     WpE p s (.index o i) Ψ := by
   obtain ⟨v, s₁, ho, n, s₂, hi, l, xs, m, rfl, rfl, hl, hr⟩ := h
   exact ⟨_, _, Evals.index ho hi rfl hl, hr⟩
 theorem wpe_length {p s o Ψ}
-    (h : WpE p s o fun v s' => ∃ l xs, v = .ref l ∧ s'.heap[l]? = some (.array xs) ∧ Ψ (.num xs.length) s') :
+    (h : WpE p s o fun v s' => ∃ l xs, v = .ref l ∧ s'.heap[l]? = some (.array xs) ∧ Ψ (.num (F64.ofInt xs.length)) s') :
     WpE p s (.length o) Ψ := by
   obtain ⟨v, s', he, l, xs, rfl, hl, hr⟩ := h
   exact ⟨_, _, Evals.length he hl, hr⟩
+theorem wpe_neg {p s a Ψ}
+    (h : WpE p s a fun v s' => ∃ x, v = .num x ∧ Ψ (.num x.neg) s') : WpE p s (.neg a) Ψ := by
+  obtain ⟨v, s', he, x, rfl, hr⟩ := h
+  exact ⟨_, _, Evals.neg he, hr⟩
+theorem wpe_math {p s g a Ψ}
+    (h : WpE p s a fun v s' => ∃ x, v = .num x ∧ Ψ (.num (g x)) s') : WpE p s (.math g a) Ψ := by
+  obtain ⟨v, s', he, x, rfl, hr⟩ := h
+  exact ⟨_, _, Evals.math he, hr⟩
 theorem wpf_nil {p s Ψ} (h : Ψ [] s) : WpF p s [] Ψ := ⟨_, _, EvalsF.nil _ _, h⟩
 theorem wpf_cons {p s k e es Ψ}
     (h : WpE p s e fun v s₁ => WpF p s₁ es fun vs s₂ => Ψ ((k, v) :: vs) s₂) : WpF p s ((k, e) :: es) Ψ := by
@@ -179,7 +188,7 @@ end Core
 
 namespace Core
 
-@[simp] theorem enc_num {h} {a : Js.Num} {v} : Enc.enc h a v ↔ v = .num a.val := Iff.rfl
+@[simp] theorem enc_num {h} {a : Js.Num} {v} : Enc.enc h a v ↔ v = .num (F64.ofInt a.val) := Iff.rfl
 @[simp] theorem enc_big {h} {a : Int} {v} : Enc.enc h a v ↔ v = .big a := Iff.rfl
 @[simp] theorem enc_bool {h} {a : Bool} {v} : Enc.enc h a v ↔ v = .bool a := Iff.rfl
 @[simp] theorem enc_some {α} [Enc α] {h} {a : α} {v} : Enc.enc h (some a) v ↔ Enc.enc h a v := Iff.rfl
@@ -226,10 +235,12 @@ theorem len_intro {α : Type} {G : Prop} {xs : List α} {r : Js.Num} (k : r.val 
   simp only [Js.len, Js.mk] at h; split at h <;> simp_all; subst h; rfl)
 theorem neg_intro {G : Prop} {x r : Js.Num} (k : r.val = -x.val → G) : Js.neg x = ok r → G := fun h => k (by
   simp only [Js.neg, Js.mk] at h; split at h <;> simp_all; subst h; rfl)
-theorem add_intro {G : Prop} {x y r : Js.Num} (k : r.val = x.val + y.val → G) : Js.add x y = ok r → G :=
-  fun h => k (add_val h)
-theorem sub_intro {G : Prop} {x y r : Js.Num} (k : r.val = x.val - y.val → G) : Js.sub x y = ok r → G :=
-  fun h => k (sub_val h)
+theorem add_intro {G : Prop} {x y r : Js.Num}
+    (k : r.val = x.val + y.val → -9007199254740991 ≤ x.val + y.val → x.val + y.val ≤ 9007199254740991 → G) :
+    Js.add x y = ok r → G := fun h => k (add_val h) ((add_val h) ▸ r.lo) ((add_val h) ▸ r.hi)
+theorem sub_intro {G : Prop} {x y r : Js.Num}
+    (k : r.val = x.val - y.val → -9007199254740991 ≤ x.val - y.val → x.val - y.val ≤ 9007199254740991 → G) :
+    Js.sub x y = ok r → G := fun h => k (sub_val h) ((sub_val h) ▸ r.lo) ((sub_val h) ▸ r.hi)
 theorem mul_intro {G : Prop} {x y r : Js.Num} (k : r.val = x.val * y.val → G) : Js.mul x y = ok r → G :=
   fun h => k (mul_val h)
 theorem bdiv_intro {G : Prop} {x y r : Int} (k : y ≠ 0 → r = x.tdiv y → G) : Js.bdiv x y = ok r → G :=
@@ -261,11 +272,11 @@ macro "core_step" : tactic => `(tactic| first
   | apply Core.wp_cons | apply Core.wp_nil | apply Core.wprun
   | apply Core.wps_set | apply Core.wps_setField | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
   | apply Core.wpe_lit | apply Core.wpe_var | apply Core.wpe_field | apply Core.wpe_bin | apply Core.wpe_isNullish
-  | apply Core.wpe_not | apply Core.wpe_length | apply Core.wpe_cond | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
+  | apply Core.wpe_not | apply Core.wpe_neg | apply Core.wpe_math | apply Core.wpe_length | apply Core.wpe_cond | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
   | apply Core.wpe_call' | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
   | apply Core.wpa_cons | apply Core.wpa_nil)
 
-macro "core_simp" : tactic => `(tactic| simp [Core.Env.put, Core.Fn.env0, Core.readField, Core.binary, Core.truthy, Core.nullish, List.lookup, Core.strLt_eq, *])
+macro "core_simp" : tactic => `(tactic| simp (disch := omega) [List.getElem?_concat_length, Core.Env.put, Core.Fn.env0, Core.readField, Core.binary, Core.truthy, Core.nullish, List.lookup, Core.strLt_eq, *])
 
 macro "core_run" : tactic => `(tactic| iterate 60 (all_goals try (first | core_step | core_simp | (exfalso; omega) | split | (exfalso; simp_all; done))))
 
@@ -278,8 +289,8 @@ macro "shallow" : tactic => `(tactic| iterate 24 (all_goals try (first
      first
        | (revert step; with_reducible refine Core.len_intro ?_; intro this)
        | (revert step; with_reducible refine Core.neg_intro ?_; intro this)
-       | (revert step; with_reducible refine Core.add_intro ?_; intro this)
-       | (revert step; with_reducible refine Core.sub_intro ?_; intro this)
+       | (revert step; with_reducible refine Core.add_intro ?_; intro this lo hi)
+       | (revert step; with_reducible refine Core.sub_intro ?_; intro this lo hi)
        | (revert step; with_reducible refine Core.mul_intro ?_; intro this)
        | (revert step; with_reducible refine Core.bdiv_intro ?_; intro nz this; subst this)
        | (revert step; with_reducible refine Core.brem_intro ?_; intro nz this; subst this)

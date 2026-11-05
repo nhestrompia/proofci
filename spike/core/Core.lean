@@ -1,3 +1,5 @@
+import F64
+
 /-! # Core: one definition of what the code means (spike)
 
 A small JavaScript semantics: values, a heap of shared objects, exceptions, loops
@@ -5,7 +7,7 @@ and calls. Nothing here depends on types or on Aeneas, so unions, `any` and alia
 need no special treatment. Variables are function-scoped: lowering gives every
 declaration its own name.
 
-Spike limits: numbers are exact integers, not binary64. No closures, classes or async. -/
+Spike limits: no closures, classes or async yet. -/
 
 namespace Core
 
@@ -14,7 +16,7 @@ abbrev Loc := Nat
 inductive Val where
   | undef | null
   | bool (b : Bool)
-  | num (n : Int)
+  | num (x : F64)
   | big (n : Int)
   | str (s : List Nat)
   | ref (l : Loc)
@@ -38,13 +40,14 @@ inductive Expr where
   | bin (op : Op) (a b : Expr)
   | isNullish (e : Expr)
   | not (e : Expr)
+  | neg (e : Expr)
+  | math (f : F64 → F64) (e : Expr)
   | or (a b : Expr)
   | and (a b : Expr)
   | cond (c a b : Expr)
   | record (fields : List (String × Expr))
   | array (items : List Expr)
   | call (f : String) (args : List Expr)
-  deriving Repr
 
 inductive Stmt where
   | set (x : String) (e : Expr)
@@ -56,12 +59,10 @@ inductive Stmt where
   | ret (e : Expr)
   | brk
   | throw (e : Expr)
-  deriving Repr
 
 structure Fn where
   params : List String
   body : List Stmt
-  deriving Repr
 
 abbrev Prog := String → Option Fn
 abbrev Env := String → Option Val
@@ -89,7 +90,10 @@ def typeError : Val := .str [84, 121, 112, 101, 69, 114, 114, 111, 114]
 def truthy : Val → Bool
   | .undef | .null => false
   | .bool b => b
-  | .num n | .big n => n != 0
+  | .num x => match x with
+    | .nan | .fin _ 0 => false
+    | _ => true
+  | .big n => n != 0
   | .str s => !s.isEmpty
   | .ref _ => true
 
@@ -111,13 +115,17 @@ def strLt : List Nat → List Nat → Bool
   | x :: xs, y :: ys => if x = y then strLt xs ys else decide (x < y)
 
 def binary : Op → Val → Val → Option Val
-  | .add, .num a, .num b => some (.num (a + b))
-  | .sub, .num a, .num b => some (.num (a - b))
-  | .mul, .num a, .num b => some (.num (a * b))
-  | .lt, .num a, .num b => some (.bool (decide (a < b)))
-  | .le, .num a, .num b => some (.bool (decide (a ≤ b)))
-  | .gt, .num a, .num b => some (.bool (decide (a > b)))
-  | .ge, .num a, .num b => some (.bool (decide (a ≥ b)))
+  | .add, .num a, .num b => some (.num (a.add b))
+  | .sub, .num a, .num b => some (.num (a.sub b))
+  | .mul, .num a, .num b => some (.num (a.mul b))
+  | .div, .num a, .num b => some (.num (a.div b))
+  | .rem, .num a, .num b => some (.num (a.rem b))
+  | .lt, .num a, .num b => some (.bool (a.lt b))
+  | .le, .num a, .num b => some (.bool (a.le b))
+  | .gt, .num a, .num b => some (.bool (b.lt a))
+  | .ge, .num a, .num b => some (.bool (b.le a))
+  | .eq, .num a, .num b => some (.bool (a.eq b))
+  | .ne, .num a, .num b => some (.bool (!a.eq b))
   | .lt, .str a, .str b => some (.bool (strLt a b))
   | .gt, .str a, .str b => some (.bool (strLt b a))
   | .add, .big a, .big b => some (.big (a + b))
@@ -152,7 +160,7 @@ def eval : Nat → Prog → St → Expr → Out Val
       | .ok v s₁ => match eval f p s₁ i with
         | .ok (.num n) s₂ => match v with
           | .ref l => match s₂.heap[l]? with
-            | some (.array xs) => .ok (if n < 0 then .undef else xs[n.toNat]?.getD .undef) s₂
+            | some (.array xs) => .ok ((n.index.bind (xs[·]?)).getD .undef) s₂
             | _ => .thrown typeError s₂
           | _ => .thrown typeError s₂
         | .ok _ s₂ => .thrown typeError s₂
@@ -162,7 +170,7 @@ def eval : Nat → Prog → St → Expr → Out Val
       | .stuck => .stuck
     | .length o => match eval f p s o with
       | .ok (.ref l) s' => match s'.heap[l]? with
-        | some (.array xs) => .ok (.num xs.length) s'
+        | some (.array xs) => .ok (.num (F64.ofInt xs.length)) s'
         | _ => .thrown typeError s'
       | .ok _ s' => .thrown typeError s'
       | .thrown v s' => .thrown v s'
@@ -178,6 +186,16 @@ def eval : Nat → Prog → St → Expr → Out Val
       | .stuck => .stuck
     | .isNullish a => match eval f p s a with
       | .ok v s' => .ok (.bool (nullish v)) s'
+      | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .neg a => match eval f p s a with
+      | .ok (.num x) s' => .ok (.num x.neg) s'
+      | .ok _ s' => .thrown typeError s'
+      | .thrown v s' => .thrown v s'
+      | .stuck => .stuck
+    | .math g a => match eval f p s a with
+      | .ok (.num x) s' => .ok (.num (g x)) s'
+      | .ok _ s' => .thrown typeError s'
       | .thrown v s' => .thrown v s'
       | .stuck => .stuck
     | .not a => match eval f p s a with
@@ -258,10 +276,12 @@ def exec : Nat → Prog → St → Stmt → Out Cmp
       | .ok (.ref l) s₁ => match eval f p s₁ i with
         | .ok (.num n) s₂ => match eval f p s₂ e with
           | .ok v s₃ => match s₃.heap[l]? with
-            | some (.array xs) =>
-              if 0 ≤ n ∧ n < xs.length then
-                .ok .normal { s₃ with heap := s₃.heap.set l (.array (xs.set n.toNat v)) }
-              else .stuck
+            | some (.array xs) => match n.index with
+              | some i =>
+                if i < xs.length then
+                  .ok .normal { s₃ with heap := s₃.heap.set l (.array (xs.set i v)) }
+                else .stuck
+              | none => .stuck
             | _ => .thrown typeError s₃
           | .thrown v s₃ => .thrown v s₃
           | .stuck => .stuck

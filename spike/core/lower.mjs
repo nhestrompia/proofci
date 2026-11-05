@@ -5,6 +5,13 @@ import { dirname, join, relative } from "node:path";
 
 const OPS = { "+": "add", "-": "sub", "*": "mul", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "===": "eq", "!==": "ne", "/": "div", "%": "rem" };
 const lean = s => JSON.stringify(s);
+const bits = new DataView(new ArrayBuffer(8));
+const num = x => {
+  if (Number.isSafeInteger(x) && !Object.is(x, -0)) return `(F64.ofInt (${x}))`;
+  bits.setFloat64(0, x);
+  return `(F64.ofBits ${bits.getBigUint64(0)})`;
+};
+const MATH = { floor: "F64.floor", ceil: "F64.ceil", trunc: "F64.trunc" };
 
 export function lower(root, targets) {
   const files = [...new Set(targets.map(t => join(root, t.split("::")[0])))];
@@ -42,7 +49,7 @@ export function lower(root, targets) {
     const loops = [];
     const E = e => {
       if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) return E(e.expression);
-      if (ts.isNumericLiteral(e)) return `.lit (.num ${e.text.replace(/_/g, "")})`;
+      if (ts.isNumericLiteral(e)) return `.lit (.num ${num(Number(e.text.replace(/_/g, "")))})`;
       if (ts.isBigIntLiteral(e)) return `.lit (.big ${e.text.replace(/n$/, "").replace(/_/g, "")})`;
       if (e.kind === ts.SyntaxKind.TrueKeyword) return ".lit (.bool true)";
       if (e.kind === ts.SyntaxKind.FalseKeyword) return ".lit (.bool false)";
@@ -63,8 +70,8 @@ export function lower(root, targets) {
       if (ts.isElementAccessExpression(e)) return `.index (${E(e.expression)}) (${E(e.argumentExpression)})`;
       if (ts.isConditionalExpression(e)) return `.cond (${E(e.condition)}) (${E(e.whenTrue)}) (${E(e.whenFalse)})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken) return `.not (${E(e.operand)})`;
-      if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(e.operand)) return `.lit (.num (-${e.operand.text}))`;
-      if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken) return `.bin .sub (.lit (.num 0)) (${E(e.operand)})`;
+      if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(e.operand) && Number(e.operand.text) !== 0) return `.lit (.num ${num(-Number(e.operand.text))})`;
+      if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken) return `.neg (${E(e.operand)})`;
       if (ts.isObjectLiteralExpression(e)) {
         const fields = e.properties.map(p => {
           if (ts.isShorthandPropertyAssignment(p)) return `(${lean(p.name.text)}, .var ${lean(scope.get(checker.getShorthandAssignmentValueSymbol(p)))})`;
@@ -74,6 +81,9 @@ export function lower(root, targets) {
         return `.record [${fields.join(", ")}]`;
       }
       if (ts.isArrayLiteralExpression(e)) return `.array [${e.elements.map(E).join(", ")}]`;
+      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && MATH[e.expression.name.text]) {
+        return `.math ${MATH[e.expression.name.text]} (${E(e.arguments[0])})`;
+      }
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) {
         const d = resolve(e.expression)?.valueDeclaration;
         if (!d || !ts.isFunctionDeclaration(d)) throw new Error(`call ${e.getText()}`);

@@ -106,6 +106,11 @@ def eq (x y : F64) : Bool := le.eq' x y
 
 def ofInt (a : Int) : F64 := fin (decide (a < 0)) (a.natAbs * unit)
 
+/-- The array slot a number names, if it names one. `-0` is slot 0. -/
+def index : F64 → Option Nat
+  | fin neg n => if n = 0 then some 0 else if !neg && n % unit = 0 then some (n / unit) else none
+  | _ => none
+
 def ofBits (b : Nat) : F64 :=
   let neg := decide (2 ^ 63 ≤ b)
   let e := (b / 2 ^ 52) % 2048
