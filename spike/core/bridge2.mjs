@@ -13,8 +13,10 @@ for (const target of targets) {
   const key = names[target], view = `src.scale.${target.split("::")[1]}`;
   const text = lean.slice(lean.indexOf(`def ${key} :`));
   const stmts = text.slice(text.indexOf("body := [") + 9, text.indexOf("] }")).split(/,\n\s+/).map(s => s.trim()).filter(Boolean);
-  const L = ["  unfold " + view + " at hr", "  try simp only [bind_ok] at hr", "  apply wprun",
-    `  have va : VarIs ⟨${key}.env0 [.num (F64.ofInt p0.val)], h⟩ "a" p0 := by simp [VarIs, Fn.env0, ${key}, Env.put]`,
+  const L = ["  unfold " + view + " at hr", "  try simp (maxSteps := 50000000) only [bind_ok] at hr", "  apply wprun",
+    `  have va : VarIs ⟨${key}.env0 [.num (F64.ofInt p0.val)], h⟩ "a" p0 := by
+    have hp : ${key}.params = ["a"] := rfl
+    simp [VarIs, Fn.env0, hp, Env.put]`,
     `  have hh : (St.mk (${key}.env0 [.num (F64.ofInt p0.val)]) h).heap = h := rfl`,
     `  generalize St.mk (${key}.env0 [.num (F64.ofInt p0.val)]) h = s0 at va hh`];
   let n = 0, t = null;                // Lean names of the state, and of `t` if it exists
@@ -26,7 +28,7 @@ for (const target of targets) {
   for (const st of stmts) {
     let m;
     if ((m = st.match(/^\.set "t" \(\.var "a"\)$/))) { stateful("p0", "vt", "NumE.var va"); t = true; }
-    else if ((m = st.match(/^\.set "t" \(\.lit /))) { L.push("  -- starts at a literal"); stateful("_", "vt", "NumE.lit _ rfl"); t = true; }
+    else if ((m = st.match(/^\.set "t" \(\.lit /))) { const v = st.match(/ofInt \((-?\d+)\)/)[1]; stateful(`⟨${v}, by decide, by decide⟩`, "vt", "NumE.lit _ rfl"); t = true; }
     else if ((m = st.match(/^\.set "t" \(\.bin \.add \(\.var "t"\) \(\.lit /))) {
       const x = `x${n}`;
       L.push("  revert hr; refine Core.bind_intro ?_", `  intro ${x} st${n} hr`);
