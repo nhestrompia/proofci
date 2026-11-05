@@ -72,12 +72,14 @@ Of the 16 feature functions that failed, 10 reached the prover and 6 stopped in 
 
 | Reason | Functions |
 |---|---:|
-| Reading a string by index, or a character in a condition | at least 4 |
-| Loop state the generator's invariant doesn't describe | at least 2 |
 | Lowering: `new`, spread, `replace` and generics | 6 |
-| Others, not yet diagnosed | the rest |
-
-`reduce` has Core semantics but no proof rule yet.
+| Loop state the invariant doesn't describe | 2 |
+| Reading a string by index | 2 |
+| Proof timeout | 2 |
+| `reduce`, which has Core semantics but no proof rule | 1 |
+| Reading a field of an indexed array element | 1 |
+| A value expression the rules don't cover | 1 |
+| A term Lean's kernel rejected | 1 |
 
 ## Bugs this found
 
@@ -86,8 +88,8 @@ Of the 16 feature functions that failed, 10 reached the prover and 6 stopped in 
 - **Generator:** a failed step was logged and replaced with `sorry` while the search carried
   on. The axiom check would have rejected the result, so nothing unsound was counted, but it
   sent proofs down wrong paths.
-- **Kernel:** on one function the tactics built a term that Lean's kernel rejected. That
-  function is counted as failed.
+- **Kernel:** on one function the tactics built a term that Lean's kernel rejected. It's
+  counted as failed, and the cause isn't diagnosed yet.
 
 ## What this doesn't show
 
