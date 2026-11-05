@@ -1,6 +1,6 @@
 # Core spike
 
-The follow-up tests on real functions are in [SLICE.md](SLICE.md) and [SLICE2.md](SLICE2.md).
+The follow-up tests on real functions are in [SLICE.md](SLICE.md), [SLICE2.md](SLICE2.md) and [SLICE3.md](SLICE3.md).
 
 A small-scale test of the proposed TypeScript architecture: one formal model of
 JavaScript (Core), with today's typed output tied to it by a generated theorem.

@@ -149,6 +149,18 @@ function importedNames(statement) {
 function compile(root, files, imports, out) {
   const realRoot = realpathSync(root);
   const reached = new Set(files);
+  // A package's index can re-export a value from a file the translation reached. Such a name
+  // is real, so it comes from that file, and only the rest are stubbed.
+  const exported = new Map();
+  for (const file of files) {
+    const source = ts.createSourceFile(file, readFileSync(join(root, file), "utf8"), ts.ScriptTarget.ES2022, true);
+    for (const statement of source.statements) {
+      if (!ts.getModifiers?.(statement)?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+      if (ts.isVariableStatement(statement)) {
+        for (const d of statement.declarationList.declarations) if (ts.isIdentifier(d.name)) exported.set(d.name.text, file);
+      } else if (ts.isFunctionDeclaration(statement) && statement.name) exported.set(statement.name.text, file);
+    }
+  }
   let stubs = 0;
   for (const file of files) {
     const js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
@@ -168,7 +180,9 @@ function compile(root, files, imports, out) {
         replacement = posix.relative(dirname(module_(file)), module_(target));
       } else {
         const stub = `__stand_in_${stubs += 1}.mjs`;
-        writeFileSync(join(out, stub), STAND_IN + importedNames(statement).map(n => `export { stub as ${n} };\n`).join(""));
+        writeFileSync(join(out, stub), STAND_IN + importedNames(statement).map(n => exported.has(n)
+          ? `export { ${n} } from ${JSON.stringify(`./${module_(exported.get(n))}`)};\n`
+          : `export { stub as ${n} };\n`).join(""));
         replacement = posix.relative(dirname(module_(file)), stub);
       }
       if (!replacement.startsWith(".")) replacement = `./${replacement}`;
