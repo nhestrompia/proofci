@@ -300,7 +300,7 @@ syntax "b_join" : tactic
 def attempt (a : TSyntax `tactic) : TacticM Bool := do
   let saved ← Tactic.saveState
   try
-    evalTactic a
+    Tactic.withoutRecover (evalTactic a)
     pure true
   catch e =>
     if (← IO.getEnv "BRIDGE_TRACE").isSome then
@@ -388,13 +388,10 @@ elab "v_ite_go" : tactic => do
   evalTactic (← `(tactic| (with_reducible refine Core.todo_ite ?_ ?_) <;> intro hc hk))
 elab "v_decide_go" : tactic => do
   revertTodo
-  let pos ← `(tactic| (with_reducible refine Core.todo_pos ?_ ?_))
-  let neg ← `(tactic| (with_reducible refine Core.todo_neg ?_ ?_))
-  let settled ← (do evalTactic pos; evalTactic (← `(tactic| assumption)); pure true)
-    <|> (do evalTactic neg; evalTactic (← `(tactic| assumption)); pure true)
-    <|> (do evalTactic pos; evalTactic (← `(tactic| known)); pure true)
-    <|> (do evalTactic neg; evalTactic (← `(tactic| known)); pure true)
-    <|> pure false
+  let settled ← attempt (← `(tactic| ((with_reducible refine Core.todo_pos ?_ ?_); assumption)))
+  let settled ← if settled then pure true else attempt (← `(tactic| ((with_reducible refine Core.todo_neg ?_ ?_); assumption)))
+  let settled ← if settled then pure true else attempt (← `(tactic| ((with_reducible refine Core.todo_pos ?_ ?_); known)))
+  let settled ← if settled then pure true else attempt (← `(tactic| ((with_reducible refine Core.todo_neg ?_ ?_); known)))
   if settled then evalTactic (← `(tactic| (intro hk; crun)))
   else evalTactic (← `(tactic| ((with_reducible refine Core.todo_ite ?_ ?_) <;> (intro hc hk; first | (exfalso; refuted) | crun))))
 elab "v_split_go" : tactic => do
@@ -418,9 +415,9 @@ macro_rules | `(tactic| b_lock) => `(tactic| (
   (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))
   (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))))
 macro_rules | `(tactic| l_conj) => `(tactic| repeat' (first | trivial | assumption | (apply V.nil_cast; assumption) | apply And.intro))
-macro_rules | `(tactic| c_loop_end) => `(tactic| (apply wp_nil; first | refine ⟨(), rfl, Or.inl rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inl rfl, ?_, ?_⟩; assumption; l_conj))
+macro_rules | `(tactic| c_loop_end) => `(tactic| (apply wp_nil; (first | refine ⟨(), rfl, Or.inl rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inl rfl, ?_, ?_⟩); assumption; l_conj))
 macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; refine Or.inl ⟨rfl, ?_, ?_⟩; assumption; l_conj))
-macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; first | refine ⟨(), rfl, Or.inr rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inr rfl, ?_, ?_⟩; assumption; l_conj))
+macro_rules | `(tactic| c_cont) => `(tactic| (apply step_cont; seq_out; (first | refine ⟨(), rfl, Or.inr rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inr rfl, ?_, ?_⟩); assumption; l_conj))
 elab "clear_todo" : tactic => withMainContext do
   for d in (← getLCtx).decls.toList.reverse do
     let some d := d | continue

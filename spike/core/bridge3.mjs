@@ -121,7 +121,7 @@ def ${K}_Zr (r : ${beta}) (v : Val) (s : St) : Prop := ${zr}`;
   const after = isSum
     ? `rcases res with b1 | ${rPat(carried.length)}`
     : carried.length > 1 ? `rcases res with ${rPat(carried.length)}` : "skip";
-  const kr = isSum ? `(rcases res with b1 | _); (focus (dsimp only [${K}_Zr] at hz; have hk' := hk; unfold Todo at hk'; dsimp only at hk'; vsplit hk'; refine post_use ?_ ?_ hpre hz; post; assumption)); (focus (exact False.elim hz))` : "exact False.elim hz";
+  const kr = isSum ? `(rcases res with b1 | _); (focus (dsimp only [${K}_Zr] at hz; have hk' := hk; unfold Todo at hk'; dsimp only at hk'; vsplit hk'; apply post_use hz hpre; post; assumption)); (focus (exact False.elim hz))` : "exact False.elim hz";
   return `${defs}
 macro_rules | \`(tactic| c_for) => \`(tactic| (
   v_keep; intro res hl hk
@@ -130,7 +130,7 @@ macro_rules | \`(tactic| c_for) => \`(tactic| (
   (focus (intro s2 he; carry he; clear he; l_conj))
   (focus (intro ${pattern(vars.length)} s3 y hf hR hb; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); dsimp only at hb; vsplit hb; all_goals (refine ⟨_, rfl, ?_⟩; dsimp only [${K}_Zb]; l_conj)))
   (focus (intro q rest ${pattern(vars.length) === "_" ? "_" : "st"} s3 w y hf hR hw hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; apply enter; intro s4 hu he2 hh; have hvq := V.mk' (α := ${T}) he2 hh hw; have hb0 := base_of hh; have hfr : Fr s3 s4 ${W} := Fr.upd (Fr.refl _ _) hu (by decide); carry hu; clear hu he2 hh; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))
-  (focus (intro s5 hf hz; ${isSum ? `(rcases res with b1 | ${rPat(carried.length)}); exact False.elim hz; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; dsimp only at hk; crun` : `${after}; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; crun`}))
+  (focus (intro s5 hf hz; ${isSum ? `(rcases res with b1 | ${rPat(carried.length)}); exact False.elim hz; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; (try dsimp only at hk); crun` : `${after}; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; (try dsimp only at hk); crun`}))
   (focus (intro v s6 hpre hz; ${kr}))))`;
 }
 

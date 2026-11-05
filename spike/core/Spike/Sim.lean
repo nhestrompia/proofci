@@ -1411,8 +1411,8 @@ theorem V.nil_cast {s x A B} {_ : TyRep A} {_ : TyRep B} (h : V (α := List A) s
   have : vs = [] := List.forall₂_nil_left_iff.mp hf
   subst this
   exact ⟨_, e, l, [], rfl, hl, .nil⟩
-theorem post_use {α} {_ : TyRep α} {Φ : Cmp → St → Prop} {h s s'} {a : α} {v} (ho : Post Φ h a) (hb : Base h s)
-    (hp : s.heap <+: s'.heap) (hz : rep s'.heap a v) : Φ (.ret v) s' := ho v s' (List.IsPrefix.trans hb hp) hz
+theorem post_use {α} {_ : TyRep α} {Φ : Cmp → St → Prop} {h s s'} {a : α} {v} (hz : rep s'.heap a v)
+    (hp : s.heap <+: s'.heap) (ho : Post Φ h a) (hb : Base h s) : Φ (.ret v) s' := ho v s' (List.IsPrefix.trans hb hp) hz
 
 /-- A step of the typed function that is still to be walked. -/
 def Todo {α : Type} (m : Result α) (r : α) : Prop := m = ok r
