@@ -7,7 +7,7 @@ import { lower } from "./lower.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "work");
 for (const f of ["prelude", "features", "async"]) cpSync(join(here, `fixtures/${f}.ts`), join(root, `src/${f}.ts`));
-const F = ["counterTwice", "loopCaptures", "scaled", "indexed", "positives", "total", "anyOver", "firstNegative", "positivesLoop", "sumPlusOne", "dispatch", "growBoth", "treeSum"];
+const F = ["overrideSeen", "counterTwice", "loopCaptures", "scaled", "indexed", "positives", "total", "anyOver", "firstNegative", "positivesLoop", "sumPlusOne", "dispatch", "growBoth", "treeSum"];
 const A = ["withdrawStale", "withdrawSafe", "twoWaits"];
 const targets = [...F.map(f => `src/features.ts::${f}`), ...A.map(f => `src/async.ts::${f}`)];
 const { names, lean } = lower(root, targets);
@@ -41,7 +41,7 @@ const arr = () => Array.from({ length: rand(5) }, num);
 const tree = d => (d === 0 || rand(3) === 0) ? null : { value: num(), left: tree(d - 1), right: tree(d - 1) };
 const sharedTree = () => { const s = tree(2); return { value: num(), left: s, right: s }; };
 const lines = ["import Core", "import Spike.Gen", "import Spike.Show", "open Core Gen Spike", ""]; const expected = [];
-const inputs = { counterTwice: () => [num()], loopCaptures: () => [arr()], scaled: () => [arr(), num()], indexed: () => [arr()], positives: () => [arr()], total: () => [arr()],
+const inputs = { overrideSeen: () => [], counterTwice: () => [num()], loopCaptures: () => [arr()], scaled: () => [arr(), num()], indexed: () => [arr()], positives: () => [arr()], total: () => [arr()],
   anyOver: () => [arr(), num()], firstNegative: () => [arr()], positivesLoop: () => [arr()], sumPlusOne: () => [arr()], dispatch: () => [num()], growBoth: () => [num()], treeSum: () => [rand(2) ? sharedTree() : tree(3)] };
 for (const f of F) for (let i = 0; i < 60; i += 1) {
   const args = inputs[f](); const { val, heap } = encoder(); const enc = args.map(val);

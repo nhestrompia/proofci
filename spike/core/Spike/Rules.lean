@@ -244,6 +244,52 @@ theorem Evals.call {p s g args vs s₁ fn v s₂} (ha : EvalsL p s args vs s₁)
     obtain ⟨g', rfl, hg'⟩ := succ_of_le hf
     simp only [eval, hF g' (by omega), hg, hG g' (by omega)]⟩
 
+theorem Evals.closure {p s g e v s'} (he : Evals p s e v s') : Evals p s (.closure g e) (.fn g v) s' := by
+  obtain ⟨F, hF⟩ := he
+  exact ⟨F + 1, fun f hf => by obtain ⟨g', rfl, hg⟩ := succ_of_le hf; simp only [eval, hF g' hg]⟩
+
+theorem Evals.callV {p s c g env args vs s₁ s₂ fn v s₃} (hc : Evals p s c (.fn g env) s₁)
+    (ha : EvalsL p s₁ args vs s₂) (hg : p g = some fn) (hr : Runs p fn (env :: vs) s₂.heap v s₃) :
+    Evals p s (.callV c args) v { s₂ with heap := s₃.heap } := by
+  obtain ⟨F, hF⟩ := hc
+  obtain ⟨A, hA⟩ := ha
+  obtain ⟨G, hG⟩ := hr
+  exact ⟨F + A + G + 1, fun f hf => by
+    obtain ⟨g', rfl, hg'⟩ := succ_of_le hf
+    simp only [eval, hF g' (by omega), hA g' (by omega), hg, hG g' (by omega)]⟩
+
+theorem Evals.callM {p s o m args v vs c fn r s₁ s₂ s₃} (ho : Evals p s o v s₁)
+    (ha : EvalsL p s₁ args vs s₂) (hc : readField s₂.heap v "__class" = some (.str c))
+    (hg : p (className c ++ "." ++ m) = some fn) (hr : Runs p fn (v :: vs) s₂.heap r s₃) :
+    Evals p s (.callM o m args) r { s₂ with heap := s₃.heap } := by
+  obtain ⟨F, hF⟩ := ho
+  obtain ⟨A, hA⟩ := ha
+  obtain ⟨G, hG⟩ := hr
+  exact ⟨F + A + G + 1, fun f hf => by
+    obtain ⟨g', rfl, hg'⟩ := succ_of_le hf
+    simp only [eval, hF g' (by omega), hA g' (by omega), hc, hg, hG g' (by omega)]⟩
+
+theorem Execs.push {p s o e l v xs s₁ s₂} (ho : Evals p s o (.ref l) s₁) (he : Evals p s₁ e v s₂)
+    (hl : s₂.heap[l]? = some (.array xs)) :
+    Execs p s (.push o e) .normal { s₂ with heap := s₂.heap.set l (.array (xs ++ [v])) } := by
+  obtain ⟨F, hF⟩ := ho
+  obtain ⟨G, hG⟩ := he
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [exec, hF g (by omega), hG g (by omega), hl]⟩
+
+theorem Execs.expr {p s e v s'} (he : Evals p s e v s') : Execs p s (.expr e) .normal s' := by
+  obtain ⟨F, hF⟩ := he
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [exec, hF g hg]⟩
+
+theorem Iterates.exit {p x l i b s xs item s₁ v} (hl : s.heap[l]? = some (.array xs))
+    (hi : xs[i]? = some item) (hb : ExecsL p { s with env := s.env.put x item } b (.ret v) s₁) :
+    Iterates p x (.ref l) i b s (.ret v) s₁ := by
+  obtain ⟨F, hF⟩ := hb
+  exact ⟨F + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [iterate, hl, hi, hF g hg]⟩
+
 theorem Execs.setField {p s o k e l v s₁ s₂ fs} (ho : Evals p s o (.ref l) s₁) (he : Evals p s₁ e v s₂)
     (hl : s₂.heap[l]? = some (.record fs)) :
     Execs p s (.setField o k e) .normal

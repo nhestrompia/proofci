@@ -114,3 +114,18 @@ export function treeSum(t: Tree | null): number {
   if (t === null) return 0;
   return t.value + treeSum(t.left) + treeSum(t.right);
 }
+
+class Base {
+  f(): number { return 1; }
+  g(): number { return this.f() + 1; }
+}
+
+class Sub extends Base {
+  f(): number { return 10; }
+}
+
+/** `g` is inherited, but `f` must come from the object's own class. */
+export function overrideSeen(): number {
+  const s = new Sub();
+  return s.g();
+}

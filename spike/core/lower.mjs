@@ -59,7 +59,7 @@ export function lower(root, targets) {
     if (ctor) {
       ctor.__name = initKey; ctor.__this = true;
       aliases.set(initKey, fnKey(ctor)); done.set(fnKey(ctor), null); queue.push(ctor);
-    } else if (parent) aliases.set(initKey, aliases.get(`${parent}.__init`));
+    } else if (parent && aliases.has(`${parent}.__init`)) aliases.set(initKey, aliases.get(`${parent}.__init`));
     const params = ctor ? ctor.parameters.map(p => p.name.text) : ["a", "b"];
     const tag = `[${[...name].map(x => x.charCodeAt(0)).join(", ")}]`;
     const newKey = `${name}_new`;

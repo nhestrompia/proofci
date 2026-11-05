@@ -3,6 +3,10 @@ open Core
 set_option maxRecDepth 4000
 namespace Gen
 
+def src_features_overrideSeen : Fn := { params := [], body := [
+    .set "s" (.call "Sub.__new" []),
+    .ret (.callM (.var "s") "g" [])] }
+
 def src_features_counterTwice : Fn := { params := ["start"], body := [
     .set "__scope" (.record []),
     .setField (.var "__scope") "n" (.var "start"),
@@ -93,6 +97,15 @@ def src_async_twoWaits_segs : List (List Stmt) := [[.push (.field (.var "a") "lo
 
 def src_async_twoWaits : Fn := { params := ["a", "amount"], body := [] }
 
+def Base_f : Fn := { params := ["this"], body := [
+    .ret (.lit (.num (F64.ofInt (1))))] }
+
+def Base_g : Fn := { params := ["this"], body := [
+    .ret (.bin .add (.callM (.var "this") "f" []) (.lit (.num (F64.ofInt (1)))))] }
+
+def Sub_f : Fn := { params := ["this"], body := [
+    .ret (.lit (.num (F64.ofInt (10))))] }
+
 def src_features_counterTwice_lambda0 : Fn := { params := ["__env"], body := [
     .setField (.field (.var "__env") "__up") "n" (.bin .add (.field (.field (.var "__env") "__up") "n") (.lit (.num (F64.ofInt (1))))),
     .ret (.field (.field (.var "__env") "__up") "n")] }
@@ -168,6 +181,14 @@ def Doubled_area : Fn := { params := ["this"], body := [
 def Doubled___init : Fn := { params := ["this", "size"], body := [
     .expr (.call "Shape.__init" [.var "this", .bin .mul (.var "size") (.lit (.num (F64.ofInt (2))))])] }
 
+def Base_new : Fn := { params := ["a", "b"], body := [
+    .set "this" (.record [("__class", .lit (.str [66, 97, 115, 101]))]),
+    .ret (.var "this")] }
+
+def Sub_new : Fn := { params := ["a", "b"], body := [
+    .set "this" (.record [("__class", .lit (.str [83, 117, 98]))]),
+    .ret (.var "this")] }
+
 def Shape_new : Fn := { params := ["size"], body := [
     .set "this" (.record [("__class", .lit (.str [83, 104, 97, 112, 101]))]),
     .expr (.call "Shape.__init" [.var "this", .var "size"]),
@@ -179,6 +200,7 @@ def Doubled_new : Fn := { params := ["size"], body := [
     .ret (.var "this")] }
 
 def prog : Prog := fun name => match name with
+  | "src_features_overrideSeen" => some src_features_overrideSeen
   | "src_features_counterTwice" => some src_features_counterTwice
   | "src_features_loopCaptures" => some src_features_loopCaptures
   | "src_features_scaled" => some src_features_scaled
@@ -195,6 +217,9 @@ def prog : Prog := fun name => match name with
   | "src_async_withdrawStale" => some src_async_withdrawStale
   | "src_async_withdrawSafe" => some src_async_withdrawSafe
   | "src_async_twoWaits" => some src_async_twoWaits
+  | "Base_f" => some Base_f
+  | "Base_g" => some Base_g
+  | "Sub_f" => some Sub_f
   | "src_features_counterTwice_lambda0" => some src_features_counterTwice_lambda0
   | "src_features_loopCaptures_lambda1" => some src_features_loopCaptures_lambda1
   | "src_prelude_jsMap" => some src_prelude_jsMap
@@ -212,6 +237,12 @@ def prog : Prog := fun name => match name with
   | "Shape___init" => some Shape___init
   | "Doubled_area" => some Doubled_area
   | "Doubled___init" => some Doubled___init
+  | "Base.f" => some Base_f
+  | "Base.g" => some Base_g
+  | "Base.__new" => some Base_new
+  | "Sub.f" => some Sub_f
+  | "Sub.g" => some Base_g
+  | "Sub.__new" => some Sub_new
   | "Shape.area" => some Shape_area
   | "Shape.describe" => some Shape_describe
   | "Shape.__init" => some Shape___init

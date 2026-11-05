@@ -110,6 +110,19 @@ theorem wpe_call' {p s g args Ψ}
   cases hg : p g with
   | some fn => rw [hg] at h; exact wpe_call hg h
   | none => rw [hg] at h; exact h.elim
+theorem wpe_closure {p s g e Ψ} (h : WpE p s e fun v s' => Ψ (.fn g v) s') : WpE p s (.closure g e) Ψ := by
+  obtain ⟨v, s', he, hr⟩ := h; exact ⟨_, _, Evals.closure he, hr⟩
+theorem wpe_callV {p s c args Ψ}
+    (h : WpE p s c fun f s₁ => ∃ g env fn, f = .fn g env ∧ p g = some fn ∧ WpA p s₁ args fun vs s₂ =>
+      WpRun p fn (env :: vs) s₂.heap fun v s₃ => Ψ v { s₂ with heap := s₃.heap }) : WpE p s (.callV c args) Ψ := by
+  obtain ⟨f, s₁, hc, g, env, fn, rfl, hg, vs, s₂, ha, v, s₃, hr, hk⟩ := h
+  exact ⟨_, _, Evals.callV hc ha hg hr, hk⟩
+theorem wpe_callM {p s o m args Ψ}
+    (h : WpE p s o fun v s₁ => WpA p s₁ args fun vs s₂ => ∃ c fn, readField s₂.heap v "__class" = some (.str c) ∧
+      p (className c ++ "." ++ m) = some fn ∧ WpRun p fn (v :: vs) s₂.heap fun r s₃ => Ψ r { s₂ with heap := s₃.heap }) :
+    WpE p s (.callM o m args) Ψ := by
+  obtain ⟨v, s₁, ho, vs, s₂, ha, c, fn, hc, hg, r, s₃, hr, hk⟩ := h
+  exact ⟨_, _, Evals.callM ho ha hc hg hr, hk⟩
 theorem wprun {p fn a h Ψ}
     (hb : Wp p ⟨fn.env0 a, h⟩ fn.body fun c s => ∃ v, c = .ret v ∧ Ψ v s) : WpRun p fn a h Ψ := by
   obtain ⟨c, s', he, v, rfl, hr⟩ := hb; exact ⟨_, _, Runs.of he, hr⟩
@@ -147,6 +160,14 @@ theorem wps_setField {p s o k e Φ}
     WpS p s (.setField o k e) Φ := by
   obtain ⟨ov, s₁, ho, v, s₂, he, l, fs, rfl, hl, hk⟩ := h
   exact ⟨_, _, Execs.setField ho he hl, hk⟩
+theorem wps_push {p s o e Φ}
+    (h : WpE p s o fun ov s₁ => WpE p s₁ e fun v s₂ => ∃ l xs, ov = .ref l ∧ s₂.heap[l]? = some (.array xs) ∧
+      Φ .normal { s₂ with heap := s₂.heap.set l (.array (xs ++ [v])) }) : WpS p s (.push o e) Φ := by
+  obtain ⟨ov, s₁, ho, v, s₂, he, l, xs, rfl, hl, hk⟩ := h
+  exact ⟨_, _, Execs.push ho he hl, hk⟩
+theorem wps_expr {p s e Φ} (h : WpE p s e fun _ s' => Φ .normal s') : WpS p s (.expr e) Φ := by
+  obtain ⟨v, s', he, hk⟩ := h
+  exact ⟨_, _, Execs.expr he, hk⟩
 theorem wps_forOf {p s x e body Φ}
     (h : WpE p s e fun v s₁ => WpIter p x v 0 body s₁ fun s₂ => Φ .normal s₂) : WpS p s (.forOf x e body) Φ := by
   obtain ⟨v, s₁, he, s₂, hi, hk⟩ := h; exact ⟨_, _, Execs.forOf he hi, hk⟩
@@ -161,6 +182,46 @@ theorem wp_cons {p s c cs Φ}
     exact ⟨_, _, ExecsL.cons_normal he ht, hk'⟩
   · simp only [hr, if_false] at hk
     exact ⟨_, _, ExecsL.cons_exit he hr, hk⟩
+
+/-- An array loop in general: the body may change the heap and may `return`. `Inv i s`
+holds before turn `i`. -/
+theorem wp_forOf_inv {p x l vs body} (Inv : Nat → St → Prop) (Done : Cmp → St → Prop)
+    (harr : ∀ i s, Inv i s → s.heap[l]? = some (.array vs))
+    (hend : ∀ s, Inv vs.length s → Done .normal s)
+    (hstep : ∀ i s item, i < vs.length → Inv i s → vs[i]? = some item →
+      Wp p { s with env := s.env.put x item } body fun c s' =>
+        (c = .normal ∧ Inv (i + 1) s') ∨ (∃ v, c = .ret v ∧ Done (.ret v) s')) :
+    ∀ n i s, n + i = vs.length → Inv i s → ∃ r s', Iterates p x (.ref l) i body s r s' ∧ Done r s' := by
+  intro n
+  induction n with
+  | zero =>
+    intro i s hn hI
+    have hi : i = vs.length := by omega
+    subst hi
+    exact ⟨_, _, Iterates.done (xs := vs) (harr _ s hI) (by simp), hend s hI⟩
+  | succ n ih =>
+    intro i s hn hI
+    have hlt : i < vs.length := by omega
+    obtain ⟨c, s', he, ⟨rfl, hI'⟩ | ⟨v, rfl, hD⟩⟩ := hstep i s vs[i] hlt hI (by simp [hlt])
+    · obtain ⟨r, s₂, hit, hD⟩ := ih (i + 1) s' (by omega) hI'
+      exact ⟨r, s₂, Iterates.next (xs := vs) (harr i s hI) (by simp [hlt]) he hit, hD⟩
+    · exact ⟨_, s', Iterates.exit (xs := vs) (harr i s hI) (by simp [hlt]) he, hD⟩
+
+/-- The whole `for...of` statement, for use in a proof. -/
+theorem wps_forOf_inv {p s x e body Φ l vs} (Inv : Nat → St → Prop)
+    (he : Evals p s e (.ref l) s) (h0 : Inv 0 s)
+    (harr : ∀ i s, Inv i s → s.heap[l]? = some (.array vs))
+    (hend : ∀ s, Inv vs.length s → Φ .normal s)
+    (hstep : ∀ i s item, i < vs.length → Inv i s → vs[i]? = some item →
+      Wp p { s with env := s.env.put x item } body fun c s' =>
+        (c = .normal ∧ Inv (i + 1) s') ∨ (∃ v, c = .ret v ∧ Φ (.ret v) s')) :
+    WpS p s (.forOf x e body) Φ := by
+  obtain ⟨r, s', hit, hD⟩ := wp_forOf_inv Inv Φ harr hend hstep vs.length 0 s (by omega) h0
+  obtain ⟨F, hF⟩ := he
+  obtain ⟨G, hG⟩ := hit
+  refine ⟨r, s', ⟨F + G + 1, fun f hf => ?_⟩, hD⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  simp only [exec, hF g (by omega), hG g (by omega)]
 
 /-- The loop rule. Its inputs are the invariant `R` and one simulated turn of the body. -/
 theorem wp_loop {T σ β : Type} [Enc T] {p x l vs body h}
@@ -270,10 +331,10 @@ end Core
 `simp` decides most branches; `split` takes the rest, and `omega` closes impossible ones. -/
 macro "core_step" : tactic => `(tactic| first
   | apply Core.wp_cons | apply Core.wp_nil | apply Core.wprun
-  | apply Core.wps_set | apply Core.wps_setField | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
+  | apply Core.wps_set | apply Core.wps_setField | apply Core.wps_push | apply Core.wps_expr | apply Core.wps_ret | apply Core.wps_brk | apply Core.wps_ite | apply Core.wps_forOf
   | apply Core.wpe_lit | apply Core.wpe_var | apply Core.wpe_field | apply Core.wpe_bin | apply Core.wpe_isNullish
   | apply Core.wpe_not | apply Core.wpe_neg | apply Core.wpe_math | apply Core.wpe_length | apply Core.wpe_cond | apply Core.wpe_or | apply Core.wpe_and | apply Core.wpe_index
-  | apply Core.wpe_call' | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
+  | apply Core.wpe_call' | apply Core.wpe_closure | apply Core.wpe_callV | apply Core.wpe_callM | apply Core.wpe_record | apply Core.wpf_cons | apply Core.wpf_nil
   | apply Core.wpa_cons | apply Core.wpa_nil)
 
 macro "core_simp" : tactic => `(tactic| simp (disch := omega) [List.getElem?_concat_length, Core.Env.put, Core.Fn.env0, Core.readField, Core.binary, Core.truthy, Core.nullish, List.lookup, Core.strLt_eq, *])
