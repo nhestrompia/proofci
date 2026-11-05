@@ -1724,7 +1724,10 @@ class Scope {
     if (this.nullable(this.typeOf(object))) {
       // Compiled without index checks: a missing object stops the model.
       const value = this.expression(object, env, lines);
-      return `${this.bind(`Js.unwrap ${value}`, lines)}.${name(node.name.text)}`;
+      const bare = this.checker.getNonNullableType(this.typeOf(object));
+      const unwrapped = this.bind(`Js.unwrap ${value}`, lines);
+      if (node.name.text === "length" && (bare.flags & ts.TypeFlags.StringLike || this.checker.isArrayType(bare))) return this.bind(`Js.len ${unwrapped}`, lines);
+      return `${unwrapped}.${name(node.name.text)}`;
     }
     if (this.isString(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
     if (this.isCollection(object) && node.name.text === "size") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);

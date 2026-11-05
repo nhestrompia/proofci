@@ -150,7 +150,8 @@ elab "sim0_go" : tactic => withMainContext do
     | ``Expr.call => `(tactic| s_call)
     | ``Expr.hof => `(tactic| s_hof)
     | ``Expr.reduce => `(tactic| s_hof)
-    | ``Expr.cond | ``Expr.or | ``Expr.and | ``Expr.coalesce => `(tactic| first | s_branch | s_misc)
+    | ``Expr.or | ``Expr.and | ``Expr.not => `(tactic| first | (apply SimE.of_c; simc) | s_branch | s_misc)
+    | ``Expr.cond | ``Expr.coalesce => `(tactic| first | s_branch | s_misc)
     | _ => `(tactic| s_misc)
   evalTactic tac
 macro_rules | `(tactic| sim0) => `(tactic| sim0_go)
@@ -363,6 +364,9 @@ late in a function doesn't re-explore everything before it. -/
 elab "crun_go" : tactic => withMainContext do
   vdrain
   if (← getGoals).isEmpty then return
+  -- A final `ok` can always be taken now.
+  if let some (m, none) ← todoHead then
+    if headIs m ``Aeneas.Std.Result.ok then evalTactic (← `(tactic| v_ok))
   withMainContext do
   let t ← whnfR (← instantiateMVars (← (← getMainGoal).getType))
   unless t.isAppOf ``Core.Wp do throwError "STUCK, not a Core goal"
@@ -378,6 +382,13 @@ elab "crun_go" : tactic => withMainContext do
     | some (_, b) => b.isNone
     | none => false
   let split ← `(tactic| c_split)
+  -- A conditional expression over a pending branch needs that branch's case, so split now.
+  if branch && (kind == ``Stmt.ret || kind == ``Stmt.set) then
+    let c ← whnfD (cs.getArg! 1)
+    let e ← whnfR (c.getArg! (if kind == ``Stmt.ret then 0 else 1))
+    if e.isAppOf ``Expr.cond then
+      evalTactic split
+      return
   match kind with
   | `nil =>
     if (t.getArg! 3).isAppOf ``Core.Seq then evalTactic (← `(tactic| c_nil))

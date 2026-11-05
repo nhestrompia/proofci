@@ -251,7 +251,7 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     (hr : ${sig.lean} ${P.join(" ")} = ok r) :
     WpRun prog ${key} [${Vs.join(", ")}] h fun v s => h <+: s.heap ∧ rep (α := ${repRes}) s.heap r v := by
   unfold ${sig.lean} at hr
-${constants.map(c => `  try unfold ${c} at hr`).join("\n")}
+${[...constants].reverse().map(c => `  try unfold ${c} at hr`).join("\n")}
   apply ${sig.result.kind === "void" ? "wprun_unit" : "wprun'"}
   have hb : Base h ⟨${key}.env0 [${Vs.join(", ")}], h⟩ := List.prefix_refl _
 ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}], h⟩ ${q("PARAM" + i)} (α := ${leanType(t)}) p${i} := ⟨v${i}, by simp [${key}, Fn.env0, Env.put], h${i}⟩`).join("\n")}
