@@ -10,7 +10,7 @@ for (const f of ["prelude", "features", "async"]) cpSync(join(here, `fixtures/${
 const F = ["amountOf", "mapGrows", "mapShrinks", "clamp01", "overrideSeen", "counterTwice", "loopCaptures", "scaled", "indexed", "positives", "total", "anyOver", "firstNegative", "positivesLoop", "sumPlusOne", "dispatch", "growBoth", "treeSum"];
 const A = ["withdrawStale", "withdrawSafe", "twoWaits"];
 const targets = [...F.map(f => `src/features.ts::${f}`), ...A.map(f => `src/async.ts::${f}`)];
-const { names, lean } = lower(root, [...targets, "src/ledger.ts::transfer", "src/ledger.ts::sumAmounts", "src/phases.ts::getActiveSpendingPhase", "src/config/price.ts::deriveAuctionPricing"]);
+const { names, lean } = lower(root, [...targets, "src/ledger.ts::transfer", "src/ledger.ts::sumAmounts", "src/phases.ts::getActiveSpendingPhase", "src/config/price.ts::deriveAuctionPricing", "src/shared.ts::moveMoney", "src/shared.ts::moveMoneyStale"]);
 writeFileSync(join(here, "Spike/Gen.lean"), lean);
 const load = async f => { const out = join(root, `${f}.mjs`);
   ts.sys.writeFile(out, ts.transpileModule(ts.sys.readFile(join(root, `src/${f}.ts`)), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);

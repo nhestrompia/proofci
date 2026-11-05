@@ -80,6 +80,7 @@ export function lower(root, targets) {
       taken.add(n); scope.set(s, n);
       return n;
     };
+    let lambdaCount = 0;
     const prelude = [];
     const inner = decl.__env ?? null;          // variables of the enclosing function
     const captured = new Set();                // mutable variables a lambda shares: they live in a scope object
@@ -142,7 +143,7 @@ export function lower(root, targets) {
       if (ts.isElementAccessExpression(e)) return `.index (${E(e.expression)}) (${E(e.argumentExpression)})`;
       if (e.kind === ts.SyntaxKind.ThisKeyword) return `.var "this"`;
       if (ts.isArrowFunction(e)) {
-        const name = `${key}_lambda${lambdas.count++}`;
+        const name = `${key}_lambda${lambdaCount++}`;
         e.__env = captured; e.__name = name;
         queue.push(e); done.set(name, null);
         const copies = [...(e.__const ?? [])].map(c => `(${lean(c.name)}, ${E(ts.factory.createIdentifier(c.name) && idOf(c))})`);

@@ -14,7 +14,7 @@ def src_features_mapGrows : Fn := { params := ["xs"], body := [
 
 def src_features_mapShrinks : Fn := { params := ["xs"], body := [
     .set "__scope" (.record [("xs", .var "xs")]),
-    .ret (.call "src_prelude_jsMap" [.field (.var "__scope") "xs", .closure "src_features_mapShrinks_lambda1" (.record [("__up", .var "__scope")])])] }
+    .ret (.call "src_prelude_jsMap" [.field (.var "__scope") "xs", .closure "src_features_mapShrinks_lambda0" (.record [("__up", .var "__scope")])])] }
 
 def src_features_clamp01 : Fn := { params := ["x"], body := [
     .ite (.bin .lt (.var "x") (.lit (.num (F64.ofInt (0))))) [.ret (.lit (.num (F64.ofInt (0))))] [],
@@ -28,7 +28,7 @@ def src_features_overrideSeen : Fn := { params := [], body := [
 def src_features_counterTwice : Fn := { params := ["start"], body := [
     .set "__scope" (.record []),
     .setField (.var "__scope") "n" (.var "start"),
-    .set "bump" (.closure "src_features_counterTwice_lambda2" (.record [("__up", .var "__scope")])),
+    .set "bump" (.closure "src_features_counterTwice_lambda0" (.record [("__up", .var "__scope")])),
     .set "out" (.array []),
     .push (.var "out") (.callV (.var "bump") []),
     .push (.var "out") (.callV (.var "bump") []),
@@ -36,7 +36,7 @@ def src_features_counterTwice : Fn := { params := ["start"], body := [
     .push (.var "out") (.callV (.var "bump") []),
     .ret (.var "out")] }
 
-def src_features_loopCaptures_loop0 : List Stmt := [.push (.var "fs") (.closure "src_features_loopCaptures_lambda3" (.record [("__up", .var "__scope"), ("x", .var "x")]))]
+def src_features_loopCaptures_loop0 : List Stmt := [.push (.var "fs") (.closure "src_features_loopCaptures_lambda0" (.record [("__up", .var "__scope"), ("x", .var "x")]))]
 
 def src_features_loopCaptures_loop1 : List Stmt := [.set "total" (.bin .add (.var "total") (.callV (.var "f") []))]
 
@@ -50,23 +50,23 @@ def src_features_loopCaptures : Fn := { params := ["xs"], body := [
 
 def src_features_scaled : Fn := { params := ["xs", "k"], body := [
     .set "__scope" (.record [("k", .var "k")]),
-    .ret (.call "src_prelude_jsMap" [.var "xs", .closure "src_features_scaled_lambda4" (.record [("__up", .var "__scope")])])] }
+    .ret (.call "src_prelude_jsMap" [.var "xs", .closure "src_features_scaled_lambda0" (.record [("__up", .var "__scope")])])] }
 
 def src_features_indexed : Fn := { params := ["xs"], body := [
     .set "__scope" (.record []),
-    .ret (.call "src_prelude_jsMap" [.var "xs", .closure "src_features_indexed_lambda5" (.record [("__up", .var "__scope")])])] }
+    .ret (.call "src_prelude_jsMap" [.var "xs", .closure "src_features_indexed_lambda0" (.record [("__up", .var "__scope")])])] }
 
 def src_features_positives : Fn := { params := ["xs"], body := [
     .set "__scope" (.record []),
-    .ret (.call "src_prelude_jsFilter" [.var "xs", .closure "src_features_positives_lambda6" (.record [("__up", .var "__scope")])])] }
+    .ret (.call "src_prelude_jsFilter" [.var "xs", .closure "src_features_positives_lambda0" (.record [("__up", .var "__scope")])])] }
 
 def src_features_total : Fn := { params := ["xs"], body := [
     .set "__scope" (.record []),
-    .ret (.call "src_prelude_jsReduce" [.var "xs", .closure "src_features_total_lambda7" (.record [("__up", .var "__scope")]), .lit (.num (F64.ofInt (0)))])] }
+    .ret (.call "src_prelude_jsReduce" [.var "xs", .closure "src_features_total_lambda0" (.record [("__up", .var "__scope")]), .lit (.num (F64.ofInt (0)))])] }
 
 def src_features_anyOver : Fn := { params := ["xs", "limit"], body := [
     .set "__scope" (.record [("limit", .var "limit")]),
-    .ret (.call "src_prelude_jsSome" [.var "xs", .closure "src_features_anyOver_lambda8" (.record [("__up", .var "__scope")])])] }
+    .ret (.call "src_prelude_jsSome" [.var "xs", .closure "src_features_anyOver_lambda0" (.record [("__up", .var "__scope")])])] }
 
 def src_features_firstNegative_loop0 : List Stmt := [.ite (.bin .lt (.var "x") (.lit (.num (F64.ofInt (0))))) [.ret (.var "x")] []]
 
@@ -137,6 +137,16 @@ def src_config_price_deriveAuctionPricing : Fn := { params := ["rawFloorPriceX96
     .set "tickSpacing" (.call "src_config_price_deriveAuctionTickSpacing" [.var "rawFloorPriceX96"]),
     .ret (.record [("floorPriceX96", .bin .sub (.var "rawFloorPriceX96") (.bin .rem (.var "rawFloorPriceX96") (.var "tickSpacing"))), ("tickSpacing", .var "tickSpacing")])] }
 
+def src_shared_moveMoney : Fn := { params := ["from", "to", "amount"], body := [
+    .setField (.var "from") "balance" (.bin .sub (.field (.var "from") "balance") (.var "amount")),
+    .setField (.var "to") "balance" (.bin .add (.field (.var "to") "balance") (.var "amount"))] }
+
+def src_shared_moveMoneyStale : Fn := { params := ["from", "to", "amount"], body := [
+    .set "a" (.field (.var "from") "balance"),
+    .set "b" (.field (.var "to") "balance"),
+    .setField (.var "from") "balance" (.bin .sub (.var "a") (.var "amount")),
+    .setField (.var "to") "balance" (.bin .add (.var "b") (.var "amount"))] }
+
 def src_prelude_jsMap : Fn := { params := ["xs", "f"], body := [
     .set "out" (.array []),
     .ret (.call "src_prelude_mapFrom" [.var "xs", .var "f", .lit (.num (F64.ofInt (0))), .length (.var "xs"), .var "out"])] }
@@ -145,7 +155,7 @@ def src_features_mapGrows_lambda0 : Fn := { params := ["__env", "x"], body := [
     .push (.field (.field (.var "__env") "__up") "xs") (.var "x"),
     .ret (.var "x")] }
 
-def src_features_mapShrinks_lambda1 : Fn := { params := ["__env", "x"], body := [
+def src_features_mapShrinks_lambda0 : Fn := { params := ["__env", "x"], body := [
     .pop (.field (.field (.var "__env") "__up") "xs"),
     .ret (.var "x")] }
 
@@ -158,36 +168,36 @@ def Base_g : Fn := { params := ["this"], body := [
 def Sub_f : Fn := { params := ["this"], body := [
     .ret (.lit (.num (F64.ofInt (10))))] }
 
-def src_features_counterTwice_lambda2 : Fn := { params := ["__env"], body := [
+def src_features_counterTwice_lambda0 : Fn := { params := ["__env"], body := [
     .setField (.field (.var "__env") "__up") "n" (.bin .add (.field (.field (.var "__env") "__up") "n") (.lit (.num (F64.ofInt (1))))),
     .ret (.field (.field (.var "__env") "__up") "n")] }
 
-def src_features_loopCaptures_lambda3 : Fn := { params := ["__env"], body := [
+def src_features_loopCaptures_lambda0 : Fn := { params := ["__env"], body := [
     .ret (.bin .mul (.field (.var "__env") "x") (.lit (.num (F64.ofInt (2)))))] }
 
-def src_features_scaled_lambda4 : Fn := { params := ["__env", "x"], body := [
+def src_features_scaled_lambda0 : Fn := { params := ["__env", "x"], body := [
     .ret (.bin .mul (.var "x") (.field (.field (.var "__env") "__up") "k"))] }
 
-def src_features_indexed_lambda5 : Fn := { params := ["__env", "x", "i"], body := [
+def src_features_indexed_lambda0 : Fn := { params := ["__env", "x", "i"], body := [
     .ret (.bin .add (.var "x") (.var "i"))] }
 
 def src_prelude_jsFilter : Fn := { params := ["xs", "f"], body := [
     .set "out" (.array []),
     .ret (.call "src_prelude_filterFrom" [.var "xs", .var "f", .lit (.num (F64.ofInt (0))), .length (.var "xs"), .var "out"])] }
 
-def src_features_positives_lambda6 : Fn := { params := ["__env", "x"], body := [
+def src_features_positives_lambda0 : Fn := { params := ["__env", "x"], body := [
     .ret (.bin .gt (.var "x") (.lit (.num (F64.ofInt (0)))))] }
 
 def src_prelude_jsReduce : Fn := { params := ["xs", "f", "init"], body := [
     .ret (.call "src_prelude_reduceFrom" [.var "xs", .var "f", .lit (.num (F64.ofInt (0))), .length (.var "xs"), .var "init"])] }
 
-def src_features_total_lambda7 : Fn := { params := ["__env", "acc", "x"], body := [
+def src_features_total_lambda0 : Fn := { params := ["__env", "acc", "x"], body := [
     .ret (.bin .add (.var "acc") (.var "x"))] }
 
 def src_prelude_jsSome : Fn := { params := ["xs", "f"], body := [
     .ret (.call "src_prelude_someFrom" [.var "xs", .var "f", .lit (.num (F64.ofInt (0))), .length (.var "xs")])] }
 
-def src_features_anyOver_lambda8 : Fn := { params := ["__env", "x"], body := [
+def src_features_anyOver_lambda0 : Fn := { params := ["__env", "x"], body := [
     .ret (.bin .gt (.var "x") (.field (.field (.var "__env") "__up") "limit"))] }
 
 def src_features_sumAll_loop0 : List Stmt := [.set "t" (.bin .add (.var "t") (.var "x"))]
@@ -284,22 +294,24 @@ def prog : Prog := fun name => match name with
   | "src_ledger_sumAmounts" => some src_ledger_sumAmounts
   | "src_phases_getActiveSpendingPhase" => some src_phases_getActiveSpendingPhase
   | "src_config_price_deriveAuctionPricing" => some src_config_price_deriveAuctionPricing
+  | "src_shared_moveMoney" => some src_shared_moveMoney
+  | "src_shared_moveMoneyStale" => some src_shared_moveMoneyStale
   | "src_prelude_jsMap" => some src_prelude_jsMap
   | "src_features_mapGrows_lambda0" => some src_features_mapGrows_lambda0
-  | "src_features_mapShrinks_lambda1" => some src_features_mapShrinks_lambda1
+  | "src_features_mapShrinks_lambda0" => some src_features_mapShrinks_lambda0
   | "Base_f" => some Base_f
   | "Base_g" => some Base_g
   | "Sub_f" => some Sub_f
-  | "src_features_counterTwice_lambda2" => some src_features_counterTwice_lambda2
-  | "src_features_loopCaptures_lambda3" => some src_features_loopCaptures_lambda3
-  | "src_features_scaled_lambda4" => some src_features_scaled_lambda4
-  | "src_features_indexed_lambda5" => some src_features_indexed_lambda5
+  | "src_features_counterTwice_lambda0" => some src_features_counterTwice_lambda0
+  | "src_features_loopCaptures_lambda0" => some src_features_loopCaptures_lambda0
+  | "src_features_scaled_lambda0" => some src_features_scaled_lambda0
+  | "src_features_indexed_lambda0" => some src_features_indexed_lambda0
   | "src_prelude_jsFilter" => some src_prelude_jsFilter
-  | "src_features_positives_lambda6" => some src_features_positives_lambda6
+  | "src_features_positives_lambda0" => some src_features_positives_lambda0
   | "src_prelude_jsReduce" => some src_prelude_jsReduce
-  | "src_features_total_lambda7" => some src_features_total_lambda7
+  | "src_features_total_lambda0" => some src_features_total_lambda0
   | "src_prelude_jsSome" => some src_prelude_jsSome
-  | "src_features_anyOver_lambda8" => some src_features_anyOver_lambda8
+  | "src_features_anyOver_lambda0" => some src_features_anyOver_lambda0
   | "src_features_sumAll" => some src_features_sumAll
   | "Shape_area" => some Shape_area
   | "Shape_describe" => some Shape_describe
