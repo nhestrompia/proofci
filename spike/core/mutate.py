@@ -4,6 +4,7 @@ keeps the same Core and the same proof, so a sound bridge must fail to check.
 usage: mutate.py <dir with F*.lean, F*.res, index.json> <out dir> [per kind]"""
 import json, os, re, sys, random
 src, out, per = sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 8
+only = len(sys.argv) > 4
 os.makedirs(out, exist_ok=True)
 index = [x for x in json.load(open(f"{src}/index.json")) if x["ok"]]
 good = []
@@ -30,6 +31,15 @@ KINDS = {
     "lower-upper": (r"\bJs\.toLower\b", "Js.toUpper"),
     "append-order": (r"\(js!\"([^\"]*)\"\) \+\+ ", r'(js!"\1 ") ++ '),
     "eq-ne": (r" = true then", " = false then"),
+    # Inside loops and callbacks
+    "loop-skip": (r"Result\.ok \(\.cont \((\w+), (\w+)\)\)", r"Result.ok (.cont (\1, \2)) >>= fun _ => Result.ok (.done (Sum.inr ()))"),
+    "loop-next": (r"\.cont \((\w+)\)\)$", r".cont (\1 ++ \1)))"),
+    "done-early": (r"Result\.ok \(\.cont ", "Result.ok (.done "),
+    "append-front": (r"(\w+) \+\+ \[(.+)\]\)$", r"[\2] ++ \1)"),
+    "filter-not": (r"Result\.ok \(decide \((.*)\)\)$", r"Result.ok (decide (¬(\1)))"),
+    
+    "some-every": (r"\bJs\.some_\b", "Js.every"),
+    "every-some": (r"\bJs\.every\b", "Js.some_"),
 }
 rng = random.Random(20261105)
 made = []
@@ -45,6 +55,8 @@ for kind, (pat, rep) in KINDS.items():
         head = text.find("def ")
         lines = text[:cut].split("\n")
         body = [i for i, l in enumerate(lines) if re.search(pat, l) and not l.startswith(("structure", "inductive"))]
+        if only and not any("Aeneas.Std.loop" in l or re.search(r"\bJs\.(map|filter|some_|every|find)\b", l) for l in lines):
+            continue
         if not body:
             continue
         i = rng.choice(body)
