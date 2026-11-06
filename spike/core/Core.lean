@@ -44,7 +44,7 @@ inductive Prim where
   | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
-  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt
+  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -201,6 +201,15 @@ def asNum : Val → Option Js.Num
     | _ => none
   | _ => none
 
+/-- How a value prints inside a template. Objects and functions aren't modelled here. -/
+def textOf : Val → Option (List Nat)
+  | .undef => some Js.undefinedStr
+  | .null => some Js.nullStr
+  | .bool b => some (Js.boolStr b)
+  | .big n => some (Js.intStr n)
+  | .str s => some s
+  | v => (asNum v).map Js.numStr
+
 def numVal (a : Js.Num) : Val := .num (F64.ofInt a.val)
 
 def okStr (r : Aeneas.Std.Result (List Nat)) : Option Val :=
@@ -248,6 +257,7 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
     | none => none
   | .charAt, h, [.str s, i] => (asNum i).map fun i => (.str (Js.charAt s i), h)
   | .numStr, h, [v] => (asNum v).map fun a => (.str (Js.numStr a), h)
+  | .toText, h, [v] => (textOf v).map fun t => (.str t, h)
   | .min, h, [a, b] => match asNum a, asNum b with
     | some a, some b => some (numVal (Js.min a b), h)
     | _, _ => none

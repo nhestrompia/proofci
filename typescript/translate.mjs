@@ -394,7 +394,8 @@ export class Translator {
     if (type.types.every(t => t.isStringLiteral())) {
       const tags = type.types.map(t => t.value);
       return { kind: "enum", tags,
-        text: [`inductive ${lean} where`, ...tags.map(t => `  | ${name(t)}`), "deriving DecidableEq, Repr"].join("\n") };
+        text: [`inductive ${lean} where`, ...tags.map(t => `  | ${name(t)}`), "deriving DecidableEq, Repr", "",
+          `def ${lean}.toJsStr : ${lean} → Js.Str`, ...tags.map(t => `  | .${name(t)} => ${leanString(t)}`)].join("\n") };
     }
     const variants = type.types.map(member => {
       if (!(member.flags & ts.TypeFlags.Object)) throw this.fail(declaration, "unions must be tagged records");
@@ -1818,9 +1819,7 @@ export class Scope {
 
   // A string literal, as code units when it can't be written in Lean source.
   text(value) {
-    if (/^[\x20-\x21\x23-\x5b\x5d-\x7e]*$/.test(value)) return `(js!"${value}")`;
-    const units = Array.from({ length: value.length }, (_, i) => value.charCodeAt(i));
-    return `([${units.join(", ")}] : Js.Str)`;
+    return leanString(value);
   }
 
   template(node, env, lines) {
@@ -1833,11 +1832,28 @@ export class Scope {
 
   // How a value prints inside a template.
   toText(node, env, lines) {
-    if (this.isString(node)) return this.expression(node, env, lines);
-    if (this.isNumber(node)) return `(Js.numStr ${this.expression(node, env, lines)})`;
-    if (this.isBigInt(node)) return `(Js.intStr ${this.expression(node, env, lines)})`;
-    if (this.isBoolean(node)) return `(Js.boolStr ${this.expression(node, env, lines)})`;
-    throw this.t.fail(node, "only strings, numbers and booleans can go in a template for now");
+    const type = this.typeOf(node);
+    const missing = this.nothing(type);
+    if (missing === "both") throw this.t.fail(node, "a value that may be `null` or `undefined` can't go in a template, because it isn't known which word prints");
+    const show = this.printer(this.checker.getNonNullableType(this.storedType(node)), type, node);
+    const value = this.expression(node, env, lines);
+    if (missing) return `(Js.show${missing === "null" ? "Null" : "Undef"} ${show ?? "id"} ${value})`;
+    return show ? `(${show} ${value})` : value;
+  }
+
+  // The Lean function that prints a value of `stored`, or nothing for a string.
+  // `type` is what the value narrowed to, which can be a union of literals.
+  printer(stored, type, node) {
+    const lean = this.leanOf(stored, node);
+    if (lean?.startsWith("_root_.") && this.t.shape(stored)?.kind === "enum") return `${lean}.toJsStr`;
+    const plain = this.leanOf(this.checker.getNonNullableType(type), node);
+    switch (plain) {
+      case "Js.Str": return undefined;
+      case "Js.Num": return "Js.numStr";
+      case "Int": return "Js.intStr";
+      case "Bool": return "Js.boolStr";
+      default: throw this.t.fail(node, "only strings, numbers, booleans and their optional forms can go in a template for now");
+    }
   }
 
   identifier(node, env) {
@@ -2279,6 +2295,12 @@ export class Scope {
     }
     throw this.t.fail(node, "`===` is only supported on numbers, booleans and string-literal unions for now");
   }
+}
+
+function leanString(value) {
+  if (/^[\x20-\x21\x23-\x5b\x5d-\x7e]*$/.test(value)) return `(js!"${value}")`;
+  const units = Array.from({ length: value.length }, (_, i) => value.charCodeAt(i));
+  return `([${units.join(", ")}] : Js.Str)`;
 }
 
 export function findDeclaration(translator, target) {

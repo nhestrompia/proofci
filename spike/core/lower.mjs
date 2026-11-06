@@ -217,9 +217,9 @@ export function lower(root, targets, { paths } = {}) {
       if (ts.isTemplateExpression(e)) {
         const part = x => {
           const t = checker.getTypeAtLocation(x);
-          if (t.flags & ts.TypeFlags.StringLike) return E(x);
+          if (t.flags & ts.TypeFlags.String) return E(x);
           if (t.flags & ts.TypeFlags.NumberLike) return `.prim .numStr [${E(x)}]`;
-          throw new Error("template part that is neither a string nor a number");
+          return `.prim .toText [${E(x)}]`;
         };
         const lit = t => `.lit (.str ${UNITS(t)})`;
         // Left-nested, as in the typed view.

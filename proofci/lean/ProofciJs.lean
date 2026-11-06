@@ -410,6 +410,19 @@ def intStr (v : Int) : Str := (toString v).toList.map Char.toNat
 def numStr (x : Num) : Str := intStr x.val
 def boolStr (b : Bool) : Str := if b then js!"true" else js!"false"
 
+def undefinedStr : Str := js!"undefined"
+def nullStr : Str := js!"null"
+
+/-- `${x}` where `x` may be `undefined`. -/
+def showUndef {α} (f : α → Str) : Option α → Str
+  | some a => f a
+  | none => undefinedStr
+
+/-- `${x}` where `x` may be `null`. -/
+def showNull {α} (f : α → Str) : Option α → Str
+  | some a => f a
+  | none => nullStr
+
 /-! ## Maps and sets
 
 Both keep insertion order, like JavaScript's. Keys are compared by value, which

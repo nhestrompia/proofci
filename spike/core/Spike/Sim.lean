@@ -1013,6 +1013,39 @@ theorem SimE.numStr {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numStr [
   refine sim_prim (args1 hx) ?_
   rintro _ _ ⟨v, rfl, ri⟩
   exact ⟨_, _, by simp [primV, num_arg ri], List.prefix_refl _, rfl⟩
+/-- Types whose values print the same in the typed view and in Core. -/
+class Shown (α : Type) [TyRep α] where
+  text : α → List Nat
+  shows {h : Heap} {a : α} {v : Val} : rep h a v → textOf v = some (text a)
+instance : Shown Js.Num := ⟨Js.numStr, fun {_ _ v} r => by
+  have := num_arg r; obtain ⟨x, rfl, _⟩ := r; show (asNum (.num x)).map Js.numStr = _; rw [this]; rfl⟩
+instance : Shown Int := ⟨Js.intStr, by rintro _ _ _ rfl; rfl⟩
+instance : Shown Bool := ⟨Js.boolStr, by rintro _ _ _ rfl; rfl⟩
+instance : Shown (List Nat) := ⟨id, by rintro _ _ _ rfl; rfl⟩
+theorem sim_text {p s x α} {_ : TyRep α} {a : α} {r : List Nat} (hx : SimE p s x a)
+    (hf : ∀ h v, rep h a v → textOf v = some r) : SimE p s (.prim .toText [x]) r := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  exact ⟨.str r, h, by simp [primV, hf h v ri], List.prefix_refl _, rfl⟩
+theorem SimE.toText {α} {_ : TyRep α} [Shown α] {a : α} (hx : SimE p s x a) :
+    SimE p s (.prim .toText [x]) (Shown.text a) :=
+  sim_text hx fun _ _ r => Shown.shows r
+theorem SimE.toText_str {a : List Nat} (hx : SimE p s x a) : SimE p s (.prim .toText [x]) a := SimE.toText hx
+theorem SimE.toText_bool {a : Bool} (hx : SimE p s x a) : SimE p s (.prim .toText [x]) (Js.boolStr a) := SimE.toText hx
+theorem SimE.toText_big {a : Int} (hx : SimE p s x a) : SimE p s (.prim .toText [x]) (Js.intStr a) := SimE.toText hx
+theorem SimE.toText_num {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .toText [x]) (Js.numStr a) := SimE.toText hx
+theorem SimE.show_undef {α} {_ : TyRep α} [Shown α] {f : α → List Nat} {a : Opt .undef α} (hx : SimE p s x a)
+    (hf : ∀ y, f y = Shown.text y) : SimE p s (.prim .toText [x]) (Js.showUndef f a) := by
+  refine sim_text hx fun h v r => ?_
+  cases a with
+  | none => cases (r : nothingOk .undef v); rfl
+  | some y => simpa [Js.showUndef, hf] using Shown.shows (α := α) (a := y) r
+theorem SimE.show_null {α} {_ : TyRep α} [Shown α] {f : α → List Nat} {a : Opt .null α} (hx : SimE p s x a)
+    (hf : ∀ y, f y = Shown.text y) : SimE p s (.prim .toText [x]) (Js.showNull f a) := by
+  refine sim_text hx fun h v r => ?_
+  cases a with
+  | none => cases (r : nothingOk .null v); rfl
+  | some y => simpa [Js.showNull, hf] using Shown.shows (α := α) (a := y) r
 theorem SimE.min {a b : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) : SimE p s (.prim .min [x, y]) (Js.min a b) := by
   refine sim_prim (args2 hx hy) ?_
   rintro _ _ ⟨v, w, rfl, ri, rj⟩

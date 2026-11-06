@@ -560,6 +560,20 @@ test("a literal compares with an optional value through some", () => {
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
 
+test("a template prints optional values, enums and unions of literals", () => {
+  const kind = `export type K = "x" | "y";\n`;
+  emits("export function f(a?: string) { return `<${a}>`; }", "Js.showUndef id a");
+  emits("export function f(a: string | null) { return `<${a}>`; }", "Js.showNull id a");
+  emits("export function f(a?: number) { return `<${a}>`; }", "Js.showUndef Js.numStr a");
+  emits("export function f(a?: boolean) { return `<${a}>`; }", "Js.showUndef Js.boolStr a");
+  emits(`${kind}export function f(a: K) { return \`<\${a}>\`; }`, ".toJsStr a");
+  emits(`${kind}export function f(a?: K) { return \`<\${a}>\`; }`, "Js.showUndef", ".toJsStr a");
+  emits(`${kind}export function f(a: K) { return a === "x" ? \`\${a}\` : "n"; }`, ".toJsStr a");
+  emits("export function f(n: number) { return `${n === 1 ? '' : 's'}`; }", "if n.val = 1");
+  rejects("export function f(a: string | null | undefined) { return `<${a}>`; }", /isn't known which word prints/);
+  rejects("export function f(a: { x: number }) { return `<${a}>`; }", /can go in a template/);
+});
+
 test("string search from the end and character codes", () => {
   emits(`export function f(s: string) { return s.lastIndexOf("/"); }`, "Js.strLastIndexOf s");
   emits(`export function f(s: string, i: number) { return s.charCodeAt(i); }`, "Js.charCodeAt s i");
