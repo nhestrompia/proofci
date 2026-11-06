@@ -33,11 +33,37 @@ export const category = message => {
   return text.replace(/`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 80);
 };
 
+const OUTSIDE = /this call isn't to a function|has no source in the package|outside the translated package/;
+
+function publishedTypes(translator, node) {
+  const signature = translator.checker.getResolvedSignature(node);
+  if (!signature) return false;
+  const types = [...signature.parameters.map(p => translator.checker.getTypeOfSymbolAtLocation(p, node)), signature.getReturnType()];
+  try {
+    for (const type of types) translator.type(type, node);
+    return true;
+  } catch (error) {
+    if (error instanceof Unsupported) return false;
+    throw error;
+  }
+}
+
+// What a function leaves to inference. Callbacks written in place take their
+// types from the call, so only named functions are held to this.
+export function untyped(declaration, translator) {
+  const fn = translator.bodyOf(declaration);
+  if (!fn) return [];
+  const missing = fn.parameters.filter(p => !p.type && !declaration.type).map(p => p.name.getText());
+  if (!fn.type && !declaration.type) missing.push("return");
+  return missing;
+}
+
 // Each wrapper records into the function being translated.
 export function collecting(translator) {
   const blockers = new Map(); // declaration -> Set of reasons
   const calls = new Map();    // declaration -> Set of callees
   const stack = [];
+  let probing = false;
   const note = reason => {
     const owner = stack.at(-1);
     if (!owner) return;
@@ -50,11 +76,22 @@ export function collecting(translator) {
       try {
         return original.apply(this, args);
       } catch (error) {
+        if (probing) throw error; // Asking about a type isn't a finding either.
         // A placeholder can upset later code, which isn't a finding of its own.
         note(error instanceof Unsupported ? category(error.message) : "(follow-on)");
         return fallback.call(this, args);
       }
     };
+  };
+
+  // An outside call is only usable through its published types if they translate.
+  const fail = translator.fail;
+  translator.fail = function (node, message) {
+    if (!OUTSIDE.test(message) || !ts.isCallExpression(node)) return fail.call(this, node, message);
+    probing = true;
+    const usable = publishedTypes(this, node);
+    probing = false;
+    return fail.call(this, node, `${message} (${usable ? "types translate" : "types don't translate"})`);
   };
 
   const self = translator;
@@ -138,16 +175,19 @@ function wrapScope() {
 }
 wrapScope();
 
-// Everything a function reaches through its calls.
-export function reached(declaration, blockers, calls) {
+// Every function a function reaches through its calls, itself included.
+function closure(declaration, calls) {
   const seen = new Set([declaration]);
-  const found = new Set();
   const pending = [declaration];
   while (pending.length) {
-    const next = pending.pop();
-    for (const reason of blockers.get(next) ?? []) found.add(reason);
-    for (const callee of calls.get(next) ?? []) if (!seen.has(callee)) { seen.add(callee); pending.push(callee); }
+    for (const callee of calls.get(pending.pop()) ?? []) if (!seen.has(callee)) { seen.add(callee); pending.push(callee); }
   }
+  return [...seen];
+}
+
+// Everything that stops a function, through its calls.
+export function reached(declaration, blockers, calls) {
+  const found = new Set(closure(declaration, calls).flatMap(next => [...(blockers.get(next) ?? [])]));
   found.delete("(follow-on)");
   return [...found].sort();
 }
@@ -161,7 +201,9 @@ export function measure(root, targets, paths = {}) {
       const declaration = findDeclaration(translator, target);
       translator.current = [];
       translator.declareFunction(declaration);
-      rows.push({ target, blockers: reached(declaration, active.blockers, active.calls) });
+      const reach = closure(declaration, active.calls);
+      rows.push({ target, blockers: reached(declaration, active.blockers, active.calls), reach: reach.length,
+        untyped: reach.filter(d => untyped(d, translator).length).length, self: untyped(declaration, translator) });
     } catch (error) {
       rows.push({ target, blockers: [error instanceof Unsupported ? category(error.message) : "(crash)"] });
     }

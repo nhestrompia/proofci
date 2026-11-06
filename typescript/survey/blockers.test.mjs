@@ -61,3 +61,29 @@ test("a type that fails blocks every function that uses it, not only the first",
   assert.ok(f.includes("type unknown"), f.join());
   assert.deepEqual(g, f);
 });
+
+test("a function is counted as untyped through what it calls", () => {
+  const rows = root => Object.fromEntries(measure(root, ["m.ts::f", "m.ts::g"]).map(r => [r.target.split("::")[1], r]));
+  const root = join(dir, `p${count++}`);
+  mkdirSync(root);
+  writeFileSync(join(root, "m.ts"), `function h(a: number) { return a; }
+    export function f(a: number): number { return h(a); }
+    export const g = (a: number): number => [a].map(x => x + 1).length;`);
+  const { f, g } = rows(root);
+  assert.equal(f.untyped, 1);
+  assert.deepEqual(f.self, []);
+  assert.equal(g.untyped, 0);
+});
+
+test("an outside call says whether its published types translate", () => {
+  const root = join(dir, `p${count++}`);
+  mkdirSync(join(root, "node_modules/lib"), { recursive: true });
+  writeFileSync(join(root, "node_modules/lib/index.d.ts"), "export function good(a: string): string;\nexport function bad(a: string): Promise<string>;\n");
+  writeFileSync(join(root, "node_modules/lib/package.json"), '{"name":"lib","types":"index.d.ts"}');
+  writeFileSync(join(root, "m.ts"), `import { good, bad } from "lib";
+    export function f(a: string): string { return good(a); }
+    export function g(a: string) { return bad(a); }`);
+  const [f, g] = measure(root, ["m.ts::f", "m.ts::g"]);
+  assert.ok(f.blockers.some(b => /types translate/.test(b)), f.blockers.join());
+  assert.ok(g.blockers.some(b => /types don't translate/.test(b)), g.blockers.join());
+});
