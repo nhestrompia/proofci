@@ -560,6 +560,12 @@ test("a literal compares with an optional value through some", () => {
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
 
+test("string search from the end and character codes", () => {
+  emits(`export function f(s: string) { return s.lastIndexOf("/"); }`, "Js.strLastIndexOf s");
+  emits(`export function f(s: string, i: number) { return s.charCodeAt(i); }`, "Js.charCodeAt s i");
+  rejects(`export function f(s: string) { return s.lastIndexOf("/", 2); }`, /with these arguments/);
+});
+
 test("a comparison keeps the enumeration after an earlier test narrows it", () => {
   const kind = `export type K = "x" | "y" | "z";\n`;
   emits(`${kind}export function f(a: K) { return a === "x" || a === "y"; }`, "a = .x", "a = .y");

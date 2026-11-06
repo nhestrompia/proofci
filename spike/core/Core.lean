@@ -44,7 +44,7 @@ inductive Prim where
   | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
-  | replace | replaceAll | substring | indexOfStr
+  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -238,6 +238,14 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .strIndexOf, h, [.str s, .str t] => match (Js.strIndexOf s t).match with
     | .ok n => some (numVal n, h)
     | _ => none
+  | .strLastIndexOf, h, [.str s, .str t] => match (Js.strLastIndexOf s t).match with
+    | .ok n => some (numVal n, h)
+    | _ => none
+  | .charCodeAt, h, [.str s, i] => match asNum i with
+    | some i => match (Js.charCodeAt s i).match with
+      | .ok n => some (numVal n, h)
+      | _ => none
+    | none => none
   | .charAt, h, [.str s, i] => (asNum i).map fun i => (.str (Js.charAt s i), h)
   | .numStr, h, [v] => (asNum v).map fun a => (.str (Js.numStr a), h)
   | .min, h, [a, b] => match asNum a, asNum b with

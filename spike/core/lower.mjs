@@ -18,7 +18,7 @@ const UNITS = t => `[${[...Array(t.length).keys()].map(i => t.charCodeAt(i)).joi
 const STRING_METHODS = {
   "startsWith/1": "startsWith", "endsWith/1": "endsWith", "includes/1": "strIncludes", "trim/0": "trim", "trimStart/0": "trimStart",
   "trimEnd/0": "trimEnd", "toLowerCase/0": "toLower", "toUpperCase/0": "toUpper", "slice/1": "sliceFrom", "slice/2": "slice",
-  "indexOf/1": "strIndexOf", "charAt/1": "charAt", "split/1": "split",
+  "indexOf/1": "strIndexOf", "lastIndexOf/1": "strLastIndexOf", "charAt/1": "charAt", "charCodeAt/1": "charCodeAt", "split/1": "split",
   "replace/2": "replace", "replaceAll/2": "replaceAll", "substring/2": "substring",
 };
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };

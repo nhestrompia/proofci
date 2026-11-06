@@ -2056,6 +2056,8 @@ export class Scope {
       case "endsWith": exactly(1); return `(Js.endsWith ${value} ${text(0)})`;
       case "includes": exactly(1); return `(Js.strIncludes ${value} ${text(0)})`;
       case "indexOf": exactly(1); return this.bind(`Js.strIndexOf ${value} ${text(0)}`, lines);
+      case "lastIndexOf": exactly(1); return this.bind(`Js.strLastIndexOf ${value} ${text(0)}`, lines);
+      case "charCodeAt": exactly(1); return this.bind(`Js.charCodeAt ${value} ${count(0)}`, lines);
       case "trim": none(); return `(Js.trim ${value})`;
       case "trimStart": none(); return `(Js.trimStart ${value})`;
       case "trimEnd": none(); return `(Js.trimEnd ${value})`;

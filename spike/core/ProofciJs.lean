@@ -325,6 +325,28 @@ def strIndexOf (s sub : Str) : Result Num :=
   | some i => mk i
   | none => mk (-1)
 
+/-- The last position of `sub` in `s`: a match in the tail is further along than one here. -/
+def rfind? (s sub : Str) : Option Nat :=
+  match s with
+  | [] => if sub.isEmpty then some 0 else none
+  | c :: rest =>
+    match rfind? rest sub with
+    | some i => some (i + 1)
+    | none => if sub.isPrefixOf (c :: rest) then some 0 else none
+
+/-- `s.lastIndexOf(sub)` -/
+def strLastIndexOf (s sub : Str) : Result Num :=
+  match rfind? s sub with
+  | some i => mk i
+  | none => mk (-1)
+
+/-- `s.charCodeAt(i)`. Past the end JavaScript gives `NaN`, which isn't a `Num`, so the
+    model stops there. -/
+def charCodeAt (s : Str) (i : Num) : Result Num :=
+  match at_ s i with
+  | some c => mk c
+  | none => fail .undef
+
 /-- `s.substring(a, b)`: bounds are clamped and swapped if out of order. -/
 def substring (s : Str) (a b : Num) : Str :=
   let clamp (i : Num) : Nat := Min.min i.val.toNat s.length

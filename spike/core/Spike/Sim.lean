@@ -994,6 +994,16 @@ theorem SimE.strIndexOf {a b : List Nat} {r : Js.Num} (hx : SimE p s x a) (hy : 
   refine sim_prim (args2 hx hy) ?_
   rintro _ _ ⟨_, _, rfl, rfl, rfl⟩
   exact ⟨numVal r, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.strLastIndexOf {a b : List Nat} {r : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.strLastIndexOf a b = ok r) :
+    SimE p s (.prim .strLastIndexOf [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, rfl, rfl⟩
+  exact ⟨numVal r, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.charCodeAt {a : List Nat} {i r : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) (h : Js.charCodeAt a i = ok r) :
+    SimE p s (.prim .charCodeAt [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, v, rfl, rfl, ri⟩
+  exact ⟨numVal r, _, by simp [primV, num_arg ri, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
 theorem SimE.charAt {a : List Nat} {i : Js.Num} (hx : SimE p s x a) (hy : SimE p s y i) :
     SimE p s (.prim .charAt [x, y]) (Js.charAt a i) := by
   refine sim_prim (args2 hx hy) ?_
