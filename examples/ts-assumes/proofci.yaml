@@ -1,0 +1,18 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+# Outside calls a proof may rely on. Each must have this exact signature, and must
+# give the same result for the same arguments. ProofCI doesn't check that code, and
+# the report lists every entry a proof used.
+assumes:
+  - call: slug-maker::slug
+    signature: "(title: string): string"
+
+targets:
+  - id: label
+    function: src/label.ts::label
+    guarantees:
+      - id: tagged
+        theorem: label_tagged

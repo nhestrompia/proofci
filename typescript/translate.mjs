@@ -106,16 +106,17 @@ const unwrap = node => {
 };
 
 export class Translator {
-  constructor(root, targets, paths = {}, repository = root) {
+  constructor(root, targets, paths = {}, repository = root, assumes = []) {
     this.root = realpathSync(root);
     this.repository = realpathSync(repository);
     this.files = [...new Set(targets.map(t => join(this.root, t.split("::")[0])))];
     for (const file of this.files) {
       if (!existsSync(file)) throw new Unsupported(`${relative(this.root, file)} does not exist`);
     }
-    this.program = ts.createProgram(this.files, { ...OPTIONS, paths });
+    const build = options => this.assumedProgram(options, assumes);
+    this.program = build({ ...OPTIONS, paths });
     this.checker = this.program.getTypeChecker();
-    this.lenient = ts.createProgram(this.files, { ...OPTIONS, ...LENIENT, paths });
+    this.lenient = build({ ...OPTIONS, ...LENIENT, paths });
     this.anonymous = new Map(); // key -> shape of an inline object type
     this.types = new Map();      // declaration, or instantiation key -> { lean, text }
     this.typeOwners = new Map(); // Lean name -> the declaration that took it
@@ -124,6 +125,9 @@ export class Translator {
     this.constants = new Map();
     this.fileChecks = new Map();
     this.order = [];
+    this.assumes = new Map(assumes.map(a => [a.call, a.signature])); // `module::name` -> its listed signature
+    this.assumed = new Map();   // `module::name` -> its Lean name
+    this.assumedBy = new Map(); // declaration -> what it relies on, through its calls
     this.current = [];
   }
 
@@ -507,6 +511,27 @@ export class Translator {
     return undefined;
   }
 
+  // The action doesn't install dependencies, so a listed call's module may be
+  // missing. Its declaration then comes from the policy, which a pull request
+  // can't change. An installed module keeps its own types, and they must match.
+  assumedProgram(options, assumes) {
+    const missing = new Map();
+    for (const { call, signature } of assumes) {
+      const [module, fn] = call.split("::");
+      if (ts.resolveModuleName(module, this.files[0], options, ts.sys).resolvedModule) continue;
+      missing.set(module, [...missing.get(module) ?? [], `  export function ${fn}${signature};`]);
+    }
+    if (!missing.size) return ts.createProgram(this.files, options);
+    const path = join(this.root, "__proofci_assumed__.d.ts");
+    const text = [...missing].map(([module, lines]) => `declare module ${JSON.stringify(module)} {\n${lines.join("\n")}\n}`).join("\n");
+    const host = ts.createCompilerHost(options);
+    const { getSourceFile, fileExists, readFile } = host;
+    host.getSourceFile = (name, ...rest) => (name === path ? ts.createSourceFile(name, text, ts.ScriptTarget.Latest) : getSourceFile.call(host, name, ...rest));
+    host.fileExists = name => name === path || fileExists.call(host, name);
+    host.readFile = name => (name === path ? text : readFile.call(host, name));
+    return ts.createProgram([...this.files, path], options, host);
+  }
+
   // What a function leaves to inference, as the types it should write. A written
   // type is the contract a reviewer sees, and inference would change it silently.
   // Callbacks written in place take their types from the call, so aren't checked.
@@ -565,6 +590,30 @@ export class Translator {
     entry.pending = false;
     this.order.push(lines.join("\n"));
     return lean;
+  }
+
+  // An outside call the policy lists. Opaque, so a proof holds for any function of
+  // this type, and it can only say more through a hypothesis in the contract.
+  declareAssumed(key, signature, node) {
+    const known = this.assumed.get(key);
+    if (known) return known;
+    const [module, fn] = key.split("::");
+    const parts = signature.getParameters().map(p => this.type(this.checker.getTypeOfSymbolAtLocation(p, node), node));
+    const result = this.type(signature.getReturnType(), node);
+    if (result === "Unit") throw this.fail(node, `\`${key}\` returns nothing, so it can only be called for its effects`);
+    const lean = `Proofci.Assumed.${module.replace(/[^A-Za-z0-9]+/g, "_")}.${name(fn)}`;
+    const body = `${parts.map(() => "fun _ => ").join("")}Result.fail .undef`;
+    this.order.push(`opaque ${lean} : ${[...parts, `Result ${result}`].join(" → ")} := ${body}`);
+    this.assumed.set(key, lean);
+    return lean;
+  }
+
+  // Records what the function being translated relies on.
+  noteAssumed(keys) {
+    const owner = this.current.at(-1);
+    if (!owner) return;
+    if (!this.assumedBy.has(owner)) this.assumedBy.set(owner, new Set());
+    for (const key of keys) this.assumedBy.get(owner).add(key);
   }
 
   // A failed target stays as a bare declaration, so that the contract still
@@ -2023,12 +2072,15 @@ export class Scope {
       return this.toText(node.arguments[0], env, lines);
     }
     const signature = this.checker.getResolvedSignature(node);
+    const outside = this.outsideName(callee);
+    if (outside && this.t.assumes.has(outside)) return this.assumedCall(outside, signature, node, env, lines);
     let declaration = signature?.declaration;
     if (declaration && !ts.isFunctionDeclaration(declaration)) declaration = declaration.parent;
     declaration = this.t.resolve(declaration);
     if (!declaration) throw this.t.fail(node, "this call isn't to a function the translator can see");
     if (declaration.getSourceFile().isDeclarationFile) throw this.t.fail(node, "this function has no source in the package");
     const lean = this.t.declareFunction(declaration);
+    this.t.noteAssumed(this.t.assumedBy.get(declaration) ?? []);
     const parameters = signature.getParameters();
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
     const args = parameters.map((parameter, index) => {
@@ -2130,6 +2182,41 @@ export class Scope {
     if (kind === "Map" && method === "has") return `(Js.dictHas ${value} ${key()})`;
     if (kind === "Set" && method === "has") return `(Js.setHas ${value} ${key()})`;
     throw this.t.fail(node, `\`.${method}\` is not supported here yet`);
+  }
+
+  // `kebabCase` imported from "lodash" is `lodash::kebabCase`. Relative imports are this code.
+  outsideName(callee) {
+    if (!ts.isIdentifier(callee)) return undefined;
+    const site = this.checker.getSymbolAtLocation(callee)?.declarations?.[0];
+    if (!site || !ts.isImportSpecifier(site)) return undefined;
+    const module = site.parent.parent.parent.moduleSpecifier.text;
+    return module.startsWith(".") ? undefined : `${module}::${(site.propertyName ?? site.name).text}`;
+  }
+
+  assumedCall(key, signature, node, env, lines) {
+    const site = signature.declaration;
+    if (signature.typeParameters?.length || signature.target || site?.typeParameters?.length) throw this.t.fail(node, `\`${key}\` is generic, so it can't be assumed yet`);
+    const listed = this.t.assumes.get(key);
+    const found = this.checker.signatureToString(signature);
+    const plain = text => text.replace(/\s+/g, " ").trim();
+    // Listing the signature keeps it under the protected policy: the type a proof
+    // relies on can't change through the code or through a package upgrade.
+    if (plain(found) !== plain(listed)) throw this.t.fail(node, `\`${key}\` has the signature \`${found}\`, but \`assumes\` lists \`${listed}\``);
+    if (site?.parameters.some(p => p.dotDotDotToken)) throw this.t.fail(node, `\`${key}\` takes a rest parameter, so it can't be assumed yet`);
+    const parameters = signature.getParameters();
+    // Assuming a call means the same arguments give the same result, which a
+    // function of nothing could only satisfy by being a constant.
+    if (!parameters.length) throw this.t.fail(node, `\`${key}\` takes no arguments, so it can't be a function of its inputs`);
+    if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
+    const lean = this.t.declareAssumed(key, signature, node);
+    const args = parameters.map((parameter, index) => {
+      const argument = node.arguments[index];
+      if (argument) return this.convert(argument, this.checker.getTypeOfSymbolAtLocation(parameter, node), env, lines);
+      if (!site.parameters[index].questionToken) throw this.t.fail(node, "a missing argument");
+      return "none";
+    });
+    this.t.noteAssumed([key]);
+    return this.bind(`_root_.${lean} ${args.join(" ")}`, lines);
   }
 
   bindCallback(method, callback, rest, lines) {
@@ -2350,30 +2437,34 @@ export function findDeclaration(translator, target) {
   throw new Unsupported(`\`${functionName}\` is not a top-level function in ${path}`);
 }
 
-export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes }) {
+export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes, assumes }) {
   const resolved = policyRoot ? protectedPaths(policyRoot, repository) : paths;
-  const translator = new Translator(root, targets, resolved, repository);
+  const translator = new Translator(root, targets, resolved, repository, assumes);
   translator.requireTypes = Boolean(requireTypes);
   const failures = {};
   const names = {};
   const signatures = {};
+  const assumed = {};
   let fatal = null;
   for (const target of targets) {
     const snapshot = {
       order: translator.order.length, types: new Map(translator.types),
       functions: new Map(translator.functions), constants: new Map(translator.constants),
+      assumed: new Map(translator.assumed),
     };
     let declaration;
     try {
       declaration = findDeclaration(translator, target);
       names[target] = translator.declareFunction(declaration);
       signatures[target] = translator.signature(declaration);
+      assumed[target] = [...translator.assumedBy.get(declaration) ?? []].sort();
     } catch (error) {
       if (!(error instanceof Unsupported)) throw error;
       failures[target] = error.message;
       translator.order.length = snapshot.order;
       translator.types = snapshot.types;
       translator.functions = snapshot.functions;
+      translator.assumed = snapshot.assumed;
       translator.constants = snapshot.constants;
       try {
         if (declaration) names[target] = translator.stub(declaration);
@@ -2387,7 +2478,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   const reached = [...translator.fileChecks.keys()];
   const packages = Object.fromEntries([...translator.packages.values()].filter(Boolean).map(p => [p.name, p.version]));
   const local = file => relative(translator.root, realpathSync(file));
-  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, packages,
+  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, packages,
     files: reached.map(f => local(f.fileName)),
     imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
 }

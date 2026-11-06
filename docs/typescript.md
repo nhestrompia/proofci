@@ -64,6 +64,48 @@ unproven, and is never judged wrongly.
 Each check also runs the translated functions in Node on generated inputs. See the
 [security model](../SECURITY.md#typescript).
 
+## Written types
+
+Every function a guarantee reaches must write out its parameter and return types.
+Inference can change a function's contract without showing up in a diff. The check
+rejects a function that leaves them out and says what to add. Callbacks written in
+place are exempt, because they take their types from the call.
+
+## Outside calls
+
+A proof can rely on a call to code it can't see, if the policy lists it:
+
+```yaml
+assumes:
+  - call: slug-maker::slug
+    signature: "(title: string): string"
+```
+
+The call must be a named import, and it must have exactly this signature. Generic
+functions, rest parameters and functions without arguments can't be listed. If the
+package isn't installed, the signature in the manifest declares it. If it is
+installed, its published types must match, so an upgrade that changes the type stops
+the check.
+
+An assumption makes two claims: the function has this type, and it gives the same
+result for the same arguments. So don't list a function that reads the clock, the
+network or random numbers. The translated model is opaque, so a proof holds for any
+function of that type. To rely on what it does, state that as a hypothesis in the
+contract:
+
+```lean
+theorem label_tagged (title : Js.Str)
+    (slug_nonempty : ∃ s, Proofci.Assumed.slug_maker.slug title = ok s ∧ s ≠ []) :
+    label title ⦃ r => r.head? = some 35 ∧ 2 ≤ r.length ⦄ := by sorry
+```
+
+The manifest and the contract are both protected, so a pull request can't add or
+change an assumption for itself. The report lists every assumption a verified
+guarantee rests on. See [`examples/ts-assumes`](../examples/ts-assumes).
+
+Functions that rely on an assumed call aren't compared with Node, because the model
+has no body to run.
+
 ## Survey
 
 ### How it works

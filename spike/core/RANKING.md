@@ -67,6 +67,25 @@ Regular expressions sit inside the smaller gaps but aren't small: about 70 of th
 row's functions pass one to `replace`, `replaceAll` or `split`, and the JavaScript
 regex language has no model yet. It needs its own plan.
 
+## Written types and assumptions
+
+The rule that functions must write out their types costs little: 74% of pure functions
+already do, through everything they reach. Of the 420 accepted, 116 would need an edit,
+and 104 of those need just one function annotated.
+
+What the assumptions unlock is smaller than the rows above suggest, because a function
+usually has other blockers too:
+
+| Allowed | Clean | With the smaller gaps |
+|---|---:|---:|
+| Today | 420 (8.6%) | 670 (13.8%) |
+| Outside calls whose published types translate | 493 (10.1%) | 810 (16.6%) |
+| And casts, if they were listed | 504 (10.3%) | 833 (17.1%) |
+| And `any` and `unknown` replaced with real types | 514 (10.6%) | 897 (18.4%) |
+
+Only outside calls can be listed so far. Published types translate for 975 of the outside
+calls' blockers and not for 1,476, mostly because of `Promise` and library classes.
+
 ## Limits
 
 - These count what the translator would accept, not what bridges. Functions the rules

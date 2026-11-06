@@ -45,7 +45,7 @@ def module_name(root: Path):
     return name or "package"
 
 
-def extract(checkout: Path, package_rel: str, work: Path, functions, policy_checkout=None) -> Extraction:
+def extract(checkout: Path, package_rel: str, work: Path, functions, policy_checkout=None, assumes=()) -> Extraction:
     root = checkout / package_rel
     crate_name = module_name(root)
     module = lean_module_name(crate_name)
@@ -54,7 +54,8 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     config = out / "config.json"
     policy = Path(policy_checkout or checkout)
     config.write_text(json.dumps({"root": str(root), "module": module, "out": str(out), "targets": list(functions),
-                                  "repository": str(checkout), "policyRoot": str(policy), "requireTypes": True}))
+                                  "repository": str(checkout), "policyRoot": str(policy), "requireTypes": True,
+                                  "assumes": [{"call": call, "signature": signature} for call, signature in assumes]}))
     program = translator()
     result = sandbox.run(["node", str(program), str(config)], readable=[checkout, policy, program.parent],
                          writable=[out], cwd=out, timeout=300)
@@ -66,6 +67,8 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     lean_file = out / f"{module}.lean"
     extraction = Extraction(module, lean_file, crate_name, result.output, [], outcome["names"], outcome["failures"])
     extraction.signatures = outcome["signatures"]
+    extraction.assumptions = {call: signature for call, signature in assumes}
+    extraction.assumed = outcome["assumed"]
     extraction.files = outcome["files"]
     extraction.imports = outcome["imports"]
     return extraction
@@ -79,19 +82,24 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     this finds translator bugs and defends against nothing else."""
     out = work / "differential"
     out.mkdir()
+    # The model of an assumed call has no body to run, so nothing can be compared.
+    signatures = {t: s for t, s in extraction.signatures.items() if not extraction.assumed.get(t)}
+    skipped = [f"not compared with Node: {t} relies on an assumed outside call" for t in extraction.signatures if t not in signatures]
+    if not signatures:
+        return [], skipped
     if cases is None:  # each case takes about 8 ms to replay
-        cases = max(25, min(200, MAX_CASES // max(len(extraction.signatures), 1)))
+        cases = max(25, min(200, MAX_CASES // max(len(signatures), 1)))
     config = out / "config.json"
     config.write_text(json.dumps({
         "root": str(checkout / package_rel), "out": str(out), "module": extraction.module, "cases": cases,
-        "signatures": extraction.signatures, "files": extraction.files,
+        "signatures": signatures, "files": extraction.files,
         "imports": extraction.imports}))
     program = translator().parent / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
                        writable=[out], cwd=out, timeout=60)
     if node.status != 0:
         return ["the comparison with Node did not run: " + node.output[-600:]], []
-    notes = [f"not compared with Node: {item}" for item in json.loads(node.output.splitlines()[-1])["skipped"]]
+    notes = skipped + [f"not compared with Node: {item}" for item in json.loads(node.output.splitlines()[-1])["skipped"]]
     replay = sandbox.run(["lake", "env", "lean", str(out / "Differential.lean")], readable=[ws.root, out],
                          writable=[ws.root / ".lake"], cwd=ws.root, timeout=timeout)
     if replay.timed_out:

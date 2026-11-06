@@ -20,6 +20,7 @@ ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 RUST_PATH = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$")
 TS_PATH = re.compile(r"^(?!/)(?!.*\.\.)[A-Za-z0-9_./-]+\.ts::[A-Za-z_$][A-Za-z0-9_$]*$")
 LANGUAGES = ("rust", "typescript")
+ASSUMED_CALL = re.compile(r"^(@[\w.-]+/)?[\w.-]+(/[\w.-]+)*::[A-Za-z_][A-Za-z0-9_]*$")
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 LEAN_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$")
 
@@ -52,6 +53,9 @@ class Manifest:
     # policy can only change through a commit to the protected branch.
     approvers: tuple = None
     language: str = "rust"
+    # Outside calls a proof may rely on, as (`module::name`, signature). They
+    # are part of the policy, so a pull request can't add one for itself.
+    assumes: tuple = ()
 
     @property
     def contract(self):
@@ -117,6 +121,25 @@ def _construct_mapping(loader, node, deep=False):
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
 
 
+def _assumes(entries, language):
+    if entries and language != "typescript":
+        raise ManifestError("assumes is only available for TypeScript")
+    if not isinstance(entries, list):
+        raise ManifestError("assumes must be a list")
+    assumptions = {}
+    for index, entry in enumerate(entries):
+        where = f"assumes[{index}]"
+        _keys(entry, ("call", "signature"), ("call", "signature"), where)
+        if not isinstance(entry["call"], str) or not ASSUMED_CALL.match(entry["call"]):
+            raise ManifestError(f"{where}.call must look like `package::function`")
+        if not isinstance(entry["signature"], str) or not entry["signature"].strip():
+            raise ManifestError(f"{where}.signature must be the function's TypeScript signature")
+        if entry["call"] in assumptions:
+            raise ManifestError(f"{entry['call']} is assumed twice")
+        assumptions[entry["call"]] = entry["signature"]
+    return tuple(sorted(assumptions.items()))
+
+
 def parse(data: bytes) -> Manifest:
     if len(data) > MAX_MANIFEST_BYTES:
         raise ManifestError("manifest is larger than 64 KiB")
@@ -124,7 +147,7 @@ def parse(data: bytes) -> Manifest:
         raw = yaml.load(data.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as error:
         raise ManifestError(f"manifest is not valid YAML: {error}") from None
-    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy"), ("version", "targets"), "manifest")
+    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes"), ("version", "targets"), "manifest")
     if raw["version"] != 1:
         raise ManifestError("only manifest version 1 is supported")
     language = raw.get("language", "rust")
@@ -183,4 +206,4 @@ def parse(data: bytes) -> Manifest:
         if not isinstance(logins, list) or not all(isinstance(x, str) and LOGIN.match(x) for x in logins):
             raise ManifestError("policy.approvers must be a list of GitHub logins (may be empty)")
         approvers = tuple(sorted({x.lower() for x in logins}))
-    return Manifest(crate, lean, tuple(targets), approvers, language)
+    return Manifest(crate, lean, tuple(targets), approvers, language, _assumes(raw.get("assumes", []), language))

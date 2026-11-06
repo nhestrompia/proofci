@@ -560,6 +560,58 @@ test("a literal compares with an optional value through some", () => {
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
 
+test("an outside call is only usable as the policy lists it", () => {
+  const call = (source, assumes) => {
+    const root = join(dir, `p${count++}`);
+    mkdirSync(root);
+    writeFileSync(join(root, "a.ts"), source);
+    mkdirSync(join(root, "node_modules/slugger"), { recursive: true });
+    writeFileSync(join(root, "node_modules/slugger/package.json"), '{"name":"slugger","types":"index.d.ts"}');
+    writeFileSync(join(root, "node_modules/slugger/index.d.ts"), `
+      export function slug(a: string): string;
+      export function find(a: string, b?: number): string | undefined;
+      export function now(): number;
+      export function send(a: string): void;
+      export function id<T>(a: T): T;
+      export function all(...a: string[]): string;
+      export function later(a: string): Promise<string>;`);
+    return translate({ root, module: "M", targets: ["a.ts::f"], assumes });
+  };
+  const using = (fn, args = '"x"') => `import { ${fn} } from "slugger";\nexport function f(): unknown { return ${fn}(${args}); }`.replace("unknown", fn === "find" ? "string | undefined" : "string");
+  const slug = { call: "slugger::slug", signature: "(a: string): string" };
+  assert.match(call(using("slug"), []).failures["a.ts::f"], /no source|can see/);
+  const ok = call(using("slug"), [slug]);
+  assert.deepEqual(ok.failures, {});
+  assert.ok(ok.source.includes("opaque Proofci.Assumed.slugger.slug : Js.Str → Result Js.Str"), ok.source);
+  assert.deepEqual(ok.assumed["a.ts::f"], ["slugger::slug"]);
+  assert.match(call(using("slug"), [{ ...slug, signature: "(a: string): number" }]).failures["a.ts::f"], /but `assumes` lists/);
+  const find = call(using("find"), [{ call: "slugger::find", signature: "(a: string, b?: number | undefined): string | undefined" }]);
+  assert.deepEqual(find.failures, {});
+  assert.ok(find.source.includes("(js!\"x\") none"), find.source);
+  const refused = (fn, signature, args, pattern) => assert.match(call(using(fn, args), [{ call: `slugger::${fn}`, signature }]).failures["a.ts::f"], pattern);
+  refused("id", "(a: string): string", '"x"', /generic/);
+  refused("all", "(...a: string[]): string", '"x"', /rest parameter/);
+  assert.match(call(`import { now } from "slugger";\nexport function f(): number { return now(); }`, [{ call: "slugger::now", signature: "(): number" }]).failures["a.ts::f"], /no arguments/);
+  refused("later", "(a: string): Promise<string>", '"x"', /Promise/);
+  // A caller inherits what its callee relies on.
+  const nested = call(`import { slug } from "slugger";\nfunction g(a: string): string { return slug(a); }\nexport function f(): string { return g("x") + g("y"); }`, [slug]);
+  assert.deepEqual(nested.assumed["a.ts::f"], ["slugger::slug"]);
+});
+
+test("a listed call whose package isn't installed takes its types from the policy", () => {
+  const root = join(dir, `p${count++}`);
+  mkdirSync(root);
+  writeFileSync(join(root, "a.ts"), `import { slug } from "not-installed";\nexport function f(a: string): string { return slug(a); }`);
+  const target = ["a.ts::f"];
+  const signature = "(a: string): string";
+  assert.ok(translate({ root, module: "M", targets: target }).failures["a.ts::f"]);
+  const ok = translate({ root, module: "M", targets: target, assumes: [{ call: "not-installed::slug", signature }] });
+  assert.deepEqual(ok.failures, {});
+  assert.ok(ok.source.includes("Proofci.Assumed.not_installed.slug"), ok.source);
+  // Listing a different function doesn't make this one usable.
+  assert.ok(translate({ root, module: "M", targets: target, assumes: [{ call: "not-installed::other", signature }] }).failures["a.ts::f"]);
+});
+
 test("the action requires every function a guarantee reaches to write its types", () => {
   const typed = (source, extra) => {
     const root = join(dir, `p${count++}`);

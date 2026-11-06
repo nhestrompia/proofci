@@ -70,7 +70,7 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print)
         (work / "translate").mkdir()
         try:
             if manifest.language == "typescript":
-                ex = typescript.extract(repo, manifest.crate, work / "translate", functions)
+                ex = typescript.extract(repo, manifest.crate, work / "translate", functions, assumes=manifest.assumes)
                 for function, reason in ex.failures.items():
                     out(f"unsupported: {function}: {reason}")
                 if len(ex.failures) == len(functions):

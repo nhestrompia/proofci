@@ -101,6 +101,10 @@ A TypeScript guarantee also assumes:
 - Code elsewhere in the program doesn't replace built-ins such as `Math.floor`.
 - The program runs the TypeScript source as written, so bundler replacements and
   macros are outside the guarantee.
+- Each outside call listed under `assumes` has the listed type and gives the same
+  result for the same arguments. ProofCI checks none of that code, and doesn't
+  compare functions that rely on it with Node. Listing a call that isn't a function
+  of its arguments makes a proof about it meaningless.
 
 ## Reporting a vulnerability
 

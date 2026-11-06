@@ -43,6 +43,7 @@ class Outcome:
     reason: str = ""
     assumes: list = field(default_factory=list)    # ProofCI models the function relies on
     warnings: list = field(default_factory=list)   # contract shape warnings
+    assumed: list = field(default_factory=list)    # outside calls the proof rests on
 
 
 @dataclass
@@ -171,7 +172,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         extraction, failures = None, {}
         if active.language == "typescript":
             try:
-                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout)
+                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout, active.assumes)
                 failures = extraction.failures
                 if len(failures) == len(functions):
                     extraction = None
@@ -246,6 +247,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         for o in pending:
             item = audit[o.theorem]
             o.assumes = [model_names[n] for n in item.get("models", []) if n in model_names]
+            if extraction.assumed:
+                o.assumed = [f"{call}: {extraction.assumptions[call]}" for call in extraction.assumed.get(o.function, [])]
             if item.get("hypothesis_mentions_function"):
                 o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
                                   "may assume what it should prove")

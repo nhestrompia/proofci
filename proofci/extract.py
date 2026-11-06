@@ -56,6 +56,8 @@ class Extraction:
     names: dict = None      # function in the manifest -> Lean name, where they differ
     failures: dict = None   # function in the manifest -> why it can't be translated
     signatures: dict = None # TypeScript: the shape of each translated function
+    assumptions: dict = None # TypeScript: the outside calls the policy allows
+    assumed: dict = None     # TypeScript: which of them each function relies on
     files: list = None      # TypeScript: the source files translated
     imports: dict = None    # TypeScript: where each of those files' imports resolve
 

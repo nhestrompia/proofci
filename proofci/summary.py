@@ -43,6 +43,12 @@ def markdown(report):
                   "Some verified guarantees rely on ProofCI's models of these library functions "
                   "(checked against `rustc`, see SECURITY.md):", ""]
         lines += [f"- `{m}`" for m in assumed]
+    outside = sorted({c for g in report["guarantees"] if g["status"] == "verified" for c in g.get("assumed", [])})
+    if outside:
+        lines += ["", "### Assumed outside calls", "",
+                  "These proofs hold only if each function below has this type and gives the same "
+                  "result for the same arguments. ProofCI didn't check that code:", ""]
+        lines += [f"- `{c}`" for c in outside]
     warned = [g for g in report["guarantees"] if g.get("warnings")]
     if warned:
         lines += ["", "### Contract warnings", "",

@@ -80,6 +80,30 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaises(manifest.ManifestError):
             manifest.parse(GOOD.replace(b"version: 1", b"version: 1\nlanguage: python"))
 
+    def test_assumed_calls(self):
+        base = b"""
+version: 1
+language: typescript
+assumes:
+  - call: "@acme/slug::slug"
+    signature: "(a: string): string"
+targets:
+  - id: fees
+    function: src/a.ts::f
+    guarantees:
+      - id: capped
+        theorem: fee_capped
+"""
+        self.assertEqual(manifest.parse(base).assumes, (("@acme/slug::slug", "(a: string): string"),))
+        self.assertEqual(manifest.parse(base.replace(b"@acme/slug::slug", b"lodash::kebabCase")).assumes[0][0], "lodash::kebabCase")
+        for wrong in (b"call: nothing", b'call: "a::1b"'):
+            with self.assertRaises(manifest.ManifestError):
+                manifest.parse(base.replace(b'call: "@acme/slug::slug"', wrong))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(base.replace(b'signature: "(a: string): string"', b'signature: ""'))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(base.replace(b"language: typescript\n", b"").replace(b"src/a.ts::f", b"ledger::f"))
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 
