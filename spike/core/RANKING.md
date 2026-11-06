@@ -23,6 +23,7 @@ Pure functions the translator accepts:
 |---|---:|---:|
 | Before conditions | 211 | 4.3% |
 | After conditions | 339 | 7.0% |
+| After `lastIndexOf` and `charCodeAt` | 365 | 7.5% |
 
 The conditions work freed 128 functions, about half of the 243 forecast. The rest of
 that row is mostly tests on `any` and `unknown`: `typeof` reaches 981 pure functions,
@@ -33,20 +34,30 @@ Of those 339, 219 are proved: 140 of the third slice's 196, with none of its ear
 group ran on a busy machine with a 120-second limit, and 11 of its failures were
 timeouts.
 
+A later run on an idle machine, after fixing comparisons on narrowed enums, raised the
+second group to 87. That fix reached proofs in functions already accepted: after
+`a === "x"`, TypeScript reports `a` as the remaining literal, so `a === "y"` compared
+a string with an enum. Of the 26 functions `lastIndexOf` and `charCodeAt` added, 18
+are proved. In all, 245 of the 365 accepted functions are proved.
+
 ## Work ranked by what it frees, on pure functions
 
 Each row counts the functions freed once everything above it is done.
 
 | Work | Freed | Clean after |
 |---|---:|---:|
-| Smaller gaps: destructuring, `new Set(...)`, some string methods, names | 336 | 675 (13.9%) |
-| Calls and types from outside: packages, classes, `new`, globals | 439 | 1,114 (22.9%) |
-| Dynamic data: `any`, `unknown`, `Record`, casts, loose objects | 735 | 1,849 (38.0%) |
+| Smaller gaps: templates, `new Set(...)`, regex, destructuring, names | 310 | 675 (13.9%) |
+| Calls and types from outside: packages, classes, `new`, globals | 434 | 1,109 (22.8%) |
+| Dynamic data: `any`, `unknown`, `Record`, casts, loose objects | 740 | 1,849 (38.0%) |
 | Remaining conditions, mostly `typeof` and tests on dynamic data | 890 | 2,739 (56.2%) |
 | Mutation of shared values | 666 | 3,405 (69.9%) |
 | Recursive types | 794 | 4,199 (86.2%) |
 | Closures | 479 | 4,678 (96.0%) |
 | TypeScript settings and `async` | 194 | 4,872 |
+
+Regular expressions sit inside the smaller gaps but aren't small: about 70 of that
+row's functions pass one to `replace`, `replaceAll` or `split`, and the JavaScript
+regex language has no model yet. It needs its own plan.
 
 ## Limits
 
