@@ -24,6 +24,8 @@ Pure functions the translator accepts:
 | Before conditions | 211 | 4.3% |
 | After conditions | 339 | 7.0% |
 | After `lastIndexOf` and `charCodeAt` | 365 | 7.5% |
+| After values in templates | 391 | 8.0% |
+| After `new Set(array)` | 420 | 8.6% |
 
 The conditions work freed 128 functions, about half of the 243 forecast. The rest of
 that row is mostly tests on `any` and `unknown`: `typeof` reaches 981 pure functions,
@@ -38,7 +40,13 @@ A later run on an idle machine, after fixing comparisons on narrowed enums, rais
 second group to 87. That fix reached proofs in functions already accepted: after
 `a === "x"`, TypeScript reports `a` as the remaining literal, so `a === "y"` compared
 a string with an enum. Of the 26 functions `lastIndexOf` and `charCodeAt` added, 18
-are proved. In all, 245 of the 365 accepted functions are proved.
+are proved. Of the 26 that templates added, 18 are proved, and of the 29 that sets added, 13 are.
+In all, 279 of the 420 accepted functions are proved.
+
+`add` and `delete` on sets aren't lowered, because they need proofs about mutation,
+so those functions are accepted but can't bridge. A module constant computed through
+a callback, such as `const NAMES = ROLES.map(...)`, doesn't bridge either: it reaches
+the proof as one unsplit chain.
 
 ## Work ranked by what it frees, on pure functions
 
@@ -46,13 +54,13 @@ Each row counts the functions freed once everything above it is done.
 
 | Work | Freed | Clean after |
 |---|---:|---:|
-| Smaller gaps: templates, `new Set(...)`, regex, destructuring, names | 310 | 675 (13.9%) |
-| Calls and types from outside: packages, classes, `new`, globals | 434 | 1,109 (22.8%) |
-| Dynamic data: `any`, `unknown`, `Record`, casts, loose objects | 740 | 1,849 (38.0%) |
-| Remaining conditions, mostly `typeof` and tests on dynamic data | 890 | 2,739 (56.2%) |
-| Mutation of shared values | 666 | 3,405 (69.9%) |
-| Recursive types | 794 | 4,199 (86.2%) |
-| Closures | 479 | 4,678 (96.0%) |
+| Smaller gaps: regex, `Map`, destructuring, names, array methods | 250 | 670 (13.8%) |
+| Calls and types from outside: packages, classes, `new`, globals | 431 | 1,101 (22.6%) |
+| Dynamic data: `any`, `unknown`, `Record`, casts, loose objects | 741 | 1,842 (37.8%) |
+| Remaining conditions, mostly `typeof` and tests on dynamic data | 890 | 2,732 (56.1%) |
+| Mutation of shared values | 667 | 3,399 (69.8%) |
+| Recursive types | 795 | 4,194 (86.1%) |
+| Closures | 483 | 4,677 (96.0%) |
 | TypeScript settings and `async` | 194 | 4,872 |
 
 Regular expressions sit inside the smaller gaps but aren't small: about 70 of that

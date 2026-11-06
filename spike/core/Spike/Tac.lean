@@ -567,8 +567,17 @@ syntax "prog_lookup" : tactic
 macro_rules | `(tactic| prog_lookup) => `(tactic| fail "no such function")
 macro_rules | `(tactic| s_hof) => `(tactic| fail "no callback rule")
 syntax "c_cb" : tactic
+open Lean Elab Tactic Meta in
+/-- Solves instances the goal is still waiting on. Under a rule like `SimE.setOf_` the element
+type is only known once the callback's result is, and an open instance blocks `clear`. -/
+elab "fill_insts" : tactic => withMainContext do
+  for m in ← getMVars (← instantiateMVars (← getMainTarget)) do
+    let type ← instantiateMVars (← m.getType)
+    if (← isClass? type).isSome then
+      try m.assign (← synthInstance type) catch _ => pure ()
 open Lean Elab Tactic in
 elab "c_cb_t" : tactic => do
+  evalTactic (← `(tactic| fill_insts))
   unless ← attempt (← `(tactic| c_cb)) do throwError "STUCK in a callback"
 macro_rules | `(tactic| c_cb) => `(tactic| (
   unfold Cb; intro s1 he w a r hw hf
