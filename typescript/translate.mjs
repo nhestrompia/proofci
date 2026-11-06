@@ -914,6 +914,20 @@ export class Scope {
     return this.checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration ?? node);
   }
 
+  // The type a variable or field is stored as. An earlier test can narrow an
+  // enumeration to one member, and TypeScript then reports a plain literal.
+  storedType(node) {
+    if (ts.isIdentifier(node)) {
+      const symbol = this.symbol(node);
+      if (symbol?.valueDeclaration) return this.declaredType(symbol, node);
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      const field = this.typeOf(node.expression).getProperty(node.name.text);
+      if (field) return this.checker.getTypeOfSymbol(field);
+    }
+    return this.typeOf(node);
+  }
+
   // ------------------------------------------------------------ statements
 
   // Lines for `statements`, followed by whatever `flow` does at the end. Local
@@ -2238,13 +2252,10 @@ export class Scope {
     const other = left === literal ? right : left;
     const otherType = this.narrowedType(other, env);
     if (literal && this.nullable(otherType)) {
-      // Earlier checks can narrow a union to one literal, which isn't how it's stored.
-      const symbol = this.checker.getSymbolAtLocation(other);
-      const stored = symbol?.valueDeclaration ? this.checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration) : otherType;
-      const plain = this.t.type(this.checker.getNonNullableType(stored), other) === "Js.Str";
+      const plain = this.t.type(this.checker.getNonNullableType(this.storedType(other)), other) === "Js.Str";
       return `${this.expression(other, env, lines)} = some ${plain ? this.text(literal.text) : `.${name(literal.text)}`}`;
     }
-    if (literal && this.t.type(otherType, other) !== "Js.Str") {
+    if (literal && this.t.type(this.checker.getNonNullableType(this.storedType(other)), other) !== "Js.Str") {
       return `${this.expression(other, env, lines)} = .${name(literal.text)}`;
     }
     if (this.isText(left) && this.isText(right)) {

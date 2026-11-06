@@ -559,3 +559,13 @@ test("a literal compares with an optional value through some", () => {
     "a = some .x", "a = some .y");
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
+
+test("a comparison keeps the enumeration after an earlier test narrows it", () => {
+  const kind = `export type K = "x" | "y" | "z";\n`;
+  emits(`${kind}export function f(a: K) { return a === "x" || a === "y"; }`, "a = .x", "a = .y");
+  emits(`${kind}export function f(a: K) {\n  if (a === "x") return 1;\n  if (a === "y") return 2;\n  return a === "z" ? 3 : 4;\n}`, "a = .z");
+  emits(`${kind}export type R = { s: K };\nexport function f(r: R) {\n  if (r.s === "x") return 1;\n  return r.s === "y" ? 2 : 3;\n}`, "r.s = .x", "r.s = .y");
+  emits(`${kind}export type B<T> = { s: T };\nexport function f(r: B<K>) { return r.s === "x" || r.s === "y"; }`, "r.s = .x", "r.s = .y");
+  emits(`export function f(a: string) { return a === "x" || a === "y"; }`, "a = (js!");
+  emits(`${kind}export function f(a?: K) { return a === "x" || a === "y"; }`, "a = some .x", "a = some .y");
+});
