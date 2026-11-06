@@ -30,20 +30,23 @@ export const category = message => {
     return "named type (class or library)";
   }
   if (/outside the translated package/.test(text)) return "code outside the translated package";
+  // An outside call carries the reason for its types, already reduced to a kind.
+  if (/\(types (don't )?translate/.test(text)) return text;
   return text.replace(/`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 80);
 };
 
 const OUTSIDE = /this call isn't to a function|has no source in the package|outside the translated package/;
 
+// Why an outside call's published types don't translate, or nothing if they do.
 function publishedTypes(translator, node) {
   const signature = translator.checker.getResolvedSignature(node);
-  if (!signature) return false;
+  if (!signature) return "no signature";
   const types = [...signature.parameters.map(p => translator.checker.getTypeOfSymbolAtLocation(p, node)), signature.getReturnType()];
   try {
     for (const type of types) translator.type(type, node);
-    return true;
+    return undefined;
   } catch (error) {
-    if (error instanceof Unsupported) return false;
+    if (error instanceof Unsupported) return category(error.message);
     throw error;
   }
 }
@@ -79,9 +82,9 @@ export function collecting(translator) {
   translator.fail = function (node, message) {
     if (!OUTSIDE.test(message) || !ts.isCallExpression(node)) return fail.call(this, node, message);
     probing = true;
-    const usable = publishedTypes(this, node);
+    const problem = publishedTypes(this, node);
     probing = false;
-    return fail.call(this, node, `${message} (${usable ? "types translate" : "types don't translate"})`);
+    return fail.call(this, node, `${message} (${problem ? `types don't translate: ${problem}` : "types translate"})`);
   };
 
   const self = translator;

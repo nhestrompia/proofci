@@ -73,18 +73,26 @@ The rule that functions must write out their types costs little: 74% of pure fun
 already do, through everything they reach. Of the 420 accepted, 116 would need an edit,
 and 104 of those need just one function annotated.
 
-What the assumptions unlock is smaller than the rows above suggest, because a function
-usually has other blockers too:
+Assumptions unlock much less than the rows above suggest. The row called calls and
+types from outside is nearly all JavaScript's own built-ins, not packages. Pure functions
+touching each kind of outside call:
 
-| Allowed | Clean | With the smaller gaps |
-|---|---:|---:|
-| Today | 420 (8.6%) | 670 (13.8%) |
-| Outside calls whose published types translate | 493 (10.1%) | 810 (16.6%) |
-| And casts, if they were listed | 504 (10.3%) | 833 (17.1%) |
-| And `any` and `unknown` replaced with real types | 514 (10.6%) | 897 (18.4%) |
+| Declared in | Functions |
+|---|---:|
+| JavaScript's built-ins | 1,780 |
+| The repository, such as methods on its own classes | 385 |
+| Packages | 57 |
+| Unresolved | 27 |
 
-Only outside calls can be listed so far. Published types translate for 975 of the outside
-calls' blockers and not for 1,476. Why those 1,476 fail hasn't been measured.
+Of the 125 functions blocked only by outside calls, 120 need a built-in and 5 need a
+package. `assumes` can't list built-ins, so its effect on this sample is about 5 functions.
+Built-ins have public semantics that can be compared with Node, so they should be
+modelled, not assumed.
+
+The most used are `Array.isArray` (458 functions), `RegExp.test` (282), `Number.isFinite`
+(186), `?.trim()` on an optional string (151 for `undefined`, 47 for `null`), `RegExp.exec`
+(137), `Number()` (125), `Object.keys` (116) and `JSON.stringify` (107). Many of them take
+`any`, which is why published types seemed not to translate.
 
 ## Limits
 
