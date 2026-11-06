@@ -1013,6 +1013,54 @@ theorem SimE.numStr {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numStr [
   refine sim_prim (args1 hx) ?_
   rintro _ _ ⟨v, rfl, ri⟩
   exact ⟨_, _, by simp [primV, num_arg ri], List.prefix_refl _, rfl⟩
+/-- `x?.m() ?? d` when `x` is present: the chain's value. -/
+theorem SimE.chain_some {p s x e d k α β} {_ : TyRep α} {_ : TyRep β} {a : Opt k α} {y : α} {v : β}
+    (hx : SimE p s x a) (ha : a = Option.some y) (hn : NotNull α) (he : SimE p s e v) (hv : NotNull β) :
+    SimE p s (.coalesce (.cond (.isNullish x) (.lit .undef) e) d) v :=
+  SimE.coalesce_some (SimE.cond_f (SimB.of_c (SimB.isNullish_some (SimE.unwrap hx ha) hn)) (by simp) he) hv
+/-- `x?.m() ?? d` when `x` is missing: the default. -/
+theorem SimE.chain_none {p s x e d k α β} {_ : TyRep α} {_ : TyRep β} {a : Opt k α} {w : β}
+    (hx : SimE p s x a) (ha : a = Option.none) (hd : SimE p s d w) :
+    SimE p s (.coalesce (.cond (.isNullish x) (.lit .undef) e) d) w :=
+  SimE.coalesce_none (k := .undef) (α := β) (o := Option.none)
+    (SimE.cond_t (SimB.of_c (SimB.isNullish_none hx ha)) trivial (SimE.lit_undef rfl)) rfl hd
+theorem SimE.numFinite {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) true := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  have e := num_arg ri
+  obtain ⟨y, rfl, _⟩ := ri
+  exact ⟨.bool true, h, by simp [primV, Core.numFinite, e], List.prefix_refl _, rfl⟩
+theorem SimE.numNaN {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numNaN [x]) false := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  have e := num_arg ri
+  obtain ⟨y, rfl, _⟩ := ri
+  exact ⟨.bool false, h, by simp [primV, Core.numNaN, e], List.prefix_refl _, rfl⟩
+theorem SimE.numFinite_opt {k} {a : Opt k Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Option.isSome a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
+  | some n =>
+    have ri' : rep h n v := ri
+    have e := num_arg ri'
+    obtain ⟨y, rfl, _⟩ := ri'
+    exact ⟨.bool true, h, by simp [primV, Core.numFinite, e], List.prefix_refl _, rfl⟩
+theorem SimE.toFixed {a d : Js.Num} {r : List Nat} (hx : SimE p s x a) (hy : SimE p s y d) (h : Js.toFixed a d = ok r) :
+    SimE p s (.prim .toFixed [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h' _ ⟨v, w, rfl, ri, rj⟩
+  exact ⟨.str r, h', by simp [primV, num_arg ri, num_arg rj, h, Result.match.ok], List.prefix_refl _, rfl⟩
+theorem SimE.parseIntStr {auto} {a : List Nat} {r : Js.Num} (hx : SimE p s x a) (h : Js.parseIntStr auto a = ok r) :
+    SimE p s (.prim (.parseInt auto) [x]) r := by
+  refine sim_prim (args1 hx) ?_
+  rintro _ _ ⟨_, rfl, rfl⟩
+  exact ⟨numVal r, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
 /-- Types whose values print the same in the typed view and in Core. -/
 class Shown (α : Type) [TyRep α] where
   text : α → List Nat

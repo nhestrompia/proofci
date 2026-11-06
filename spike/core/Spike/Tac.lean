@@ -116,6 +116,11 @@ macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.charAt; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.strLastIndexOf; sim'; sim'; assumption))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.charCodeAt; sim'; sim'; assumption))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.numStr; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.numFinite; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.numFinite_opt; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.numNaN; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toFixed; sim'; sim'; assumption))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.parseIntStr; sim'; assumption))
 macro_rules | `(tactic| s_prim) => `(tactic| (focus (apply SimE.setOf_; sim'; (try any_goals infer_instance); (try any_goals infer_instance))))
 macro_rules | `(tactic| s_prim) => `(tactic| (focus (apply SimE.setHas_; sim'; sim'; (try any_goals infer_instance); (try any_goals infer_instance))))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toText_str; sim'))
@@ -245,6 +250,9 @@ macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.endsWith; sim'; sim')
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.includes_str; sim'; sim'))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.numFinite; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.numFinite_opt; sim'))
+macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.numNaN; sim'))
 macro_rules | `(tactic| sim_read) => `(tactic| (focus (apply SimE.setHas_; sim'; sim'; (try any_goals infer_instance); (try any_goals infer_instance))))
 
 -- Tried last: each of these also accepts a plain value read as a present option.
@@ -273,6 +281,9 @@ macro_rules | `(tactic| simb_opt) => `(tactic| (is_read; first
   | (apply SimB.opt_big; sim') | (apply SimB.opt_some; sim'; infer_instance)))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_t; simb_opt; known; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_f; simb_opt; known; sim'))
+-- `x?.m() ?? d`: the conclusions only match this shape, so these fail fast on anything else.
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_none; sim'; isnone; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_some; sim'; assumption; infer_instance; sim'; infer_instance))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.of_c; simc))
 
 -- Statements. Core and the typed function advance together: `vdrain` consumes what the next

@@ -23,6 +23,7 @@ const STRING_METHODS = {
 };
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };
 const isSet = t => t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet";
+const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numFinite", isSafeInteger: "numFinite", isNaN: "numNaN" };
 const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach"]);
 const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr" };
 
@@ -212,6 +213,42 @@ export function lower(root, targets, { paths } = {}) {
       throw new Error("a callback that isn't written in place");
     };
     const idOf = sym => ({ __sym: sym });
+    const inLibrary = id => checker.getSymbolAtLocation(id)?.declarations?.some(d => program.isSourceFileDefaultLibrary(d.getSourceFile()));
+    // `x?.trim().toLowerCase()`: everything after `?.` runs only when `x` is present.
+    const optionalChain = e => {
+      const links = [];
+      for (let at = e; ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression); at = at.expression.expression) {
+        links.unshift(at);
+        if (at.expression.questionDotToken) break;
+      }
+      const first = links[0]?.expression;
+      if (!first?.questionDotToken) return undefined;
+      const base = E(first.expression);
+      const body = links.reduce((value, link) => {
+        const prim = STRING_METHODS[`${link.expression.name.text}/${link.arguments.length}`];
+        if (!prim) throw new Error(`method ${link.getText()}`);
+        return `.prim .${prim} [${[value, ...link.arguments.map(E)].join(", ")}]`;
+      }, `(${base})`);
+      return `.cond (.isNullish (${base})) (.lit .undef) (${body})`;
+    };
+    const builtinCall = e => {
+      const callee = e.expression, args = e.arguments;
+      const named = ts.isIdentifier(callee) && inLibrary(callee) ? callee.text
+        : ts.isPropertyAccessExpression(callee) && !callee.questionDotToken && ts.isIdentifier(callee.expression) && callee.expression.text === "Number" && inLibrary(callee.expression)
+          ? callee.name.text : undefined;
+      if (named && NUMBER_TESTS[named] && args.length === 1) return `.prim .${NUMBER_TESTS[named]} [${E(args[0])}]`;
+      if (named === "parseInt" && args.length === 1) return `.prim (.parseInt true) [${E(args[0])}]`;
+      if (named === "parseInt" && args.length === 2) return `.prim (.parseInt false) [${E(args[0])}]`;
+      if (named === "Boolean" && args.length === 1) return `.not (.not (${E(args[0])}))`;
+      if (ts.isPropertyAccessExpression(callee) && !callee.questionDotToken) {
+        const t = checker.getTypeAtLocation(callee.expression);
+        const number = t.flags & ts.TypeFlags.NumberLike, plain = t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.BooleanLike);
+        if (number && callee.name.text === "toFixed" && args.length === 1) return `.prim .toFixed [${E(callee.expression)}, ${E(args[0])}]`;
+        if (number && callee.name.text === "toFixed" && !args.length) return `.prim .toText [${E(callee.expression)}]`;
+        if (plain && callee.name.text === "toString" && !args.length) return `.prim .toText [${E(callee.expression)}]`;
+      }
+      return undefined;
+    };
     const E = e => {
       if (e.__sym) return scope.has(e.__sym) ? `.var ${lean(scope.get(e.__sym))}` : `.field (.var "__env") ${lean(e.__sym.name)}`;
       if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e) || ts.isSatisfiesExpression(e)) return E(e.expression);
@@ -307,6 +344,14 @@ export function lower(root, targets, { paths } = {}) {
       }
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && ["min", "max", "abs"].includes(e.expression.name.text)) {
         return `.prim .${e.expression.name.text} [${e.arguments.map(E).join(", ")}]`;
+      }
+      if (ts.isCallExpression(e)) {
+        const built = builtinCall(e);
+        if (built) return built;
+      }
+      if (ts.isCallExpression(e) && ts.isOptionalChain(e)) {
+        const chain = optionalChain(e);
+        if (chain) return chain;
       }
       if (ts.isCallExpression(e) && e.expression.getText() === "String" && e.arguments.length === 1) return `.prim .numStr [${E(e.arguments[0])}]`;
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && !e.expression.questionDotToken && !e.questionDotToken

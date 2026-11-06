@@ -2062,9 +2062,15 @@ export class Scope {
   call(node, env, lines) {
     const callee = unwrap(node.expression);
     if (node.questionDotToken) throw this.t.fail(node, "optional calls are not supported yet");
+    if (ts.isOptionalChain(node)) {
+      const chained = this.optionalChain(node, env, lines);
+      if (chained) return chained;
+    }
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Math" && !this.isLocal(callee.expression)) {
       return this.math(callee.name.text, node, env, lines);
     }
+    const builtin = this.builtin(callee, node, env, lines);
+    if (builtin) return builtin;
     if (ts.isPropertyAccessExpression(callee) && this.isArray(callee.expression)) return this.arrayMethod(callee, node, env, lines);
     if (ts.isPropertyAccessExpression(callee) && this.isString(callee.expression)) return this.stringMethod(callee, node, env, lines);
     if (ts.isPropertyAccessExpression(callee) && this.isCollection(callee.expression)) return this.collectionMethod(callee, node, env, lines);
@@ -2136,8 +2142,33 @@ export class Scope {
   }
 
   stringMethod(callee, node, env, lines) {
-    const method = callee.name.text;
-    const value = this.expression(callee.expression, env, lines);
+    return this.stringCall(this.expression(callee.expression, env, lines), callee.name.text, node, env, lines);
+  }
+
+  // `x?.trim().toLowerCase()` on an optional string. A missing `x` skips the whole
+  // chain, arguments included, so everything after `?.` runs inside the `some` arm.
+  optionalChain(node, env, lines) {
+    const links = [];
+    for (let at = node; ts.isCallExpression(at) && ts.isPropertyAccessExpression(unwrap(at.expression)); at = unwrap(unwrap(at.expression).expression)) {
+      links.unshift(at);
+      if (unwrap(at.expression).questionDotToken) break;
+    }
+    const first = links[0] && unwrap(links[0].expression);
+    if (!first?.questionDotToken || links.at(-1) !== node) return undefined;
+    const base = unwrap(first.expression);
+    const type = this.typeOf(base);
+    if (!this.nullable(type) || this.leanOf(this.checker.getNonNullableType(type), base) !== "Js.Str") return undefined;
+    if (!ts.isIdentifier(base) && !this.isFieldPath(base)) throw this.t.fail(node, "`?.` on an expression is not supported yet");
+    const present = this.fresh(), arm = [];
+    let value = present;
+    for (const link of links) value = this.stringCall(value, unwrap(link.expression).name.text, link, env, arm);
+    const fresh = this.fresh();
+    lines.push(`let ${fresh} ← match ${this.expression(base, env, lines)} with`, `  | some ${present} => do`,
+      ...arm.map(line => `    ${line}`), `    Result.ok (some ${value})`, "  | none => Result.ok none");
+    return fresh;
+  }
+
+  stringCall(value, method, node, env, lines) {
     const args = node.arguments;
     const text = index => {
       if (!args[index] || !this.isString(args[index])) throw this.t.fail(node, `\`${method}\` is only supported with a string here, because it would otherwise take a regular expression`);
@@ -2182,6 +2213,57 @@ export class Scope {
     if (kind === "Map" && method === "has") return `(Js.dictHas ${value} ${key()})`;
     if (kind === "Set" && method === "has") return `(Js.setHas ${value} ${key()})`;
     throw this.t.fail(node, `\`.${method}\` is not supported here yet`);
+  }
+
+  // Functions on numbers that JavaScript provides. Each still evaluates its argument,
+  // because a call inside it can fail even when the answer doesn't depend on it.
+  builtin(callee, node, env, lines) {
+    const args = node.arguments;
+    const global = ts.isIdentifier(callee) && !this.isLocal(callee);
+    const onNumber = ts.isPropertyAccessExpression(callee) && !callee.questionDotToken
+      && ts.isIdentifier(callee.expression) && callee.expression.text === "Number" && !this.isLocal(callee.expression);
+    const named = global ? callee.text : onNumber ? `Number.${callee.name.text}` : undefined;
+    const test = () => {
+      if (!this.isNumber(args[0])) return undefined;
+      this.expression(args[0], env, lines);
+      return true;
+    };
+    if (args.length === 1) {
+      switch (named) {
+        case "Number.isFinite": case "Number.isInteger": case "Number.isSafeInteger":
+          if (this.nullable(this.typeOf(args[0])) && this.isOptionalNumber(args[0])) return `(Option.isSome ${this.expression(args[0], env, lines)})`;
+          if (test()) return "true";
+          break;
+        case "isFinite": if (test()) return "true"; break;
+        case "isNaN": case "Number.isNaN": if (test()) return "false"; break;
+        case "Boolean": return `(decide (¬¬(${this.condition(args[0], env, lines)})))`;
+        default:
+      }
+    }
+    if ((named === "parseInt" || named === "Number.parseInt") && this.isString(args[0])) {
+      if (args.length === 1) return this.bind(`Js.parseIntStr true ${this.expression(args[0], env, lines)}`, lines);
+      const radix = args.length === 2 && unwrap(args[1]);
+      if (radix && ts.isNumericLiteral(radix) && radix.text === "10") return this.bind(`Js.parseIntStr false ${this.expression(args[0], env, lines)}`, lines);
+    }
+    if (ts.isPropertyAccessExpression(callee) && !callee.questionDotToken) {
+      const receiver = callee.expression, method = callee.name.text;
+      if (method === "toFixed" && this.isNumber(receiver) && !this.nullable(this.typeOf(receiver))) {
+        const value = this.expression(receiver, env, lines);
+        if (!args.length) return `(Js.numStr ${value})`;
+        if (args.length === 1) return this.bind(`Js.toFixed ${value} ${this.numeric(args[0], env, lines)}`, lines);
+      }
+      if (method === "toString" && !args.length && !this.nullable(this.typeOf(receiver))) {
+        if (this.isNumber(receiver)) return `(Js.numStr ${this.expression(receiver, env, lines)})`;
+        if (this.isBigInt(receiver)) return `(Js.intStr ${this.expression(receiver, env, lines)})`;
+        if (this.isBoolean(receiver)) return `(Js.boolStr ${this.expression(receiver, env, lines)})`;
+      }
+    }
+    return undefined;
+  }
+
+  isOptionalNumber(node) {
+    const type = this.typeOf(node);
+    return this.nothing(type) !== undefined && this.leanOf(this.checker.getNonNullableType(type), node) === "Js.Num";
   }
 
   // `kebabCase` imported from "lodash" is `lodash::kebabCase`. Relative imports are this code.

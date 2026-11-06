@@ -45,6 +45,7 @@ inductive Prim where
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas
+  | numFinite | numNaN | toFixed | parseInt (auto : Bool)
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -209,6 +210,17 @@ def sameKey (a b : Val) : Bool := binary .eq a b == some (.bool true)
 def addKey (acc : List Val) (v : Val) : List Val :=
   if acc.any (sameKey · v) then acc else acc ++ [v]
 
+/-- `Number.isFinite`, `isInteger` and `isSafeInteger`: not a number is false, and a typed
+number is a safe integer. Any other number stops the model rather than guessing. -/
+def numFinite : Val → Option Bool
+  | .undef | .null => some false
+  | v => (asNum v).map fun _ => true
+
+/-- `Number.isNaN`, on the same terms. -/
+def numNaN : Val → Option Bool
+  | .undef | .null => some false
+  | v => (asNum v).map fun _ => false
+
 /-- How a value prints inside a template. Objects and functions aren't modelled here. -/
 def textOf : Val → Option (List Nat)
   | .undef => some Js.undefinedStr
@@ -266,6 +278,16 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .charAt, h, [.str s, i] => (asNum i).map fun i => (.str (Js.charAt s i), h)
   | .numStr, h, [v] => (asNum v).map fun a => (.str (Js.numStr a), h)
   | .toText, h, [v] => (textOf v).map fun t => (.str t, h)
+  | .numFinite, h, [v] => (numFinite v).map fun b => (.bool b, h)
+  | .numNaN, h, [v] => (numNaN v).map fun b => (.bool b, h)
+  | .toFixed, h, [v, d] => match asNum v, asNum d with
+    | some a, some d => match (Js.toFixed a d).match with
+      | .ok t => some (.str t, h)
+      | _ => none
+    | _, _ => none
+  | .parseInt auto, h, [.str s] => match (Js.parseIntStr auto s).match with
+    | .ok n => some (numVal n, h)
+    | _ => none
   | .setOf, h, [.ref l] => match h[l]? with
     | some (.array xs) => some (.ref h.length, h ++ [.array (xs.foldl addKey [])])
     | _ => none

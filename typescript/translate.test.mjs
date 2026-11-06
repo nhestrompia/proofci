@@ -560,6 +560,24 @@ test("a literal compares with an optional value through some", () => {
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
 
+test("number built-ins", () => {
+  emits("export function f(a: number) { return Number.isFinite(a); }", "Result.ok true");
+  emits("export function f(a?: number) { return Number.isInteger(a); }", "Option.isSome a");
+  emits("export function f(a: number) { return Number.isNaN(a); }", "Result.ok false");
+  emits("export function f(a: number) { return a.toFixed(2); }", "Js.toFixed a");
+  emits("export function f(a: number) { return a.toFixed(); }", "Js.numStr a");
+  emits("export function f(a: number) { return a.toString(); }", "Js.numStr a");
+  emits("export function f(a: boolean) { return a.toString(); }", "Js.boolStr a");
+  emits("export function f(a: string) { return parseInt(a); }", "Js.parseIntStr true a");
+  emits("export function f(a: string) { return Number.parseInt(a, 10); }", "Js.parseIntStr false a");
+  emits("export function f(a: string) { return Boolean(a); }", "decide");
+  rejects("export function f(a: string) { return parseInt(a, 16); }", /see|no source/);
+  rejects("export function f(a: number) { return a.toString(2); }", /see|no source/);
+  rejects("export function f(a: unknown) { return Number.isFinite(a); }", /unknown/);
+  // A name the code declares itself is not the built-in.
+  rejects("function isNaN(a: number) { return a > 1; }\nexport function f(a: string) { return isNaN(1) ? a : parseInt; }", /./);
+});
+
 test("an outside call is only usable as the policy lists it", () => {
   const call = (source, assumes) => {
     const root = join(dir, `p${count++}`);

@@ -410,6 +410,31 @@ def intStr (v : Int) : Str := (toString v).toList.map Char.toNat
 def numStr (x : Num) : Str := intStr x.val
 def boolStr (b : Bool) : Str := if b then js!"true" else js!"false"
 
+/-- `x.toFixed(d)`. A safe integer has no fraction to round, so this only pads. `d` must be
+    in the range JavaScript allows, and it throws otherwise. -/
+def toFixed (x d : Num) : Result Str :=
+  if d.val = 0 then ok (numStr x)
+  else if 0 < d.val ∧ d.val ≤ 100 then ok (numStr x ++ [46] ++ List.replicate d.val.toNat 48)
+  else fail .undef
+
+/-- `parseInt(s, 10)`, or `parseInt(s)` when `auto` is set. Without a radix, a `0x` prefix
+    means hexadecimal, and the model stops there. No digits gives `NaN`, where it stops too. -/
+def parseIntStr (auto : Bool) (s : Str) : Result Num :=
+  let t := trimStart s
+  let (neg, u) := match t with
+    | 45 :: r => (true, r)
+    | 43 :: r => (false, r)
+    | r => (false, r)
+  let hex := match u with
+    | 48 :: x :: _ => x == 120 || x == 88
+    | _ => false
+  let digits := u.takeWhile (fun c => 48 ≤ c && c ≤ 57)
+  if (auto && hex) || digits.isEmpty then fail .undef
+  else
+    let n : Int := digits.foldl (fun a c => a * 10 + ((c : Int) - 48)) 0
+    -- A minus sign on zero gives `-0`, which isn't a `Num`.
+    if neg && n == 0 then fail .undef else mk (if neg then -n else n)
+
 def undefinedStr : Str := js!"undefined"
 def nullStr : Str := js!"null"
 
