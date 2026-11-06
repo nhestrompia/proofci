@@ -94,6 +94,20 @@ def unwrap {α} (x : Option α) : Result α :=
   | some v => ok v
   | none => fail .undef
 
+/-- `if (x)` on a possibly missing value. A present value can still be falsy. -/
+def truthyStr : Option (List Nat) → Bool
+  | some s => !s.isEmpty
+  | none => false
+def truthyNum : Option Num → Bool
+  | some n => n.val != 0
+  | none => false
+def truthyBool : Option Bool → Bool
+  | some b => b
+  | none => false
+def truthyBig : Option Int → Bool
+  | some n => n != 0
+  | none => false
+
 theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 9007199254740991) :
     mk v ⦃ r => r.val = v ⦄ := by
   simp [mk, h1, h2, WP.spec_ok]

@@ -360,6 +360,23 @@ theorem SimB.obj {p s e α} {_ : TyRep α} {a : α} (h : SimE p s e a) (hobj : I
   obtain ⟨v, s₂, he, hk, rv⟩ := h s₁ hx
   obtain ⟨l, rfl⟩ := IsObj.ref rv
   exact ⟨_, s₂, he, hk, by simp [truthy]⟩
+/-- Values that can't be falsy, whatever they hold. -/
+class AlwaysTruthy (α : Type) [TyRep α] : Prop where
+  ok {h : Heap} {a : α} {v : Val} : rep h a v → truthy v = true
+instance {α} [TyRep α] [IsObj α] : AlwaysTruthy α := ⟨fun h => by obtain ⟨l, rfl⟩ := IsObj.ref h; rfl⟩
+theorem SimB.always {p s e α} {_ : TyRep α} {a : α} (h : SimE p s e a) (ht : AlwaysTruthy α) : SimB p s e True := by
+  intro s₁ hx
+  obtain ⟨v, s₂, he, hk, rv⟩ := h s₁ hx
+  exact ⟨_, s₂, he, hk, by simp [ht.ok rv]⟩
+theorem SimB.iff {p s e P Q} (h : SimB p s e P) (hq : P ↔ Q) : SimB p s e Q := by
+  intro s₁ hx
+  obtain ⟨v, s₂, he, hk, ht⟩ := h s₁ hx
+  exact ⟨v, s₂, he, hk, ht.trans hq⟩
+theorem SimC.iff {p s e P Q} {_ : Decidable P} {_ : Decidable Q} (h : SimC p s e P) (hq : P ↔ Q) : SimC p s e Q := by
+  intro s₁ hx
+  obtain ⟨s₂, he, hk⟩ := h s₁ hx
+  have : decide P = decide Q := by simp [hq]
+  exact ⟨s₂, this ▸ he, hk⟩
 theorem SimE.some_inv {p s e k α} {_ : TyRep α} {a : α} (h : SimE (α := Opt k α) p s e (Option.some a)) : SimE p s e a := h
 theorem SimE.unwrap {p s e k α} {_ : TyRep α} {x : Opt k α} {a : α} (h : SimE p s e x) (hx : x = Option.some a) : SimE p s e a := by
   subst hx; exact h
@@ -488,6 +505,114 @@ theorem SimC.eq_opt {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α}
     rw [binary_eq_of_not_num (Inj.notNum hr')]
     simp [Inj.inj hr' rw]
 
+/-- `eq_opt`, for whichever way the view decides the equality. -/
+theorem SimC.eq_some {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α} {d : Decidable (a = Option.some b)}
+    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) : @SimC p s (.bin .eq x y) (a = Option.some b) d := by
+  have h := SimC.eq_opt hx hy hi
+  rwa [show (Classical.propDecidable (a = Option.some b)) = d from Subsingleton.elim _ _] at h
+/-- Two optional values of one type: both missing means the same nullish value,
+because the type allows only one. -/
+theorem SimC.eq_opts {p s x y k α} {_ : TyRep α} {a b : Opt k α} {d : Decidable (a = b)}
+    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) (hk : k ≠ .both) : @SimC p s (.bin .eq x y) (a = b) d := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ex, h₂, rv⟩ := hx s₁ h₁
+  obtain ⟨w, s₃, ey, h₃, rw⟩ := hy s₂ (h₁.trans h₂)
+  refine ⟨s₃, Evals.bin ex ey ?_, h₂.trans h₃⟩
+  have hv' := mono h₃.2 rv
+  generalize s₃.heap = h at hv' rw
+  have nn : ∀ {u}, nothingOk k u → ∀ x, u ≠ .num x := by
+    intro u hu x he
+    subst he
+    cases k <;> simp_all [nothingOk]
+  have hnum : ∀ x, v ≠ .num x := by
+    revert hv'
+    exact Option.casesOn (motive := fun o : Option α => optRep k h o v → ∀ x, v ≠ .num x) a (fun r => nn r) (fun c r => Inj.notNum (show rep h c v from r))
+  rw [binary_eq_of_not_num hnum]
+  have key : v = w ↔ a = b := by
+    revert hv' rw
+    refine Option.casesOn (motive := fun o : Option α => optRep k h o v → optRep k h b w → (v = w ↔ o = b)) a ?_ ?_
+    · refine Option.casesOn (motive := fun o : Option α => optRep k h Option.none v → optRep k h o w → (v = w ↔ Option.none = o)) b ?_ ?_
+      · intro r1 r2
+        have : v = w := by cases k <;> simp_all [optRep, nothingOk]
+        simp [this]
+      · intro c r1 r2
+        have hn := nothing_nullish r1
+        have hw := Inj.notNull (show rep h c w from r2)
+        have : v ≠ w := fun he => by subst he; simp [hn] at hw
+        simp [this]
+    · intro c
+      refine Option.casesOn (motive := fun o : Option α => optRep k h (Option.some c) v → optRep k h o w → (v = w ↔ Option.some c = o)) b ?_ ?_
+      · intro r1 r2
+        have hn := nothing_nullish r2
+        have hw := Inj.notNull (show rep h c v from r1)
+        have : v ≠ w := fun he => by subst he; simp [hn] at hw
+        simp [this]
+      · intro e r1 r2
+        simp [Inj.inj (show rep h c v from r1) (show rep h e w from r2)]
+  have : decide (v = w) = @decide (a = b) d := by simp [key]
+  rw [this]
+
+theorem opt_cases {k α} {_ : TyRep α} {p s e} {Q : Opt k α → Prop} (a : Opt k α) (h : SimE (α := Opt k α) p s e a)
+    (hn : SimE (α := Opt k α) p s e Option.none → Q Option.none) (hs : ∀ x, SimE (α := Opt k α) p s e (Option.some x) → Q (Option.some x)) : Q a := by
+  revert h
+  exact Option.casesOn (motive := fun o : Option α => SimE (α := Opt k α) p s e o → Q o) a hn hs
+
+/-! Truth of a possibly missing value, and tests for a missing one. -/
+@[simp] theorem truthyStr_some {s : List Nat} : Js.truthyStr (some s) = true ↔ s ≠ [] := by cases s <;> simp [Js.truthyStr]
+@[simp] theorem truthyNum_some {n : Js.Num} : Js.truthyNum (some n) = true ↔ n.val ≠ 0 := by simp [Js.truthyNum]
+@[simp] theorem truthyBool_some {b : Bool} : Js.truthyBool (some b) = true ↔ b = true := by simp [Js.truthyBool]
+@[simp] theorem truthyBig_some {n : Int} : Js.truthyBig (some n) = true ↔ n ≠ 0 := by simp [Js.truthyBig]
+@[simp] theorem truthyStr_none : Js.truthyStr none = false := rfl
+@[simp] theorem truthyNum_none : Js.truthyNum none = false := rfl
+@[simp] theorem truthyBool_none : Js.truthyBool none = false := rfl
+@[simp] theorem truthyBig_none : Js.truthyBig none = false := rfl
+theorem SimB.opt_str {p s e k} {a : Opt k (List Nat)} (h : SimE p s e a) : SimB p s e (Js.truthyStr a = true) :=
+  opt_cases (Q := fun o => SimB p s e (Js.truthyStr o = true)) a h
+    (fun h => (SimB.none h rfl).iff (by simp [Js.truthyStr]))
+    (fun _ h => (SimB.str (SimE.some_inv h)).iff (by simp [Js.truthyStr]))
+theorem SimB.opt_num {p s e k} {a : Opt k Js.Num} (h : SimE p s e a) : SimB p s e (Js.truthyNum a = true) :=
+  opt_cases (Q := fun o => SimB p s e (Js.truthyNum o = true)) a h
+    (fun h => (SimB.none h rfl).iff (by simp [Js.truthyNum]))
+    (fun _ h => (SimB.num (SimE.some_inv h)).iff (by simp [Js.truthyNum]))
+theorem SimB.opt_bool {p s e k} {a : Opt k Bool} (h : SimE p s e a) : SimB p s e (Js.truthyBool a = true) :=
+  opt_cases (Q := fun o => SimB p s e (Js.truthyBool o = true)) a h
+    (fun h => (SimB.none h rfl).iff (by simp [Js.truthyBool]))
+    (fun _ h => (SimB.bool (SimE.some_inv h)).iff (by simp [Js.truthyBool]))
+theorem SimB.opt_big {p s e k} {a : Opt k Int} (h : SimE p s e a) : SimB p s e (Js.truthyBig a = true) :=
+  opt_cases (Q := fun o => SimB p s e (Js.truthyBig o = true)) a h
+    (fun h => (SimB.none h rfl).iff (by simp [Js.truthyBig]))
+    (fun _ h => (SimB.big (SimE.some_inv h)).iff (by simp [Js.truthyBig]))
+theorem SimB.opt_some {p s e k α} {_ : TyRep α} {a : Opt k α} (h : SimE p s e a) (ht : AlwaysTruthy α) :
+    SimB p s e (Option.isSome (α := α) a = true) :=
+  opt_cases (Q := fun o => SimB p s e (Option.isSome (α := α) o = true)) a h
+    (fun h => (SimB.none h rfl).iff (by simp))
+    (fun _ h => (SimB.always (SimE.some_inv h) ht).iff (by simp))
+theorem SimC.isNullish_opt {p s e k α} {_ : TyRep α} {a : Opt k α} (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.isNullish e) (Option.isNone (α := α) a = true) :=
+  opt_cases (Q := fun o => SimC p s (.isNullish e) (Option.isNone (α := α) o = true)) a h
+    (fun h => (SimB.isNullish_none h rfl).iff (by simp))
+    (fun _ h => (SimB.isNullish_some (SimE.some_inv h) hn).iff (by simp))
+theorem SimC.eq_undef {p s e α} {_ : TyRep α} {a : Opt .undef α} (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.bin .eq e (.lit .undef)) (Option.isNone (α := α) a = true) :=
+  opt_cases (Q := fun o => SimC p s (.bin .eq e (.lit .undef)) (Option.isNone (α := α) o = true)) a h
+    (fun h => (SimC.eq_undef_none h rfl).iff (by simp))
+    (fun _ h => (SimC.eq_nothing_some rfl (SimE.some_inv h) hn).iff (by simp))
+theorem SimC.eq_null {p s e α} {_ : TyRep α} {a : Opt .null α} (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.bin .eq e (.lit .null)) (Option.isNone (α := α) a = true) :=
+  opt_cases (Q := fun o => SimC p s (.bin .eq e (.lit .null)) (Option.isNone (α := α) o = true)) a h
+    (fun h => (SimC.eq_null_none h rfl).iff (by simp))
+    (fun _ h => (SimC.eq_nothing_some rfl (SimE.some_inv h) hn).iff (by simp))
+theorem SimC.ne_undef {p s e α} {_ : TyRep α} {a : Opt .undef α} (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.bin .ne e (.lit .undef)) (¬Option.isNone (α := α) a = true) :=
+  opt_cases (Q := fun o => SimC p s (.bin .ne e (.lit .undef)) (¬Option.isNone (α := α) o = true)) a h
+    (fun h => (SimC.ne_undef_none h rfl).iff (by simp))
+    (fun _ h => (SimC.ne_nothing_some rfl (SimE.some_inv h) hn).iff (by simp))
+theorem SimC.ne_null {p s e α} {_ : TyRep α} {a : Opt .null α} (h : SimE p s e a) (hn : NotNull α) :
+    SimC p s (.bin .ne e (.lit .null)) (¬Option.isNone (α := α) a = true) :=
+  opt_cases (Q := fun o => SimC p s (.bin .ne e (.lit .null)) (¬Option.isNone (α := α) o = true)) a h
+    (fun h => (SimC.ne_null_none h rfl).iff (by simp))
+    (fun _ h => (SimC.ne_nothing_some rfl (SimE.some_inv h) hn).iff (by simp))
+
 /-- `c` is known, so only one side runs. -/
 theorem SimE.cond_t {p s c a b P α} {_ : TyRep α} {x : α} (hc : SimB p s c P) (hp : P) (ha : SimE p s a x) :
     SimE p s (.cond c a b) x := by
@@ -535,10 +660,6 @@ theorem SimB.or_f {p s a b P Q} (ha : SimB p s a P) (hp : ¬P) (hb : SimB p s b 
   obtain ⟨w, s₃, e', h₃, ht'⟩ := hb s₂ (h₁.trans h₂)
   have : truthy v = false := by cases h : truthy v <;> simp_all
   exact ⟨w, s₃, Evals.or_false e this e', h₂.trans h₃, ht'⟩
-theorem SimB.iff {p s e P Q} (h : SimB p s e P) (hi : P ↔ Q) : SimB p s e Q := by
-  intro s₁ hx
-  obtain ⟨v, s₂, he, hk, ht⟩ := h s₁ hx
-  exact ⟨v, s₂, he, hk, ht.trans hi⟩
 
 theorem SimB.and_both {p s a b P Q} (ha : SimB p s a P) (hb : SimB p s b Q) : SimB p s (.and a b) (P ∧ Q) := by
   by_cases hp : P

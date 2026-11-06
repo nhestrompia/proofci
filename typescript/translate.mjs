@@ -872,7 +872,30 @@ export class Scope {
     return this.checker.getTypeAtLocation(node);
   }
 
-  isNumber(node) { return (this.typeOf(node).flags & ts.TypeFlags.NumberLike) !== 0; }
+  isNumber(node) {
+    const type = this.typeOf(node);
+    return (type.flags & ts.TypeFlags.NumberLike) !== 0 || (type.isUnion() && type.types.every(t => t.flags & ts.TypeFlags.NumberLike));
+  }
+  // A string, or an unnamed union of strings, which `type` also calls `Js.Str`.
+  isText(node) {
+    const type = this.typeOf(node);
+    return this.isString(node) || (type.isUnion() && !type.aliasSymbol && type.types.every(t => t.flags & ts.TypeFlags.StringLike));
+  }
+  // The Lean type of `type`, when it has one.
+  leanOf(type, node) {
+    try {
+      return this.t.type(type, node);
+    } catch (error) {
+      if (error instanceof Unsupported) return undefined;
+      throw error;
+    }
+  }
+  // Which nullish values a type allows.
+  nothing(type) {
+    const kinds = type.isUnion() ? type.types.filter(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) : [];
+    if (kinds.length > 1) return "both";
+    return kinds[0]?.flags & ts.TypeFlags.Null ? "null" : kinds.length ? "undefined" : undefined;
+  }
   isBoolean(node) { return (this.typeOf(node).flags & ts.TypeFlags.BooleanLike) !== 0; }
   isBigInt(node) {
     return (this.typeOf(node).flags & ts.TypeFlags.BigIntLike) !== 0;
@@ -1378,6 +1401,8 @@ export class Scope {
         };
       }
     }
+    const truthy = this.truthyNarrowing(test, env);
+    if (truthy) return truthy;
     if (!ts.isBinaryExpression(test)) return undefined;
     const op = test.operatorToken.kind;
     const equal = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
@@ -1403,6 +1428,29 @@ export class Scope {
       const next = new Map(env);
       const inner = this.rebind(symbol, next, { present: true });
       return [`match ${lean} with`, "| none =>", ...this.indent(arm(equal, env)), `| some ${inner} =>`, ...this.indent(arm(!equal, next))];
+    };
+  }
+
+  // `if (x)` on an optional string, number or field: a present value can still be
+  // falsy, so the test comes first and the value is only read on the truthy side.
+  truthyNarrowing(test, env) {
+    const field = ts.isPropertyAccessExpression(test) && this.isFieldPath(test);
+    if (!ts.isIdentifier(test) && !field) return undefined;
+    const declared = ts.isIdentifier(test) ? this.declaredType(this.symbol(test), test) : this.typeOf(test);
+    if (!declared.isUnion() || !this.nullable(declared)) return undefined;
+    const lines = [];
+    const value = this.expression(test, env, lines);
+    if (lines.length) return undefined;
+    const condition = this.present(value, this.checker.getNonNullableType(declared), test);
+    return arm => {
+      const next = new Map(env);
+      let lean;
+      if (ts.isIdentifier(test)) lean = this.rebind(this.symbol(test), next, { present: true });
+      else {
+        lean = this.fresh();
+        next.set(this.fieldKey(test), { lean });
+      }
+      return [`if ${condition} then`, ...this.indent([`let ${lean} ← Js.unwrap ${value}`, ...arm(true, next)]), "else", ...this.indent(arm(false, env))];
     };
   }
 
@@ -1524,6 +1572,7 @@ export class Scope {
     if (ts.isArrayLiteralExpression(node)) return this.wrapIf(target, this.arrayLiteral(node, target, env, lines), node);
     if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines, target);
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return this.nullish(node, env, lines, target);
+    if (this.isChoice(node)) return this.choice(node, env, lines, target);
     if (ts.isNewExpression(node) && this.isCollection(node)) return this.wrapIf(target, this.newCollection(node, target), node);
     if (ts.isStringLiteralLike(node)) {
       const plain = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
@@ -1678,9 +1727,48 @@ export class Scope {
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
       if (ARITHMETIC[op]) return this.arithmetic(op, node.left, this.operand(node.left, env, lines), node.right, env, lines);
+      if (this.isChoice(node)) return this.choice(node, env, lines);
       return `(decide (${this.condition(node, env, lines)}))`;
     }
     throw this.t.fail(node, `\`${ts.SyntaxKind[node.kind]}\` is not supported yet`);
+  }
+
+  isChoice(node) {
+    if (!ts.isBinaryExpression(node)) return false;
+    const op = node.operatorToken.kind;
+    return (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) && !(this.isBoolean(node.left) && this.isBoolean(node.right));
+  }
+
+  // `a || b` and `a && b` as values: the result is one side or the other.
+  choice(node, env, lines, target) {
+    const type = target ?? this.typeOf(node);
+    const and = node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken;
+    const left = unwrap(node.left);
+    const leftValue = branchEnv => {
+      const inner = [];
+      const value = this.wrapIf(type, this.expression(left, branchEnv, inner), left);
+      return [...inner, `Result.ok ${value}`];
+    };
+    const rightValue = branchEnv => {
+      const inner = [];
+      const value = this.convert(node.right, type, branchEnv, inner);
+      return [...inner, `Result.ok ${value}`];
+    };
+    const fresh = this.fresh();
+    const narrowed = this.narrowing(left, env);
+    const falsy = this.nullable(this.typeOf(left)) ? () => ["Result.ok none"] : leftValue;
+    if (narrowed) {
+      const arms = narrowed((onPath, next) => (and ? (onPath ? rightValue(next) : falsy(next)) : (onPath ? leftValue(next) : rightValue(next))));
+      lines.push(`let ${fresh} ← do`, ...this.indent(arms));
+      return fresh;
+    }
+    // The test and the result both read the left side, so it must be safe to read twice.
+    if (!ts.isIdentifier(left) && !this.isFieldPath(left)) throw this.t.fail(node, "the left side of this `&&` or `||` must be a variable or field for now");
+    if (this.nullable(this.typeOf(left))) throw this.t.fail(node, "this `&&` or `||` is not supported here yet");
+    const test = this.condition(left, env, lines);
+    const [whenTrue, whenFalse] = and ? [rightValue(env), leftValue(env)] : [leftValue(env), rightValue(env)];
+    lines.push(`let ${fresh} ← if ${test} then`, ...this.indent(this.indent(whenTrue)), "  else", ...this.indent(this.indent(whenFalse)));
+    return fresh;
   }
 
   operand(node, env, lines) {
@@ -2060,17 +2148,63 @@ export class Scope {
         const test = this.equality(node, env, lines);
         return op === ts.SyntaxKind.EqualsEqualsEqualsToken ? test : `¬(${test})`;
       }
+      // Loose equality only means something simple against `null`.
+      if ((op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken)
+        && unwrap(node.right).kind === ts.SyntaxKind.NullKeyword) {
+        const test = this.missing(node, env, lines);
+        return op === ts.SyntaxKind.EqualsEqualsToken ? test : `¬(${test})`;
+      }
       throw this.t.fail(node, "this operator is not supported");
     }
     if (this.isString(node)) return `${this.expression(node, env, lines)} ≠ []`;
     if (this.isNumber(node)) return `${this.expression(node, env, lines)}.val ≠ 0`; // NaN never reaches here
     if (this.isBigInt(node)) return `${this.expression(node, env, lines)} ≠ 0`;
-    if (!this.isBoolean(node)) throw this.t.fail(node, "truthiness of this type is not supported yet");
-    return `${this.expression(node, env, lines)} = true`;
+    if (this.isBoolean(node)) return `${this.expression(node, env, lines)} = true`;
+    const type = this.typeOf(node);
+    if (type.isUnion() && this.nullable(type)) return this.present(this.expression(node, env, lines), this.checker.getNonNullableType(type), node);
+    if (this.alwaysTruthy(type, node)) throw this.t.fail(node, "this value is always truthy, so the test does nothing");
+    throw this.t.fail(node, "truthiness of this type is not supported yet");
   }
 
+  // Objects, arrays and enumerations are truthy whatever they hold: no tag is empty.
+  alwaysTruthy(type, node) {
+    const lean = this.leanOf(type, node);
+    if (!lean || ["Js.Num", "Js.Str", "Bool", "Int", "Unit"].includes(lean)) return false;
+    return !type.isUnion() || !this.nullable(type);
+  }
+
+  // A test on an optional value, by what its inner value's truth depends on.
+  present(value, inner, node) {
+    const lean = this.leanOf(inner, node);
+    if (lean === "Js.Str") return `Js.truthyStr ${value} = true`;
+    if (lean === "Js.Num") return `Js.truthyNum ${value} = true`;
+    if (lean === "Bool") return `Js.truthyBool ${value} = true`;
+    if (lean === "Int") return `Js.truthyBig ${value} = true`;
+    if (this.alwaysTruthy(inner, node)) return `Option.isSome ${value} = true`;
+    throw this.t.fail(node, "truthiness of this type is not supported yet");
+  }
+
+  // `x == null`, or `x === null` where the type allows only that nullish value.
+  missing(node, env, lines) {
+    const operand = unwrap(node.left);
+    if (!this.isNull(unwrap(node.right))) throw this.t.fail(node, "the nullish value must be on the right here for now");
+    const type = this.typeOf(operand);
+    const kind = this.nothing(type);
+    if (!kind) throw this.t.fail(node, "this kind of null check is not supported yet");
+    const strict = node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken || node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+    const wanted = this.isUndefined(unwrap(node.right)) ? "undefined" : "null";
+    if (strict && kind === "both") throw this.t.fail(node, "`===` can't tell `null` from `undefined` here; use `== null`");
+    if (strict && kind !== wanted) throw this.t.fail(node, "this null check is always false, because the type allows the other nullish value");
+    return `Option.isNone ${this.expression(operand, env, lines)} = true`;
+  }
+
+  // `&&` and `||` as a test only ask whether the result is truthy, whatever the sides are.
   logical(node, env, lines) {
-    if (!this.isBoolean(node.left) || !this.isBoolean(node.right)) throw this.t.fail(node, "`&&` and `||` are only supported on `boolean` for now");
+    if (this.splits(node)) {
+      const fresh = this.fresh();
+      lines.push(`let ${fresh} ← do`, ...this.indent(this.splitTest(node, env, onPath => [`Result.ok ${onPath}`])));
+      return `${fresh} = true`;
+    }
     const and = node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken;
     const left = this.condition(node.left, env, lines);
     const inner = [];
@@ -2087,7 +2221,7 @@ export class Scope {
 
   equality(node, env, lines) {
     const left = unwrap(node.left), right = unwrap(node.right);
-    if (this.isNull(left) || this.isNull(right)) throw this.t.fail(node, "this kind of null check is not supported yet");
+    if (this.isNull(left) || this.isNull(right)) return this.missing(node, env, lines);
     if (this.isNumber(left) && this.isNumber(right)) {
       return `${this.valueOf(left, env, lines)} = ${this.valueOf(right, env, lines)}`;
     }
@@ -2113,8 +2247,22 @@ export class Scope {
     if (literal && this.t.type(otherType, other) !== "Js.Str") {
       return `${this.expression(other, env, lines)} = .${name(literal.text)}`;
     }
-    if (this.isString(left) && this.isString(right)) {
+    if (this.isText(left) && this.isText(right)) {
       return `${this.expression(left, env, lines)} = ${this.expression(right, env, lines)}`;
+    }
+    const leftType = this.typeOf(left), rightType = this.typeOf(right);
+    const inner = type => (this.nullable(type) ? this.checker.getNonNullableType(type) : type);
+    const same = this.leanOf(inner(leftType), left);
+    const comparable = same && same === this.leanOf(inner(rightType), right) && same !== "Js.Num"
+      && (same === "Js.Str" || same === "Bool" || same === "Int" || (same.startsWith("_root_.") && this.t.shape(inner(leftType))?.kind === "enum"));
+    if (comparable) {
+      const a = this.expression(left, env, lines), b = this.expression(right, env, lines);
+      const [leftKind, rightKind] = [this.nothing(leftType), this.nothing(rightType)];
+      if (!leftKind && !rightKind) return `${a} = ${b}`;
+      if (leftKind && !rightKind) return `${a} = some ${b}`;
+      if (rightKind && !leftKind) return `${b} = some ${a}`;
+      // Two missing values are only equal if they are the same nullish value.
+      if (leftKind === rightKind && leftKind !== "both") return `${a} = ${b}`;
     }
     throw this.t.fail(node, "`===` is only supported on numbers, booleans and string-literal unions for now");
   }

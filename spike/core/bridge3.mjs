@@ -150,6 +150,7 @@ function enumRules(e) {
 ${e.tags.map(t => `  | .${t.lean} => ${units(t.tag)}`).join("\n")}
 instance : TyRep ${e.lean} := ⟨fun _ a v => v = .str (${tag} a), fun _ h => h⟩
 instance : NotNull ${e.lean} := ⟨by rintro _ _ _ rfl; rfl⟩
+instance : AlwaysTruthy ${e.lean} := ⟨by rintro _ a _ rfl; cases a <;> rfl⟩
 theorem ${n}_inj {a b : ${e.lean}} (h : ${tag} a = ${tag} b) : a = b := by
   cases a <;> cases b <;> first | rfl | (simp [${tag}] at h)
 theorem ${n}_iff {a b : ${e.lean}} : ${tag} a = ${tag} b ↔ a = b := ⟨${n}_inj, fun e => by rw [e]⟩

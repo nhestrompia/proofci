@@ -333,7 +333,7 @@ test("null checks in their other spellings", () => {
   emits("interface A { x: number } export function f(a: A | null) { if (a === null || a.x > 0) { return 1; } return a.x; }", "match a with");
   emits("export function f(a: number | null | undefined) { return a == null ? 0 : a; }");
   rejects("export function f(a: number | null | undefined) { return a === null ? 0 : 1; }", /tell `null` from `undefined`/);
-  rejects("export function f(a: string | null) { return a ? 1 : 0; }", /truthiness|not supported/);
+  emits("export function f(a: string | null) { return a ? 1 : 0; }", "Js.truthyStr a = true", "Js.unwrap a");
 });
 
 test("a read the project assumes is present stops the model when it isn't", () => {
@@ -356,6 +356,47 @@ test("forEach is a loop, and return only ends one call", () => {
 test("identity comparison isn't approximated", () => {
   rejects("interface L { n: number } export function f(xs: L[], x: L) { return xs.includes(x); }", /identity/);
   rejects("export function f(a: number[], b: number[]) { return a === b; }", /only supported on/);
+});
+
+test("truth follows JavaScript, by type", () => {
+  emits("export function f(a?: number) { if (a) { return a; } return 0; }", "Js.truthyNum a = true");
+  emits("export function f(a?: boolean) { return a ? 1 : 0; }", "Js.truthyBool a = true");
+  emits("export function f(a: number[] | null) { return a ? 1 : 0; }", "match a with");
+  emits("interface R { s?: string } export function f(r: R) { return r.s ? r.s.length : 0; }", "Js.truthyStr r.s = true");
+  rejects("export function f(a: number[]) { if (a) { return 1; } return 0; }", /always truthy/);
+  rejects(`type M = "a" | "b"; export function f(a: M) { return a ? 1 : 0; }`, /always truthy/);
+  emits("export function f(a: string, b: number) { if (a && b) { return 1; } return 0; }", "(a ≠ []) ∧ (b.val ≠ 0)");
+  emits("export function f(a?: string) { if (a && a.length > 1) { return a; } return ''; }", "Js.truthyStr a = true");
+  emits("export function f(a: 1 | 2, b: number) { return a === b; }", "a.val = b.val");
+});
+
+test("\`&&\` and \`||\` as values keep the value", () => {
+  emits("export function f(a: string, b: string) { return a || b; }", "a ≠ []");
+  emits("export function f(a: number, b: number) { return a && b; }", "a.val ≠ 0");
+  emits("export function f(a?: string) { return a || 'x'; }", "Js.truthyStr a = true");
+  emits("interface R { x: number } export function f(a?: R): number | undefined { return a && a.x; }", "Result.ok none");
+  emits("export function f(a: string | null, b: boolean): boolean { return a !== null && b; }");
+  rejects("declare function g(): string; export function f() { return g() || 'x'; }", /no body|no source|variable or field/);
+});
+
+test("null tests work anywhere, and still tell null from undefined", () => {
+  emits("export function f(a: number | null) { const b = a === null; return b; }", "Option.isNone a = true");
+  emits("export function f(a: number | undefined) { return a !== undefined; }", "¬(Option.isNone a = true)");
+  emits("export function f(a: number | null | undefined) { return a == null; }", "Option.isNone a = true");
+  emits("export function f(a: number | null | undefined) { return a != null; }", "¬(Option.isNone a = true)");
+  rejects("export function f(a: number | null | undefined) { return a === null; }", /tell `null` from `undefined`/);
+  rejects("export function f(a: number | undefined) { const b = (a as unknown) === null; return b; }", /assertion|null check/);
+  rejects("export function f(a: number) { return a == 1; }", /operator/);
+});
+
+test("equality on optional values", () => {
+  emits("export function f(a?: boolean) { return a === true; }", "a = some true");
+  emits("export function f(a: string | null, b: string) { return a === b; }", "a = some b");
+  emits("export function f(a?: string, b?: string) { return a === b; }", "a = b");
+  rejects("export function f(a: string | null, b?: string) { return a === b; }", /only supported/);
+  rejects("export function f(a: string | null | undefined, b: string | null | undefined) { return a === b; }", /only supported/);
+  emits(`type M = "a" | "b"; export function f(a: M, b: M) { return a === b; }`, "a = b");
+  rejects("export function f(a: 'x' | 'y', b: number) { return (a as string) === String(b); }", /assertion|supported/);
 });
 
 test("switch handles grouped cases, default and a final break", () => {

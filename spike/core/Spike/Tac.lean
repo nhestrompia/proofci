@@ -198,7 +198,14 @@ macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_undef_none; sim'; isno
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_null_none; sim'; isnone))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_nothing_some; rfl; sim_v; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_nothing_some; rfl; sim_v; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.isNullish_opt; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_undef; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_null; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_undef; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_null; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.not; simb))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_some; sim'; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_opts; sim'; sim'; infer_instance; decide))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.and; simc; simc))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.or; simc; simc))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
@@ -210,6 +217,12 @@ macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.strIncludes; sim'; si
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.includes_str; sim'; sim'))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
 
+-- Tried last: each of these also accepts a plain value read as a present option.
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_some; sim'; infer_instance))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_big; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_bool; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_num; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_str; sim'))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.none; sim'; isnone))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.obj; sim_v; infer_instance))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.big; sim'))
@@ -223,6 +236,13 @@ macro_rules | `(tactic| simb) => `(tactic| (apply SimB.or_f; simb; known; simb))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.or_t; simb; known))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.and_both; simb; simb))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.or_both; simb; simb))
+-- The test of a value-level branch, when it is the view's own truth test.
+syntax "simb_opt" : tactic
+macro_rules | `(tactic| simb_opt) => `(tactic| first
+  | (apply SimB.opt_str; sim') | (apply SimB.opt_num; sim') | (apply SimB.opt_bool; sim')
+  | (apply SimB.opt_big; sim') | (apply SimB.opt_some; sim'; infer_instance))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_t; simb_opt; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_f; simb_opt; known; sim'))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.of_c; simc))
 
 -- Statements. Core and the typed function advance together: `vdrain` consumes what the next
