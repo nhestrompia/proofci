@@ -22,6 +22,7 @@ const STRING_METHODS = {
   "replace/2": "replace", "replaceAll/2": "replaceAll", "substring/2": "substring",
 };
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };
+const isSet = t => t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet";
 const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach"]);
 const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr" };
 
@@ -247,6 +248,7 @@ export function lower(root, targets, { paths } = {}) {
       if (ts.isPropertyAccessExpression(e)) {
         const continues = ts.isOptionalChain(e) && !e.questionDotToken;
         if (continues) throw new Error("an optional chain that continues past `?.`");
+        if (e.name.text === "size" && !e.questionDotToken && isSet(checker.getTypeAtLocation(e.expression))) return `.length (${E(e.expression)})`;
         if (e.name.text === "length") {
           if (!e.questionDotToken) return `.length (${E(e.expression)})`;
           if (!ts.isIdentifier(e.expression)) throw new Error("`?.length` on an expression");
@@ -263,6 +265,11 @@ export function lower(root, targets, { paths } = {}) {
         queue.push(e); done.set(name, null);
         const copies = [...(e.__const ?? [])].map(c => `(${lean(c.name)}, ${E(ts.factory.createIdentifier(c.name) && idOf(c))})`);
         return `.closure ${lean(name)} (.record [("__up", .var "__scope")${copies.length ? ", " : ""}${copies.join(", ")}])`;
+      }
+      if (ts.isNewExpression(e) && isSet(checker.getTypeAtLocation(e))) {
+        if (!e.arguments?.length) return ".array []";
+        if (e.arguments.length === 1 && checker.isArrayType(checker.getTypeAtLocation(e.arguments[0]))) return `.prim .setOf [${E(e.arguments[0])}]`;
+        throw new Error("`new Set` on something other than an array");
       }
       if (ts.isNewExpression(e)) { if (!classDecl(e.expression.getText())) throw new Error("`new` on a class outside this code"); useClass(e.expression.text); }
       if (ts.isNewExpression(e)) return `.call ${lean(`${e.expression.text}.__new`)} [${(e.arguments ?? []).map(E).join(", ")}]`;
@@ -287,7 +294,8 @@ export function lower(root, targets, { paths } = {}) {
         const flush = () => { if (run.length) parts.push(`.array [${run.join(", ")}]`); run = []; };
         for (const el of e.elements) {
           if (ts.isSpreadElement(el)) {
-            if (!checker.isArrayType(checker.getTypeAtLocation(el.expression))) throw new Error("a spread of something other than an array");
+            const spread = checker.getTypeAtLocation(el.expression);
+            if (!checker.isArrayType(spread) && !isSet(spread)) throw new Error("a spread of something other than an array");
             flush(); parts.push(E(el.expression));
           } else run.push(E(el));
         }
@@ -312,6 +320,7 @@ export function lower(root, targets, { paths } = {}) {
         const t = checker.getTypeAtLocation(recv);
         const table = t.flags & ts.TypeFlags.StringLike ? STRING_METHODS : checker.isArrayType(t) ? ARRAY_METHODS : null;
         if (table?.[m]) return `.prim .${table[m]} [${[recv, ...e.arguments].map(E).join(", ")}]`;
+        if (m === "has/1" && isSet(t)) return `.prim .setHas [${[recv, ...e.arguments].map(E).join(", ")}]`;
       }
       if (ts.isCallExpression(e) && e.expression.kind === ts.SyntaxKind.SuperKeyword) throw new Error("super call outside a constructor");
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.kind === ts.SyntaxKind.SuperKeyword) {

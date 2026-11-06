@@ -560,6 +560,16 @@ test("a literal compares with an optional value through some", () => {
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
 
+test("a set is built from an array and read by value", () => {
+  emits(`export function f(a: string[], k: string) { return new Set(a).has(k); }`, "Js.setHas (Js.setOf a) k");
+  emits(`export function f(a: number[]) { return new Set(a).size; }`, "Js.setOf a");
+  emits(`export function f(a: string[]) { return [...new Set(a)]; }`, "Js.setOf a");
+  emits(`export type K = "x" | "y";\nexport function f(a: K[], k: K) { return new Set(a).has(k); }`, "Js.setOf a");
+  rejects(`export function f(a: string) { return new Set(a).size; }`, /on an array/);
+  rejects(`export function f(a: string[]) { return new Map(a.map(x => [x, 1])).size; }`, /new Map/);
+  rejects(`export type R = { x: number };\nexport function f(a: R[]) { return new Set(a).size; }`, /can be keys/);
+});
+
 test("a template prints optional values, enums and unions of literals", () => {
   const kind = `export type K = "x" | "y";\n`;
   emits("export function f(a?: string) { return `<${a}>`; }", "Js.showUndef id a");

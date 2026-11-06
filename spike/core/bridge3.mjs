@@ -21,7 +21,7 @@ function leanType(t) {
     case "record": case "enum": return t.lean;
     case "void": return "Unit";
     case "generic": return t.name;
-    case "array": return `(List ${leanType(t.item)})`;
+    case "array": case "set": return `(List ${leanType(t.item)})`;
     case "optional": return `(Opt ${t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef"} ${leanType(t.inner)})`;
     default: throw new Error(`no encoding for ${t.kind}`);
   }

@@ -445,6 +445,12 @@ def setAdd {K} [DecidableEq K] (s : List K) (v : K) : List K := if s.contains v 
 
 def setDelete {K} [DecidableEq K] (s : List K) (v : K) : List K := s.filter (· ≠ v)
 
+/-- `new Set(xs)`: the first occurrence of each value, in order. -/
+def setOf {K} [DecidableEq K] (xs : List K) : List K := xs.foldl setAdd []
+
+/-- `s.has(v)` -/
+def setHas {K} [DecidableEq K] (s : List K) (v : K) : Bool := s.contains v
+
 /-- A number for the differential test. Inputs are always safe integers. -/
 def lit (v : Int) : Num :=
   if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default

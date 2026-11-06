@@ -44,7 +44,7 @@ inductive Prim where
   | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
-  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText
+  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -201,6 +201,14 @@ def asNum : Val → Option Js.Num
     | _ => none
   | _ => none
 
+/-- Set membership, as `===` sees it: `-0` and `0` are one key. `NaN` isn't, unlike
+JavaScript, but no typed number is `NaN`. -/
+def sameKey (a b : Val) : Bool := binary .eq a b == some (.bool true)
+
+/-- One step of building a set, which is stored as an array without repeats. -/
+def addKey (acc : List Val) (v : Val) : List Val :=
+  if acc.any (sameKey · v) then acc else acc ++ [v]
+
 /-- How a value prints inside a template. Objects and functions aren't modelled here. -/
 def textOf : Val → Option (List Nat)
   | .undef => some Js.undefinedStr
@@ -258,6 +266,12 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .charAt, h, [.str s, i] => (asNum i).map fun i => (.str (Js.charAt s i), h)
   | .numStr, h, [v] => (asNum v).map fun a => (.str (Js.numStr a), h)
   | .toText, h, [v] => (textOf v).map fun t => (.str t, h)
+  | .setOf, h, [.ref l] => match h[l]? with
+    | some (.array xs) => some (.ref h.length, h ++ [.array (xs.foldl addKey [])])
+    | _ => none
+  | .setHas, h, [.ref l, v] => match h[l]? with
+    | some (.array xs) => some (.bool (xs.any (sameKey · v)), h)
+    | _ => none
   | .min, h, [a, b] => match asNum a, asNum b with
     | some a, some b => some (numVal (Js.min a b), h)
     | _, _ => none

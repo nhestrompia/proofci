@@ -1074,6 +1074,60 @@ theorem SimE.includes_arr {a : List (List Nat)} {b : List Nat} (hx : SimE p s x 
   refine sim_prim (args2 hx hy) ?_
   rintro _ _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, rfl⟩
   exact ⟨_, _, by simp [primV, hl, strs_of hf], List.prefix_refl _, rfl⟩
+/-- Types whose values Core and the typed view compare the same way as set keys. -/
+class Key (α : Type) [TyRep α] [DecidableEq α] : Prop where
+  same {h : Heap} {a b : α} {v w : Val} : rep h a v → rep h b w → sameKey v w = decide (a = b)
+instance {α} [TyRep α] [DecidableEq α] [Inj α] : Key α := ⟨fun {_ a b v w} rv rw => by
+  have e := Inj.inj rv rw
+  simp only [sameKey, binary_eq_of_not_num (Inj.notNum rv)]
+  by_cases h : a = b <;> simp [h, e.not, e]⟩
+instance : Key Js.Num := ⟨by
+  rintro _ a b _ _ ⟨x, rfl, hx⟩ ⟨y, rfl, hy⟩
+  by_cases h : a = b
+  · simp [sameKey, binary, F64.eq_isInt hx hy, h]
+  · have : a.val ≠ b.val := fun e => h (Js.Num.ext e)
+    simp [sameKey, binary, F64.eq_isInt hx hy, h, this]⟩
+theorem any_key {α} [TyRep α] [DecidableEq α] [Key α] {h : Heap} {a : List α} {vs : List Val} {b : α} {w : Val}
+    (hf : List.Forall₂ (rep h) a vs) (rw : rep h b w) : vs.any (sameKey · w) = Js.setHas a b := by
+  induction hf with
+  | nil => rfl
+  | @cons x v _ _ r _ ih =>
+    simp only [List.any_cons, Js.setHas, List.contains_cons] at ih ⊢
+    rw [Key.same r rw, ih]
+    by_cases e : x = b
+    · subst e; simp
+    · have e' : b ≠ x := fun q => e q.symm
+      simp [e, e']
+theorem fold_keys {α} [TyRep α] [DecidableEq α] [Key α] {h : Heap} {a acc : List α} {vs acc' : List Val}
+    (hf : List.Forall₂ (rep h) a vs) (hc : List.Forall₂ (rep h) acc acc') :
+    List.Forall₂ (rep h) (a.foldl Js.setAdd acc) (vs.foldl addKey acc') := by
+  induction hf generalizing acc acc' with
+  | nil => exact hc
+  | @cons x v _ _ r _ ih =>
+    refine ih ?_
+    have e := any_key hc r
+    simp only [Js.setHas] at e
+    simp only [addKey, Js.setAdd, e]
+    split
+    · exact hc
+    · exact List.rel_append hc (.cons r .nil)
+theorem SimE.setOf {α} {_ : TyRep α} [DecidableEq α] [Key α] {a : List α} (hx : SimE p s x a) :
+    SimE p s (.prim .setOf [x]) (Js.setOf a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨_, rfl, l, vs, rfl, hl, hf⟩
+  refine ⟨.ref h.length, h ++ [.array (vs.foldl addKey [])], by simp [primV, hl], List.prefix_append _ _, h.length, vs.foldl addKey [], rfl, by simp, ?_⟩
+  exact fold_keys (hf.imp fun _ _ r => mono (List.prefix_append _ _) r) .nil
+theorem SimE.setHas {α} {_ : TyRep α} [DecidableEq α] [Key α] {a : List α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .setHas [x, y]) (Js.setHas a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, w, rfl, ⟨l, vs, rfl, hl, hf⟩, rw⟩
+  exact ⟨_, _, by simp [primV, hl, any_key hf rw], List.prefix_refl _, rfl⟩
+-- For tactics: the element type can be unknown until `hx` is proved, so these leave the
+-- instances as goals rather than searching for them too early.
+theorem SimE.setOf_ {α} {_ : TyRep α} {d : DecidableEq α} {a : List α} (hx : SimE p s x a) (k : @Key α _ d) :
+    SimE p s (.prim .setOf [x]) (@Js.setOf α d a) := @SimE.setOf _ _ _ _ _ d k _ hx
+theorem SimE.setHas_ {α} {_ : TyRep α} {d : DecidableEq α} {a : List α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) (k : @Key α _ d) :
+    SimE p s (.prim .setHas [x, y]) (@Js.setHas α d a b) := @SimE.setHas _ _ _ _ _ _ d k _ _ hx hy
 theorem forall_strs {h : Heap} (xs : List (List Nat)) : List.Forall₂ (rep h) xs (xs.map .str) := by
   induction xs with
   | nil => exact .nil

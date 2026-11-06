@@ -30,6 +30,8 @@ KINDS = {
     "show-undef": (r"\bJs\.showNull\b", "Js.showUndef"),
     "show-trim": (r"(Js\.show(?:Undef|Null)) id\b", r"\1 Js.trim"),
     "bool-negate": (r"\bJs\.boolStr (\S+)\)", r"Js.boolStr (!\1))"),
+    "set-no-dedupe": (r"\bJs\.setOf ", "id "),
+    "set-has-not": (r"\(Js\.setHas ", "(!Js.setHas "),
     "truthy-str": (r"Js\.truthyStr (\S+) = true", r"Option.isSome \1 = true"),
     "truthy-num": (r"Js\.truthyNum (\S+) = true", r"Option.isSome \1 = true"),
     "truthy-bool": (r"Js\.truthyBool (\S+) = true", r"Option.isSome \1 = true"),

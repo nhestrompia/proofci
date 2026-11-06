@@ -246,7 +246,8 @@ export class Translator {
     const collection = this.collection(type);
     if (collection) {
       const [key, value] = collection.args.map(arg => this.type(arg, node));
-      if (!["Js.Num", "Js.Str", "Bool", "Int"].includes(key)) throw this.fail(node, "only numbers, strings and booleans can be keys for now");
+      const keyed = ["Js.Num", "Js.Str", "Bool", "Int"].includes(key) || this.shape(collection.args[0])?.kind === "enum";
+      if (!keyed) throw this.fail(node, "only numbers, strings, booleans and string-literal unions can be keys for now");
       return collection.kind === "Map" ? `(Js.Dict ${key} ${value})` : `(List ${key})`;
     }
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
@@ -1365,7 +1366,8 @@ export class Scope {
 
   forOf(statement, rest, flow, env) {
     if (statement.awaitModifier) throw this.t.fail(statement, "`for await` is not supported");
-    if (!this.isArray(statement.expression)) throw this.t.fail(statement.expression, "`for...of` is only supported on arrays for now");
+    const iterated = this.isArray(statement.expression) || this.t.collection(this.typeOf(statement.expression))?.kind === "Set";
+    if (!iterated) throw this.t.fail(statement.expression, "`for...of` is only supported on arrays and sets for now");
     const declaration = statement.initializer.declarations?.[0];
     if (!declaration || !ts.isIdentifier(declaration.name)) throw this.t.fail(statement, "`for...of` needs a plain variable for now");
     return this.walkArray(statement, statement.expression, declaration.name, statement.statement, rest, flow, env, false);
@@ -1588,7 +1590,7 @@ export class Scope {
     if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines, target);
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return this.nullish(node, env, lines, target);
     if (this.isChoice(node)) return this.choice(node, env, lines, target);
-    if (ts.isNewExpression(node) && this.isCollection(node)) return this.wrapIf(target, this.newCollection(node, target), node);
+    if (ts.isNewExpression(node) && this.isCollection(node)) return this.wrapIf(target, this.newCollection(node, target, env, lines), node);
     if (ts.isStringLiteralLike(node)) {
       const plain = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
       const lean = this.t.type(plain, node);
@@ -1611,7 +1613,10 @@ export class Scope {
   arrayLiteral(node, target, env, lines) {
     const type = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
     if (!this.checker.isArrayType(type)) throw this.t.fail(node, "tuples are not supported yet");
-    const item = this.checker.getTypeArguments(type)[0];
+    return this.arrayItems(node, this.checker.getTypeArguments(type)[0], type, env, lines);
+  }
+
+  arrayItems(node, item, type, env, lines) {
     const parts = [];
     let run = [];
     const flush = () => { if (run.length) parts.push(`[${run.join(", ")}]`); run = []; };
@@ -1619,20 +1624,32 @@ export class Scope {
       if (ts.isOmittedExpression(element)) throw this.t.fail(element, "arrays with holes are not supported");
       if (ts.isSpreadElement(element)) {
         flush();
-        if (!this.isArray(element.expression)) throw this.t.fail(element, "only arrays can be spread for now");
-        parts.push(this.convert(element.expression, type, env, lines));
+        const set = this.t.collection(this.typeOf(element.expression))?.kind === "Set";
+        if (!this.isArray(element.expression) && !set) throw this.t.fail(element, "only arrays and sets can be spread for now");
+        parts.push(set ? this.expression(element.expression, env, lines) : this.convert(element.expression, type, env, lines));
       } else {
         run.push(this.convert(element, item, env, lines));
       }
     }
     flush();
-    if (!parts.length) return `([] : ${this.t.type(type, node)})`;
+    if (!parts.length) return `([] : (List ${this.t.type(item, node)}))`;
     return `(${parts.join(" ++ ")})`;
   }
 
-  newCollection(node, target) {
-    if (node.arguments?.length) throw this.t.fail(node, "only an empty `new Map()` or `new Set()` is supported for now");
-    return `([] : ${this.t.type(this.nullable(target) ? this.checker.getNonNullableType(target) : target, node)})`;
+  newCollection(node, target, env, lines) {
+    const type = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
+    const args = node.arguments ?? [];
+    const lean = this.t.type(type, node); // Checks the keys: objects compare by identity.
+    if (!args.length) return `([] : ${lean})`;
+    if (this.t.collection(type).kind !== "Set" || args.length !== 1 || !this.isArray(args[0])) {
+      throw this.t.fail(node, "only an empty `new Map()`, or `new Set()` on an array, is supported for now");
+    }
+    // Written out in place, the items take the set's key type, which may be an enumeration.
+    const items = unwrap(args[0]);
+    const list = ts.isArrayLiteralExpression(items)
+      ? this.arrayItems(items, this.t.collection(type).args[0], this.typeOf(items), env, lines)
+      : this.convert(items, this.typeOf(items), env, lines);
+    return `(Js.setOf ${list})`;
   }
 
   // The type of what `node` reads, given the branch it is in.
@@ -1728,7 +1745,7 @@ export class Scope {
     }
     if (ts.isStringLiteralLike(node)) return this.text(node.text);
     if (ts.isTemplateExpression(node)) return this.template(node, env, lines);
-    if (ts.isNewExpression(node) && this.isCollection(node)) return this.newCollection(node, this.typeOf(node));
+    if (ts.isNewExpression(node) && this.isCollection(node)) return this.newCollection(node, this.typeOf(node), env, lines);
     if (ts.isPrefixUnaryExpression(node)) {
       if (node.operator === ts.SyntaxKind.ExclamationToken) return `(decide (${this.condition(node, env, lines)}))`;
       if (node.operator === ts.SyntaxKind.MinusToken) {
@@ -2096,7 +2113,7 @@ export class Scope {
     const key = () => this.convert(node.arguments[0], types[0], env, lines);
     if (kind === "Map" && method === "get") return `(Js.dictGet ${value} ${key()})`;
     if (kind === "Map" && method === "has") return `(Js.dictHas ${value} ${key()})`;
-    if (kind === "Set" && method === "has") return `(${value}.contains ${key()})`;
+    if (kind === "Set" && method === "has") return `(Js.setHas ${value} ${key()})`;
     throw this.t.fail(node, `\`.${method}\` is not supported here yet`);
   }
 
