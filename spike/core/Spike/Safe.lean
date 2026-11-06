@@ -230,6 +230,107 @@ theorem mul_isInt {a b : Int} (hlo : -9007199254740991 ≤ a * b) (hhi : a * b �
         simp [h1, h2]; omega
     simp [ofInt, hsign]
 
+/-- An exact quotient has every low bit clear, so rounding keeps a safe integer. -/
+theorem round_div_exact {neg : Bool} {m k : Nat} (h0 : 0 < m) (hm : m < 2 ^ 53) (hk : 64 ≤ k) :
+    round neg (m * 2 ^ (1074 + k)) k false = fin neg (m * unit) := by
+  have hu : unit = 2 ^ 1074 := rfl
+  have hne : m * 2 ^ (1074 + k) ≠ 0 := Nat.mul_ne_zero (by omega) (by positivity)
+  have hlt : m * 2 ^ (1074 + k) < 2 ^ (1127 + k) := by
+    calc m * 2 ^ (1074 + k) < 2 ^ 53 * 2 ^ (1074 + k) := Nat.mul_lt_mul_of_pos_right hm (by positivity)
+      _ = 2 ^ (1127 + k) := by rw [← Nat.pow_add]; congr 1; omega
+  have hlog : Nat.log2 (m * 2 ^ (1074 + k)) < 1127 + k := (Nat.log2_lt hne).mpr hlt
+  have hlimit : ¬ limit ≤ m * unit := by
+    have h1 : m * unit < 2 ^ 1127 := by
+      calc m * unit < 2 ^ 53 * unit := Nat.mul_lt_mul_of_pos_right hm unit_pos
+        _ = 2 ^ 1127 := by rw [hu, ← Nat.pow_add]
+    have h2 : (2 : Nat) ^ 1127 ≤ limit := Nat.pow_le_pow_right (by decide) (by decide)
+    omega
+  unfold round
+  rw [if_neg hne]
+  simp only
+  generalize hs : max (Nat.log2 (m * 2 ^ (1074 + k)) + 1 - 53) k = s
+  have hs1 : k ≤ s := by omega
+  have hs2 : s ≤ 1074 + k := by omega
+  have hs0 : s ≠ 0 := by omega
+  have hdvd : 2 ^ s ∣ m * 2 ^ (1074 + k) := Dvd.dvd.mul_left (Nat.pow_dvd_pow 2 hs2) m
+  have hrest : (m * 2 ^ (1074 + k)) % 2 ^ s = 0 := Nat.mod_eq_zero_of_dvd hdvd
+  have hback : (m * 2 ^ (1074 + k)) / 2 ^ s * 2 ^ (s - k) = m * unit := by
+    have he : 1074 + k - s + s = 1074 + k := by omega
+    have hsplit : (2 : Nat) ^ (1074 + k) = 2 ^ (1074 + k - s) * 2 ^ s := by rw [← Nat.pow_add, he]
+    have hdiv : (m * 2 ^ (1074 + k)) / 2 ^ s = m * 2 ^ (1074 + k - s) := by
+      rw [hsplit, ← Nat.mul_assoc, Nat.mul_div_cancel _ (by positivity)]
+    have he' : 1074 + k - s + (s - k) = 1074 := by omega
+    rw [hdiv, Nat.mul_assoc, ← Nat.pow_add, he', hu]
+  have h1 : decide (2 ^ (s - 1) < 0) = false := by simp
+  have h2 : decide (0 = 2 ^ (s - 1)) = false := by simp
+  rw [if_neg hs0]
+  simp only [hrest, h1, h2, Bool.false_or, Bool.false_and, Bool.false_eq_true, ite_false, hback, if_neg hlimit]
+
+theorem sign_mul {b q : Int} (hb : b ≠ 0) (hq : q ≠ 0) :
+    (decide (b * q < 0) != decide (b < 0)) = decide (q < 0) := by
+  by_cases h1 : b < 0 <;> by_cases h2 : q < 0
+  · have : 0 < b * q := mul_pos_of_neg_of_neg h1 h2
+    simp [h1, h2]; omega
+  · have : b * q < 0 := mul_neg_of_neg_of_pos h1 (by omega)
+    simp [h1, h2, this]
+  · have : b * q < 0 := mul_neg_of_pos_of_neg (by omega) h2
+    simp [h1, h2, this]
+  · have : 0 < b * q := mul_pos (by omega) (by omega)
+    simp [h1, h2]; omega
+
+/-- Dividing two doubles that stand for integers, when the quotient is a safe integer. -/
+theorem div_isInt {x y : F64} {b q : Int} (hx : IsInt x (b * q)) (hy : IsInt y b) (hb : b ≠ 0)
+    (hlo : -9007199254740991 ≤ q) (hhi : q ≤ 9007199254740991) : IsInt (x.div y) q := by
+  have hy' : y = ofInt b := by rcases hy with h | ⟨h, _⟩; exact h; exact absurd h hb
+  subst hy'
+  have hbn : 0 < b.natAbs := Int.natAbs_pos.mpr hb
+  have hyn : b.natAbs * unit ≠ 0 := Nat.mul_ne_zero (by omega) (Nat.ne_of_gt unit_pos)
+  by_cases hq : q = 0
+  · subst hq
+    have hz : x = fin false 0 ∨ x = fin true 0 := by
+      rcases hx with h | ⟨_, h⟩
+      · left; rw [h]; simp [ofInt]
+      · right; exact h
+    have zero : ∀ s, IsInt (fin s 0) 0 := fun s => by
+      cases s
+      · exact Or.inl (by simp [ofInt])
+      · exact Or.inr ⟨rfl, rfl⟩
+    rcases hz with rfl | rfl <;> simp only [ofInt, div, if_neg hyn, if_true] <;> exact zero _
+  · have hab : b * q ≠ 0 := Int.mul_ne_zero hb hq
+    have hx' : x = ofInt (b * q) := by rcases hx with h | ⟨h, _⟩; exact h; exact absurd h hab
+    subst hx'
+    have hxn : (b * q).natAbs * unit ≠ 0 := Nat.mul_ne_zero (by have := Int.natAbs_pos.mpr hab; omega) (Nat.ne_of_gt unit_pos)
+    have hqn : 0 < q.natAbs := Int.natAbs_pos.mpr hq
+    generalize hk : Nat.log2 (b.natAbs * unit) + 64 = k
+    have htop : (b * q).natAbs * unit * 2 ^ (1074 + k) = (b.natAbs * unit) * (q.natAbs * 2 ^ (1074 + k)) := by
+      rw [Int.natAbs_mul]; ring
+    simp only [ofInt, div, if_neg hyn, if_neg hxn, hk, htop]
+    rw [Nat.mul_div_cancel_left _ (by omega), Nat.mul_mod_right]
+    simp only [ne_eq, not_true_eq_false, decide_false]
+    rw [round_div_exact hqn (by omega) (by omega), sign_mul hb hq]
+    left; rfl
+
+theorem trunc_isInt {x : F64} {a : Int} (h : IsInt x a) : IsInt x.trunc a := by
+  rcases h with rfl | ⟨rfl, rfl⟩
+  · left; simp only [ofInt, trunc, Nat.mul_div_cancel _ unit_pos]
+  · right; exact ⟨rfl, by simp [trunc]⟩
+
+theorem floor_isInt {x : F64} {a : Int} (h : IsInt x a) : IsInt x.floor a := by
+  rcases h with rfl | ⟨rfl, rfl⟩
+  · left
+    cases hs : decide (a < 0) <;> simp [ofInt, hs, floor, trunc, Nat.mul_div_cancel _ unit_pos, Nat.mul_mod_left]
+  · right; exact ⟨rfl, by simp [floor]⟩
+
+theorem ceil_isInt {x : F64} {a : Int} (h : IsInt x a) : IsInt x.ceil a := by
+  rcases h with rfl | ⟨rfl, rfl⟩
+  · left
+    cases hs : decide (a < 0) with
+    | false => simp [ofInt, hs, ceil, Nat.mul_mod_left]
+    | true =>
+      have : a.natAbs ≠ 0 := by simp at hs; omega
+      simp [ofInt, hs, ceil, Nat.mul_div_cancel _ unit_pos, this]
+  · right; exact ⟨rfl, by simp [ceil]⟩
+
 /-- `-0` is invisible to ordering and `===`, so comparisons survive `IsInt`. -/
 theorem lt_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) : x.lt y = decide (a < b) := by
   rcases hx with rfl | ⟨rfl, rfl⟩ <;> rcases hy with rfl | ⟨rfl, rfl⟩

@@ -236,6 +236,33 @@ theorem SimE.mul {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js
   have hhi : a.val * b.val ≤ 9007199254740991 := hv ▸ r.hi
   exact ⟨_, rfl, _, rfl, hv ▸ F64.mul_isInt' hx hy hlo hhi⟩
 
+theorem div_val {x y r : Js.Num} (h : Js.div x y = ok r) : y.val ≠ 0 ∧ x.val = y.val * r.val := by
+  simp only [Js.div] at h
+  split at h
+  · simp at h
+  · split at h
+    · rename_i h0 hm
+      simp only [Js.mk] at h
+      split at h
+      · simp only [ok.injEq] at h
+        subst h
+        exact ⟨h0, (Int.mul_ediv_cancel' (Int.dvd_of_emod_eq_zero hm)).symm⟩
+      · simp at h
+    · simp at h
+
+theorem SimE.div {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.div a b = ok r) :
+    SimE p s (.bin .div x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ ⟨x, rfl, hx⟩ ⟨y, rfl, hy⟩
+  obtain ⟨hb, hv⟩ := div_val h
+  exact ⟨_, rfl, _, rfl, F64.div_isInt (hv ▸ hx) hy hb r.lo r.hi⟩
+
+theorem SimE.math {p s e} {f : F64 → F64} {a : Js.Num} (hf : ∀ {x n}, Core.F64.IsInt x n → Core.F64.IsInt (f x) n) (hx : SimE p s e a) :
+    SimE p s (.math f e) a := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, x, rfl, hi⟩ := hx s₁ h₁
+  exact ⟨_, s₂, Evals.math ev, h₂, _, rfl, hf hi⟩
+
 theorem SimE.neg {p s e} {a r : Js.Num} (hx : SimE p s e a) (h : Js.neg a = ok r) : SimE p s (.neg e) r := by
   have hv : r.val = -a.val := by simp only [Js.neg, Js.mk] at h; split at h <;> simp_all; subst h; rfl
   intro s₁ h₁
@@ -1024,13 +1051,13 @@ theorem SimE.chain_none {p s x e d k α β} {_ : TyRep α} {_ : TyRep β} {a : O
     SimE p s (.coalesce (.cond (.isNullish x) (.lit .undef) e) d) w :=
   SimE.coalesce_none (k := .undef) (α := β) (o := Option.none)
     (SimE.cond_t (SimB.of_c (SimB.isNullish_none hx ha)) trivial (SimE.lit_undef rfl)) rfl hd
-theorem SimE.numFinite {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) true := by
+theorem SimE.numFinite {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Js.isFinite a) := by
   refine sim_prim (args1 hx) ?_
   rintro h _ ⟨v, rfl, ri⟩
   have e := num_arg ri
   obtain ⟨y, rfl, _⟩ := ri
   exact ⟨.bool true, h, by simp [primV, Core.numFinite, e], List.prefix_refl _, rfl⟩
-theorem SimE.numNaN {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numNaN [x]) false := by
+theorem SimE.numNaN {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numNaN [x]) (Js.isNaN a) := by
   refine sim_prim (args1 hx) ?_
   rintro h _ ⟨v, rfl, ri⟩
   have e := num_arg ri

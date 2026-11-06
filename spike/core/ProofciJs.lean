@@ -410,6 +410,13 @@ def intStr (v : Int) : Str := (toString v).toList.map Char.toNat
 def numStr (x : Num) : Str := intStr x.val
 def boolStr (b : Bool) : Str := if b then js!"true" else js!"false"
 
+/-- `Number.isFinite(x)` and friends. A `Num` is always a safe integer, so this is true.
+    It stays a name so that a test on it isn't simplified away. -/
+def isFinite (_ : Num) : Bool := true
+
+/-- `Number.isNaN(x)`, false for the same reason. -/
+def isNaN (_ : Num) : Bool := false
+
 /-- `x.toFixed(d)`. A safe integer has no fraction to round, so this only pads. `d` must be
     in the range JavaScript allows, and it throws otherwise. -/
 def toFixed (x d : Num) : Result Str :=

@@ -26,6 +26,7 @@ Pure functions the translator accepts:
 | After `lastIndexOf` and `charCodeAt` | 365 | 7.5% |
 | After values in templates | 391 | 8.0% |
 | After `new Set(array)` | 420 | 8.6% |
+| After number built-ins and `?.` chains on strings | 464 | 9.5% |
 
 The conditions work freed 128 functions, about half of the 243 forecast. The rest of
 that row is mostly tests on `any` and `unknown`: `typeof` reaches 981 pure functions,
@@ -41,7 +42,15 @@ second group to 87. That fix reached proofs in functions already accepted: after
 `a === "x"`, TypeScript reports `a` as the remaining literal, so `a === "y"` compared
 a string with an enum. Of the 26 functions `lastIndexOf` and `charCodeAt` added, 18
 are proved. Of the 26 that templates added, 18 are proved, and of the 29 that sets added, 13 are.
-In all, 279 of the 420 accepted functions are proved.
+Of the 44 that number built-ins and `?.` chains added, 16 are proved. In all, 304 of the
+464 accepted functions are proved.
+
+Number division and `Math.floor`, `ceil` and `trunc` had no proof rules until these
+functions needed them, and adding them raised the third slice from 142 to 151. Division
+stays exact: `(n / 1000).toFixed(1)` only stays in the model when `n` is a multiple of
+1000, so proofs of formatting code like that cover few inputs. A value assigned from a
+chain and tested later, such as `const t = x?.trim(); return t || undefined`, doesn't
+bridge yet.
 
 `add` and `delete` on sets aren't lowered, because they need proofs about mutation,
 so those functions are accepted but can't bridge. A module constant computed through

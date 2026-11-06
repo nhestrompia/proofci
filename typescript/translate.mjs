@@ -2215,27 +2215,21 @@ export class Scope {
     throw this.t.fail(node, `\`.${method}\` is not supported here yet`);
   }
 
-  // Functions on numbers that JavaScript provides. Each still evaluates its argument,
-  // because a call inside it can fail even when the answer doesn't depend on it.
+  // Functions on numbers that JavaScript provides.
   builtin(callee, node, env, lines) {
     const args = node.arguments;
     const global = ts.isIdentifier(callee) && !this.isLocal(callee);
     const onNumber = ts.isPropertyAccessExpression(callee) && !callee.questionDotToken
       && ts.isIdentifier(callee.expression) && callee.expression.text === "Number" && !this.isLocal(callee.expression);
     const named = global ? callee.text : onNumber ? `Number.${callee.name.text}` : undefined;
-    const test = () => {
-      if (!this.isNumber(args[0])) return undefined;
-      this.expression(args[0], env, lines);
-      return true;
-    };
+    const test = name => (this.isNumber(args[0]) ? `(Js.${name} ${this.expression(args[0], env, lines)})` : undefined);
     if (args.length === 1) {
       switch (named) {
         case "Number.isFinite": case "Number.isInteger": case "Number.isSafeInteger":
           if (this.nullable(this.typeOf(args[0])) && this.isOptionalNumber(args[0])) return `(Option.isSome ${this.expression(args[0], env, lines)})`;
-          if (test()) return "true";
-          break;
-        case "isFinite": if (test()) return "true"; break;
-        case "isNaN": case "Number.isNaN": if (test()) return "false"; break;
+          return test("isFinite");
+        case "isFinite": return test("isFinite");
+        case "isNaN": case "Number.isNaN": return test("isNaN");
         case "Boolean": return `(decide (¬¬(${this.condition(args[0], env, lines)})))`;
         default:
       }

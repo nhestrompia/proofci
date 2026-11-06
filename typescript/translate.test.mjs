@@ -561,9 +561,9 @@ test("a literal compares with an optional value through some", () => {
 });
 
 test("number built-ins", () => {
-  emits("export function f(a: number) { return Number.isFinite(a); }", "Result.ok true");
+  emits("export function f(a: number) { return Number.isFinite(a); }", "Js.isFinite a");
   emits("export function f(a?: number) { return Number.isInteger(a); }", "Option.isSome a");
-  emits("export function f(a: number) { return Number.isNaN(a); }", "Result.ok false");
+  emits("export function f(a: number) { return Number.isNaN(a); }", "Js.isNaN a");
   emits("export function f(a: number) { return a.toFixed(2); }", "Js.toFixed a");
   emits("export function f(a: number) { return a.toFixed(); }", "Js.numStr a");
   emits("export function f(a: number) { return a.toString(); }", "Js.numStr a");
