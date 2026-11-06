@@ -22,6 +22,18 @@ elab "small_logic" : tactic => withMainContext do
     unless t.isAppOf ``Or || t.isAppOf ``And || t.isAppOf ``Not do continue
     n := n + t.sizeWithoutSharing
   if n > 300 then throwError "too large for tauto"
+/-- The expression under test is a plain read, so searching it can't branch. -/
+elab "is_read" : tactic => do
+  let goal ← Lean.Elab.Tactic.getMainTarget
+  let goal ← Lean.instantiateMVars goal
+  let e := goal.getAppArgs[2]!
+  unless (e.getAppFn.isConstOf ``Core.Expr.var || e.getAppFn.isConstOf ``Core.Expr.field) do
+    Lean.throwError "not a plain read"
+/-- The view has stated the test, so a rule is checking it rather than choosing it. -/
+elab "is_stated" : tactic => do
+  let goal ← Lean.Elab.Tactic.getMainTarget
+  let goal ← Lean.instantiateMVars goal
+  if goal.getAppArgs[3]!.getAppFn.isMVar then Lean.throwError "the test isn't stated yet"
 syntax "isnone" : tactic
 macro_rules | `(tactic| isnone) => `(tactic| first | rfl | assumption | (simp_all; done))
 syntax "known" : tactic
@@ -114,6 +126,12 @@ macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.trimStart; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.trimEnd; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toLower; sim'; assumption))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toUpper; sim'; assumption))
+-- A null test stored in a variable: the value is the test, so nothing states it first.
+syntax "s_nulltest" : tactic
+macro_rules | `(tactic| s_nulltest) => `(tactic| (apply SimE.of_c; first
+  | (apply SimC.eq_undef; sim'; infer_instance) | (apply SimC.eq_null; sim'; infer_instance)
+  | (apply SimC.ne_undef; sim'; infer_instance) | (apply SimC.ne_null; sim'; infer_instance)
+  | (apply SimC.isNullish_opt; sim'; infer_instance)))
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.of_c; simc))
 
 -- Branching values
@@ -170,6 +188,14 @@ macro_rules | `(tactic| sim) => `(tactic| (apply SimE.conv; sim'; first | rfl | 
 macro_rules | `(tactic| sim) => `(tactic| sim')
 
 -- Truth
+-- Tried last: when an earlier rule can settle a null test from what is known, it should.
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_some; sim'; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_opts; sim'; sim'; infer_instance; decide))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.isNullish_opt; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_undef; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_null; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.ne_undef; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.ne_null; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_opt; sim_read; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.of_bool; sim_read))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.lt; sim'; sim'))
@@ -198,14 +224,7 @@ macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_undef_none; sim'; isno
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_null_none; sim'; isnone))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_nothing_some; rfl; sim_v; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_nothing_some; rfl; sim_v; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.isNullish_opt; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_undef; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_null; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_undef; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_null; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.not; simb))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_some; sim'; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_opts; sim'; sim'; infer_instance; decide))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.and; simc; simc))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.or; simc; simc))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.some_inv; apply SimE.var; assumption))
@@ -218,11 +237,11 @@ macro_rules | `(tactic| sim_read) => `(tactic| (apply SimC.includes_str; sim'; s
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.includes_arr; sim'; sim'))
 
 -- Tried last: each of these also accepts a plain value read as a present option.
-macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_some; sim'; infer_instance))
-macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_big; sim'))
-macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_bool; sim'))
-macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_num; sim'))
-macro_rules | `(tactic| simb) => `(tactic| (apply SimB.opt_str; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (is_read; apply SimB.opt_some; sim'; infer_instance))
+macro_rules | `(tactic| simb) => `(tactic| (is_read; apply SimB.opt_big; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (is_read; apply SimB.opt_bool; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (is_read; apply SimB.opt_num; sim'))
+macro_rules | `(tactic| simb) => `(tactic| (is_read; apply SimB.opt_str; sim'))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.none; sim'; isnone))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.obj; sim_v; infer_instance))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.big; sim'))
@@ -238,9 +257,9 @@ macro_rules | `(tactic| simb) => `(tactic| (apply SimB.and_both; simb; simb))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.or_both; simb; simb))
 -- The test of a value-level branch, when it is the view's own truth test.
 syntax "simb_opt" : tactic
-macro_rules | `(tactic| simb_opt) => `(tactic| first
+macro_rules | `(tactic| simb_opt) => `(tactic| (is_read; first
   | (apply SimB.opt_str; sim') | (apply SimB.opt_num; sim') | (apply SimB.opt_bool; sim')
-  | (apply SimB.opt_big; sim') | (apply SimB.opt_some; sim'; infer_instance))
+  | (apply SimB.opt_big; sim') | (apply SimB.opt_some; sim'; infer_instance)))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_t; simb_opt; known; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_f; simb_opt; known; sim'))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.of_c; simc))
@@ -440,7 +459,7 @@ elab "crun_go" : tactic => withMainContext do
         evalTactic (← `(tactic| b_join))
         return
     let (first_, rest) ← match kind with
-      | ``Stmt.set => pure (← `(tactic| (apply step_set; sim)), ← `(tactic| b_set))
+      | ``Stmt.set => pure (← `(tactic| (apply step_set; first | sim | s_nulltest)), ← `(tactic| b_set))
       | ``Stmt.expr => pure (← `(tactic| (apply step_expr; sim)), ← `(tactic| b_expr))
       | ``Stmt.ret => pure (← `(tactic| (apply step_ret; post; assumption; sim)), ← `(tactic| skip))
       | _ =>
