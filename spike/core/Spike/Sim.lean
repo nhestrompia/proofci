@@ -1051,6 +1051,16 @@ theorem SimE.chain_none {p s x e d k α β} {_ : TyRep α} {_ : TyRep β} {a : O
     SimE p s (.coalesce (.cond (.isNullish x) (.lit .undef) e) d) w :=
   SimE.coalesce_none (k := .undef) (α := β) (o := Option.none)
     (SimE.cond_t (SimB.of_c (SimB.isNullish_none hx ha)) trivial (SimE.lit_undef rfl)) rfl hd
+/-- `x?.m()` when `x` is missing: `undefined`, without running the rest. -/
+theorem SimE.chain_skip {p s x e k k' α β} {_ : TyRep α} {_ : TyRep β} {a : Opt k α}
+    (hx : SimE p s x a) (ha : a = Option.none) (hk : nothingOk k' .undef) :
+    SimE (α := Opt k' β) p s (.cond (.isNullish x) (.lit .undef) e) Option.none :=
+  SimE.cond_t (SimB.of_c (SimB.isNullish_none hx ha)) trivial (SimE.lit_undef hk)
+/-- A value the view read through an option, tested with the option's truthiness. -/
+theorem SimB.present_str {p s e} {a : List Nat} (h : SimE p s e a) : SimB p s e (Js.truthyStr (Option.some a) = true) :=
+  SimB.opt_str (k := .undef) (SimE.some h)
+theorem SimB.present_num {p s e} {a : Js.Num} (h : SimE p s e a) : SimB p s e (Js.truthyNum (Option.some a) = true) :=
+  SimB.opt_num (k := .undef) (SimE.some h)
 theorem SimE.numFinite {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Js.isFinite a) := by
   refine sim_prim (args1 hx) ?_
   rintro h _ ⟨v, rfl, ri⟩

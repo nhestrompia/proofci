@@ -42,15 +42,17 @@ second group to 87. That fix reached proofs in functions already accepted: after
 `a === "x"`, TypeScript reports `a` as the remaining literal, so `a === "y"` compared
 a string with an enum. Of the 26 functions `lastIndexOf` and `charCodeAt` added, 18
 are proved. Of the 26 that templates added, 18 are proved, and of the 29 that sets added, 13 are.
-Of the 44 that number built-ins and `?.` chains added, 16 are proved. In all, 304 of the
-464 accepted functions are proved.
+Of the 44 that number built-ins and `?.` chains added, 16 were proved at first.
 
 Number division and `Math.floor`, `ceil` and `trunc` had no proof rules until these
 functions needed them, and adding them raised the third slice from 142 to 151. Division
 stays exact: `(n / 1000).toFixed(1)` only stays in the model when `n` is a multiple of
-1000, so proofs of formatting code like that cover few inputs. A value assigned from a
-chain and tested later, such as `const t = x?.trim(); return t || undefined`, doesn't
-bridge yet.
+1000, so proofs of formatting code like that cover few inputs.
+
+Work on the proof rate then took the total to 320 of the 464 accepted functions (69%):
+every argument of `push` now lowers, `add` works on a set the function owns, and a value
+assigned from a chain and tested later bridges. What's left is 87 stuck, 21 past the
+120-second limit, 8 with other errors, and 28 that don't generate.
 
 `add` and `delete` on sets aren't lowered, because they need proofs about mutation,
 so those functions are accepted but can't bridge. A module constant computed through

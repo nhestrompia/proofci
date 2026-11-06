@@ -49,7 +49,7 @@ macro_rules
     | ((revert $h:ident; with_reducible refine Core.bind_intro ?_; intro tmp hx hk; vsplit hx) <;> vsplit hk)
     | (revert $h:ident; (with_reducible refine Core.ite_intro ?_ ?_) <;> (intro hc hk; vsplit hk))
     | (split at $h:ident <;> vsplit $h)
-    | (rw [Core.unwrap_iff] at $h:ident)
+    | (rw [Core.unwrap_iff] at $h:ident; try (have e := Option.some.inj $h:ident; subst e))
     | skip)
 
 syntax "sim" : tactic
@@ -288,6 +288,28 @@ macro_rules | `(tactic| simb_opt) => `(tactic| (is_read; first
   | (apply SimB.opt_big; sim') | (apply SimB.opt_some; sim'; infer_instance)))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_t; simb_opt; known; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.cond_f; simb_opt; known; sim'))
+-- With no stated value the type is free, and an assigned chain usually gives a string.
+macro_rules | `(tactic| s_branch) => `(tactic| (focus (apply SimE.chain_skip (k' := .undef) (β := List Nat); sim'; isnone; rfl; all_goals infer_instance)))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_skip; sim'; isnone; first | rfl | exact Or.inl rfl))
+/-- A test on a present value is in scope. These rules succeed on `apply` for any branch, so
+without this they would explore every condition twice. -/
+elab "has_present" : tactic => Lean.Elab.Tactic.withMainContext do
+  -- Only the head of each fact: a pending step can hold a very long string literal.
+  for d in (← Lean.getLCtx) do
+    if d.isImplementationDetail || d.type.isAppOf ``Core.Todo then continue
+    let ty := (← Lean.instantiateMVars d.type).consumeMData
+    let t := (if ty.isAppOf ``Not then ty.appArg! else ty).consumeMData
+    unless t.isAppOfArity ``Eq 3 do continue
+    let lhs := (t.appFn!.appArg!).consumeMData
+    if (lhs.isAppOf ``Js.truthyStr || lhs.isAppOf ``Js.truthyNum) && lhs.appArg!.isAppOf ``Option.some then return
+  Lean.throwError "no test on a present value"
+-- A tested value already known to be present. `known` must then hold, so these can't misfire.
+macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_t; apply SimB.present_str; sim'; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_f; apply SimB.present_str; sim'; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.or_false; apply SimB.present_str; sim'; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.or_true; sim'; apply SimB.present_str; sim'; known))
+macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_t; apply SimB.present_num; sim'; known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_f; apply SimB.present_num; sim'; known; sim'))
 -- `x?.m() ?? d`: the conclusions only match this shape, so these fail fast on anything else.
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_none; sim'; isnone; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_some; sim'; assumption; infer_instance; sim'; infer_instance))
@@ -380,7 +402,7 @@ elab "dedup_some" : tactic => withMainContext do
 elab "v_step" : tactic => do
   revertTodo
   evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
-  evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx; try dedup_some) | skip)))
+  evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx; try dedup_some; try (have e := Option.some.inj hx; subst e)) | skip)))
 
 /-- Reduces the pending step when it matches on a known constructor, as after a loop. -/
 def todoReduce : TacticM Unit := withMainContext do
