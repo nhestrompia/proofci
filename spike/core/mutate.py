@@ -37,6 +37,7 @@ KINDS = {
     "trim-start": (r"\bJs\.trim\b", "Js.trimStart"),
     "fixed-str": (r"\bJs\.toFixed (\S+) (\S+)$", r"Js.toFixed \1 (Js.lit 3)"),
     "num-test": (r"Result\.ok true$", "Result.ok false"),
+    "set-add-skip": (r"\bJs\.setAdd (\S+) (\S+)\)$", r"\1)"),
     "truthy-str": (r"Js\.truthyStr (\S+) = true", r"Option.isSome \1 = true"),
     "truthy-num": (r"Js\.truthyNum (\S+) = true", r"Option.isSome \1 = true"),
     "truthy-bool": (r"Js\.truthyBool (\S+) = true", r"Option.isSome \1 = true"),

@@ -44,7 +44,7 @@ inductive Prim where
   | startsWith | endsWith | strIncludes | trim | trimStart | trimEnd
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
-  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas
+  | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
   | numFinite | numNaN | toFixed | parseInt (auto : Bool)
   deriving DecidableEq, Repr
 
@@ -290,6 +290,9 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
     | _ => none
   | .setOf, h, [.ref l] => match h[l]? with
     | some (.array xs) => some (.ref h.length, h ++ [.array (xs.foldl addKey [])])
+    | _ => none
+  | .setAdd, h, [.ref l, v] => match h[l]? with
+    | some (.array xs) => some (.ref h.length, h ++ [.array (addKey xs v)])
     | _ => none
   | .setHas, h, [.ref l, v] => match h[l]? with
     | some (.array xs) => some (.bool (xs.any (sameKey · v)), h)

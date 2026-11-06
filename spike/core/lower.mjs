@@ -134,14 +134,15 @@ export function lower(root, targets, { paths } = {}) {
       if (!d || !ts.isVariableDeclaration(d) || !d.initializer) return false;
       let init = d.initializer;
       while (ts.isAsExpression(init) || ts.isParenthesizedExpression(init) || ts.isSatisfiesExpression(init)) init = init.expression;
-      if (!ts.isArrayLiteralExpression(init)) return false;
+      const fresh = ts.isArrayLiteralExpression(init) || (ts.isNewExpression(init) && isSet(checker.getTypeAtLocation(init)));
+      if (!fresh) return false;
       let ok = true;
       walk(decl.body, n => {
         if (!ts.isIdentifier(n) || n === d.name || resolve(n) !== sym) return;
         let u = n;
         while (ts.isParenthesizedExpression(u.parent) || ts.isAsExpression(u.parent) || ts.isNonNullExpression(u.parent)) u = u.parent;
         const p = u.parent;
-        if (ts.isPropertyAccessExpression(p) && p.expression === u && (READS.has(p.name.text) || p.name.text === "push")) return;
+        if (ts.isPropertyAccessExpression(p) && p.expression === u && (READS.has(p.name.text) || p.name.text === "push" || p.name.text === "add" || p.name.text === "has" || p.name.text === "size")) return;
         if (ts.isElementAccessExpression(p) && p.expression === u) {
           if (ts.isBinaryExpression(p.parent) && p.parent.left === p && ts.isAssignmentOperator(p.parent.operatorToken.kind)) ok = false;
           return;
@@ -562,11 +563,22 @@ export function lower(root, targets, { paths } = {}) {
       }
       if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "push") {
         const r = s.expression.expression.expression;
-        if (ts.isIdentifier(r) && scope.has(resolve(r)) && s.expression.arguments.length === 1 && ownedArray(resolve(r))) {
-          const n = lean(scope.get(resolve(r)));
-          out.push(`.set ${n} (.prim .append [.var ${n}, ${E(s.expression.arguments[0])}])`); return;
+        if (ts.isIdentifier(r) && scope.has(resolve(r)) && ownedArray(resolve(r))) {
+          const n = lean(scope.get(resolve(r))), args = s.expression.arguments;
+          // All the arguments are evaluated before any of them is added.
+          if (args.length === 1) out.push(`.set ${n} (.prim .append [.var ${n}, ${E(args[0])}])`);
+          else out.push(`.set ${n} (.prim .concat [.var ${n}, .array [${args.map(E).join(", ")}]])`);
+          return;
         }
+        if (s.expression.arguments.length !== 1) throw new Error("`push` with several arguments on an array something else may hold");
         out.push(`.push (${E(s.expression.expression.expression)}) (${E(s.expression.arguments[0])})`); return;
+      }
+      if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression) && s.expression.expression.name.text === "add"
+        && s.expression.arguments.length === 1 && isSet(checker.getTypeAtLocation(s.expression.expression.expression))) {
+        const r = s.expression.expression.expression;
+        if (!ts.isIdentifier(r) || !scope.has(resolve(r)) || !ownedArray(resolve(r))) throw new Error("`add` on a set something else may hold");
+        const n = lean(scope.get(resolve(r)));
+        out.push(`.set ${n} (.prim .setAdd [.var ${n}, ${E(s.expression.arguments[0])}])`); return;
       }
       if (ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && s.expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
         out.push(`.expr (.call ${lean(`${parentOf(decl)}.__init`)} [.var "this", ${s.expression.arguments.map(E).join(", ")}])`.replace(", ])", "])")); return;
@@ -601,7 +613,7 @@ export function lower(root, targets, { paths } = {}) {
       done.set(key, `def ${key}_segs : List (List Stmt) := [${segs.map(g => `[${g.join(", ")}]`).join(",\n  ")}]\n\ndef ${key} : Fn := { params := [${params.map(lean).join(", ")}], body := [] }`);
       return;
     }
-    done.set(key, `${loops.map(l => `${l}\n\n`).join("")}def ${key} : Fn := { params := [${params.map(lean).join(", ")}], body := [\n    ${body.join(",\n    ")}] }`);
+    done.set(key, `${[...loops].reverse().map(l => `${l}\n\n`).join("")}def ${key} : Fn := { params := [${params.map(lean).join(", ")}], body := [\n    ${body.join(",\n    ")}] }`);
   }
 
   const names = {};

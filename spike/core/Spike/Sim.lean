@@ -1192,6 +1192,22 @@ theorem SimE.setOf {α} {_ : TyRep α} [DecidableEq α] [Key α] {a : List α} (
   rintro h _ ⟨_, rfl, l, vs, rfl, hl, hf⟩
   refine ⟨.ref h.length, h ++ [.array (vs.foldl addKey [])], by simp [primV, hl], List.prefix_append _ _, h.length, vs.foldl addKey [], rfl, by simp, ?_⟩
   exact fold_keys (hf.imp fun _ _ r => mono (List.prefix_append _ _) r) .nil
+theorem add_key {α} [TyRep α] [DecidableEq α] [Key α] {H : Heap} {a : List α} {vs : List Val} {b : α} {w : Val}
+    (hd : List.Forall₂ (rep H) a vs) (uw : rep H b w) : List.Forall₂ (rep H) (Js.setAdd a b) (addKey vs w) := by
+  have e := any_key hd uw
+  simp only [Js.setHas] at e
+  simp only [addKey, Js.setAdd, e]
+  split
+  · exact hd
+  · exact List.rel_append hd (.cons uw .nil)
+theorem SimE.setAdd {α} {_ : TyRep α} [DecidableEq α] [Key α] {a : List α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .setAdd [x, y]) (Js.setAdd a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, w, rfl, ⟨l, vs, rfl, hl, hf⟩, rw⟩
+  refine ⟨.ref h.length, h ++ [.array (addKey vs w)], by simp [primV, hl], List.prefix_append _ _, h.length, addKey vs w, rfl, by simp, ?_⟩
+  have uw : rep (h ++ [.array (addKey vs w)]) b w := mono (List.prefix_append _ _) rw
+  have hd : List.Forall₂ (rep (h ++ [.array (addKey vs w)])) a vs := hf.imp fun _ _ r => mono (List.prefix_append _ _) r
+  exact add_key hd uw
 theorem SimE.setHas {α} {_ : TyRep α} [DecidableEq α] [Key α] {a : List α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) :
     SimE p s (.prim .setHas [x, y]) (Js.setHas a b) := by
   refine sim_prim (args2 hx hy) ?_
@@ -1201,6 +1217,8 @@ theorem SimE.setHas {α} {_ : TyRep α} [DecidableEq α] [Key α] {a : List α} 
 -- instances as goals rather than searching for them too early.
 theorem SimE.setOf_ {α} {_ : TyRep α} {d : DecidableEq α} {a : List α} (hx : SimE p s x a) (k : @Key α _ d) :
     SimE p s (.prim .setOf [x]) (@Js.setOf α d a) := @SimE.setOf _ _ _ _ _ d k _ hx
+theorem SimE.setAdd_ {α} {_ : TyRep α} {d : DecidableEq α} {a : List α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) (k : @Key α _ d) :
+    SimE p s (.prim .setAdd [x, y]) (@Js.setAdd α d a b) := @SimE.setAdd _ _ _ _ _ _ d k _ _ hx hy
 theorem SimE.setHas_ {α} {_ : TyRep α} {d : DecidableEq α} {a : List α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) (k : @Key α _ d) :
     SimE p s (.prim .setHas [x, y]) (@Js.setHas α d a b) := @SimE.setHas _ _ _ _ _ _ d k _ _ hx hy
 theorem forall_strs {h : Heap} (xs : List (List Nat)) : List.Forall₂ (rep h) xs (xs.map .str) := by

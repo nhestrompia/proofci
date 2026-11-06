@@ -127,6 +127,7 @@ macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toFixed; sim'; sim'; as
 -- The result names its arguments, which may be computed, so it is read first.
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toFixed; rotate_left 2; assumption; all_goals sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.parseIntStr; sim'; assumption))
+macro_rules | `(tactic| s_prim) => `(tactic| (focus (apply SimE.setAdd_; sim'; sim'; (try any_goals infer_instance); (try any_goals infer_instance))))
 macro_rules | `(tactic| s_prim) => `(tactic| (focus (apply SimE.setOf_; sim'; (try any_goals infer_instance); (try any_goals infer_instance))))
 macro_rules | `(tactic| s_prim) => `(tactic| (focus (apply SimE.setHas_; sim'; sim'; (try any_goals infer_instance); (try any_goals infer_instance))))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.toText_str; sim'))
