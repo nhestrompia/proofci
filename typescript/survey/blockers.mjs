@@ -62,6 +62,29 @@ export function collecting(translator) {
   recover(self, "checkDeclaration", () => undefined);
   recover(self, "type", () => "Js.Num");
   recover(self, "describe", () => ({ kind: "number" }));
+  // A type is only checked the first time it is met, so each use depends on it
+  // the way a call depends on its callee.
+  const edge = target => {
+    const caller = stack.at(-1);
+    if (!caller) return;
+    if (!calls.has(caller)) calls.set(caller, new Set());
+    calls.get(caller).add(target);
+  };
+  const declaring = (method, keyOf) => {
+    const declare = self[method];
+    self[method] = function (...args) {
+      const key = keyOf(args);
+      edge(key);
+      stack.push(key);
+      try {
+        return declare.apply(this, args);
+      } finally {
+        stack.pop();
+      }
+    };
+  };
+  declaring("declareType", ([declaration]) => declaration);
+  declaring("declareAnonymous", ([type]) => type);
   const original = self.declareFunction;
   self.declareFunction = function (declaration) {
     const caller = stack.at(-1);

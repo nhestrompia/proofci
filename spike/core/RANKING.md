@@ -14,13 +14,24 @@ The sample is the nine repositories from the third slice with real dependencies
 installed: 13,767 top-level logic functions, of which 4,872 are pure. Another 5,152
 class methods aren't counted, because the translator doesn't reach methods.
 
-| | Functions | Clean today |
-|---|---:|---:|
-| All top-level logic | 13,767 | 232 (1.7%) |
-| Pure | 4,872 | 227 (4.7%) |
+An early version of the tool missed a type's blockers after the first function that
+used it, which inflated every clean count. The numbers here are from the fixed tool.
 
-Most functions need several things: 7,788 of the 13,767 reach six or more blockers,
-and only 632 reach exactly one.
+Pure functions the translator accepts:
+
+| | Clean | Share |
+|---|---:|---:|
+| Before conditions | 211 | 4.3% |
+| After conditions | 339 | 7.0% |
+
+The conditions work freed 128 functions, about half of the 243 forecast. The rest of
+that row is mostly tests on `any` and `unknown`: `typeof` reaches 981 pure functions,
+and those tests can't be translated until those types can.
+
+Of those 339, 219 are proved: 140 of the third slice's 196, with none of its earlier
+138 lost, and 79 of the other 143, whose rules were not tuned on them. The second
+group ran on a busy machine with a 120-second limit, and 11 of its failures were
+timeouts.
 
 ## Work ranked by what it frees, on pure functions
 
@@ -28,19 +39,19 @@ Each row counts the functions freed once everything above it is done.
 
 | Work | Freed | Clean after |
 |---|---:|---:|
-| Conditions: truthiness, `===`, `&&` and `\|\|`, null checks | 308 | 535 (11.0%) |
-| Smaller gaps: destructuring, `new Set(...)`, regex-free string methods, names | 433 | 968 (19.9%) |
-| Calls and types from outside: packages, classes, `new`, globals | 649 | 1,617 (33.2%) |
-| Dynamic data: `any`, `unknown`, `Record`, casts, loose objects | 1,246 | 2,863 (58.8%) |
-| Mutation of shared values | 713 | 3,576 (73.4%) |
-| Recursive types | 642 | 4,218 (86.6%) |
-| Closures | 473 | 4,691 (96.3%) |
-| TypeScript settings and `async` | 181 | 4,872 |
+| Smaller gaps: destructuring, `new Set(...)`, some string methods, names | 336 | 675 (13.9%) |
+| Calls and types from outside: packages, classes, `new`, globals | 439 | 1,114 (22.9%) |
+| Dynamic data: `any`, `unknown`, `Record`, casts, loose objects | 735 | 1,849 (38.0%) |
+| Remaining conditions, mostly `typeof` and tests on dynamic data | 890 | 2,739 (56.2%) |
+| Mutation of shared values | 666 | 3,405 (69.9%) |
+| Recursive types | 794 | 4,199 (86.2%) |
+| Closures | 479 | 4,678 (96.0%) |
+| TypeScript settings and `async` | 194 | 4,872 |
 
 ## Limits
 
-- These count what the translator would accept, not what bridges. The third slice
-  bridged 70% of accepted functions, so every row overstates what gets proved.
+- These count what the translator would accept, not what bridges. Functions the rules
+  weren't tuned on bridged at 55%, so every row overstates what gets proved.
 - The freed counts depend on the order, and a later row can't be read alone.
 - Placing a blocker in a group is a judgement call, made by matching its message.
 - Skipping a failed statement can hide or add a follow-on blocker.

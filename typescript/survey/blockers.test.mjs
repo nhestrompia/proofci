@@ -53,3 +53,11 @@ test("`async` doesn't hide what the body needs", () => {
   assert.ok(f.includes("async"), f.join());
   assert.ok(f.includes("type unknown"), f.join());
 });
+
+test("a type that fails blocks every function that uses it, not only the first", () => {
+  const { f, g } = run(`interface T { a: unknown }
+    export function f(x: T) { return 1; }
+    export function g(x: T) { return 2; }`, "f", "g");
+  assert.ok(f.includes("type unknown"), f.join());
+  assert.deepEqual(g, f);
+});
