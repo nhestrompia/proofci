@@ -72,6 +72,7 @@ test("a function is counted as untyped through what it calls", () => {
   const { f, g } = rows(root);
   assert.equal(f.untyped, 1);
   assert.deepEqual(f.self, []);
+  assert.deepEqual(rows(root).f.self, []);
   assert.equal(g.untyped, 0);
 });
 

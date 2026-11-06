@@ -560,6 +560,22 @@ test("a literal compares with an optional value through some", () => {
   emits(`export function f(a?: string) { return a === "x"; }`, "a = some (js!");
 });
 
+test("the action requires every function a guarantee reaches to write its types", () => {
+  const typed = (source, extra) => {
+    const root = join(dir, `p${count++}`);
+    mkdirSync(root);
+    writeFileSync(join(root, "a.ts"), source);
+    for (const [path, text] of Object.entries(extra ?? {})) writeFileSync(join(root, path), text);
+    return translate({ root, module: "M", targets: ["a.ts::f"], requireTypes: true }).failures["a.ts::f"];
+  };
+  assert.match(typed("export function f(a: number) { return a + 1; }"), /add a return type of `number`/);
+  assert.match(typed("export function f(a) { return 1; }"), /TypeScript error|`a: any`/);
+  assert.match(typed("function g(a: number) { return a; }\nexport function f(a: number): number { return g(a); }"), /add a return type of `number`/);
+  assert.equal(typed("export function f(a: number): number { return [a].map(x => x + 1).length; }"), undefined);
+  assert.equal(typed("export const f = (a: number): number => a + 1;"), undefined);
+  assert.equal(typed("type F = (a: number) => number;\nexport const f: F = a => a + 1;"), undefined);
+});
+
 test("a set is built from an array and read by value", () => {
   emits(`export function f(a: string[], k: string) { return new Set(a).has(k); }`, "Js.setHas (Js.setOf a) k");
   emits(`export function f(a: number[]) { return new Set(a).size; }`, "Js.setOf a");

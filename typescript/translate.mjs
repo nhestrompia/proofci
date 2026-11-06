@@ -507,6 +507,19 @@ export class Translator {
     return undefined;
   }
 
+  // What a function leaves to inference, as the types it should write. A written
+  // type is the contract a reviewer sees, and inference would change it silently.
+  // Callbacks written in place take their types from the call, so aren't checked.
+  untyped(declaration) {
+    const fn = this.bodyOf(declaration);
+    if (!fn || declaration.type) return [];
+    const missing = fn.parameters.filter(p => !p.type)
+      .map(p => `\`${p.name.getText()}: ${this.checker.typeToString(this.checker.getTypeAtLocation(p))}\``);
+    if (fn.type) return missing;
+    const signature = this.checker.getSignatureFromDeclaration(fn);
+    return [...missing, `a return type of \`${this.checker.typeToString(this.checker.getReturnTypeOfSignature(signature))}\``];
+  }
+
   bodyOf(declaration) {
     if (ts.isFunctionDeclaration(declaration)) return declaration;
     const init = declaration.initializer && unwrap(declaration.initializer);
@@ -527,6 +540,8 @@ export class Translator {
     this.checkDeclaration(declaration);
     const fn = this.bodyOf(declaration);
     if (!fn || !fn.body) throw this.fail(declaration, "this function has no body to translate");
+    const missing = this.requireTypes ? this.untyped(declaration) : [];
+    if (missing.length) throw this.fail(declaration, `add ${missing.join(" and ")}: functions a guarantee reaches must write out their types`);
     if (fn.asteriskToken) throw this.fail(fn, "generators are not supported");
     if (fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) throw this.fail(fn, "`async` is not supported yet");
     const lean = this.leanName(declaration, declaration.name.text);
@@ -2335,9 +2350,10 @@ export function findDeclaration(translator, target) {
   throw new Unsupported(`\`${functionName}\` is not a top-level function in ${path}`);
 }
 
-export function translate({ root, module, targets, paths, repository, policyRoot }) {
+export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes }) {
   const resolved = policyRoot ? protectedPaths(policyRoot, repository) : paths;
   const translator = new Translator(root, targets, resolved, repository);
+  translator.requireTypes = Boolean(requireTypes);
   const failures = {};
   const names = {};
   const signatures = {};

@@ -54,7 +54,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     config = out / "config.json"
     policy = Path(policy_checkout or checkout)
     config.write_text(json.dumps({"root": str(root), "module": module, "out": str(out), "targets": list(functions),
-                                  "repository": str(checkout), "policyRoot": str(policy)}))
+                                  "repository": str(checkout), "policyRoot": str(policy), "requireTypes": True}))
     program = translator()
     result = sandbox.run(["node", str(program), str(config)], readable=[checkout, policy, program.parent],
                          writable=[out], cwd=out, timeout=300)

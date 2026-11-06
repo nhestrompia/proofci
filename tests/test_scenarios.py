@@ -438,6 +438,11 @@ def ts_cast_hides_a_type(head):
     edit(head / TS_LEDGER, "amount <= 0 ||", "(amount as any) <= 0 ||")
 
 
+def ts_return_type_not_written(head):
+    edit(head / TS_LEDGER, "export function sumAmounts(amounts: readonly number[]): number {",
+         "export function sumAmounts(amounts: readonly number[]) {")
+
+
 def ts_javascript_beside_source(head):
     (head / "src/ledger.js").write_text("export const transfer = () => null;\n")
 
@@ -512,6 +517,7 @@ SCENARIOS.update({
     "ts-overdraft-check-removed": (ts_overdraft_check_removed, {**ts_results(), TS_CONSERVES: U, TS_OVERDRAFT: U}, 1),
     "ts-fractional-fee": (ts_fractional_fee, {**ts_results(), TS_FEE: X}, 1),
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
     "ts-javascript-beside-source": (ts_javascript_beside_source, dict.fromkeys(TS_GUARANTEES, X), 1),
     "ts-compiler-error-silenced": (ts_compiler_error_silenced, {**ts_results(), TS_FEE: X}, 1),
     "ts-compiler-error": (ts_compiler_error, {**ts_results(), TS_FEE: X}, 1),
@@ -533,6 +539,7 @@ SCENARIOS.update({
 TS_REASONS = {
     "ts-fractional-fee": "not a safe integer",
     "ts-cast-hides-a-type": "only `number` operands",
+    "ts-return-type-not-written": "add a return type of `number`",
     "ts-javascript-beside-source": "sits beside",
     "ts-compiler-error-silenced": "TypeScript error",
     "ts-compiler-error": "TypeScript error",

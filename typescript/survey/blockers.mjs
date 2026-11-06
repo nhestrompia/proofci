@@ -48,16 +48,6 @@ function publishedTypes(translator, node) {
   }
 }
 
-// What a function leaves to inference. Callbacks written in place take their
-// types from the call, so only named functions are held to this.
-export function untyped(declaration, translator) {
-  const fn = translator.bodyOf(declaration);
-  if (!fn) return [];
-  const missing = fn.parameters.filter(p => !p.type && !declaration.type).map(p => p.name.getText());
-  if (!fn.type && !declaration.type) missing.push("return");
-  return missing;
-}
-
 // Each wrapper records into the function being translated.
 export function collecting(translator) {
   const blockers = new Map(); // declaration -> Set of reasons
@@ -203,7 +193,7 @@ export function measure(root, targets, paths = {}) {
       translator.declareFunction(declaration);
       const reach = closure(declaration, active.calls);
       rows.push({ target, blockers: reached(declaration, active.blockers, active.calls), reach: reach.length,
-        untyped: reach.filter(d => untyped(d, translator).length).length, self: untyped(declaration, translator) });
+        untyped: reach.filter(d => translator.untyped(d).length).length, self: translator.untyped(declaration) });
     } catch (error) {
       rows.push({ target, blockers: [error instanceof Unsupported ? category(error.message) : "(crash)"] });
     }
