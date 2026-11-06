@@ -84,7 +84,7 @@ usually has other blockers too:
 | And `any` and `unknown` replaced with real types | 514 (10.6%) | 897 (18.4%) |
 
 Only outside calls can be listed so far. Published types translate for 975 of the outside
-calls' blockers and not for 1,476, mostly because of `Promise` and library classes.
+calls' blockers and not for 1,476. Why those 1,476 fail hasn't been measured.
 
 ## Limits
 
