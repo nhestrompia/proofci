@@ -119,3 +119,5 @@ lake env lean --run Spike/CheckF64.lean work/f64.txt
 
 Paths assume a sibling `typescript-support` worktree with `node_modules` installed, and
 Lean runs in the `proofci-toolchain` image.
+
+[RANKING.md](RANKING.md) ranks the remaining work by how many functions each piece frees.

@@ -105,7 +105,7 @@ const unwrap = node => {
   return node;
 };
 
-class Translator {
+export class Translator {
   constructor(root, targets, paths = {}, repository = root) {
     this.root = realpathSync(root);
     this.repository = realpathSync(repository);
@@ -602,7 +602,7 @@ class Stub {
 
 // Translates one function body. `env` maps a variable's symbol to how it reads
 // in the current branch, which is how narrowing reaches the Lean output.
-class Scope {
+export class Scope {
   constructor(translator, fn) {
     this.t = translator;
     this.checker = translator.checker;
@@ -2120,7 +2120,7 @@ class Scope {
   }
 }
 
-function findDeclaration(translator, target) {
+export function findDeclaration(translator, target) {
   const [path, functionName] = target.split("::");
   const file = translator.program.getSourceFile(join(translator.root, path));
   if (!file) throw new Unsupported(`${path} does not exist`);
