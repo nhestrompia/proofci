@@ -1,0 +1,9 @@
+AppFlowy-Web AppFlowy-IO/AppFlowy-Web 7b27ded
+cline cline/cline d3ecc48
+console appwrite/console 843f17e
+continue continuedev/continue 5522c6f
+immich immich-app/immich 96cc139
+lobe-chat lobehub/lobe-chat 3deeec68
+nocodb nocodb/nocodb 5f2e381
+open-webui open-webui/open-webui c38885a
+strapi strapi/strapi d02414e

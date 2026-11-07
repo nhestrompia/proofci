@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "ledger"
+TS_EXAMPLE = ROOT / "examples" / "ts-bank"
 GUARANTEES = ("fees/fee-capped", "fees/zero-amount", "transfer/conservation", "transfer/rejects-overdraft")
 V, U, X, S = "verified", "unproven", "unsupported", "contract-stale"
 
@@ -360,10 +361,11 @@ SCENARIOS = {
 def run_scenario(name, out_dir=None):
     """Run one scenario. Returns a list of mismatches (empty when it passed)."""
     mutate, expected, expected_exit = SCENARIOS[name]
+    example = TS_EXAMPLE if name.startswith("ts-") else EXAMPLE
     with tempfile.TemporaryDirectory() as tmp:
         base, head = Path(tmp) / "base", Path(tmp) / "head"
-        shutil.copytree(EXAMPLE, base)
-        shutil.copytree(EXAMPLE, head)
+        shutil.copytree(example, base)
+        shutil.copytree(example, head)
         if mutate:
             mutate(head)
             if hasattr(mutate, "also_base"):
@@ -386,6 +388,9 @@ def run_scenario(name, out_dir=None):
         problems.append(f"statuses {statuses} != expected {expected}")
     if done.returncode != expected_exit:
         problems.append(f"exit {done.returncode} != expected {expected_exit}")
+    wanted = TS_REASONS.get(name)
+    if wanted and not any(wanted in g["reason"] for g in data["guarantees"]):
+        problems.append(f"no guarantee was rejected for the expected reason: {wanted!r}")
     if name == "weaken-policy" and not data["policy_changes"]:
         problems.append("policy change not reported")
     if name == "contract-no-panic" and any(g.get("warnings") for g in data["guarantees"]):
@@ -397,6 +402,167 @@ def run_scenario(name, out_dir=None):
     if problems:
         problems.append(done.stdout[-4000:])
     return problems
+
+
+TS_LEDGER = "src/ledger.ts"
+TS_GUARANTEES = ("fees/capped", "transfer/conservation", "transfer/rejects-overdraft", "totals/exact")
+TS_FEE, TS_CONSERVES, TS_OVERDRAFT, TS_SUM = TS_GUARANTEES
+
+
+def ts_module_throws_when_loaded(head):
+    text = (head / "src/ledger.ts").read_text()
+    (head / "src/ledger.ts").write_text(text + '\nthrow new Error("not in this environment");\n')
+
+
+def ts_results():
+    return dict.fromkeys(TS_GUARANTEES, V)
+
+
+def ts_transfer_loses_money(head):
+    edit(head / TS_LEDGER, "to: accounts.to + amount", "to: accounts.to + amount - 1")
+
+
+def ts_fee_cap_raised(head):
+    edit(head / TS_LEDGER, "const MAX_FEE = 500;", "const MAX_FEE = 5000;")
+
+
+def ts_overdraft_check_removed(head):
+    edit(head / TS_LEDGER, "amount <= 0 || amount > accounts.from", "amount <= 0")
+
+
+def ts_fractional_fee(head):
+    edit(head / TS_LEDGER, "Math.floor(amount * rateBps / BASIS_POINTS)", "Math.floor(amount * 0.02)")
+
+
+def ts_cast_hides_a_type(head):
+    edit(head / TS_LEDGER, "amount <= 0 ||", "(amount as any) <= 0 ||")
+
+
+def ts_return_type_not_written(head):
+    edit(head / TS_LEDGER, "export function sumAmounts(amounts: readonly number[]): number {",
+         "export function sumAmounts(amounts: readonly number[]) {")
+
+
+def ts_lists_its_own_assumption(head):
+    edit(head / TS_LEDGER, "export function sumAmounts(amounts: readonly number[]): number {",
+         'import { rate } from "rates";\nexport function sumAmounts(amounts: readonly number[]): number {\n'
+         '  if (rate("x") < 0) return 0;')
+    manifest = head / "proofci.yaml"
+    manifest.write_text(manifest.read_text().replace(
+        "targets:", 'assumes:\n  - call: rates::rate\n    signature: "(a: string): number"\n\ntargets:', 1))
+
+
+def ts_javascript_beside_source(head):
+    (head / "src/ledger.js").write_text("export const transfer = () => null;\n")
+
+
+def ts_compiler_error_silenced(head):
+    edit(head / TS_LEDGER, "const MAX_FEE = 500;", "// @ts-ignore\nconst MAX_FEE: string = 500;")
+
+
+def ts_compiler_error(head):
+    edit(head / TS_LEDGER, "return Math.min(", "const broken: string = 1;\n  return Math.min(")
+
+
+def ts_tsconfig_relaxes_checks(head):
+    (head / "tsconfig.json").write_text('{"compilerOptions": {"strict": false}}\n')
+    edit(head / TS_LEDGER, "amount: number): Accounts | null", "amount): Accounts | null")
+
+
+def ts_module_patches_math(head):
+    edit(head / TS_LEDGER, "const MAX_FEE = 500;", "const MAX_FEE = 500;\nMath.floor = (x) => x + 1;")
+
+
+def ts_import_for_side_effects(head):
+    (head / "src/patch.ts").write_text("Math.floor = (x: number) => x + 1;\nexport {};\n")
+    edit(head / TS_LEDGER, "export interface Accounts", 'import "./patch.ts";\n\nexport interface Accounts')
+
+
+def ts_declaration_file_lies(head):
+    (head / "src/helper.d.ts").write_text("export function always(a: number): number;\n")
+    edit(head / TS_LEDGER, "export interface Accounts", 'import { always } from "./helper";\n\nexport interface Accounts')
+    edit(head / TS_LEDGER, "from: accounts.from - amount", "from: always(accounts.from - amount)")
+
+
+def ts_proof_uses_sorry(head):
+    proofs = head / "proofci/Proofs.lean"
+    edit(proofs, "  unfold transfer\n  step*\n", "  sorry\n")
+
+
+def ts_function_removed(head):
+    edit(head / TS_LEDGER, "export function transfer(", "export function move(")
+
+
+def ts_sum_skips_an_item(head):
+    edit(head / TS_LEDGER, "    total += amount;\n", "    if (amount === 7) continue;\n    total += amount;\n")
+
+
+def ts_mutates_callers_array(head):
+    edit(head / TS_LEDGER, "export function transfer(", """export function audit(log: number[]): number {
+  log.push(1);
+  return log.length;
+}
+
+export function transfer(""")
+    edit(head / TS_LEDGER, "if (amount <= 0 ||", "if (audit([]) < 0 || amount <= 0 ||")
+
+
+def ts_alias_hides_a_write(head):
+    edit(head / TS_LEDGER, "  if (amount <= 0 ||", """  const seen = [amount];
+  const same = seen;
+  seen[0] = 0;
+  if (same[0] === 0) return null;
+  if (amount <= 0 ||""")
+
+
+def ts_contract_weakened(head):
+    edit(head / "proofci/Contract.lean", "fee.val ≤ 500", "fee.val ≤ 5000")
+
+
+SCENARIOS.update({
+    "ts-baseline": (None, ts_results(), 0),
+    "ts-transfer-loses-money": (ts_transfer_loses_money, {**ts_results(), TS_CONSERVES: U}, 1),
+    "ts-fee-cap-raised": (ts_fee_cap_raised, {**ts_results(), TS_FEE: U}, 1),
+    "ts-overdraft-check-removed": (ts_overdraft_check_removed, {**ts_results(), TS_CONSERVES: U, TS_OVERDRAFT: U}, 1),
+    "ts-fractional-fee": (ts_fractional_fee, {**ts_results(), TS_FEE: X}, 1),
+    "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
+    "ts-lists-its-own-assumption": (ts_lists_its_own_assumption, {**ts_results(), TS_SUM: X}, 1),
+    "ts-javascript-beside-source": (ts_javascript_beside_source, dict.fromkeys(TS_GUARANTEES, X), 1),
+    "ts-compiler-error-silenced": (ts_compiler_error_silenced, {**ts_results(), TS_FEE: X}, 1),
+    "ts-compiler-error": (ts_compiler_error, {**ts_results(), TS_FEE: X}, 1),
+    "ts-tsconfig-relaxes-checks": (ts_tsconfig_relaxes_checks, dict.fromkeys(TS_GUARANTEES, X), 1),
+    "ts-module-patches-math": (ts_module_patches_math, dict.fromkeys(TS_GUARANTEES, X), 1),
+    "ts-import-for-side-effects": (ts_import_for_side_effects, dict.fromkeys(TS_GUARANTEES, X), 1),
+    "ts-declaration-file-lies": (ts_declaration_file_lies, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-proof-uses-sorry": (ts_proof_uses_sorry, {**ts_results(), TS_CONSERVES: U}, 1),
+    "ts-function-removed": (ts_function_removed, {TS_FEE: S, TS_CONSERVES: X, TS_OVERDRAFT: X, TS_SUM: S}, 1),
+    "ts-module-throws-when-loaded": (ts_module_throws_when_loaded, dict.fromkeys(TS_GUARANTEES, X), 1),
+    "ts-sum-skips-an-item": (ts_sum_skips_an_item, {**ts_results(), TS_SUM: U}, 1),
+    "ts-mutates-callers-array": (ts_mutates_callers_array, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-alias-hides-a-write": (ts_alias_hides_a_write, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
+    "ts-contract-weakened": (ts_contract_weakened, ts_results(), 1),
+})
+
+
+# A crash in the translator also reports `unsupported`, so these check the cause.
+TS_REASONS = {
+    "ts-fractional-fee": "not a safe integer",
+    "ts-cast-hides-a-type": "only `number` operands",
+    "ts-return-type-not-written": "add a return type of `number`",
+    "ts-lists-its-own-assumption": "only `number` operands",
+    "ts-javascript-beside-source": "sits beside",
+    "ts-compiler-error-silenced": "TypeScript error",
+    "ts-compiler-error": "TypeScript error",
+    "ts-tsconfig-relaxes-checks": "`any`",
+    "ts-module-patches-math": "replaces a built-in",
+    "ts-import-for-side-effects": "side effects",
+    "ts-declaration-file-lies": "no source",
+    "ts-function-removed": "not a top-level function",
+    "ts-module-throws-when-loaded": "the comparison with Node did not run",
+    "ts-mutates-callers-array": "shared with the caller",
+    "ts-alias-hides-a-write": "passed around or stored",
+}
 
 
 @unittest.skipUnless(os.environ.get("PROOFCI_TOOLCHAIN"), "needs the ProofCI toolchain image")

@@ -3,6 +3,11 @@
 ICON = {"verified": "✅", "unproven": "❌", "unsupported": "⛔", "contract-stale": "⚠️", "error": "💥"}
 
 
+def _translator(report):
+    return ("ProofCI's TypeScript translator" if report.get("language") == "typescript"
+            else "the pinned Charon/Aeneas toolchain")
+
+
 def markdown(report):
     lines = ["## ProofCI", ""]
     lines.append("**Result: passed**" if report["passed"] else "**Result: blocked**")
@@ -38,14 +43,23 @@ def markdown(report):
                   "Some verified guarantees rely on ProofCI's models of these library functions "
                   "(checked against `rustc`, see SECURITY.md):", ""]
         lines += [f"- `{m}`" for m in assumed]
+    outside = sorted({c for g in report["guarantees"] if g["status"] == "verified" for c in g.get("assumed", [])})
+    if outside:
+        lines += ["", "### Assumed outside calls", "",
+                  "These proofs hold only if each function below has this type and gives the same "
+                  "result for the same arguments. ProofCI didn't check that code:", ""]
+        lines += [f"- `{c}`" for c in outside]
     warned = [g for g in report["guarantees"] if g.get("warnings")]
     if warned:
         lines += ["", "### Contract warnings", "",
                   "These statements may not constrain the code as intended. Review the contract:", ""]
         for g in warned:
             lines += [f"- `{g['target']}/{g['guarantee']}`: {w}" for w in g["warnings"]]
+    if report.get("notes"):
+        lines += ["", "### Notes", ""]
+        lines += [f"- {note}" for note in report["notes"]]
     lines += ["", "Verified means the Lean kernel (and nanoda) accepted a proof of the exact protected "
-              "statement about the Rust code as translated by the pinned Charon/Aeneas toolchain. "
+              f"statement about the code as translated by {_translator(report)}. "
               "It covers only the listed guarantees."]
     timings = report.get("timings_seconds") or {}
     if timings:

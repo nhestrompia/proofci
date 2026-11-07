@@ -62,6 +62,48 @@ class ManifestTests(unittest.TestCase):
         self.assertRejected(GOOD + b"policy:\n  approvers: alice\n", "GitHub logins")
         self.assertRejected(GOOD + b"policy:\n  owners: [alice]\n", "unknown keys")
 
+    def test_typescript(self):
+        data = GOOD.replace(b"version: 1", b"version: 1\nlanguage: typescript\npackage: packages/core")
+        data = data.replace(b"ledger::calculate_fee", b"src/fees.ts::calculateFee")
+        m = manifest.parse(data)
+        self.assertEqual((m.language, m.crate), ("typescript", "packages/core"))
+        self.assertEqual(m.summary()["language"], "typescript")
+        for bad in (b"src/fees.js::f", b"../fees.ts::f", b"/etc/fees.ts::f", b"src/fees.ts", b"ledger::f"):
+            with self.assertRaises(manifest.ManifestError):
+                manifest.parse(data.replace(b"src/fees.ts::calculateFee", bad))
+
+    def test_language_and_directory_key_must_match(self):
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(GOOD.replace(b"version: 1", b"version: 1\npackage: ."))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(GOOD.replace(b"version: 1", b"version: 1\nlanguage: typescript\ncrate: ."))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(GOOD.replace(b"version: 1", b"version: 1\nlanguage: python"))
+
+    def test_assumed_calls(self):
+        base = b"""
+version: 1
+language: typescript
+assumes:
+  - call: "@acme/slug::slug"
+    signature: "(a: string): string"
+targets:
+  - id: fees
+    function: src/a.ts::f
+    guarantees:
+      - id: capped
+        theorem: fee_capped
+"""
+        self.assertEqual(manifest.parse(base).assumes, (("@acme/slug::slug", "(a: string): string"),))
+        self.assertEqual(manifest.parse(base.replace(b"@acme/slug::slug", b"lodash::kebabCase")).assumes[0][0], "lodash::kebabCase")
+        for wrong in (b"call: nothing", b'call: "a::1b"'):
+            with self.assertRaises(manifest.ManifestError):
+                manifest.parse(base.replace(b'call: "@acme/slug::slug"', wrong))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(base.replace(b'signature: "(a: string): string"', b'signature: ""'))
+        with self.assertRaises(manifest.ManifestError):
+            manifest.parse(base.replace(b"language: typescript\n", b"").replace(b"src/a.ts::f", b"ledger::f"))
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 

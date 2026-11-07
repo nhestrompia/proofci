@@ -18,6 +18,9 @@ PROOFS_MODULE = "Proofs"
 MAX_MANIFEST_BYTES = 64 * 1024
 ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 RUST_PATH = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$")
+TS_PATH = re.compile(r"^(?!/)(?!.*\.\.)[A-Za-z0-9_./-]+\.ts::[A-Za-z_$][A-Za-z0-9_$]*$")
+LANGUAGES = ("rust", "typescript")
+ASSUMED_CALL = re.compile(r"^(@[\w.-]+/)?[\w.-]+(/[\w.-]+)*::[A-Za-z_][A-Za-z0-9_]*$")
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 LEAN_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$")
 
@@ -49,6 +52,10 @@ class Manifest:
     # owner, member or collaborator other than the author; (): nobody, so the
     # policy can only change through a commit to the protected branch.
     approvers: tuple = None
+    language: str = "rust"
+    # Outside calls a proof may rely on, as (`module::name`, signature). They
+    # are part of the policy, so a pull request can't add one for itself.
+    assumes: tuple = ()
 
     @property
     def contract(self):
@@ -67,6 +74,7 @@ class Manifest:
         """Comparable view used to detect policy changes between commits."""
         return {
             "crate": self.crate,
+            "language": self.language,
             "lean": self.lean,
             "approvers": None if self.approvers is None else sorted(self.approvers),
             "guarantees": {
@@ -113,6 +121,25 @@ def _construct_mapping(loader, node, deep=False):
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
 
 
+def _assumes(entries, language):
+    if entries and language != "typescript":
+        raise ManifestError("assumes is only available for TypeScript")
+    if not isinstance(entries, list):
+        raise ManifestError("assumes must be a list")
+    assumptions = {}
+    for index, entry in enumerate(entries):
+        where = f"assumes[{index}]"
+        _keys(entry, ("call", "signature"), ("call", "signature"), where)
+        if not isinstance(entry["call"], str) or not ASSUMED_CALL.match(entry["call"]):
+            raise ManifestError(f"{where}.call must look like `package::function`")
+        if not isinstance(entry["signature"], str) or not entry["signature"].strip():
+            raise ManifestError(f"{where}.signature must be the function's TypeScript signature")
+        if entry["call"] in assumptions:
+            raise ManifestError(f"{entry['call']} is assumed twice")
+        assumptions[entry["call"]] = entry["signature"]
+    return tuple(sorted(assumptions.items()))
+
+
 def parse(data: bytes) -> Manifest:
     if len(data) > MAX_MANIFEST_BYTES:
         raise ManifestError("manifest is larger than 64 KiB")
@@ -120,10 +147,17 @@ def parse(data: bytes) -> Manifest:
         raw = yaml.load(data.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as error:
         raise ManifestError(f"manifest is not valid YAML: {error}") from None
-    _keys(raw, ("version", "crate", "lean", "targets", "policy"), ("version", "targets"), "manifest")
+    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes"), ("version", "targets"), "manifest")
     if raw["version"] != 1:
         raise ManifestError("only manifest version 1 is supported")
-    crate = _relative_path(raw.get("crate", "."), "crate")
+    language = raw.get("language", "rust")
+    if language not in LANGUAGES:
+        raise ManifestError(f"language must be one of: {', '.join(LANGUAGES)}")
+    if language == "typescript" and "crate" in raw:
+        raise ManifestError("a TypeScript manifest names its directory with `package`")
+    if language == "rust" and "package" in raw:
+        raise ManifestError("a Rust manifest names its directory with `crate`")
+    crate = _relative_path(raw.get("crate", raw.get("package", ".")), "package" if language == "typescript" else "crate")
     lean = _relative_path(raw.get("lean", "proofci"), "lean")
     if not isinstance(raw["targets"], list) or not raw["targets"]:
         raise ManifestError("targets must be a non-empty list")
@@ -136,8 +170,11 @@ def parse(data: bytes) -> Manifest:
         if entry["id"] in target_ids:
             raise ManifestError(f"duplicate target id {entry['id']!r}")
         target_ids.add(entry["id"])
-        if not isinstance(entry["function"], str) or not RUST_PATH.match(entry["function"]):
-            raise ManifestError(f"{where}.function must be a Rust path such as crate_name::function")
+        pattern = TS_PATH if language == "typescript" else RUST_PATH
+        if not isinstance(entry["function"], str) or not pattern.match(entry["function"]):
+            expected = "a path such as src/ledger.ts::transfer" if language == "typescript" \
+                else "a Rust path such as crate_name::function"
+            raise ManifestError(f"{where}.function must be {expected}")
         if not isinstance(entry["guarantees"], list) or not entry["guarantees"]:
             raise ManifestError(f"{where}.guarantees must be a non-empty list")
         guarantees = []
@@ -169,4 +206,4 @@ def parse(data: bytes) -> Manifest:
         if not isinstance(logins, list) or not all(isinstance(x, str) and LOGIN.match(x) for x in logins):
             raise ManifestError("policy.approvers must be a list of GitHub logins (may be empty)")
         approvers = tuple(sorted({x.lower() for x in logins}))
-    return Manifest(crate, lean, tuple(targets), approvers)
+    return Manifest(crate, lean, tuple(targets), approvers, language, _assumes(raw.get("assumes", []), language))

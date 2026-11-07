@@ -1,4 +1,10 @@
 *
 !proofci
 !toolchain/prune.py
+!typescript/package.json
+!typescript/package-lock.json
+!typescript/translate.mjs
+!typescript/differential.mjs
+!typescript/paths.mjs
+!typescript/lean-tokens.json
 **/__pycache__

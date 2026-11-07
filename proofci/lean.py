@@ -29,6 +29,7 @@ PERMITTED_AXIOMS = ("propext", "Quot.sound", "Classical.choice")
 AUDIT_MARKER = "PROOFCI_AUDIT "
 MAX_LEAN_BYTES = 2 * 1024 * 1024
 MAX_LEAN_FILES = 200
+JS_RUNTIME = Path(__file__).parent / "lean" / "ProofciJs.lean"
 
 
 class ContractError(Exception):
@@ -140,12 +141,14 @@ def assemble(root: Path, extracted_file: Path, crate_module: str, contract_dir: 
     _copy_lean_tree(contract_dir, "Contract", root)
     _copy_lean_tree(proofs_dir, "Proofs", root, required=False)
     (root / "ProofciSpecs.lean").write_text(specs_module())
+    shutil.copyfile(JS_RUNTIME, root / "ProofciJs.lean")
     (root / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\n"
         "package proofci_check\n"
         f'require aeneas from "{aeneas_lean_dir()}"\n'
         f"lean_lib {crate_module}\n"
         "lean_lib ProofciSpecs\n"
+        "lean_lib ProofciJs\n"
         + _lib("Contract", root) + _lib("Proofs", root)
     )
     (root / "lake-manifest.json").write_text(json.dumps(_lake_manifest("proofci_check"), indent=1))
@@ -188,6 +191,13 @@ def build_contract(ws):
     result = _lake(ws, ["build", "Contract"])
     if result.status != 0:
         raise ContractError(_errors(result.output))
+
+
+def build_translation(ws):
+    """Compile the translated code alone. Output the translator can't make
+    compile is its own limitation, not a problem with the contract."""
+    result = _lake(ws, ["build", ws.crate_module])
+    return None if result.status == 0 else _errors(result.output)
 
 
 AUDIT_LEAN = r"""

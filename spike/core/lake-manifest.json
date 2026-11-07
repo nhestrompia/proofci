@@ -1,0 +1,98 @@
+{
+ "version": "1.3.0",
+ "packagesDir": ".lake/packages",
+ "packages": [
+  {
+   "type": "path",
+   "scope": "",
+   "name": "aeneas",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "/opt/aeneas/backends/lean",
+   "configFile": "lakefile.lean"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "mathlib",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/mathlib",
+   "configFile": "lakefile.lean"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "plausible",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/plausible",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "LeanSearchClient",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/LeanSearchClient",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "importGraph",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/importGraph",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "proofwidgets",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/proofwidgets",
+   "configFile": "lakefile.lean"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "aesop",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/aesop",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "Qq",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/Qq",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "batteries",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/batteries",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "type": "path",
+   "scope": "",
+   "name": "Cli",
+   "manifestFile": "lake-manifest.json",
+   "inherited": true,
+   "dir": "/opt/aeneas/backends/lean/.lake/packages/Cli",
+   "configFile": "lakefile.toml"
+  }
+ ],
+ "name": "proofci_check",
+ "lakeDir": ".lake"
+}
