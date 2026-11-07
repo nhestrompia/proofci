@@ -94,6 +94,14 @@ def unwrap {α} (x : Option α) : Result α :=
   | some v => ok v
   | none => fail .undef
 
+/-- `xs.filter((x): x is T => ...)`: the type says every kept value is present. -/
+def unwrapAll {α} : List (Option α) → Result (List α)
+  | [] => ok []
+  | x :: rest => do
+    let v ← unwrap x
+    let vs ← unwrapAll rest
+    ok (v :: vs)
+
 /-- `if (x)` on a possibly missing value. A present value can still be falsy. -/
 def truthyStr : Option (List Nat) → Bool
   | some s => !s.isEmpty

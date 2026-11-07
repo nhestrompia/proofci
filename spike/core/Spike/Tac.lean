@@ -13,6 +13,15 @@ elab "clear_todo" : tactic => withMainContext do
     if (← instantiateMVars d.type).isAppOf ``Core.Todo then
       replaceMainGoal [← (← getMainGoal).clear d.fvarId]
 open Lean Elab Tactic Meta in
+/-- Refuting a path needs its logic, not the program state, whose values can be very long. -/
+elab "clear_state" : tactic => withMainContext do
+  for d in (← getLCtx).decls.toList.reverse do
+    let some d := d | continue
+    if d.isImplementationDetail then continue
+    let t ← instantiateMVars d.type
+    if t.isAppOf ``Core.Todo || t.isAppOf ``Core.V || t.isAppOf ``Core.Upd || t.isAppOf ``Core.Base then
+      try replaceMainGoal [← (← getMainGoal).clear d.fvarId] catch _ => pure ()
+open Lean Elab Tactic Meta in
 /-- `tauto` is exponential in the size of the conditions, so it only runs on small ones. -/
 elab "small_logic" : tactic => withMainContext do
   let mut n := 0
@@ -39,7 +48,7 @@ macro_rules | `(tactic| isnone) => `(tactic| first | rfl | assumption | (simp_al
 syntax "known" : tactic
 macro_rules | `(tactic| known) => `(tactic| first | assumption | trivial | omega | (small_logic; tauto) | (clear_todo; simp_all; done))
 syntax "refuted" : tactic
-macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | (small_logic; tauto) | (clear_todo; simp_all; done) | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | (small_logic; tauto)))
+macro_rules | `(tactic| refuted) => `(tactic| first | contradiction | omega | (small_logic; tauto) | (clear_state; simp_all; done) | (clear_todo; simp_all; done) | (simp_all; done) | (simp only [decide_eq_true_eq, decide_not, Bool.not_eq_true', decide_eq_false_iff_not] at *; first | omega | (small_logic; tauto)))
 
 syntax "vsplit " ident : tactic
 macro_rules
@@ -66,6 +75,7 @@ syntax "s_rec" : tactic
 syntax "s_call" : tactic
 syntax "s_branch" : tactic
 syntax "s_misc" : tactic
+syntax "s_decided" : tactic
 syntax "sim_v" : tactic
 syntax "simb" : tactic
 syntax "simc" : tactic
@@ -171,6 +181,12 @@ macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.array; siml))
 macro_rules | `(tactic| siml) => `(tactic| exact siml_nil)
 macro_rules | `(tactic| siml) => `(tactic| (apply siml_cons; sim'; siml))
 
+-- The view split on the left side. Each conclusion only matches its own shape, so these fail fast.
+macro_rules | `(tactic| s_decided) => `(tactic| (apply SimE.and_false_c; assumption; simc))
+macro_rules | `(tactic| s_decided) => `(tactic| (apply SimE.and_true_c; assumption; simc; simc))
+macro_rules | `(tactic| s_decided) => `(tactic| (apply SimE.or_true_c; assumption; simc))
+macro_rules | `(tactic| s_decided) => `(tactic| (apply SimE.or_false_c; assumption; simc; simc))
+
 -- Adjusting the type without descending, so these can't call each other forever.
 macro_rules | `(tactic| sim') => `(tactic| (apply SimE.of_eq_some; assumption; sim0))
 macro_rules | `(tactic| sim') => `(tactic| (apply SimE.unwrap; sim0; assumption))
@@ -200,7 +216,7 @@ elab "sim0_go" : tactic => withMainContext do
     | ``Expr.call => `(tactic| s_call)
     | ``Expr.hof => `(tactic| s_hof)
     | ``Expr.reduce => `(tactic| s_hof)
-    | ``Expr.or | ``Expr.and | ``Expr.not => `(tactic| first | (apply SimE.of_c; simc) | s_branch | s_misc)
+    | ``Expr.or | ``Expr.and | ``Expr.not => `(tactic| first | s_decided | (apply SimE.of_c; simc) | s_branch | s_misc)
     | ``Expr.cond | ``Expr.coalesce => `(tactic| first | s_branch | s_misc)
     | _ => `(tactic| s_misc)
   evalTactic tac
@@ -211,6 +227,10 @@ macro_rules | `(tactic| sim) => `(tactic| sim')
 
 -- Truth
 -- Tried last: when an earlier rule can settle a null test from what is known, it should.
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_of_eq; apply SimC.eq_opts'; sim_read; sim_read; infer_instance; decide))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.ne_of_eq; apply SimC.eq_opt'; sim_read; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.ne_of_eq; apply SimC.eq_opts; sim'; sim'; infer_instance; decide))
+macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.ne_of_eq; apply SimC.eq_some; sim'; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_some; sim'; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_opts; sim'; sim'; infer_instance; decide))
 macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.isNullish_opt; sim'; infer_instance))
@@ -218,7 +238,7 @@ macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_undef; sim'
 macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.eq_null; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.ne_undef; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (is_stated; apply SimC.ne_null; sim'; infer_instance))
-macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_opt; sim_read; sim'; infer_instance))
+macro_rules | `(tactic| simc) => `(tactic| (apply SimC.eq_opt'; sim_read; sim'; infer_instance))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.of_bool; sim_read))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.lt; sim'; sim'))
 macro_rules | `(tactic| simc) => `(tactic| (apply SimC.gt; sim'; sim'))
@@ -313,6 +333,8 @@ macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_f; 
 -- `x?.m() ?? d`: the conclusions only match this shape, so these fail fast on anything else.
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_none; sim'; isnone; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_some; sim'; assumption; infer_instance; sim'; infer_instance))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.ne_opts; sim_read; sim_read; infer_instance; decide))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.ne_opt; sim_read; sim'; infer_instance))
 macro_rules | `(tactic| simb) => `(tactic| (apply SimB.of_c; simc))
 
 -- Statements. Core and the typed function advance together: `vdrain` consumes what the next
@@ -399,10 +421,44 @@ elab "dedup_some" : tactic => withMainContext do
       replaceMainGoal [g'']
       return
 
+/-- A constant computed in steps, read as one step. It can't branch, so this keeps one goal. -/
+syntax "vchain " ident : tactic
+macro_rules
+  | `(tactic| vchain $h:ident) => `(tactic| first
+    | (revert $h:ident; with_reducible refine Core.ok_intro ?_; intro e; subst e)
+    | ((revert $h:ident; with_reducible refine Core.bind_intro ?_; intro tmp hx hk; vchain hx) <;> vchain hk)
+    | skip)
+
+/-- A pure step run twice gives two names for one value, and `s.length` read in a test and
+again in the next statement would otherwise be unrelated. This keeps the first name. -/
+elab "dedup_ok" : tactic => withMainContext do
+  let decls := (← getLCtx).decls.toList.reverse.filterMap id
+  let isOkEq (t : Lean.Expr) : Bool := t.isAppOfArity ``Eq 3 && (t.getArg! 2).isAppOfArity ``Aeneas.Std.Result.ok 2
+  let mut newest : Option LocalDecl := none
+  for d in decls do
+    if d.isImplementationDetail || d.type.isAppOf ``Core.Todo then continue
+    if isOkEq (← instantiateMVars d.type) then newest := some d
+    break
+  let some n := newest | return
+  let tn ← instantiateMVars n.type
+  let r := (tn.getArg! 2).getArg! 1
+  unless r.isFVar do return
+  for d in decls do
+    if d.fvarId == n.fvarId || d.isImplementationDetail || d.type.isAppOf ``Core.Todo then continue
+    let t ← instantiateMVars d.type
+    if isOkEq t && t.getArg! 1 == tn.getArg! 1 then
+      let e ← mkEqTrans (← mkEqSymm n.toExpr) d.toExpr
+      let pf ← mkAppM ``Core.ok_inj' #[e]
+      let g ← getMainGoal
+      let (h, g') ← (← g.assert `heq (← inferType pf) pf).intro1P
+      let g'' ← Lean.Meta.subst g' h
+      replaceMainGoal [g'']
+      return
+
 elab "v_step" : tactic => do
   revertTodo
   evalTactic (← `(tactic| with_reducible refine Core.todo_bind ?_))
-  evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx; try dedup_some; try (have e := Option.some.inj hx; subst e)) | skip)))
+  evalTactic (← `(tactic| (intro tmp hx hk; first | (revert hx; with_reducible refine Core.ok_intro ?_; intro e; subst e) | (rw [Core.unwrap_iff] at hx; try dedup_some; try (have e := Option.some.inj hx; subst e)) | (vchain hx; try dedup_ok))))
 
 /-- Reduces the pending step when it matches on a known constructor, as after a loop. -/
 def todoReduce : TacticM Unit := withMainContext do
@@ -576,8 +632,8 @@ macro_rules | `(tactic| b_ite) => `(tactic| (
   (focus (intro hp s' hk; first | (exfalso; refuted) | (carry hk; clear hk; crun)))
   (focus (intro hp s' hk; first | (exfalso; refuted) | (carry hk; clear hk; crun)))))
 macro_rules | `(tactic| b_lock) => `(tactic| (
-  (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))
-  (focus (intro hp s' hk; carry hk; clear hk; v_decide_go))))
+  (focus (intro hp s' hk; first | (exfalso; contradiction) | (carry hk; clear hk; v_decide_go)))
+  (focus (intro hp s' hk; first | (exfalso; contradiction) | (carry hk; clear hk; v_decide_go)))))
 macro_rules | `(tactic| l_conj) => `(tactic| repeat' (first | trivial | assumption | (apply V.nil_cast; assumption) | apply And.intro))
 macro_rules | `(tactic| c_loop_end) => `(tactic| (apply wp_nil; (first | refine ⟨(), rfl, Or.inl rfl, ?_, ?_⟩ | refine ⟨_, rfl, Or.inl rfl, ?_, ?_⟩); assumption; l_conj))
 macro_rules | `(tactic| c_brk) => `(tactic| (apply step_brk; seq_out; refine Or.inl ⟨rfl, ?_, ?_⟩; assumption; l_conj))
@@ -631,11 +687,19 @@ macro_rules | `(tactic| c_cb) => `(tactic| (
   have hk : Todo _ _ := hf
   clear hf
   crun))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.map_; assumption; sim'; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.filter_; assumption; sim'; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.map; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.filter; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.some_; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.every; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
 macro_rules | `(tactic| s_hof) => `(tactic| (focus (apply SimE.find; sim'; assumption; (try any_goals infer_instance); prog_lookup; rfl; c_cb_t)))
+-- `filter` with a type guard: the kept values are stated, and then which nothing they allow.
+syntax "s_unwrap_all" : tactic
+macro_rules | `(tactic| s_unwrap_all) => `(tactic| (focus (apply SimE.unwrapAll_ (k := .both); assumption; sim'; (try any_goals infer_instance))))
+macro_rules | `(tactic| s_unwrap_all) => `(tactic| (focus (apply SimE.unwrapAll_ (k := .null); assumption; sim'; (try any_goals infer_instance))))
+macro_rules | `(tactic| s_unwrap_all) => `(tactic| (focus (apply SimE.unwrapAll_ (k := .undef); assumption; sim'; (try any_goals infer_instance))))
+macro_rules | `(tactic| s_hof) => `(tactic| s_unwrap_all)
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.append; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.concat_arr; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.replace; sim'; sim'; sim'; assumption))

@@ -685,3 +685,45 @@ test("a comparison keeps the enumeration after an earlier test narrows it", () =
   emits(`export function f(a: string) { return a === "x" || a === "y"; }`, "a = (js!");
   emits(`${kind}export function f(a?: K) { return a === "x" || a === "y"; }`, "a = some .x", "a = some .y");
 });
+
+test("a filter with a type guard gives plain values", () => {
+  const { source } = run(`export function f(xs: (string | undefined)[]): string[] { return xs.filter((x): x is string => x !== undefined); }\n`);
+  assert.match(source, /Js\.unwrapAll tmp/);
+});
+
+test("a filter without a type guard keeps the missing values", () => {
+  const { source } = run(`export function f(xs: (string | undefined)[]): (string | undefined)[] { return xs.filter(x => x !== "a"); }\n`);
+  assert.doesNotMatch(source, /Js\.unwrapAll/);
+});
+
+test("a field narrowed inside && is read only when the test passed", () => {
+  const { source } = run(`
+interface O { on: boolean; wave: number | null }
+export function f(w: number, o: O): boolean { return o.on && o.wave !== null && w <= o.wave; }
+`);
+  const unwrap = source.indexOf("Js.unwrap o.wave"), test = source.indexOf("if (o.on = true)");
+  assert.ok(test >= 0 && test < unwrap, source);
+});
+
+test("a type parameter with a bound is read at its bound", () => {
+  const { source, signatures } = run(`export function f<T extends { to: string }>(xs: T[]): T[] { return xs.filter(x => x.to !== "a"); }\n`);
+  assert.doesNotMatch(source, /\{T : Type\}/);
+  assert.match(source, /x\.«?to»?/);
+  assert.equal(signatures["a.ts::f"].result.item.kind, "record");
+});
+
+test("a type parameter with no usable bound stays generic", () => {
+  for (const bound of ["", " extends object", " extends unknown[]", " extends () => void"]) {
+    const { source } = run(`export function f<T${bound}>(xs: T[]): number { return xs.length; }\n`);
+    assert.match(source, /\{T : Type\}/, bound);
+  }
+});
+
+test("records used only inside a constant are listed for the bridge", () => {
+  const { records } = run(`
+const ROLES = [{ value: "a" }, { value: "b" }];
+const NAMES = ROLES.map(r => r.value);
+export function f(r: string): boolean { return NAMES.includes(r); }
+`);
+  assert.ok(records().some(t => t.kind === "record" && t.fields[0].name === "value"));
+});

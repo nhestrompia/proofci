@@ -202,6 +202,33 @@ theorem sim_bin {p s op x y α β γ} {_ : TyRep α} {_ : TyRep β} {_ : TyRep �
   obtain ⟨u, hb, ru⟩ := hf _ v w (mono h₃.2 rv) rw
   exact ⟨u, s₃, Evals.bin ex ey hb, h₂.trans h₃, ru⟩
 
+theorem binary_ne_of_eq {v w b} (h : binary .eq v w = some (.bool b)) : binary .ne v w = some (.bool (!b)) := by
+  cases v <;> cases w <;> simp_all [binary] <;> (try subst h) <;> simp_all
+/-- Every rule for `===` gives the rule for `!==`, whatever the types. -/
+theorem SimC.ne_of_eq {p s x y P} [Decidable P] (h : SimC p s (.bin .eq x y) P) : SimC p s (.bin .ne x y) (¬P) := by
+  intro s₁ hx
+  obtain ⟨s₂, ⟨F, hF⟩, hk⟩ := h s₁ hx
+  refine ⟨s₂, ⟨F + 1, fun f hf => ?_⟩, hk⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  have he := hF (g + 1) (by omega)
+  simp only [eval] at he ⊢
+  cases ha : eval g p s₁ x with
+  | ok v t =>
+    simp only [ha] at he ⊢
+    cases hb : eval g p t y with
+    | ok w u =>
+      simp only [hb] at he ⊢
+      cases hq : binary .eq v w with
+      | none => simp [hq] at he
+      | some r =>
+        simp only [hq] at he
+        have hr : r = .bool (decide P) ∧ u = s₂ := by simpa using he
+        obtain ⟨rfl, rfl⟩ := hr
+        simp [binary_ne_of_eq hq]
+    | thrown _ _ => simp [hb] at he
+    | stuck => simp [hb] at he
+  | thrown _ _ => simp [ha] at he
+  | stuck => simp [ha] at he
 theorem sim_cmp {p s op x y α β} {_ : TyRep α} {_ : TyRep β} {a : α} {b : β} {P : Prop} [Decidable P]
     (hx : SimE p s x a) (hy : SimE p s y b)
     (hf : ∀ h v w, rep h a v → rep h b w → binary op v w = some (.bool (decide P))) :
@@ -578,6 +605,21 @@ theorem SimC.eq_opts {p s x y k α} {_ : TyRep α} {a b : Opt k α} {d : Decidab
         simp [Inj.inj (show rep h c v from r1) (show rep h e w from r2)]
   have : decide (v = w) = @decide (a = b) d := by simp [key]
   rw [this]
+/-! Tests nothing has stated yet. Written at `Option α`, not `Opt k α`, because `simp` then sees
+`some a = some b` and the facts on the path can refute it. -/
+theorem SimC.eq_opt' {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α} (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) :
+    @SimC p s (.bin .eq x y) (@Eq (Option α) a (Option.some b)) (Classical.propDecidable _) := SimC.eq_opt hx hy hi
+theorem SimC.eq_opts' {p s x y k α} {_ : TyRep α} {a b : Opt k α} (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) (hk : k ≠ .both) :
+    @SimC p s (.bin .eq x y) (@Eq (Option α) a b) (Classical.propDecidable _) := SimC.eq_opts hx hy hi hk
+/-- `!==` as a test. -/
+theorem SimB.ne_opt {p s x y k α} {_ : TyRep α} {a : Opt k α} {b : α}
+    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) : SimB p s (.bin .ne x y) (¬@Eq (Option α) a (Option.some b)) :=
+  have : Decidable (@Eq (Option α) a (Option.some b)) := Classical.propDecidable _
+  SimB.of_c (@SimC.ne_of_eq _ _ _ _ _ this (SimC.eq_some (d := this) hx hy hi))
+theorem SimB.ne_opts {p s x y k α} {_ : TyRep α} {a b : Opt k α}
+    (hx : SimE p s x a) (hy : SimE p s y b) (hi : Inj α) (hk : k ≠ .both) : SimB p s (.bin .ne x y) (¬@Eq (Option α) a b) :=
+  have : Decidable (@Eq (Option α) a b) := Classical.propDecidable _
+  SimB.of_c (@SimC.ne_of_eq _ _ _ _ _ this (SimC.eq_opts (d := this) hx hy hi hk))
 
 theorem opt_cases {k α} {_ : TyRep α} {p s e} {Q : Opt k α → Prop} (a : Opt k α) (h : SimE (α := Opt k α) p s e a)
     (hn : SimE (α := Opt k α) p s e Option.none → Q Option.none) (hs : ∀ x, SimE (α := Opt k α) p s e (Option.some x) → Q (Option.some x)) : Q a := by
@@ -752,6 +794,28 @@ theorem SimE.and_false {p s a b P α} {_ : TyRep α} {x : α} (ha : SimE p s a x
   have : truthy v = false := by cases h : truthy v <;> simp_all
   exact ⟨v, s₂, Evals.and_false e this, h₂, rv⟩
 
+/-! `a && b` and `a || b` once the view has split on the left side. The path's fact comes
+first, so the left test is stated before it is checked. -/
+theorem SimE.and_false_c {p s a b P} {_ : Decidable P} (hp : ¬P) (h : SimC p s a P) :
+    SimE p s (.and a b) (decide (false = true)) := by
+  have e : decide (false = true) = decide P := by simp [hp]
+  rw [e]
+  exact SimE.and_false (SimE.of_c h) (SimB.of_c h) hp
+theorem SimE.and_true_c {p s a b P Q} {_ : Decidable P} {_ : Decidable Q} (hp : P) (h : SimC p s a P) (hb : SimC p s b Q) :
+    SimE p s (.and a b) (decide (decide Q = true)) := by
+  have e : decide (decide Q = true) = decide Q := by simp
+  rw [e]
+  exact SimE.and_true (SimB.of_c h) hp (SimE.of_c hb)
+theorem SimE.or_true_c {p s a b P} {_ : Decidable P} (hp : P) (h : SimC p s a P) :
+    SimE p s (.or a b) (decide (true = true)) := by
+  have e : decide (true = true) = decide P := by simp [hp]
+  rw [e]
+  exact SimE.or_true (SimE.of_c h) (SimB.of_c h) hp
+theorem SimE.or_false_c {p s a b P Q} {_ : Decidable P} {_ : Decidable Q} (hp : ¬P) (h : SimC p s a P) (hb : SimC p s b Q) :
+    SimE p s (.or a b) (decide (decide Q = true)) := by
+  have e : decide (decide Q = true) = decide Q := by simp
+  rw [e]
+  exact SimE.or_false (SimB.of_c h) hp (SimE.of_c hb)
 theorem SimE.coalesce_some {p s a b α} {_ : TyRep α} {x : α} (ha : SimE p s a x) (hn : NotNull α) : SimE p s (.coalesce a b) x := by
   intro s₁ h₁
   obtain ⟨v, s₂, e, h₂, rv⟩ := ha s₁ h₁
@@ -2104,6 +2168,46 @@ theorem ite_pos_imp {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : 
 theorem ite_neg_imp {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} {G : Prop} (h : ¬c) (k : b = ok r → G) : (if c then a else b) = ok r → G :=
   fun e => k (ite_neg_of h e)
 theorem some_inj {α} {a b : α} (h : some a = some b) : a = b := Option.some.inj h
+theorem unwrapAll_rep {k α} {_ : TyRep α} {h} : ∀ {xs : List (Opt k α)} {ys : List α} {vs : List Val},
+    Js.unwrapAll (α := α) xs = ok ys → List.Forall₂ (rep h) xs vs → List.Forall₂ (rep h) ys vs := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro ys vs hu hf
+    cases hf
+    have : ys = [] := by simpa [Js.unwrapAll] using hu.symm
+    subst this; exact .nil
+  | cons x rest ih =>
+    intro ys vs hu hf
+    obtain ⟨w, tail, hq, ht, rfl⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨c, hc, hm⟩ := bind_eq (show Aeneas.Std.bind (Js.unwrap (α := α) x) _ = ok ys from hu)
+    obtain ⟨cs, hcs, hm'⟩ := bind_eq hm
+    have hyy : ys = c :: cs := by simpa using hm'.symm
+    subst hyy
+    have hx : (x : Option α) = Option.some c := by
+      revert hc
+      exact Option.casesOn (motive := fun o : Option α => Js.unwrap o = ok c → o = Option.some c) x
+        (fun e => by simp [Js.unwrap] at e) (fun d e => by simpa [Js.unwrap] using e)
+    have hr : rep h c w := by
+      have hq' : optRep k h (x : Option α) w := hq
+      rw [hx] at hq'
+      exact hq'
+    exact .cons hr (ih hcs ht)
+theorem SimE.unwrapAll {p s e k α} {_ : TyRep α} {xs : List (Opt k α)} {ys : List α}
+    (hx : SimE p s e xs) (h : Js.unwrapAll (α := α) xs = ok ys) : SimE p s e ys := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, l, vs, rfl, hl, hf⟩ := hx s₁ h₁
+  exact ⟨_, s₂, ev, h₂, l, vs, rfl, hl, unwrapAll_rep h hf⟩
+/-- `unwrapAll` with the fact first, so the rule reads the stated list before the expression. -/
+theorem SimE.unwrapAll_ {p s e k α} {xs : List (Opt k α)} {ys : List α} (h : Js.unwrapAll (α := α) xs = ok ys)
+    {_ : TyRep α} (hx : SimE p s e xs) : SimE p s e ys := SimE.unwrapAll hx h
+/-- `map` and `filter` with the fact first, for a list literal whose type only the view knows. -/
+theorem SimE.map_ {p s a g fn x α β} {xs : List α} {f : α → Result β} {ys} (h : Js.map f xs = ok ys) {_ : TyRep α} {_ : TyRep β}
+    (hx : SimE p s a xs) (hg : p g = Option.some fn) (hp : fn.params = [x]) (hcb : Cb p s fn x f) : SimE p s (.hof .map a g) ys :=
+  SimE.map hx h hg hp hcb
+theorem SimE.filter_ {p s a g fn x α} {xs : List α} {f : α → Result Bool} {ys} (h : Js.filter f xs = ok ys) {_ : TyRep α}
+    (hx : SimE p s a xs) (hg : p g = Option.some fn) (hp : fn.params = [x]) (hcb : Cb p s fn x f) : SimE p s (.hof .filter a g) ys :=
+  SimE.filter hx h hg hp hcb
 theorem bind_intro {α β : Type} {G : Prop} {x : Result α} {f : α → Result β} {r : β}
     (k : ∀ a, x = ok a → f a = ok r → G) : Aeneas.Std.bind x f = ok r → G := by
   intro h
@@ -2111,6 +2215,7 @@ theorem bind_intro {α β : Type} {G : Prop} {x : Result α} {f : α → Result 
   exact k a ha hf
 theorem ok_intro {α : Type} {G : Prop} {a b : α} (k : a = b → G) : (ok a : Result α) = ok b → G :=
   fun h => k (by simpa using h)
+theorem ok_inj' {α : Type} {a b : α} (h : (ok a : Result α) = ok b) : a = b := by simpa using h
 theorem fail_intro {α : Type} {G : Prop} {e} {r : α} : (Result.fail e : Result α) = ok r → G := by
   intro h; simp at h
 

@@ -54,6 +54,11 @@ every argument of `push` now lowers, `add` works on a set the function owns, and
 assigned from a chain and tested later bridges. What's left is 87 stuck, 21 past the
 120-second limit, 8 with other errors, and 28 that don't generate.
 
+A further round took it to 350 of 464 (75%), losing none. Most of the gain was translator bugs,
+not proof search: `filter` with a type guard, fields narrowed by tsc, `T extends {...}`, and
+records used only inside a constant or callback. Raising the limit from 120 to 600 seconds
+proved only 2 of the 21 timeouts, so timeouts need less search, not more time.
+
 `add` and `delete` on sets aren't lowered, because they need proofs about mutation,
 so those functions are accepted but can't bridge. A module constant computed through
 a callback, such as `const NAMES = ROLES.map(...)`, doesn't bridge either: it reaches

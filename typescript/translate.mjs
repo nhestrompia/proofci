@@ -119,6 +119,7 @@ export class Translator {
     this.lenient = build({ ...OPTIONS, ...LENIENT, paths });
     this.anonymous = new Map(); // key -> shape of an inline object type
     this.types = new Map();      // declaration, or instantiation key -> { lean, text }
+    this.shaped = [];            // every type given a Lean shape, with where it was met
     this.typeOwners = new Map(); // Lean name -> the declaration that took it
     this.packages = new Map();   // package.json path -> { name, version }, for declared types
     this.functions = new Map();  // declaration -> { lean, text } (null while in progress)
@@ -256,6 +257,7 @@ export class Translator {
     }
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
+    if (this.bound(type)) return this.type(this.bound(type), node);
     if (type.flags & TypeFlags.TypeParameter) return name(type.symbol.name);
     if (type.isUnion()) {
       const parts = type.types.filter(t => !(t.flags & (TypeFlags.Null | TypeFlags.Undefined)));
@@ -290,6 +292,7 @@ export class Translator {
       const text = [`structure ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n");
       this.anonymous.set(key, { lean, kind: "record", fields: fields.map(f => f.name) });
       this.order.push(text);
+      this.shaped.push({ type, node });
     }
     return this.anonymous.get(key);
   }
@@ -332,6 +335,22 @@ export class Translator {
     return `Proofci.Package.${parts.join(".")}.${name(declaration.name.text)}`;
   }
 
+  // `T extends { to: string }` is read at its bound, so its fields can be read. The bridge
+  // still checks the body, and a caller passing a wider type simply won't elaborate.
+  bound(type) {
+    if (!(type.flags & ts.TypeFlags.TypeParameter)) return undefined;
+    const bound = this.checker.getBaseConstraintOfType(type);
+    if (!bound || bound === type || !(bound.flags & ts.TypeFlags.Object) || this.checker.isArrayType(bound)) return undefined;
+    if (bound.getCallSignatures().length || !this.checker.getPropertiesOfType(bound).length) return undefined;
+    return bound;
+  }
+
+  generics(fn) {
+    return (fn.typeParameters ?? [])
+      .filter(t => !this.bound(this.checker.getTypeAtLocation(t)))
+      .map(t => `{${name(t.name.text)} : Type} [DecidableEq ${name(t.name.text)}]`);
+  }
+
   // Each use of a generic type is its own Lean type, so `Page<string>` and
   // `Page<number>` are separate structures. Nothing else needs an argument.
   instantiation(declaration, type, node) {
@@ -369,6 +388,7 @@ export class Translator {
     if (type.isUnion()) shape = this.declareUnion(declaration, type, lean);
     else shape = this.declareRecord(declaration, type, lean);
     this.types.set(key, { lean, ...shape });
+    this.shaped.push({ type, node });
     this.order.push(shape.text);
     return lean;
   }
@@ -432,6 +452,7 @@ export class Translator {
     if (lean === "Unit") return { kind: "void" };
     if (lean === "Js.Str") return { kind: "string" };
     if (this.checker.isArrayType(type)) return { kind: "array", item: this.describe(this.checker.getTypeArguments(type)[0], node) };
+    if (this.bound(type)) return this.describe(this.bound(type), node);
     if (type.flags & ts.TypeFlags.TypeParameter) return { kind: "generic", name: type.symbol.name };
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
@@ -579,7 +600,7 @@ export class Translator {
     const prologue = [];
     const env = new Map();
     const params = fn.parameters.map((p, index) => scope.parameter(p, index, prologue, env));
-    const generics = (fn.typeParameters ?? []).map(t => `{${name(t.name.text)} : Type} [DecidableEq ${name(t.name.text)}]`);
+    const generics = this.generics(fn);
     const result = this.type(returns, fn);
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
@@ -622,7 +643,7 @@ export class Translator {
     const fn = this.bodyOf(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
     const scope = new Stub(this, fn);
-    const generics = (fn.typeParameters ?? []).map(t => `{${name(t.name.text)} : Type} [DecidableEq ${name(t.name.text)}]`);
+    const generics = this.generics(fn);
     const params = [...generics, ...fn.parameters.map((p, index) => scope.parameter(p, index, [], new Map()))];
     const result = this.type(this.checker.getReturnTypeOfSignature(signature), fn);
     const lean = this.leanName(declaration, declaration.name.text);
@@ -1991,7 +2012,11 @@ export class Scope {
     if (this.isArray(object)) throw this.t.fail(node, `\`.${node.name.text}\` is not supported on arrays yet`);
     const type = this.typeOf(object);
     if (type.isUnion()) throw this.t.fail(node, "reading a field of a union outside a `switch` is not supported yet");
-    return `${this.expression(object, env, lines)}.${name(node.name.text)}`;
+    const read = `${this.expression(object, env, lines)}.${name(node.name.text)}`;
+    // tsc narrowed the field here, as in `o.x !== null && o.x > 1`, but the record still holds an Option.
+    const field = this.checker.getPropertyOfType(this.checker.getApparentType(type), node.name.text);
+    if (field && this.nullable(this.checker.getTypeOfSymbol(field)) && !this.nullable(this.typeOf(node))) return this.bind(`Js.unwrap ${read}`, lines);
+    return read;
   }
 
   optionalField(node, object, env, lines) {
@@ -2129,8 +2154,13 @@ export class Scope {
       case "concat":
         if (args.length !== 1 || !this.isArray(args[0])) throw this.t.fail(node, "only `concat` of one array is supported for now");
         return `(${list} ++ ${this.expression(args[0], env, lines)})`;
-      case "map": case "filter": case "some": case "every": case "find":
-        return this.bindCallback(method === "some" ? "some_" : method, this.callback(args, 1, node, env), list, lines);
+      case "map": case "filter": case "some": case "every": case "find": {
+        const result = this.bindCallback(method === "some" ? "some_" : method, this.callback(args, 1, node, env), list, lines);
+        if (method !== "filter" || !this.nullable(item)) return result;
+        // A type guard removed the nullish values, so the result holds plain values.
+        const kept = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(node)))[0];
+        return this.nullable(kept) ? result : this.bind(`Js.unwrapAll ${result}`, lines);
+      }
       case "reduce": {
         if (args.length !== 2) throw this.t.fail(node, "`reduce` needs an initial value");
         const signature = this.checker.getResolvedSignature(node);
@@ -2554,7 +2584,11 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   const reached = [...translator.fileChecks.keys()];
   const packages = Object.fromEntries([...translator.packages.values()].filter(Boolean).map(p => [p.name, p.version]));
   const local = file => relative(translator.root, realpathSync(file));
-  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, packages,
+  // Records can be used only inside a constant or a callback, so no signature shows them.
+  const records = () => translator.shaped.flatMap(({ type, node }) => {
+    try { return [translator.describe(type, node)]; } catch { return []; }
+  });
+  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, packages, records,
     files: reached.map(f => local(f.fileName)),
     imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
 }

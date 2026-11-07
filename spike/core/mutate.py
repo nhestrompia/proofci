@@ -62,6 +62,9 @@ KINDS = {
     "append-front": (r"(\w+) \+\+ \[(.+)\]\)$", r"[\2] ++ \1)"),
     "filter-not": (r"Result\.ok \(decide \((.*)\)\)$", r"Result.ok (decide (¬(\1)))"),
     
+    "guard-rev": (r"\bJs\.unwrapAll (\S+)$", r"Js.unwrapAll (List.reverse \1)"),
+    "guard-drop": (r"\bJs\.unwrapAll (\S+)$", r"Js.unwrapAll (List.drop 1 \1)"),
+    "narrow-none": (r"\bJs\.unwrap (\S+)$", r"Js.unwrap (Option.filter (fun _ => false) \1)"),
     "some-every": (r"\bJs\.some_\b", "Js.every"),
     "every-some": (r"\bJs\.every\b", "Js.some_"),
 }
