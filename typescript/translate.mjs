@@ -1585,8 +1585,52 @@ export class Scope {
     };
   }
 
+  // The statements of one case. `case "a": { ... }` holds them in a block.
+  caseBody(clause) {
+    const [only] = clause.statements;
+    return clause.statements.length === 1 && ts.isBlock(only) ? [...only.statements] : [...clause.statements];
+  }
+
+  // `switch` on a string, number or field: the same tests Core runs, one after another.
+  plainSwitch(statement, rest, flow, env) {
+    const clauses = [...statement.caseBlock.clauses];
+    const arms = [];
+    let labels = [], fallback = [];
+    for (const clause of clauses) {
+      const isDefault = ts.isDefaultClause(clause);
+      if (isDefault && clause !== clauses.at(-1)) throw this.t.fail(clause, "`default` must be the last case");
+      if (isDefault && labels.length) throw this.t.fail(clause, "a case that shares `default` is not supported yet");
+      if (!isDefault) labels.push(clause.expression);
+      if (!clause.statements.length) {
+        if (clause === clauses.at(-1)) throw this.t.fail(clause, "an empty last case is not supported yet");
+        continue;
+      }
+      const statements = this.caseBody(clause);
+      const last = statements.at(-1);
+      if (last && ts.isBreakStatement(last) && !last.label) statements.pop();
+      else if (clause !== clauses.at(-1) && !(last && (ts.isReturnStatement(last) || ts.isThrowStatement(last)))) throw this.t.fail(clause, "falling through to the next case is not supported");
+      if (statements.some(s => this.containsBreak(s))) throw this.t.fail(clause, "only a final `break` is supported in a case");
+      if (isDefault) fallback = statements;
+      else arms.push({ labels, statements });
+      labels = [];
+    }
+    const chain = i => {
+      if (i === arms.length) return this.block([...fallback, ...rest], flow, new Map(env));
+      const lines = [];
+      const test = arms[i].labels.map(label => `(${this.equality({ left: statement.expression, right: label, operatorToken: { kind: ts.SyntaxKind.EqualsEqualsEqualsToken } }, env, lines)})`).join(" ∨ ");
+      return [...lines, `if ${test} then`, ...this.indent(this.block([...arms[i].statements, ...rest], flow, new Map(env))), "else", ...this.indent(chain(i + 1))];
+    };
+    return chain(0);
+  }
+
   switching(statement, rest, flow, env) {
     const subject = unwrap(statement.expression);
+    const tagged = ts.isPropertyAccessExpression(subject) && subject.name.text === "kind" && ts.isIdentifier(subject.expression) && this.declareFor(subject.expression)?.kind === "tagged";
+    const named = ts.isIdentifier(subject) && this.declareFor(subject)?.kind === "enum";
+    if (!tagged && !named) {
+      if (!ts.isIdentifier(subject) && !this.isFieldPath(subject)) throw this.t.fail(statement, "`switch` on this expression is not supported yet");
+      return this.plainSwitch(statement, rest, flow, env);
+    }
     let owner, shape;
     if (ts.isPropertyAccessExpression(subject) && subject.name.text === "kind" && ts.isIdentifier(subject.expression)) {
       owner = subject.expression;

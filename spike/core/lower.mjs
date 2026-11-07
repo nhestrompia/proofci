@@ -476,6 +476,7 @@ export function lower(root, targets, { paths } = {}) {
         const tmp = `__sw${s.pos}`;
         out.push(`.set ${lean(tmp)} (${E(s.expression)})`);
         const clauses = [...s.caseBlock.clauses];
+        const caseBody = c => (c.statements.length === 1 && ts.isBlock(c.statements[0]) ? [...c.statements[0].statements] : [...c.statements]);
         // Empty clauses fall through into the next one; anything else must end its own case.
         const chain = i => {
           if (i >= clauses.length) return "";
@@ -490,14 +491,14 @@ export function lower(root, targets, { paths } = {}) {
             if (ts.isDefaultClause(clauses[j]) && !clauses[j].statements.length) throw new Error("an empty `default`");
             if (ts.isDefaultClause(clauses[j])) break;
           }
-          const body = [], stmts = [...(ts.isDefaultClause(clauses[j]) ? clauses[j] : clauses[j]).statements];
+          const body = [], stmts = caseBody(clauses[j]);
           if (stmts.at(-1) && ts.isBreakStatement(stmts.at(-1))) stmts.pop();
-          else if (!(stmts.at(-1) && (ts.isReturnStatement(stmts.at(-1)) || ts.isThrowStatement(stmts.at(-1))))) throw new Error("a `case` that falls through");
+          else if (j + 1 < clauses.length && !(stmts.at(-1) && (ts.isReturnStatement(stmts.at(-1)) || ts.isThrowStatement(stmts.at(-1))))) throw new Error("a `case` that falls through");
           for (const c of stmts) S(c, body);
           const test = tests.reduceRight((rest, t) => rest === null ? t : `.or (${t}) (${rest})`, null);
           const next = clauses[j + 1];
           if (next && ts.isDefaultClause(next)) {
-            const fin = []; const ds = [...next.statements];
+            const fin = []; const ds = caseBody(next);
             if (ds.at(-1) && ts.isBreakStatement(ds.at(-1))) ds.pop();
             for (const c of ds) S(c, fin);
             if (j + 2 < clauses.length) throw new Error("`default` before the last case");

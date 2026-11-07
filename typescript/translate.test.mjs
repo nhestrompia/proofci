@@ -727,3 +727,12 @@ export function f(r: string): boolean { return NAMES.includes(r); }
 `);
   assert.ok(records().some(t => t.kind === "record" && t.fields[0].name === "value"));
 });
+
+test("switch on a string, number or field runs its tests in order", () => {
+  emits(`export function f(x: string) { switch (x) { case "a": return 1; default: return 0; } }`, 'if (x = (js!"a")) then');
+  emits(`export function f(n: number) { switch (n) { case 2: return 1; default: return 0; } }`, "if (n.val =");
+  emits(`export function f(o: { m: string }) { switch (o.m) { case "a": { return 1; } default: return 0; } }`, 'if (o.m = (js!"a")) then');
+  rejects(`export function f(x: string) { switch (x) { case "a": x = "b"; case "c": return 1; default: return 0; } }`, /Fallthrough case/);
+  rejects(`export function f(x: string) { switch (x) { default: return 0; case "a": return 1; } }`, /last case/);
+  rejects(`export function f(x: string) { switch (x.trim()) { case "a": return 1; default: return 0; } }`, /this expression/);
+});

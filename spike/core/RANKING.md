@@ -59,6 +59,14 @@ not proof search: `filter` with a type guard, fields narrowed by tsc, `T extends
 records used only inside a constant or callback. Raising the limit from 120 to 600 seconds
 proved only 2 of the 21 timeouts, so timeouts need less search, not more time.
 
+`switch` on a plain string, number or field then took it to 363 of 475. It reaches 273
+functions but freed only 11 at once, because most of them have other blockers.
+
+Reranking on single blockers instead of groups shows no large item left: each frees 40 to
+80 functions. Dynamic data is not next, despite its size above: `any` reaches 1,235
+functions but is the only blocker on 27, and all its kinds together are the only blocker
+on about 60. The list below overstates it.
+
 `add` and `delete` on sets aren't lowered, because they need proofs about mutation,
 so those functions are accepted but can't bridge.
 
