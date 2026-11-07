@@ -60,9 +60,7 @@ records used only inside a constant or callback. Raising the limit from 120 to 6
 proved only 2 of the 21 timeouts, so timeouts need less search, not more time.
 
 `add` and `delete` on sets aren't lowered, because they need proofs about mutation,
-so those functions are accepted but can't bridge. A module constant computed through
-a callback, such as `const NAMES = ROLES.map(...)`, doesn't bridge either: it reaches
-the proof as one unsplit chain.
+so those functions are accepted but can't bridge.
 
 ## Work ranked by what it frees, on pure functions
 
