@@ -1,5 +1,5 @@
 name: ProofCI Check
-description: Check that a pull request keeps its declared, Lean-proved guarantees about Rust code.
+description: Check that a pull request keeps its declared, Lean-proved guarantees about Rust (or, experimentally, TypeScript) code.
 branding:
   icon: check-circle
   color: green

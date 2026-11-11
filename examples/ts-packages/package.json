@@ -1,0 +1,8 @@
+{
+  "name": "ts-packages",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/geojson": "7946.0.16"
+  }
+}

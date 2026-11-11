@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "getting-started.md"
 BANK = ROOT / "examples" / "bank"
+
+
+LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock")
+
+
+def registry_reachable():
+    try:
+        socket.create_connection(("registry.npmjs.org", 443), timeout=3).close()
+        return True
+    except OSError:
+        return False
 
 
 def guide_blocks():
@@ -33,10 +45,15 @@ class ExamplesVerify(unittest.TestCase):
     def test_every_example_passes(self):
         for example in sorted(p for p in (ROOT / "examples").iterdir() if (p / "proofci.yaml").exists()):
             with self.subTest(example=example.name), tempfile.TemporaryDirectory() as tmp:
+                # An example with a lockfile has packages to install, which needs the network.
+                packages = any((example / name).exists() for name in LOCKFILES)
+                if packages and not registry_reachable():
+                    self.skipTest(f"{example.name} installs packages and the registry can't be reached")
                 report = Path(tmp) / "report.json"
                 done = subprocess.run(
                     [sys.executable, "-m", "proofci", "check", "--base", example, "--head", example,
-                     "--report", report], cwd=ROOT, capture_output=True, text=True, timeout=1800)
+                     "--report", report] + (["--fetch"] if packages else []),
+                    cwd=ROOT, capture_output=True, text=True, timeout=1800)
                 data = json.loads(report.read_text())
                 self.assertTrue(data["passed"], done.stdout)
                 self.assertEqual([g for g in data["guarantees"] if g.get("warnings")], [])

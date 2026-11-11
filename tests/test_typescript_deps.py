@@ -83,15 +83,58 @@ class LockfileTests(Repo):
         (self.repo / "package-lock.json").symlink_to(self.tmp / "elsewhere.json")
         self.assertIsNone(typescript.find_lockfile(self.repo, "."))
 
-    def test_only_the_public_registry_is_allowed(self):
-        lock = write(self.repo / "package-lock.json", npm_lock(REGISTRY))
+    def test_npm_v1_lockfiles_may_only_name_the_public_registry(self):
+        lock = write(self.repo / "package-lock.json", json.dumps({"lockfileVersion": 1, "dependencies": {
+            "a": {"resolved": REGISTRY}}}))
         typescript.check_lockfile(lock, "npm")
         for bad in ("git+ssh://git@github.com/o/r.git#abc", "http://registry.npmjs.org/x.tgz",
                     "https://evil.example/x.tgz", "file:../local"):
-            lock.write_text(npm_lock(REGISTRY, bad))
+            lock.write_text(json.dumps({"lockfileVersion": 1, "dependencies": {"a": {"resolved": bad}}}))
             with self.assertRaises(Unsupported, msg=bad) as caught:
                 typescript.check_lockfile(lock, "npm")
             self.assertIn("public npm registry", str(caught.exception))
+
+    def test_packages_from_elsewhere_are_left_out_of_an_npm_install(self):
+        write(self.repo / "package.json", json.dumps({"name": "app", "dependencies": {"left-pad": "1", "private-lib": "github:o/r"},
+                                                      "devDependencies": {"sheet": "https://cdn.example/sheet.tgz"}}))
+        lock = write(self.repo / "package-lock.json", json.dumps({"lockfileVersion": 3, "packages": {
+            "": {"dependencies": {"left-pad": "1", "private-lib": "github:o/r"}, "devDependencies": {"sheet": "https://cdn.example/sheet.tgz"}},
+            "node_modules/left-pad": {"resolved": REGISTRY, "integrity": "sha512-x"},
+            "node_modules/private-lib": {"resolved": "git+ssh://git@github.com/o/r.git#abc"},
+            "node_modules/sheet": {"resolved": "https://cdn.example/sheet.tgz"},
+            "node_modules/core": {"resolved": "packages/core", "link": True}}}))
+        typescript.check_lockfile(lock, "npm")
+        copy = self.tmp / "copy"
+        copy.mkdir()
+        (copy / "package.json").write_text((self.repo / "package.json").read_text())
+        (copy / "package-lock.json").write_text(lock.read_text())
+        self.assertEqual(typescript.drop_foreign_packages(copy), ["private-lib", "sheet"])
+        data = json.loads((copy / "package-lock.json").read_text())
+        self.assertEqual(sorted(data["packages"]), ["", "node_modules/core", "node_modules/left-pad"])
+        self.assertEqual(data["packages"][""], {"dependencies": {"left-pad": "1"}, "devDependencies": {}})
+        manifest = json.loads((copy / "package.json").read_text())
+        self.assertEqual(manifest["dependencies"], {"left-pad": "1"})
+        self.assertEqual(manifest["devDependencies"], {})
+        self.assertIn("git+ssh", lock.read_text())  # the project's own files are not touched
+
+    def test_registry_packages_forget_that_they_needed_a_dropped_one(self):
+        copy = self.tmp / "copy"
+        write(copy / "package.json", json.dumps({"dependencies": {"common": "1"}}))
+        write(copy / "package-lock.json", json.dumps({"lockfileVersion": 3, "packages": {
+            "": {"dependencies": {"common": "1"}},
+            "node_modules/common": {"resolved": REGISTRY, "dependencies": {"deferred": "3", "other": "1"}},
+            "node_modules/other": {"resolved": REGISTRY},
+            "node_modules/deferred": {"resolved": "git+ssh://git@github.com/o/deferred.git#abc"},
+            "node_modules/deferred/node_modules/inner": {"resolved": REGISTRY}}}))
+        self.assertEqual(typescript.drop_foreign_packages(copy), ["deferred"])
+        data = json.loads((copy / "package-lock.json").read_text())
+        self.assertEqual(sorted(data["packages"]), ["", "node_modules/common", "node_modules/other"])
+        self.assertEqual(data["packages"]["node_modules/common"]["dependencies"], {"other": "1"})
+
+    def test_a_registry_only_lockfile_loses_nothing(self):
+        copy = self.tmp / "copy"
+        write(copy / "package-lock.json", npm_lock(REGISTRY))
+        self.assertEqual(typescript.drop_foreign_packages(copy), [])
 
     def test_nested_npm_v1_dependencies_are_checked(self):
         lock = write(self.repo / "package-lock.json", json.dumps({"lockfileVersion": 1, "dependencies": {
@@ -150,7 +193,7 @@ class InstallTests(Repo):
         self.assertEqual(modules, ["."])
         self.assertTrue((vendor / "modules" / "node_modules" / "left-pad" / "index.d.ts").is_file())
         self.assertEqual(json.loads((vendor / "dependencies.json").read_text()),
-                         {"lockfile": "package-lock.json", "manager": "npm", "modules": ["."]})
+                         {"lockfile": "package-lock.json", "manager": "npm", "modules": ["."], "skipped": []})
 
     def test_the_manager_runs_in_a_copy_that_has_no_project_settings(self):
         write(self.repo / ".npmrc", "script-shell=/tmp/evil\n")
@@ -205,11 +248,15 @@ class InstallTests(Repo):
         self.assertEqual(runner.calls, [])
         self.assertFalse((self.tmp / "v1" / "dependencies.json").exists())
 
-    def test_a_lockfile_that_leaves_the_registry_is_refused_before_anything_runs(self):
+    def test_a_pnpm_lockfile_that_leaves_the_registry_is_refused_before_anything_runs(self):
         runner = FakeRunner()
         with self.assertRaises(Unsupported):
-            self.install(runner, lock=("package-lock.json", npm_lock("git+https://github.com/o/r.git")))
+            self.install(runner, lock=("pnpm-lock.yaml", "packages:\n  x@1:\n    resolution: {tarball: https://evil.example/x.tgz}\n"))
         self.assertEqual(runner.calls, [])
+
+    def test_npm_skips_foreign_packages_and_records_them(self):
+        runner, vendor, _ = self.install(lock=("package-lock.json", npm_lock(REGISTRY, "git+ssh://git@github.com/o/r.git")))
+        self.assertEqual(json.loads((vendor / "dependencies.json").read_text())["skipped"], ["p1"])
 
 
 class PrepareTests(Repo):
@@ -253,6 +300,38 @@ class PrepareTests(Repo):
             extraction = typescript.extract(self.repo, ".", work, ["src/a.ts::a"], vendor_dir=vendor)
         self.assertEqual(len(seen), 1)
         self.assertEqual(extraction.binds[0][1], extraction.checkout / "node_modules")
+
+
+class HintTests(Repo):
+    def failing(self, vendor=None, reason="src/a.ts:3: the type `Point` is not supported yet"):
+        def fake_run(argv, **kwargs):
+            return sandbox.Result(0, json.dumps({"fatal": reason}))
+        work = Path(tempfile.mkdtemp(dir=self.tmp))
+        with mock.patch.object(sandbox, "run", fake_run):
+            with self.assertRaises(Unsupported) as caught:
+                typescript.extract(self.repo, ".", work, ["src/a.ts::a"], vendor_dir=vendor)
+        return str(caught.exception)
+
+    def test_missing_lockfile_is_named(self):
+        self.assertIn("commit package-lock.json", self.failing())
+
+    def test_missing_install_is_named_when_there_is_a_lockfile(self):
+        write(self.repo / "package-lock.json", npm_lock())
+        self.assertIn("proofci fetch", self.failing())
+
+    def test_a_refused_lockfile_is_the_reason(self):
+        write(self.repo / "pnpm-lock.yaml", "packages:\n  x@1:\n    resolution: {tarball: https://evil.example/x.tgz}\n")
+        vendor = self.tmp / "vendor"
+        with self.assertRaises(Unsupported):
+            typescript.install(self.repo, ".", vendor, self.tmp)
+        self.assertIn("public npm registry", self.failing(vendor))
+
+    def test_other_failures_are_left_alone(self):
+        self.assertEqual(self.failing(reason="src/a.ts:3: `while` is not welcome"), "src/a.ts:3: `while` is not welcome")
+
+    def test_a_project_without_dependencies_gets_no_hint(self):
+        write(self.repo / "package.json", json.dumps({"name": "app"}))
+        self.assertNotIn("installed", self.failing())
 
 
 if __name__ == "__main__":

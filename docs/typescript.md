@@ -24,7 +24,12 @@ Lean sees `src/ledger.ts::transfer` as `src.ledger.transfer`, in a module named 
 the package, so `ts-bank` is `import TsBank`. See [`examples/ts-bank`](../examples/ts-bank).
 Proofs work the same way as for Rust, including `step*`. Start with
 [proving TypeScript](proving-typescript.md), and see
-[`examples/ts-real`](../examples/ts-real) for proofs about functions from real projects.
+[`examples/ts-real`](../examples/ts-real) and [`examples/ts-dates`](../examples/ts-dates)
+for proofs about functions from real projects.
+
+A function can be exported or not. A function that isn't exported is translated and
+proved the same way, but it isn't compared with Node, because nothing can import it,
+and the report says so.
 
 | Supported | Details |
 |---|---|
@@ -63,6 +68,66 @@ unproven, and is never judged wrongly.
 
 Each check also runs the translated functions in Node on generated inputs. See the
 [security model](../SECURITY.md#typescript).
+
+## Running it on pull requests
+
+The workflow is the one in [getting started](getting-started.md#6-add-the-workflow-and-make-it-required).
+Set `path` to the directory that holds `proofci.yaml` (the repository root, even when
+`package` points at a workspace member). The base commit's `proofci.yaml` and
+`Contract.lean` are the policy: a pull request that removes or weakens a guarantee, or
+edits the contract, is blocked until a maintainer approves that exact commit. Code
+that breaks a proved function fails as `unproven`, and a proof file edited to make
+that pass is checked against the protected statement, not its own.
+
+## Packages
+
+The type checker reads the declarations of every package a file imports, so a project
+that imports packages needs them installed. ProofCI installs them for you, from the
+lockfile that is already in the repository, before the check:
+
+| Lockfile | Installed with |
+|---|---|
+| `package-lock.json`, `npm-shrinkwrap.json` | `npm ci` |
+| `pnpm-lock.yaml` | `pnpm install --frozen-lockfile` |
+| `yarn.lock` (Yarn 1) | `yarn install --frozen-lockfile` |
+
+The nearest lockfile at or above the `package` directory is used, so a workspace
+member works. A project without dependencies or without a lockfile is checked as it
+is, and the report says that its packages are unknown when that is why a type isn't
+supported. Yarn 2 and later isn't supported, because it runs project code while
+installing.
+
+The install is the only step with network access, and it runs nothing from the
+project:
+
+- Install scripts are off (`--ignore-scripts`), so no package runs code. The package
+  manager itself is the version pinned in the toolchain image, not the project's
+  `packageManager` choice.
+- The install happens in a copy of the repository without `.npmrc`, `.yarnrc*`,
+  `.yarn/`, `.pnpmfile.cjs` and `.pnp.*`, because a pull request controls those files
+  and some of them run code.
+- Packages may only come from `registry.npmjs.org` (and `registry.yarnpkg.com` for
+  `yarn.lock`), and the lockfile's integrity hashes decide what they contain. For
+  npm, a package from anywhere else (a git repository, a URL, a private registry) is
+  left out of the install and named in the report, so that one such package doesn't
+  stop everything else. pnpm and Yarn lockfiles with such a package are refused.
+- The check itself stays offline. It reads the installed packages through a read-only
+  mount inside a copy of the code.
+
+Running a function in Node for the comparison can load installed packages. That is
+the project's code running in the same sandbox as before, without network.
+
+Locally, run the install once and pass the result to `dev` and `check`:
+
+```sh
+docker run --rm $OPTS -v "$PWD:/base:ro" -v "$PWD:/head:ro" -v "$PWD/.proofci-vendor:/vendor" \
+  $IMAGE fetch --base /base --head /head --out /vendor
+docker run --rm --network none $OPTS -v "$PWD:/repo:ro" -v "$PWD/.proofci-vendor:/vendor:ro" \
+  -v proofci-dev:/tmp/proofci-dev $IMAGE dev --repo /repo --vendor /vendor
+```
+
+The vendor directory has to be writable by the image's user (`chmod 777`). The
+action does all of this for you. See [`examples/ts-packages`](../examples/ts-packages).
 
 ## Written types
 
@@ -162,7 +227,7 @@ untagged unions, `any` and `unknown`.
 - The classifier is heuristic. It under-counts aliasing, because it doesn't follow
   values stored in collections and mutated later.
 - Dependencies weren't installed, so some types are unresolved. That inflates casts
-  from `any` and third-party calls.
+  from `any` and third-party calls. The check installs them now; the survey doesn't.
 - `Pure` still includes plumbing that nobody would prove.
 - The repositories were hand-picked, and each is sampled to 1,500 files.
 - Library internals skew low: `immer` and `zod` are metaprogramming by nature.
@@ -184,8 +249,8 @@ pure logic can usually be proved, and everything else becomes a listed assumptio
 The current design maps each TypeScript type to a Lean type, which is why each new
 type shape is a new feature. The plan is to add a second path that doesn't need that:
 
-1. **Finish the cheap wins.** Install packages for their types with `--ignore-scripts`,
-   add recursive and generic types, and make `unsupported` say how to fix the code.
+1. **Finish the cheap wins.** Add recursive and generic types, and make `unsupported`
+   say how to fix the code. Packages are already installed for their types.
 2. **Try a dynamic path.** Translate to a single Lean type of JavaScript values plus an
    explicit heap, so TypeScript types become preconditions. That one change covers
    unions, `unknown`, aliasing, classes and closures. The typed path stays as the fast

@@ -42,8 +42,10 @@ SANDBOX_OPTS = [
 
 
 def fetch(base, head, policy, vendor):
-    """Download crates.io dependencies. The only step with network access:
-    `cargo vendor` downloads and checksums sources but runs none of them."""
+    """Download crates.io dependencies, or install a TypeScript project's packages.
+    The only step with network access: `cargo vendor` downloads and checksums
+    sources but runs none of them, and the package install runs with scripts off
+    and only the public registry allowed (see `proofci/typescript.py`)."""
     if vendor.exists():
         shutil.rmtree(vendor)
     vendor.mkdir(parents=True)
@@ -55,7 +57,8 @@ def fetch(base, head, policy, vendor):
     ]
     status = subprocess.run(command).returncode
     if status != 0:
-        reason = ("the crates.io dependencies pinned by Cargo.lock could not be downloaded"
+        reason = ("the dependencies pinned by the lockfile (Cargo.lock, package-lock.json, pnpm-lock.yaml or "
+                  "yarn.lock) could not be downloaded"
                   if status == 3 else f"the dependency download step failed (exit {status})")
         fail(f"{reason}. This is a download problem, not a verdict about the code; re-run the job.")
 

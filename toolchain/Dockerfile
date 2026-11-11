@@ -155,8 +155,10 @@ COPY --from=lean-run /opt/lean /opt/lean
 COPY --from=aeneas /opt/aeneas /opt/aeneas
 COPY --from=node /opt/node /opt/node
 COPY --from=node /opt/proofci/typescript /opt/proofci/typescript
-# bubblewrap (used by ProofCI and lake comparator) mounts a tmpfs here.
-RUN mkdir -p /run/user && chmod 1777 /run/user
+# bubblewrap (used by ProofCI and lake comparator) mounts a tmpfs here. A volume
+# mounted at /tmp/proofci-dev (`proofci dev`) copies this directory's mode on first use,
+# so the non-root user can write to it.
+RUN mkdir -p /run/user /tmp/proofci-dev && chmod 1777 /run/user /tmp/proofci-dev
 ENV HOME=/tmp
 USER 1000:1000
 WORKDIR /work

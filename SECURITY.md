@@ -95,6 +95,39 @@ type-checks the code. It ignores the project's `tsconfig.json`, and it rejects
 files with `@ts-` comments, compiled JavaScript beside the source, module-level
 code other than declarations, and declaration files standing in for source.
 
+### Installing packages
+
+The type checker needs the declarations of the packages a project imports, so the
+dependency step installs them from the project's lockfile. That is the one step with
+network access, and the trade-offs are these:
+
+- It runs `npm ci`, `pnpm install --frozen-lockfile` or `yarn install
+  --frozen-lockfile` with install scripts off, in the same bubblewrap sandbox as
+  every other step, inside the container's own network, on a private copy of the
+  repository. The package managers are pinned in the toolchain image.
+- The copy leaves out `.npmrc`, `.yarnrc*`, `.yarn/`, `.pnpmfile.cjs` and `.pnp.*`.
+  They are pull request content, and some run code (`.pnpmfile.cjs`, Yarn's
+  `yarnPath`), so no setting in the project reaches the installer. A consequence is
+  that private registries and custom install settings aren't supported.
+- Packages must come from `registry.npmjs.org` (or `registry.yarnpkg.com`) over
+  HTTPS, so a pull request can't make the installer fetch from a host of its
+  choosing, such as an internal address on the runner's network. The lockfile's
+  integrity hashes decide the contents. npm packages from elsewhere are left out and
+  named in the report; pnpm and Yarn lockfiles that contain one are refused. Yarn 2
+  and later is refused, because it runs project code while installing.
+- Network access isn't narrowed to those hosts at the network level; that would need
+  an egress proxy. A package manager that follows a redirect could reach another host,
+  but whatever it fetches is only ever read as package files, never run.
+- A pull request can change the lockfile, and so which package versions the
+  declarations come from. That is a change to the code the guarantees are judged
+  against, like any other, and it goes through the same proof and comparison with Node.
+  The installed packages are mounted read-only into a copy of the code for the
+  translator and for the comparison with Node. The comparison runs functions in Node,
+  and importing a module can load installed packages, which run in the sandbox without
+  network, as the project's own code does.
+- The install needs the network, which a malicious package can't use: its scripts
+  never run, and the check that reads it is offline.
+
 A TypeScript guarantee also assumes:
 
 - Callers pass values of the declared types, without getters or proxies.

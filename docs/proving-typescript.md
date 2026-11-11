@@ -36,6 +36,15 @@ says something real, then prove it.
    `IMAGE` is a ProofCI toolchain image with TypeScript support, which no release has
    yet. If it prints `unsupported`, the function is outside the subset. Don't write a proof.
    Usually the fix is to move the logic into a smaller function that takes plain values.
+   If the project imports packages, install them first and add `--vendor`, as
+   [TypeScript support](typescript.md#packages) shows. If `dev` can't write to the
+   `proofci-dev` volume, the image is older than the fix: run
+   `docker run --rm -v proofci-dev:/w alpine chmod 777 /w` once.
+
+   To find out which functions the translator takes, point `--show` at a manifest that
+   lists several candidates; each unsupported one is printed with its source line, and
+   a project's small private helpers (`isLeapYear`, `validateTime`) are often the best
+   first targets. They don't have to be exported.
 4. **State the guarantee** in `Contract.lean`, ending in `:= by sorry`.
 5. **Prove it** in `Proofs.lean`. Re-run `dev`, which takes seconds, and read the goals
    it prints. Stop when it says `0 error(s)`.
@@ -95,6 +104,34 @@ Start every proof with `unfold f` and `step*`, as the Rust guide describes.
   simp [AUCTION_TICK_DIVISOR, WP.spec_ok]
 ```
 
+**A remainder.** `x % 4` is `Js.rem x 4`, and it has no `step` lemma yet, so `step*`
+stops at it. Add one to `Proofs.lean` for positive divisors, and relate `Int.tmod` to
+divisibility, which `omega` understands for literals (`omega` doesn't know `Int.tmod`
+itself):
+
+```lean
+@[step] theorem rem_spec (x y : Js.Num) (hy : 0 < y.val) :
+    Js.rem x y ⦃ r => r.val = Int.tmod x.val y.val ⦄ := by
+  have hy' : y.val ≠ 0 := by omega
+  have h1 := Int.tmod_lt_of_pos x.val hy
+  have h2 := Int.lt_tmod_of_pos x.val hy
+  have := y.hi
+  simp only [Js.rem, hy', ite_false]
+  exact Js.mk_spec _ (by omega) (by omega)
+
+theorem tmod_zero_iff (x d : Int) : Int.tmod x d = 0 ↔ d ∣ x := Int.dvd_iff_tmod_eq_zero.symm
+```
+
+Then `step*` after `unfold f` leaves `h : tmp.val = 0` style facts, and `rw [tmp_post]`
+with `tmod_zero_iff` turns them into `4 ∣ year.val` for `omega`. The leap-year proof in
+[`examples/ts-dates`](../examples/ts-dates/proofci/Proofs.lean) is the whole pattern.
+
+**Two functions with the same name.** Files are separate modules, so
+`src/a.ts::isLeapYear` and `src/b.ts::isLeapYear` are `src.a.isLeapYear` and
+`src.b.isLeapYear`. When a theorem reaches one through another, `open` only one of the
+modules or write the full name, or Lean will say the name is ambiguous. A helper the
+target calls needs its own `@[step]` lemma, as `leap_iso_spec` does in the example.
+
 **An `if` at the end of a function.** `step*` stops there, because it's the last thing
 the function does. Split it:
 
@@ -153,6 +190,8 @@ the lemma needs, so prove it with what you have.
 | `model of this code disagrees with Node` | A translator or runtime bug. Report it, and don't prove around it |
 | `the comparison with Node did not run` | The module fails when loaded, usually from code at its top level |
 | `unsolved goals` | Normal. This is what the loop is for |
+| `Tactic split failed` or `No goals` in a proof that used to work | The code changed, so the translation did. The proof has to follow it, or the change is wrong. This is also what a pull request that breaks a guarantee looks like |
+| `... types from them are unknown` | The project's packages weren't installed. See [packages](typescript.md#packages) |
 
 Don't change the contract to get a proof through without saying so in the pull request.
 If the statement turns out to be false, you may have found a bug in the code, which is

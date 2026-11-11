@@ -1,0 +1,23 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: leap-year
+    function: src/parse/_lib/utils.ts::isLeapYearIndex
+    guarantees:
+      - id: gregorian-rule
+        theorem: leap_year_rule
+  - id: day-of-year
+    function: src/parseISO/index.ts::validateDayOfYearDate
+    guarantees:
+      - id: range
+        theorem: day_of_year_range
+  - id: time
+    function: src/parseISO/index.ts::validateTime
+    guarantees:
+      - id: end-of-day
+        theorem: midnight_24_only
+      - id: in-range
+        theorem: valid_time_in_range

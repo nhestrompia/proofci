@@ -122,15 +122,15 @@ def check_lockfile(path: Path, manager: str):
             data = json.loads(text)
         except ValueError as error:
             raise Unsupported(f"{path.name} is not valid JSON: {error}")
-        entries = list(data.get("packages", {}).values())
+        if isinstance(data.get("packages"), dict):
+            return  # lockfile version 2 or 3: packages from elsewhere are left out of the install
         stack = list(data.get("dependencies", {}).values())
         while stack:
             entry = stack.pop()
-            entries.append(entry)
-            stack.extend(entry.get("dependencies", {}).values())
-        for entry in entries:
-            if isinstance(entry, dict) and entry.get("resolved") and not entry.get("link"):
-                urls.append(entry["resolved"])
+            if isinstance(entry, dict):
+                if entry.get("resolved") and not entry.get("link"):
+                    urls.append(entry["resolved"])
+                stack.extend(entry.get("dependencies", {}).values())
     elif manager == "pnpm":
         urls += re.findall(r"tarball:\s*['\"]?([^\s,}'\"]+)", text)
         if re.search(r"type:\s*git|repo:\s|directory:\s", text):
@@ -147,6 +147,51 @@ def check_lockfile(path: Path, manager: str):
     if problems:
         raise Unsupported(f"{path.name} names a source other than the public npm registry ({problems[0]}); "
                           "only registry.npmjs.org and registry.yarnpkg.com are installed")
+
+
+def drop_foreign_packages(cwd: Path):
+    """Remove from the private copy's npm lockfile the packages that would be
+    fetched from anywhere but the public registry (git repositories, other
+    hosts, paths), along with the root's dependencies on them. The rest is
+    installed, and the dropped names are returned so the report can say that
+    their types are unknown. Only the copy changes."""
+    lock = cwd / "package-lock.json"
+    if not lock.is_file():
+        lock = cwd / "npm-shrinkwrap.json"
+    data = json.loads(lock.read_text())
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        return []  # a lockfile without `packages` (version 1) is checked and installed as it is
+
+    def foreign(entry):
+        url = entry.get("resolved") if isinstance(entry, dict) else None
+        return bool(url) and not entry.get("link") and not _from_registry(url)
+
+    dropped = sorted(key for key, entry in packages.items() if key and foreign(entry))
+    if not dropped:
+        return []
+    names = {key.rsplit("node_modules/", 1)[-1] for key in dropped}
+    for key in [k for k in packages if k and any(k == d or k.startswith(d + "/") for d in dropped)]:
+        del packages[key]  # the package and what is nested inside it
+    for key, entry in packages.items():
+        if not isinstance(entry, dict):
+            continue
+        own = key == "" or not key.startswith("node_modules/") and "/node_modules/" not in key  # root and workspaces
+        for field in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+            for name in names & set(entry.get(field, {})):
+                del entry[field][name]  # the lock's record of what each package needs
+                manifest = cwd / key / "package.json"
+                if own and manifest.is_file():
+                    written = json.loads(manifest.read_text())
+                    written.get(field, {}).pop(name, None)
+                    manifest.write_text(json.dumps(written))
+    lock.write_text(json.dumps(data))
+    return sorted(names)
+
+
+def _from_registry(url: str):
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname in REGISTRIES
 
 
 def _install_command(manager: str, cache: Path):
@@ -167,6 +212,13 @@ def _install_command(manager: str, cache: Path):
     return ["node", str(program), "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-engines",
             "--non-interactive", "--no-progress", "--cache-folder", str(cache / "yarn"),
             "--registry", "https://registry.npmjs.org/", "--use-yarnrc", str(cache / "yarnrc")]
+
+
+def _excerpt(output: str, size=1800):
+    """The start and the end of a package manager's output: the first error and its summary."""
+    if len(output) <= 2 * size:
+        return output
+    return output[:size] + "\n[...]\n" + output[-size:]
 
 
 def _module_dirs(root: Path):
@@ -190,9 +242,15 @@ def install(checkout: Path, package_rel: str, vendor_dir: Path, work: Path):
     if lock is None or not declares_dependencies(checkout, package_rel):
         return None
     directory, name, manager = lock
-    check_lockfile(directory / name, manager)
+    try:
+        check_lockfile(directory / name, manager)
+    except Unsupported as problem:
+        # `check` still runs and says why packages are missing.
+        (vendor_dir / INDEX).write_text(json.dumps({"lockfile": name, "manager": manager, "modules": [], "error": str(problem)}))
+        raise
     staged = stage(checkout, work / "install")
     cwd = staged / directory.relative_to(checkout.resolve())
+    skipped = drop_foreign_packages(cwd) if manager == "npm" else []
     cache = work / "install-cache"
     cache.mkdir()
     env = {"CI": "1", "npm_config_update_notifier": "false", "COREPACK_ENABLE_STRICT": "0",
@@ -200,7 +258,7 @@ def install(checkout: Path, package_rel: str, vendor_dir: Path, work: Path):
     result = sandbox.run(_install_command(manager, cache), writable=[staged, cache], readable=[],
                          cwd=cwd, env=env, network=True, timeout=1800)
     if result.status != 0:
-        raise FetchError(f"{manager} could not install the dependencies from {name}:\n" + result.output[-3000:])
+        raise FetchError(f"{manager} could not install the dependencies from {name}:\n" + _excerpt(result.output))
     modules = []
     for found in _module_dirs(staged):
         relative = found.parent.relative_to(staged)
@@ -208,7 +266,7 @@ def install(checkout: Path, package_rel: str, vendor_dir: Path, work: Path):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(found), str(destination))
         modules.append(relative.as_posix())
-    (vendor_dir / INDEX).write_text(json.dumps({"lockfile": name, "manager": manager, "modules": modules}))
+    (vendor_dir / INDEX).write_text(json.dumps({"lockfile": name, "manager": manager, "modules": modules, "skipped": skipped}))
     return modules
 
 
@@ -235,8 +293,27 @@ def prepare(checkout: Path, work: Path, vendor_dir=None):
     return staged, binds
 
 
+def missing_packages_hint(checkout: Path, package_rel: str, vendor_dir=None):
+    """Why a type from a package may be unknown: they were not installed."""
+    index = Path(vendor_dir) / INDEX if vendor_dir else None
+    recorded = json.loads(index.read_text()) if index and index.is_file() else {}
+    if recorded.get("error"):
+        return "This project's packages were not installed: " + recorded["error"]
+    if recorded.get("skipped"):
+        return ("Not installed, because they do not come from the public npm registry: "
+                + ", ".join(recorded["skipped"][:8]) + (", ..." if len(recorded["skipped"]) > 8 else ""))
+    if recorded.get("modules") or not declares_dependencies(checkout, package_rel):
+        return None
+    if find_lockfile(checkout, package_rel) is None:
+        return ("This project's packages are not installed, so types from them are unknown. ProofCI installs "
+                "them from a lockfile; commit package-lock.json, pnpm-lock.yaml or yarn.lock.")
+    return ("This project's packages are not installed, so types from them are unknown. "
+            "Run `proofci fetch` and pass its output as --vendor.")
+
+
 def extract(checkout: Path, package_rel: str, work: Path, functions, policy_checkout=None, assumes=(),
             vendor_dir=None) -> Extraction:
+    original = checkout
     checkout, binds = prepare(checkout, work, vendor_dir)
     root = checkout / package_rel
     crate_name = module_name(root)
@@ -254,8 +331,10 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     if result.status != 0:
         raise Unsupported("the TypeScript translator failed:\n" + result.output[-4000:])
     outcome = json.loads(result.output.splitlines()[-1])
+    hint = missing_packages_hint(original, package_rel, vendor_dir)
+    unknown = re.compile(r"not supported yet|TypeScript error|Cannot find|no source")
     if outcome.get("fatal"):
-        raise Unsupported(outcome["fatal"])
+        raise Unsupported(outcome["fatal"] + ("\n" + hint if hint and unknown.search(outcome["fatal"]) else ""))
     lean_file = out / f"{module}.lean"
     extraction = Extraction(module, lean_file, crate_name, result.output, [], outcome["names"], outcome["failures"])
     extraction.signatures = outcome["signatures"]
@@ -263,6 +342,9 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction.assumed = outcome["assumed"]
     extraction.files = outcome["files"]
     extraction.imports = outcome["imports"]
+    for function, reason in list(extraction.failures.items()):
+        if hint and unknown.search(reason):
+            extraction.failures[function] = reason + "\n" + hint
     extraction.checkout = checkout
     extraction.binds = binds
     return extraction
