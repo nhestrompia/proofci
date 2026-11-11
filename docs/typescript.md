@@ -8,8 +8,9 @@ on a function you care about, not to rely on it.
 **What works.** The pull request flow: a manifest names the functions, a pull request
 that breaks a proved one is blocked, and one that weakens the policy waits for a
 maintainer. A project's packages are installed from its lockfile so that their types
-resolve. A call into a package can be listed in the policy with `assumes`. Functions a
-guarantee reaches must write out their types.
+resolve. A call into a package can be listed in the policy with `assumes`, and what an
+`async` function awaits can be listed with `effects`. Functions a guarantee reaches must
+write out their types.
 
 **How much it covers.** On eight repositories the rules were never tuned on (tldraw,
 Rocket.Chat, plane, AFFiNE, medusa, umami, trigger.dev, cal.com), the translator accepted
@@ -87,7 +88,9 @@ allows are left out, so reading one by name, indexing the value with a key or sp
 it is `unsupported`.
 
 Everything else is `unsupported`, with the source line. That includes fractions,
-regular expressions, classes, `async` and calls into packages that aren't listed under `assumes`.
+regular expressions, classes, `Promise.all` and other concurrency, and calls into packages
+that aren't listed under `assumes` or `effects`. `async` functions work in a narrow form,
+described under [`async` code](#async-code).
 
 ### In-place changes
 
@@ -214,6 +217,99 @@ guarantee rests on. See [`examples/ts-assumes`](../examples/ts-assumes).
 
 Functions that rely on an assumed call aren't compared with Node, because the model
 has no body to run.
+
+## `async` code
+
+An `async` function is read as a sequential computation that talks to an outside world.
+Every `await` of a call to code ProofCI doesn't read (a database, the network, a package) is
+one step: the world answers with a value or a rejection, and the question and the answer are
+added to a history. A guarantee is proved for **every** world, that is, for every function
+from the question and the history so far to an answer. So it holds when another request
+changes the database between two of your calls, because that is only a different answer.
+
+The Lean view of such a function has the type `Proofci.Effects.Eff T`. A guarantee about it
+is stated against an arbitrary oracle `o` (the world) and a starting history `hist`:
+
+```lean
+theorem canViewLink_anonymous ... :
+    ∀ (o : Proofci.Effects.world.Oracle) (hist : Proofci.Effects.world.Hist),
+      src.permissions.link.canViewLink auth linkId o hist = ok (Js.Settled.fulfilled false, hist)
+```
+
+`ok (Js.Settled.fulfilled v, hist')` is a run that returned `v` and left history `hist'`;
+`Js.Settled.rejected e` is a run whose promise rejected with the `Error` `e`. The history
+says which outside calls were made, in order, and what they answered. `hist' = hist` means
+that nothing was asked. `Js.Eff.Spec m o hist Q` says that every run of `m` that completes
+satisfies `Q`, and is the form to use for "if the result is X then Y". The library is
+[`ProofciAsync.lean`](../proofci/lean/ProofciAsync.lean), which declares no axioms.
+
+### Listing the outside world
+
+Awaited calls to code that isn't in the package need an `effects` entry in `proofci.yaml`.
+The list is part of the protected policy, like `assumes`: a pull request can't add, remove
+or change an entry for itself, and a change waits for a maintainer.
+
+```yaml
+effects:
+  - id: getLink
+    call: src/queries/prisma/link.ts::getLink
+    signature: "(linkId: string): Promise<Link | null>"
+    kind: read
+```
+
+`id` is the name of the operation in the history (`Proofci.Effects.Op.getLink`). `call` is
+`module::function` for a package function, or `path/to/file.ts::function` for a function of
+the project. The project function is **not translated**: its body is never read, and nothing
+is proved about it. A function of the package that isn't listed is translated, and what it
+does is part of the proof. `signature` must be exactly what the compiler reports for the
+call, with the return type written out as `Promise<T>`; a mismatch stops the check, so a
+change to the callee's type can't pass unseen. `kind: read` claims that the call doesn't
+change what later calls answer. It is reported, and it will matter for `Promise.all`,
+which isn't supported yet. Entries of the forms `method: Class#method` (an injected object)
+and `param: deps.fetch` (a function-typed parameter) are accepted in the policy, and a call
+that would use one stops with a message: they need class and function types.
+
+### What is supported
+
+`async` and `await` of a listed call or of another `async` function of the package, in any
+position that is evaluated in order (a condition, an argument, the right side of `&&`, which
+runs only when the left side lets it); `throw new Error(message)` and the other built-in
+error classes; `try`, `catch` and `finally` around awaits; a `catch (e)` that reads
+`e.message` or `e.name`, tests `e instanceof Error` or throws `e` again; `return await`;
+`for`, `for...of` and `while` loops that contain an `await`.
+
+Everything else fails closed with the reason: `Promise.all`, `allSettled`, `race`, `.then`
+and `.catch`, timers and `new Promise`, generators and `for await`, an `async` function
+called without `await`, and a recursive `async` function.
+
+### Four things to know before relying on a proof
+
+1. **"Proved" is relative to the listed world.** A guarantee about `async` code holds for
+   every answer the listed calls could give, but it says nothing unless the contract
+   restricts the answers. To lean on what a call does, state it as a hypothesis in the
+   contract (`o ⟨.getLink, id⟩ hist = .value none`). ProofCI doesn't read the code behind
+   an effect, and an effect's rejection is modelled as an `Error` object with a `name` and
+   a `message`. The report lists every effect a verified guarantee ranges over.
+2. **Shared state in the same process is refused.** The sequential reading is wrong if
+   another task changes something the function reads after an `await`. So a function that,
+   after its first `await` (or anywhere in a loop that awaits), reads a module-level `let`,
+   a module-level object, array, map or set that isn't `readonly`, or `this`, is
+   `unsupported`. Immutable constants, functions and imports are fine. A `const` array is
+   mutable, so write `const NAMES: readonly string[]`. There is no way to declare that such
+   state is protected: the function has to be rewritten.
+3. **One standing assumption: arguments aren't changed by other code while a call is
+   pending.** An object a caller passes in could be changed by the caller during an `await`,
+   and nothing can check that. Only a function that reads a non-primitive, non-`readonly`
+   argument after an `await` relies on it; primitives and `readonly` types never do. The
+   report says, for every guarantee, whether it relied on this and which arguments.
+4. **Only sequential code.** Concurrency fails closed, and the comparison with Node, which
+   checks the translation for other code, is not run for `async` functions in the action
+   yet; in the spike it runs with scripted answers for the outside calls and compares the
+   result and the trace of calls, never real I/O.
+
+See [`examples/ts-async`](../examples/ts-async): umami's `canViewLink`, with a proof that an
+anonymous visitor is refused without any database call, and that `true` is returned only for
+a reason that is visible in the history.
 
 ## Survey
 

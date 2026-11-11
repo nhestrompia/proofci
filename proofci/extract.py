@@ -60,6 +60,7 @@ class Extraction:
     assumed: dict = None     # TypeScript: which of them each function relies on
     effects: dict = None     # TypeScript: the `effects` entries each async function can call, by id
     effect_text: dict = None # TypeScript: each listed effect as `kind, signature`
+    effect_list: list = None # TypeScript: the effects the translation used, with their types
     arguments_relied: dict = None  # TypeScript: reads after an `await` that rest on stable arguments
     files: list = None      # TypeScript: the source files translated
     imports: dict = None    # TypeScript: where each of those files' imports resolve

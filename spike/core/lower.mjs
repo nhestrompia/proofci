@@ -1,7 +1,9 @@
 // TypeScript to Core. A spike: it handles what the sample functions use and refuses
 // the rest. It reads types only to choose `==` forms, so it knows nothing about Lean.
 import ts from "../../typescript/node_modules/typescript/lib/typescript.js";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { createHazards } from "../../typescript/hazard.mjs";
 
 const OPS = { "+": "add", "-": "sub", "*": "mul", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "===": "eq", "!==": "ne", "/": "div", "%": "rem" };
 const lean = s => JSON.stringify(s);
@@ -27,10 +29,16 @@ const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numFinite", isSafeInte
 const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach"]);
 const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr" };
 
-export function lower(root, targets, { paths } = {}) {
+// `eff` turns on the lowering of async functions to `CoreAsync` statements (see CoreAsync.lean): the
+// outside calls it may await are listed there, as in the policy. Without it async code is lowered as it
+// was in the first spike (jobs split at each `await`, for the interleaving experiments).
+export function lower(root, targets, { paths, eff } = {}) {
   const files = [...new Set([...targets.map(t => join(root, t.split("::")[0])), ...(ts.sys.fileExists(join(root, "src/prelude.ts")) ? [join(root, "src/prelude.ts")] : [])])];
   const program = ts.createProgram(files, { strict: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, noEmit: true, ...(paths ? { baseUrl: root, paths } : {}) });
   const checker = program.getTypeChecker();
+  const hazards = eff ? createHazards(ts, checker, program) : null;
+  const effectByKey = new Map((eff?.effects ?? []).map(e => [e.call, e]));
+  const asyncKeys = new Set();
   const done = new Map();
   const info = {};
   const queue = [];
@@ -84,9 +92,18 @@ export function lower(root, targets, { paths } = {}) {
     ${aliases.has(initKey) ? `.expr (.call ${lean(initKey)} [.var "this", ${params.map(p => `.var ${lean(p)}`).join(", ")}]),\n    ` : ""}.ret (.var "this")] }`);
   }
 
+  const isAsyncDecl = d => Boolean(d.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword));
   function lowerFn(decl) {
     const key = fnKey(decl);
     decls.set(key, decl);
+    const asyncMode = Boolean(eff) && isAsyncDecl(decl);
+    if (asyncMode) {
+      // Trusted: the sequential reading of an async function is only right if nothing in the process
+      // can change what it reads after an await. One rule, shared with the translator.
+      const found = hazards(decl);
+      if (found.hazards.length) throw new Error(`${found.hazards[0].message}, so the function can't be read as if nothing else ran between its awaits`);
+      asyncKeys.add(key);
+    }
     const scope = new Map(); // symbol -> unique name
     const taken = new Set();
     const bind = (id) => {
@@ -250,6 +267,9 @@ export function lower(root, targets, { paths } = {}) {
       }
       return undefined;
     };
+    const awaitTemps = new Map();    // await expression -> the variable that holds its result
+    const catchVars = new Set();     // symbols of `catch (e)` variables
+    let awaitCount = 0;
     const E = e => {
       if (e.__sym) return scope.has(e.__sym) ? `.var ${lean(scope.get(e.__sym))}` : `.field (.var "__env") ${lean(e.__sym.name)}`;
       if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e) || ts.isSatisfiesExpression(e)) return E(e.expression);
@@ -394,6 +414,15 @@ export function lower(root, targets, { paths } = {}) {
         // Missing arguments are `undefined`.
         const padded = [...e.arguments.map(E), ...d.parameters.slice(e.arguments.length).map(() => ".lit .undef")];
         return `.call ${lean(fnKey(d))} [${padded.join(", ")}]`;
+      }
+      if (ts.isAwaitExpression(e)) {
+        const t = awaitTemps.get(e);
+        if (t === undefined) throw new Error("an await where the lowering can't hoist it");
+        return `.var ${lean(t)}`;
+      }
+      if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword) {
+        if (eff && ts.isIdentifier(e.right) && e.right.text === "Error" && ts.isIdentifier(e.left) && catchVars.has(resolve(e.left))) return ".lit (.bool true)";
+        throw new Error("`instanceof` other than on a caught error");
       }
       if (ts.isBinaryExpression(e)) {
         const op = e.operatorToken.getText();
@@ -602,11 +631,135 @@ export function lower(root, targets, { paths } = {}) {
       if (ts.isExpressionStatement(s)) { out.push(`.expr (${E(s.expression)})`); return; }
       throw new Error(`statement: ${s.getText()}`);
     };
+    // --- async: statements that wait or reject. Everything else goes through S, as plain Core.
+    const AS = (s, out) => {
+      const unwrapP = n => { while (ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isNonNullExpression(n)) n = n.expression; return n; };
+      const hasAsync = n => { let found = false; walk(n, m => { if (ts.isAwaitExpression(m) || ts.isThrowStatement(m) || ts.isTryStatement(m)) found = true; }); return found; };
+      const sync = n => { const part = []; S(n, part); for (const c of part) out.push(`.stmt (${c})`); };
+      // The awaits of an expression, innermost and leftmost first. One that isn't certain to run
+      // (right of `&&`, a branch of `?:`, a callback) can't be moved before the rest.
+      const hoist = (root, into) => {
+        const found = [];
+        const visit = (n, certain) => {
+          if (ts.isFunctionLike(n)) { if (hasAsync(n)) throw new Error("an await inside a callback"); return; }
+          if (ts.isConditionalExpression(n)) { visit(n.condition, certain); visit(n.whenTrue, false); visit(n.whenFalse, false); return; }
+          if (ts.isBinaryExpression(n) && [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(n.operatorToken.kind)) {
+            visit(n.left, certain); visit(n.right, false); return;
+          }
+          if (ts.isOptionalChain(n)) { ts.forEachChild(n, c => visit(c, false)); return; }
+          ts.forEachChild(n, c => visit(c, certain));
+          if (ts.isAwaitExpression(n)) {
+            if (!certain) throw new Error("an await that is not certain to run");
+            found.push(n);
+          }
+        };
+        visit(root, true);
+        for (const a of found) {
+          const t = `__aw${awaitCount++}`;
+          awaitTemps.set(a, t);
+          into.push(awaitCall(a, t));
+        }
+      };
+      const awaitCall = (a, target) => {
+        const call = unwrapP(a.expression);
+        if (!ts.isCallExpression(call) || !ts.isIdentifier(unwrapP(call.expression))) throw new Error("an await on something other than a call of a named function");
+        const callee = unwrapP(call.expression);
+        let symbol = checker.getSymbolAtLocation(callee);
+        const module = symbol?.declarations?.find(ts.isImportSpecifier)?.parent.parent.parent.moduleSpecifier.text;
+        if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+        const d = symbol?.valueDeclaration;
+        if (!d) throw new Error(`await of ${callee.text}`);
+        const name = ts.isFunctionDeclaration(d) ? d.name.text : ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) ? d.name.text : undefined;
+        const file = relative(root, realpathSync(d.getSourceFile().fileName)).split(sep).join("/");
+        const entry = effectByKey.get(`${file}::${name}`) ?? (module && !module.startsWith(".") ? effectByKey.get(`${module}::${name}`) : undefined);
+        const args = call.arguments.map(E);
+        if (entry) return `.await ${lean(target)} ${lean(entry.id)} [${args.join(", ")}]`;
+        const fnDecl = ts.isFunctionDeclaration(d) ? d : (ts.isVariableDeclaration(d) && d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)) ? (d.initializer.__top = d.name.text, d.initializer) : null);
+        if (!fnDecl || !isAsyncDecl(fnDecl)) throw new Error(`await of ${callee.text}, which is neither an effect nor an async function of the package`);
+        if (!done.has(fnKey(fnDecl))) { done.set(fnKey(fnDecl), null); queue.push(fnDecl); }
+        const padded = [...args, ...fnDecl.parameters.slice(args.length).map(() => ".lit .undef")];
+        return `.awaitFn ${lean(target)} ${lean(fnKey(fnDecl))} [${padded.join(", ")}]`;
+      };
+      const list = n => { const inner = []; AS(n, inner); return `[${inner.join(", ")}]`; };
+
+      if (ts.isBlock(s)) { for (const c of s.statements) AS(c, out); return; }
+      if (!hasAsync(s)) { sync(s); return; }
+      if (ts.isThrowStatement(s)) {
+        const e = unwrapP(s.expression);
+        if (ts.isIdentifier(e) && catchVars.has(resolve(e))) { out.push(`.throw (${E(e)})`); return; }
+        if (!ts.isNewExpression(e) || !/^(Range|Type|Syntax|Reference|URI|Eval)?Error$/.test(e.expression.getText())) throw new Error("a throw other than of an Error");
+        hoist(e, out);
+        const message = e.arguments?.length ? E(e.arguments[0]) : `.lit (.str [])`;
+        out.push(`.throw (.record [("name", .lit (.str ${UNITS(e.expression.getText())})), ("message", ${message})])`);
+        return;
+      }
+      if (ts.isExpressionStatement(s) && ts.isAwaitExpression(unwrapP(s.expression))) { out.push(awaitCall(unwrapP(s.expression), "")); return; }
+      if (ts.isIfStatement(s)) {
+        hoist(s.expression, out);
+        out.push(`.ite (${E(s.expression)}) ${list(s.thenStatement)} ${s.elseStatement ? list(s.elseStatement) : "[]"}`);
+        return;
+      }
+      if (ts.isTryStatement(s)) {
+        const body = list(s.tryBlock);
+        let node = null;
+        if (s.catchClause) {
+          const v = s.catchClause.variableDeclaration;
+          let x = "__unused";
+          if (v) { x = bind(v.name); catchVars.add(checker.getSymbolAtLocation(v.name)); }
+          node = `.tryCatch ${body} ${lean(x)} ${list(s.catchClause.block)}`;
+        }
+        if (s.finallyBlock) out.push(`.tryFinally ${node === null ? body : `[${node}]`} ${list(s.finallyBlock)}`);
+        else out.push(node);
+        return;
+      }
+      if (ts.isForOfStatement(s)) {
+        const x = bind(s.initializer.declarations[0].name);
+        hoist(s.expression, out);
+        out.push(`.forOf ${lean(x)} (${E(s.expression)}) ${list(s.statement)}`);
+        return;
+      }
+      if (ts.isWhileStatement(s) || ts.isForStatement(s)) {
+        if (ts.isForStatement(s) && s.initializer) {
+          if (!ts.isVariableDeclarationList(s.initializer)) throw new Error("this `for` initializer");
+          if (hasAsync(s.initializer)) throw new Error("an await in a `for` initializer");
+          const init = [];
+          S({ __decls: s.initializer }, init);
+          for (const c of init) out.push(`.stmt (${c})`);
+        }
+        const test = ts.isWhileStatement(s) ? s.expression : s.condition;
+        if (!test) throw new Error("a `for` with no condition");
+        const step = [];
+        if (ts.isForStatement(s) && s.incrementor) { const part = []; S({ __expr: s.incrementor }, part); for (const c of part) step.push(`.stmt (${c})`); }
+        if (hasAsync(test)) {
+          // The test runs every turn, so its awaits move into the loop: while (true) { awaits; if (!test) break; body }
+          const head = [];
+          hoist(test, head);
+          head.push(`.ite (.not (${E(test)})) [.brk] []`);
+          out.push(`.whileL (.lit (.bool true)) [${head.join(", ")}, ${list(s.statement).slice(1, -1)}] [${step.join(", ")}]`);
+        } else {
+          out.push(`.whileL (${E(test)}) ${list(s.statement)} [${step.join(", ")}]`);
+        }
+        return;
+      }
+      if (ts.isVariableStatement(s) || ts.isReturnStatement(s) || ts.isExpressionStatement(s)) {
+        hoist(s, out);
+        sync(s);
+        return;
+      }
+      throw new Error(`async statement: ${s.getText().slice(0, 40)}`);
+    };
     if (decl.__env) params.unshift("__env");
     if (decl.__this) params.unshift("this");
     const body = [...prelude];
     for (const [n, init] of defaults) body.push(`.ite (.bin .eq (.var ${lean(n)}) (.lit .undef)) [.set ${lean(n)} (${E(init)})] []`);
     if (hasLambda) body.push(`.set "__scope" (.record [${[...decl.parameters].filter(p => captured.has(checker.getSymbolAtLocation(p.name))).map(p => `(${lean(p.name.text)}, .var ${lean(p.name.text)})`).join(", ")}])`);
+    if (asyncMode) {
+      const abody = [];
+      for (const c of body) abody.push(`.stmt (${c})`);
+      AS(ts.isBlock(decl.body) ? decl.body : ts.factory.createReturnStatement(decl.body), abody);
+      done.set(key, `${[...loops].reverse().map(l => `${l}\n\n`).join("")}def ${key} : AFn := { params := [${params.map(lean).join(", ")}], body := [\n    ${abody.join(",\n    ")}] }`);
+      return;
+    }
     if (ts.isBlock(decl.body)) S(decl.body, body); else body.push(`.ret (${E(decl.body)})`);
     if (body.includes(".await") || decl.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) {
       const segs = [[]];
@@ -633,7 +786,7 @@ export function lower(root, targets, { paths } = {}) {
   }
   while (queue.length) lowerFn(queue.shift());
   const defs = [...done.values(), ...extras];
-  const prog = `def prog : Prog := fun fname => match fname with\n${[...done.keys()].map(k => `  | ${lean(k)} => some ${k}`).concat([...aliases].filter(([k]) => !done.has(k)).map(([k, v]) => `  | ${lean(k)} => some ${v}`)).join("\n")}\n  | _ => none`;
+  const prog = `def prog : Prog := fun fname => match fname with\n${[...done.keys()].filter(k => !asyncKeys.has(k)).map(k => `  | ${lean(k)} => some ${k}`).concat([...aliases].filter(([k]) => !done.has(k)).map(([k, v]) => `  | ${lean(k)} => some ${v}`)).join("\n")}\n  | _ => none`;
   const sources = [...decls].filter(([, d]) => d).map(([key, d]) => ({ key, file: relative(root, d.getSourceFile().fileName), name: d.__top ?? d.name.text }));
   // Every variable a loop can assign, through the loops nested in it.
   const defsOf = name => { const m = loopMeta.find(l => l.name === name); return m ? m.text : ""; };
@@ -647,5 +800,8 @@ export function lower(root, targets, { paths } = {}) {
     l.W = [...new Set([...(l.item ? [l.item] : []), ...[...text.matchAll(/\.set "([^"]+)"/g)].map(m => m[1])])];
     delete l.text;
   }
-  return { names, info, sources, loops: loopMeta, lean: `import Core\nopen Core\nset_option maxRecDepth 100000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
+  const aprog = `def aprog : AProg := fun fname => match fname with\n${[...asyncKeys].map(k => `  | ${lean(k)} => some ${k}`).join("\n")}\n  | _ => none`;
+  return { names, info, sources, loops: loopMeta, asyncKeys: [...asyncKeys],
+    lean: eff ? `import Core\nimport CoreAsync\nopen Core Core.Async\nset_option maxRecDepth 100000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\n${aprog}\n\nend Gen\n`
+      : `import Core\nopen Core\nset_option maxRecDepth 100000\nnamespace Gen\n\n${defs.join("\n\n")}\n\n${prog}\n\nend Gen\n` };
 }

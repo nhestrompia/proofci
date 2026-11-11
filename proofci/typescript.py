@@ -344,6 +344,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction.assumed = outcome["assumed"]
     extraction.effects = outcome.get("effects") or {}
     extraction.arguments_relied = outcome.get("argumentsRelied") or {}
+    extraction.effect_list = outcome.get("effectList") or []
     extraction.effect_text = {e.id: f"{e.kind} {e.target}{e.signature}" for e in effects}
     extraction.files = outcome["files"]
     extraction.imports = outcome["imports"]
@@ -365,11 +366,9 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     out = work / "differential"
     out.mkdir()
     # The model of an assumed call has no body to run, so nothing can be compared.
-    signatures = {t: s for t, s in extraction.signatures.items() if not extraction.assumed.get(t) and not s.get("async")}
+    signatures = {t: s for t, s in extraction.signatures.items() if not extraction.assumed.get(t)}
     skipped = [f"not compared with Node: {t} relies on an assumed outside call"
                for t in extraction.signatures if extraction.assumed.get(t)]
-    # An `async` function runs against an oracle, which this comparison has no stand-in for yet.
-    skipped += [f"not compared with Node: {t} is async" for t, s in extraction.signatures.items() if s.get("async")]
     if not signatures:
         return [], skipped
     if cases is None:  # each case takes about 8 ms to replay
@@ -378,7 +377,7 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     config.write_text(json.dumps({
         "root": str(checkout / package_rel), "out": str(out), "module": extraction.module, "cases": cases,
         "signatures": signatures, "files": extraction.files,
-        "imports": extraction.imports}))
+        "imports": extraction.imports, "effects": extraction.effect_list or []}))
     program = translator().parent / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
                        binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)

@@ -6,5 +6,6 @@ lean_lib ProofciJs
 lean_lib ProofciAsync
 lean_lib F64
 lean_lib Core
+lean_lib CoreAsync
 lean_lib Spike where
   globs := #[.submodules `Spike]

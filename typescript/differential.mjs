@@ -146,8 +146,11 @@ function importedNames(statement) {
 // Files reached by a target run for real. Anything else they import is replaced,
 // so the comparison runs only code that was translated, and doesn't depend on
 // packages being installed.
-function compile(root, files, imports, out) {
+function compile(root, files, imports, out, effects = []) {
   const realRoot = realpathSync(root);
+  // An outside call is replaced by a stand-in that asks the test's world, wherever it is declared.
+  const byName = new Map(effects.map(e => [e.call.split("::").at(-1), e]));
+  const asksWorld = (name, e) => `export function ${name}(...args) { return globalThis.__proofciWorld(${JSON.stringify(e.id)}, args); }\n`;
   const reached = new Set(files);
   // A package's index can re-export a value from a file the translation reached. Such a name
   // is real, so it comes from that file, and only the rest are stubbed.
@@ -163,9 +166,21 @@ function compile(root, files, imports, out) {
   }
   let stubs = 0;
   for (const file of files) {
-    const js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
+    let js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
     }).outputText;
+    // A project function listed as an effect is never run: its declaration is replaced.
+    for (const e of effects) {
+      const [where, fn] = e.call.split("::");
+      if (where !== file) continue;
+      const found = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+      for (const statement of [...found.statements].reverse()) {
+        const declared = ts.isFunctionDeclaration(statement) ? statement.name?.text
+          : ts.isVariableStatement(statement) ? statement.declarationList.declarations.map(d => d.name.getText())[0] : undefined;
+        if (declared !== fn) continue;
+        js = `${js.slice(0, statement.getStart(found))}${asksWorld(fn, e)}${js.slice(statement.end)}`;
+      }
+    }
     const parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
     const path = join(out, module_(file));
     mkdirSync(dirname(path), { recursive: true });
@@ -180,7 +195,9 @@ function compile(root, files, imports, out) {
         replacement = posix.relative(dirname(module_(file)), module_(target));
       } else {
         const stub = `__stand_in_${stubs += 1}.mjs`;
-        writeFileSync(join(out, stub), STAND_IN + importedNames(statement).map(n => exported.has(n)
+        writeFileSync(join(out, stub), STAND_IN + importedNames(statement).map(n => byName.has(n)
+          ? asksWorld(n, byName.get(n))
+          : exported.has(n)
           ? `export { ${n} } from ${JSON.stringify(`./${module_(exported.get(n))}`)};\n`
           : `export { stub as ${n} };\n`).join(""));
         replacement = posix.relative(dirname(module_(file)), stub);
@@ -192,10 +209,79 @@ function compile(root, files, imports, out) {
   }
 }
 
-export async function differential({ root, out, module, signatures, files, imports = {}, cases = 200 }) {
+// A small deterministic generator for the world's behaviour: delays and which calls are rejected.
+function chance(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const MESSAGES = ["boom", "", "database down", "x y"];
+const text = value => `([${Array.from({ length: value.length }, (_, i) => value.charCodeAt(i)).join(", ")}] : Js.Str)`;
+
+// Runs an async function in Node against stand-ins for its outside calls. Each call is answered
+// from a random script (a value of the declared type, or a rejection), after a random number of
+// turns of the event loop, so the real scheduler is exercised. Returns what happened.
+async function runAsync(fn, inputs, effects, seed) {
+  const random = chance(seed);
+  const value = generator(seed + 7919);
+  const trace = [];
+  globalThis.__proofciWorld = (id, args) => new Promise((resolve, reject) => {
+    const effect = effects.find(e => e.id === id);
+    const answer = random() < 0.2
+      ? { reject: MESSAGES[Math.floor(random() * MESSAGES.length)] }
+      : { value: value(effect.returns) };
+    trace.push({ id, args: effect.params.map((_, i) => args[i]), answer });
+    const settle = () => (answer.reject !== undefined ? reject(new Error(answer.reject)) : resolve(answer.value));
+    const turns = Math.floor(random() * 3);
+    if (turns === 0) queueMicrotask(settle); else setTimeout(settle, turns - 1);
+  });
+  let outcome;
+  try {
+    outcome = { value: await fn(...inputs) };
+  } catch (error) {
+    outcome = { error };
+  }
+  delete globalThis.__proofciWorld;
+  return { outcome, trace };
+}
+
+// The oracle that replays Node's answers, and the check that the model asked the same questions.
+function replay(trace, effects) {
+  const op = id => `Proofci.Effects.Op.${effects.find(e => e.id === id).lean}`;
+  const answer = (effect, a) => (a.reject !== undefined
+    ? `Js.Answer.reject ⟨${text("Error")}, ${text(a.reject)}⟩`
+    : `Js.Answer.value ${term(effect.returns, a.value)}`);
+  const arms = trace.map((call, i) => {
+    const effect = effects.find(e => e.id === call.id);
+    return `| ${i}, ${op(call.id)} => ${answer(effect, call.answer)}`;
+  });
+  const oracle = `(fun op _ hist => match hist.length, op with ${arms.join(" ")} | _, _ => Js.Answer.reject ⟨${text("Error")}, ${text("the test's world has no more answers")}⟩)`;
+  const checks = trace.map((call, i) => {
+    const effect = effects.find(e => e.id === call.id);
+    const terms = effect.params.map((type, j) => term(type, call.args[j]));
+    if (terms.includes(undefined)) return undefined;
+    const arg = terms.length === 0 ? "()" : terms.length === 1 ? terms[0] : `(${terms.join(", ")})`;
+    return `(match e${i} with | ⟨${op(call.id)}, a, _⟩ => decide (a = ${arg}) | _ => false)`;
+  });
+  if (checks.includes(undefined)) return undefined;
+  const pattern = `[${trace.map((_, i) => `e${i}`).join(", ")}]`;
+  const trace_ = `(fun h => match h with | ${pattern} => ${checks.length ? checks.join(" && ") : "true"} | _ => false)`;
+  return { oracle, trace: trace_ };
+}
+
+export async function differential({ root, out, module, signatures, files, imports = {}, cases = 200, effects = [] }) {
   const compiled = join(out, "js");
-  compile(root, files, imports, compiled);
-  const lines = [`import ${module}`, "open Aeneas Aeneas.Std Result", ""];
+  const names = effects.map(e => e.call.split("::").at(-1));
+  const ambiguous = new Set(names.filter((n, i) => names.indexOf(n) !== i));
+  compile(root, files, imports, compiled, effects.filter(e => !ambiguous.has(e.call.split("::").at(-1))));
+  const lines = [`import ${module}`, ...(signatures && Object.values(signatures).some(s => s.async) ? ["import ProofciAsync"] : []),
+    "open Aeneas Aeneas.Std Result", ""];
   const skipped = [];
   const labels = [];
   let seed = 1;
@@ -205,6 +291,27 @@ export async function differential({ root, out, module, signatures, files, impor
     const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
     const fn = loaded[signature.name];
     const value = generator(seed++);
+    if (signature.async) {
+      if ([...ambiguous].length) { skipped.push(`${target}: two effects have the same function name`); continue; }
+      for (let index = 0; index < cases; index += 1) {
+        const inputs = signature.params.map(value);
+        const { outcome, trace } = await runAsync(fn, structuredClone(inputs), effects, seed * 1000 + index);
+        let expected;
+        if ("value" in outcome) {
+          const t = term(signature.result, outcome.value);
+          if (t !== undefined) expected = `(Js.Settled.fulfilled ${t})`;
+        } else if (outcome.error instanceof Error) {
+          expected = `(Js.Settled.rejected ⟨${text(outcome.error.name)}, ${text(outcome.error.message)}⟩)`;
+        }
+        const args = signature.params.map((type, i) => term(type, inputs[i]));
+        const run = replay(trace, effects);
+        labels.push(`${target} ${show(inputs)}`);
+        if (args.includes(undefined) || !run) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+        lines.push(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
+          + `${expected === undefined ? "none" : `(some ${expected})`} ${run.trace}`);
+      }
+      continue;
+    }
     for (let index = 0; index < cases; index += 1) {
       const inputs = signature.params.map(value);
       let expected, threw = false;

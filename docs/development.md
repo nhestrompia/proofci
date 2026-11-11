@@ -35,6 +35,24 @@ CORPUS=$PWD/fixtures node bridge3.mjs corpus-gaps.tsv /tmp/gaps
 A bridge that proves must print only the standard axioms. `mutate.py` plants wrong
 translations in proved files, and every one must fail to check.
 
+## `async` fixtures
+
+[`fixtures/async`](../spike/core/fixtures/async) holds `async` code in the shapes the survey found
+(umami's `canViewLink`, a lobe-chat guard, polling loops, `try`/`catch`/`finally`), with the outside
+calls it awaits listed in `effects.json`. The Lean view of an async function is compared with Node
+on scripted answers for those calls. From `spike/core`, with the spike's Lean volume
+(`proofci-spike-lake-dev`) built so that `lake build ProofciAsync` has run:
+
+```sh
+./asynccheck.sh /tmp/ac 40            # Node vs the view: results and the trace of calls must agree
+./mutate_async.sh /tmp/ac /tmp/am     # plants wrong translations; each must be rejected by that comparison
+node hazardcheck.mjs                  # the lost-update pattern is refused, and does lose updates in Node
+```
+
+A new `async` form needs a function in `async.ts` (and an effect in `effects.json` if it awaits a
+new call), and a mutant kind in `mutate_async.py` if it is a new kind of control flow. The same
+comparison runs in the action for `async` targets (`typescript/differential.mjs`).
+
 ## Toolchain
 
 [`toolchain/Dockerfile`](../toolchain/Dockerfile) pins every component by

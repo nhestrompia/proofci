@@ -41,6 +41,7 @@ structure Exn where
 inductive Settled (α : Type) where
   | fulfilled (a : α)
   | rejected (e : Exn)
+  deriving DecidableEq
 
 /-- The outside operations of a program: one per `effects:` entry. The argument is the
 receiver (when the call has one, an opaque handle) together with the arguments. -/
@@ -53,6 +54,7 @@ structure World where
 inductive Answer (α : Type) where
   | value (v : α)
   | reject (e : Exn)
+  deriving DecidableEq
 
 namespace World
 variable (W : World)
@@ -137,6 +139,13 @@ def Fulfils (m : Eff W α) (o : W.Oracle) (h : W.Hist) (a : α) (h' : W.Hist) : 
 def Rejects (m : Eff W α) (o : W.Oracle) (h : W.Hist) (e : Exn) (h' : W.Hist) : Prop :=
   m o h = ok (.rejected e, h')
 
+/-- The statement a guarantee about an `async` function is written in: on this oracle and from
+this history, every run that completes ends in an outcome and a history satisfying `Q`. Like
+`f x ⦃ r => Q r ⦄` for other functions, it says nothing about runs that leave the model, so
+"completes" is part of what is proved only when the contract says `= ok ...` instead. -/
+def Spec (m : Eff W α) (o : W.Oracle) (h : W.Hist) (Q : Settled α → W.Hist → Prop) : Prop :=
+  ∀ r h', m o h = ok (r, h') → Q r h'
+
 @[simp] theorem pure_run (a : α) (o : W.Oracle) (h : W.Hist) :
     (pure a : Eff W α) o h = ok (.fulfilled a, h) := rfl
 
@@ -188,5 +197,21 @@ theorem call_hist {op : W.Op} {arg : W.Arg op} {o : W.Oracle} {h h' : W.Hist} {r
   cases ha : o op arg h <;> simp [ha] at e <;> exact e.2.symm
 
 end Eff
+
+/-- What the differential test (see `typescript/differential.mjs`) asks of a run: the model, with an
+oracle that replays the answers Node's stand-ins gave, must end as Node did, and its history
+must be the calls Node's stand-ins saw. `expected` is `none` when Node did something the model
+can't express. As for `Js.agree`, the model may always leave the model (`failed`), but when
+it completes, it must agree. -/
+def agreeAsync {W : World} {α : Type} [DecidableEq α] (label : String) (r : Result (Settled α × W.Hist))
+    (expected : Option (Settled α)) (trace : W.Hist → Bool) : IO Unit :=
+  match r.match with
+  | .ok (v, h) =>
+    let same : Bool := match v, expected with
+      | .fulfilled a, some (.fulfilled b) => decide (a = b)
+      | .rejected e, some (.rejected e') => decide (e = e')
+      | _, _ => false
+    IO.println (if same && trace h then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
+  | _ => IO.println s!"PROOFCI_DIFF failed {label}"
 
 end Js

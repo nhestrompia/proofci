@@ -126,3 +126,14 @@ export async function lenient(id: string): Promise<boolean> {
     return false;
   }
 }
+
+// two outside calls in a row: the order is part of what the function does
+export async function copyOwner(id: string): Promise<string> {
+  const row = await getRow(id);
+  if (!row) {
+    return "";
+  }
+  await sendMail(row.owner);
+  await audit(id);
+  return row.owner;
+}

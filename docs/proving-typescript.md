@@ -93,6 +93,38 @@ Every function returns `Result T`. A module constant that needs computing is a
   conditions inline where you can. `p.fromAge.all (fun a => a.val ≤ age.val)` reads
   `fromAge == null || fromAge <= age` without a helper.
 
+## Async functions
+
+[`examples/ts-async`](../examples/ts-async) has everything below working on real code.
+
+An `async` function is translated into the type `Proofci.Effects.Eff T`: a computation that
+takes an **oracle** `o` (the outside world, any function from a question and the history so
+far to an answer) and a **history** `hist`, and gives back `ok (outcome, hist')`. The outcome
+is `Js.Settled.fulfilled v` or `Js.Settled.rejected e`. To prove something about it:
+
+1. **List what it awaits** in the `effects` block of `proofci.yaml` (see
+   [TypeScript support](typescript.md#listing-the-outside-world)). `dev --show` prints the
+   world, `Proofci.Effects.Op`, with one case per entry.
+2. **State a guarantee over every oracle.** Either an equation, for something that always
+   happens (`f ... o hist = ok (Js.Settled.fulfilled false, hist)`: false, and nothing was
+   asked), or `Js.Eff.Spec (f ...) o hist fun r hist' => ...` for something that holds
+   whenever the run completes. Facts about the calls are facts about `hist'`: the pair of
+   question and answer is in it as an element, written
+   `(⟨Proofci.Effects.Op.getLink, linkId, Js.Answer.value (some l)⟩ : Proofci.Effects.world.Event) ∈ hist'`.
+3. **Prove it by unfolding.** `unfold` the function, then `simp` with `Js.Eff.bind_run`,
+   `Js.Eff.call_run` and `Proofci.Effects.call`. `Js.Eff.liftM_ok_bind` and the other `Eff`
+   lemmas are `simp` lemmas. Each outside call splits into the cases of
+   `o .getLink linkId hist`: `Js.Answer.value v` or `Js.Answer.reject e`. The repeated
+   pattern is to `rcases` on that answer, `simp [ha] at h`, and read the new history.
+   `Js.Eff.call_hist` says a call that settles adds exactly one event.
+
+To say something about a particular answer, state it as a hypothesis on the oracle, for
+example `(hmiss : o ⟨.getLink⟩ ... = .value none)`. The hypothesis is part of the contract, so
+a pull request can't change it.
+
+What to check in the report: the effects listed under the guarantee are the ones you
+meant, and the arguments it names are the ones you accept to be unchanged during the call.
+
 ## Patterns
 
 Start every proof with `unfold f` and `step*`, as the Rust guide describes.

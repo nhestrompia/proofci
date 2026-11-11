@@ -1,0 +1,29 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+# The outside world: what `canViewLink` asks the database. Each entry names the call, its
+# exact signature (the return type must be written as `Promise<T>`) and whether it only
+# reads. A proof holds for every answer these calls could give, including a rejection, and
+# can lean on how they behave only through a hypothesis in the contract. Like `assumes`,
+# this list is part of the protected policy: a pull request can't add or change an entry
+# for itself, and the report lists every entry a verified guarantee ranges over.
+effects:
+  - id: getLink
+    call: src/queries/prisma/link.ts::getLink
+    signature: "(linkId: string): Promise<Link | null>"
+    kind: read
+  - id: getTeamUser
+    call: src/queries/prisma/team.ts::getTeamUser
+    signature: "(teamId: string, userId: string): Promise<TeamUser | null>"
+    kind: read
+
+targets:
+  - id: can-view-link
+    function: src/permissions/link.ts::canViewLink
+    guarantees:
+      - id: anonymous-no-lookup
+        theorem: canViewLink_anonymous
+      - id: true-only-for-a-reason
+        theorem: canViewLink_true_sound

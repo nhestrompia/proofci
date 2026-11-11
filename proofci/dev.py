@@ -62,7 +62,8 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print)
     functions = sorted({t.function for t in manifest.targets})
 
     t0 = time.monotonic()
-    crate_key = _digest([repo / manifest.crate]) + json.dumps(functions)
+    crate_key = (_digest([repo / manifest.crate]) + json.dumps(functions)
+                 + json.dumps([manifest.assumes, [e.entry() for e in manifest.effects]]))
     if vendor and (Path(vendor) / typescript.INDEX).is_file():
         crate_key += (Path(vendor) / typescript.INDEX).read_text()
     ws_root = work / "lean"
@@ -72,7 +73,7 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print)
         (work / "translate").mkdir()
         try:
             if manifest.language == "typescript":
-                ex = typescript.extract(repo, manifest.crate, work / "translate", functions, assumes=manifest.assumes,
+                ex = typescript.extract(repo, manifest.crate, work / "translate", functions, assumes=manifest.assumes, effects=manifest.effects,
                                    vendor_dir=vendor)
                 for function, reason in ex.failures.items():
                     out(f"unsupported: {function}: {reason}")

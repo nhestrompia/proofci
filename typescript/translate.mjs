@@ -641,7 +641,10 @@ export class Translator {
     const types = parameters.map(p => this.type(this.checker.getTypeOfSymbolAtLocation(p, node), node));
     const args = types.length === 0 ? "Unit" : types.join(" × ");
     const result = this.type(this.promised(signature.getReturnType(), node), node);
-    const op = { id: entry.id, key, kind: entry.kind, lean: name(entry.id), args, result };
+    const promised = this.promised(signature.getReturnType(), node);
+    const op = { id: entry.id, key, kind: entry.kind, lean: name(entry.id), args, result,
+      params: parameters.map(p => this.describe(this.checker.getTypeOfSymbolAtLocation(p, node), node)),
+      returns: this.describe(promised, node) };
     this.effectOps.set(key, op);
     return op;
   }
@@ -3002,7 +3005,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   const records = () => translator.shaped.flatMap(({ type, node }) => {
     try { return [translator.describe(type, node)]; } catch { return []; }
   });
-  const effectList = [...translator.effectOps.values()].map(({ id, key, kind }) => ({ id, call: key, kind }));
+  const effectList = [...translator.effectOps.values()].map(({ id, key, kind, lean, params, returns }) => ({ id, call: key, kind, lean, params, returns }));
   return { module, source: `${[...header, ...order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, effects: effectsUsed, argumentsRelied, effectList, packages, records,
     files: reached.map(f => local(f.fileName)),
     imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
