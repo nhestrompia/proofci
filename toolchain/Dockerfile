@@ -126,9 +126,15 @@ RUN case "${TARGETARCH}" in \
  && echo "${sha}  /tmp/node.tar.xz" | sha256sum -c - \
  && mkdir -p /opt/node && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1 && rm /tmp/node.tar.xz
 COPY typescript/package.json typescript/package-lock.json /opt/proofci/typescript/
-RUN cd /opt/proofci/typescript && /opt/node/bin/node /opt/node/bin/npm ci --ignore-scripts --no-audit --no-fund \
- && rm -rf node_modules/typescript/lib/*/ package.json package-lock.json \
-            /opt/node/include /opt/node/share /opt/node/lib/node_modules /opt/node/bin/npm /opt/node/bin/npx /opt/node/bin/corepack
+# npm stays, and pnpm and Yarn 1 are added at pinned versions, because the
+# dependency installation of a TypeScript project uses them (proofci/typescript.py).
+# They run only in that step, which has the network and never runs project code.
+COPY toolchain/package-managers/package.json toolchain/package-managers/package-lock.json /opt/proofci/tools/
+RUN cd /opt/proofci/typescript && /opt/node/bin/node /opt/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --no-audit --no-fund \
+ && cd /opt/proofci/tools && /opt/node/bin/node /opt/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --no-audit --no-fund \
+ && cd /opt/proofci/typescript \
+ && rm -rf node_modules/typescript/lib/*/ package.json package-lock.json /opt/proofci/tools/package.json /opt/proofci/tools/package-lock.json \
+            /opt/node/include /opt/node/share /opt/node/lib/node_modules/corepack /opt/node/bin/npm /opt/node/bin/npx /opt/node/bin/corepack
 
 # Checking proofs needs the Lean binaries, shared libraries and .olean files,
 # not the static libraries used to compile Lean programs.

@@ -172,7 +172,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         extraction, failures = None, {}
         if active.language == "typescript":
             try:
-                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout, active.assumes)
+                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout, active.assumes, vendor_dir)
                 failures = extraction.failures
                 if len(failures) == len(functions):
                     extraction = None
@@ -338,7 +338,10 @@ def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="ba
     """Vendor the candidate's crates.io dependencies (the step with network)."""
     active = load_manifest(head_checkout if policy == "head" else base_checkout)
     if active.language == "typescript":
-        return  # the subset reaches no package code, so nothing is downloaded
+        # Package declarations are installed for the type checker; no package code runs.
+        with tempfile.TemporaryDirectory(prefix="proofci-fetch-", dir=vendor_dir) as tmp:
+            typescript.install(head_checkout, active.crate, vendor_dir, Path(tmp))
+        return
     with tempfile.TemporaryDirectory(prefix="proofci-fetch-") as tmp:
         extract.fetch(head_checkout, active.crate, vendor_dir, Path(tmp))
 
