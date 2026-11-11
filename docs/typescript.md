@@ -15,7 +15,7 @@ guarantee reaches must write out their types.
 Rocket.Chat, plane, AFFiNE, medusa, umami, trigger.dev, cal.com), the translator accepted
 227 of 2,785 pure functions (8.2%). That is a lower bound,
 because those clones had no packages installed, so imported types were unknown. For
-178 of the accepted functions (78.4%) a bridge theorem was proved
+186 of the accepted functions (81.9%) a bridge theorem was proved
 within 120 seconds. Most functions that aren't accepted use regular expressions, `Date`,
 classes or `any`.
 
@@ -37,8 +37,10 @@ the lockfile's hashes.
 recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
 out. Reading a member only an index signature allows, and a variable that might be read
 before it is assigned, are also `unsupported`. The check's proofs about your guarantees can
-use `%` (`Js.rem` has a step lemma), but the theorem that ties a function's view to Core has
-no rule for `%` yet, so functions that use it are never counted as proved above.
+use `%` (`Js.rem` has a step lemma). `%` and `Math.floor/ceil/trunc(a / b)` also bridge to
+Core for any divisor, negative operands and non-multiples included. A zero divisor makes the
+view stop (JavaScript gives `NaN`), so a bridge says nothing about that input. `-0` results
+read as 0, as everywhere else in the model.
 
 ## What works today
 
@@ -77,7 +79,7 @@ and the report says so.
 | Local changes | Reassignment, `+=`, `++`, `let x;` assigned on every path before it is read, and in-place changes to a value only one name can see |
 | Arrays | `length`, `[i]`, `push`, `map`, `filter`, `reduce`, `find`, `some`, `every`, `slice`, `includes`, `join` and more |
 | Strings | `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`, `replace` with a string, templates, ASCII case changes |
-| Numbers | `+ - * / %`, comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
+| Numbers | `+ - * / %` (`/` only where the quotient is whole), comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
 
 `??` and `?.` work on values that may be `null` or `undefined`. `||` and `&&` work on any operand, such as `daysInMonth[month] || 28`. An interface with an
 index signature (`[key: string]: T`) keeps its named fields; the members the signature

@@ -20,6 +20,14 @@ None of the 176 proved before was lost, and the generated text of the 213 earlie
 byte for byte the same. Of the three newly accepted functions, two were proved and one got
 stuck in its proof.
 
+Then `%` and `Math.floor/ceil/trunc(a / b)` for any divisor got bridge rules (the Core
+semantics and the translator were not touched, and the generated text of all 216 bridges is
+byte for byte the same). 186 of the 227 accepted functions are now proved (81.9% of accepted,
+6.7% of pure), 8 more than before and none lost. Ten of the 216 bridges use `%` or a rounding
+division; 8 of them are proved. Of the other two, one is a recursive call inside a conditional
+(`gcd`) and one is a mean of a `reduce` divided exactly; neither is stuck on the new rules. Two
+functions still run past 120 seconds even alone.
+
 The proof rate matches the tuned 76% within noise (about ±5 points at this size), so the
 tactics weren't overfitted. Acceptance is a lower bound: these clones had no packages
 installed, unlike the tuned sample, so imported types counted as unknown. One repository
@@ -86,6 +94,13 @@ proved only 2 of the 21 timeouts, so timeouts need less search, not more time.
 
 `switch` on a plain string, number or field then took it to 363 of 475. It reaches 273
 functions but freed only 11 at once, because most of them have other blockers.
+
+Bridge rules for `%` and for `Math.floor/ceil/trunc(a / b)` with any divisor took it to 371
+of 475 (12 bridges use one of them; 8 more are proved, none lost, text identical). The proof
+that `Math.floor(a / b)` on safe integers is exact is in `Spike/Safe.lean` (`round_div_between`):
+the quotient of two doubles holding safe integers never rounds to a whole number unless it is
+one, because half a unit in the last place stays below `1/|b|`. `rounddiv-check.mjs` compares
+`%` and the three roundings with exact integer arithmetic on 3 million pairs in Node.
 
 Reranking on single blockers instead of groups shows no large item left: each frees 40 to
 80 functions. Dynamic data is not next, despite its size above: `any` reaches 1,235
