@@ -209,6 +209,7 @@ def _install_command(manager: str, cache: Path):
         return ["node", str(program), "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile",
                 "--config.manage-package-manager-versions=false", "--store-dir", str(cache / "pnpm-store"),
                 "--registry", "https://registry.npmjs.org/"]
+    (cache / "yarnrc").write_text("")
     return ["node", str(program), "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-engines",
             "--non-interactive", "--no-progress", "--cache-folder", str(cache / "yarn"),
             "--registry", "https://registry.npmjs.org/", "--use-yarnrc", str(cache / "yarnrc")]
