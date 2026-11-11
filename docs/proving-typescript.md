@@ -104,25 +104,15 @@ Start every proof with `unfold f` and `step*`, as the Rust guide describes.
   simp [AUCTION_TICK_DIVISOR, WP.spec_ok]
 ```
 
-**A remainder.** `x % 4` is `Js.rem x 4`, and it has no `step` lemma yet, so `step*`
-stops at it. Add one to `Proofs.lean` for positive divisors, and relate `Int.tmod` to
-divisibility, which `omega` understands for literals (`omega` doesn't know `Int.tmod`
-itself):
+**A remainder.** `x % 4` is `Js.rem x 4`. For a positive divisor `step*` passes it, with
+`r.val = Int.tmod x.val y.val`. `omega` doesn't know `Int.tmod`, but it does know `∣` by a
+literal, so relate the two with this small lemma in `Proofs.lean`:
 
 ```lean
-@[step] theorem rem_spec (x y : Js.Num) (hy : 0 < y.val) :
-    Js.rem x y ⦃ r => r.val = Int.tmod x.val y.val ⦄ := by
-  have hy' : y.val ≠ 0 := by omega
-  have h1 := Int.tmod_lt_of_pos x.val hy
-  have h2 := Int.lt_tmod_of_pos x.val hy
-  have := y.hi
-  simp only [Js.rem, hy', ite_false]
-  exact Js.mk_spec _ (by omega) (by omega)
-
 theorem tmod_zero_iff (x d : Int) : Int.tmod x d = 0 ↔ d ∣ x := Int.dvd_iff_tmod_eq_zero.symm
 ```
 
-Then `step*` after `unfold f` leaves `h : tmp.val = 0` style facts, and `rw [tmp_post]`
+After `unfold f`, `step*` leaves `h : tmp.val = 0` style facts, and `rw [tmp_post]`
 with `tmod_zero_iff` turns them into `4 ∣ year.val` for `omega`. The leap-year proof in
 [`examples/ts-dates`](../examples/ts-dates/proofci/Proofs.lean) is the whole pattern.
 

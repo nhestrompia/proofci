@@ -394,7 +394,9 @@ export class Translator {
   }
 
   fields(type, declaration) {
-    if (this.checker.getIndexInfosOfType(type).length) throw this.fail(declaration, "index signatures are not supported yet");
+    // `[key: string]: T` allows other members next to the named ones. They are left out of the
+    // record, so a read through the signature is refused where it happens (`property`), as is a
+    // spread, which would copy them. A function that reads only the named fields can't tell.
     return this.checker.getPropertiesOfType(type).map(property => {
       const node = property.valueDeclaration;
       if (!node || !(ts.isPropertySignature(node) || ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))) {
@@ -704,6 +706,7 @@ export class Scope {
       ts.forEachChild(node, child => walk(child, nested || (ts.isFunctionLike(node) && node !== fn && !this.isForEachBody(node))));
     };
     this.owned = new Set();
+    this.evolving = new Map(); // `let x;` variables and their types
     walk(fn, false);
     this.checkOwnership();
   }
@@ -863,6 +866,7 @@ export class Scope {
   // is ever shadowed: each assignment makes a new name, and `env` tracks which
   // name is current for a variable on this path.
   current(symbol, env) {
+    if (env.get(symbol)?.unassigned) throw this.t.fail(symbol.valueDeclaration, `\`${symbol.name}\` is not assigned on every path before it is used`);
     return env.get(symbol)?.lean ?? local(symbol.name);
   }
 
@@ -998,6 +1002,7 @@ export class Scope {
 
   // The declared type of a variable, ignoring narrowing.
   declaredType(symbol, node) {
+    if (this.evolving.has(symbol)) return this.evolving.get(symbol);
     return this.checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration ?? node);
   }
 
@@ -1100,7 +1105,10 @@ export class Scope {
     const lines = [];
     const next = new Map(env);
     for (const declaration of statement.declarationList.declarations) {
-      if (!declaration.initializer) throw this.t.fail(declaration, "a declaration without a value");
+      if (!declaration.initializer) {
+        this.unassigned(declaration, next, lines);
+        continue;
+      }
       if (ts.isIdentifier(declaration.name)) {
         const symbol = this.symbol(declaration.name);
         const value = this.convert(declaration.initializer, this.declaredType(symbol, declaration.name), next, lines);
@@ -1118,6 +1126,41 @@ export class Scope {
       }
     }
     return [...lines, ...this.block(rest, flow, next)];
+  }
+
+  // `let x;` and `let x: T;`. Until it is assigned the variable holds `undefined`, which the
+  // view shows as `none` and never reads: a read before the assignment is refused, and so is
+  // a join where one path leaves it unassigned. TypeScript's own flow type is the guide for
+  // the type of `let x;`, so every read has to agree with every assignment.
+  unassigned(declaration, env, lines) {
+    if (!ts.isIdentifier(declaration.name) || declaration.exclamationToken) throw this.t.fail(declaration, "a declaration without a value needs a plain name");
+    const symbol = this.symbol(declaration.name);
+    let type;
+    if (declaration.type) type = this.checker.getTypeFromTypeNode(declaration.type);
+    else {
+      const wrote = [], read = [];
+      const walk = node => {
+        if (ts.isIdentifier(node) && node !== declaration.name && this.symbol(node) === symbol) {
+          const parent = node.parent;
+          if (ts.isBinaryExpression(parent) && parent.left === node && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) wrote.push(parent.right);
+          else read.push(node);
+        }
+        ts.forEachChild(node, walk);
+      };
+      walk(this.fn);
+      if (!wrote.length) throw this.t.fail(declaration, `\`${declaration.name.text}\` is never assigned`);
+      const lean = new Set(wrote.map(w => this.leanOf(this.checker.getBaseTypeOfLiteralType(this.typeOf(w)), w)));
+      if (lean.size !== 1 || lean.has(undefined)) throw this.t.fail(declaration, `\`${declaration.name.text}\` is assigned values of different types; write its type`);
+      type = this.checker.getBaseTypeOfLiteralType(this.typeOf(wrote[0]));
+      for (const use of read) {
+        if (this.leanOf(this.typeOf(use), use) !== [...lean][0]) throw this.t.fail(use, `\`${declaration.name.text}\` may be read before it is assigned`);
+      }
+    }
+    const lean = this.leanOf(type, declaration);
+    if (!lean) throw this.t.fail(declaration, "the type of this variable is not supported yet");
+    if (this.nullable(type) || type.flags & ts.TypeFlags.Any) throw this.t.fail(declaration, "a declaration without a value can't hold `null`, `undefined` or `any` yet");
+    this.evolving.set(symbol, type);
+    lines.push(`let ${this.rebind(symbol, env, { unassigned: true })} ← Result.ok (none : Option ${lean})`);
   }
 
   // An expression used as a statement: an assignment, an update or a call.
@@ -1809,6 +1852,9 @@ export class Scope {
     for (const property of node.properties) {
       if (ts.isSpreadAssignment(property)) {
         if (node.properties[0] !== property) throw this.t.fail(property, "a spread must come first");
+        if (this.checker.getIndexInfosOfType(this.checker.getApparentType(this.typeOf(property.expression))).length) {
+          throw this.t.fail(property, "spreading a value with an index signature would drop the members it holds");
+        }
         base = this.expression(property.expression, env, lines);
       } else if (ts.isPropertyAssignment(property) && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
         fields.set(property.name.text, property.initializer);
@@ -1862,7 +1908,10 @@ export class Scope {
       if (this.isString(node.expression)) return `(Js.charAt? ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
       if (!this.isArray(node.expression)) throw this.t.fail(node, "`[]` is only supported on arrays for now");
       if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
-      return `(Js.at_ ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
+      const read = `Js.at_ ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)}`;
+      // An element that may be `null` reads as `null` or, past the end, `undefined`: one missing value.
+      const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(node.expression)))[0];
+      return item && this.nullable(item) ? `(${read}).join` : `(${read})`;
     }
     if (ts.isNonNullExpression(node)) return this.nonNull(node, env, lines);
     if (ts.isCallExpression(node)) return this.call(node, env, lines);
@@ -1924,12 +1973,53 @@ export class Scope {
       return fresh;
     }
     // The test and the result both read the left side, so it must be safe to read twice.
-    if (!ts.isIdentifier(left) && !this.isFieldPath(left)) throw this.t.fail(node, "the left side of this `&&` or `||` must be a variable or field for now");
+    if (!ts.isIdentifier(left) && !this.isFieldPath(left)) return this.choiceOfValue(node, type, env, lines);
     if (this.nullable(this.typeOf(left))) throw this.t.fail(node, "this `&&` or `||` is not supported here yet");
     const test = this.condition(left, env, lines);
     const [whenTrue, whenFalse] = and ? [rightValue(env), leftValue(env)] : [leftValue(env), rightValue(env)];
     lines.push(`let ${fresh} ← if ${test} then`, ...this.indent(this.indent(whenTrue)), "  else", ...this.indent(this.indent(whenFalse)));
     return fresh;
+  }
+
+  // `a || b` and `a && b` where `a` is a call, an index or another expression. It runs once,
+  // is named, and then the name is tested and returned like a variable.
+  choiceOfValue(node, type, env, lines) {
+    const and = node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken;
+    const left = unwrap(node.left);
+    const leftType = this.typeOf(left);
+    const named = this.expression(left, env, lines);
+    const value = /^[\w«»']+$/.test(named) ? named : this.bind(`Result.ok ${named}`, lines);
+    const rightValue = branchEnv => {
+      const inner = [];
+      const result = this.convert(node.right, type, branchEnv, inner);
+      return [...inner, `Result.ok ${result}`];
+    };
+    const fresh = this.fresh();
+    if (this.nullable(leftType)) {
+      if (and) throw this.t.fail(node, "`&&` on a value that may be `null` or `undefined` is not supported here yet");
+      const inner = this.checker.getNonNullableType(leftType);
+      const unwrapped = this.fresh();
+      const kept = [`let ${unwrapped} ← Js.unwrap ${value}`, `Result.ok ${this.wrapIf(type, unwrapped, left)}`];
+      lines.push(`let ${fresh} ← if ${this.present(value, inner, left)} then`, ...this.indent(this.indent(kept)),
+        "  else", ...this.indent(this.indent(rightValue(env))));
+      return fresh;
+    }
+    const test = this.truthiness(value, leftType, left);
+    const kept = [`Result.ok ${this.wrapIf(type, value, left)}`];
+    const [whenTrue, whenFalse] = and ? [rightValue(env), kept] : [kept, rightValue(env)];
+    lines.push(`let ${fresh} ← if ${test} then`, ...this.indent(this.indent(whenTrue)), "  else", ...this.indent(this.indent(whenFalse)));
+    return fresh;
+  }
+
+  // Whether a named value of this type counts as true.
+  truthiness(value, type, node) {
+    const lean = this.leanOf(type, node);
+    if (lean === "Js.Str") return `${value} ≠ []`;
+    if (lean === "Js.Num") return `${value}.val ≠ 0`; // NaN never reaches here
+    if (lean === "Int") return `${value} ≠ 0`;
+    if (lean === "Bool") return `${value} = true`;
+    if (this.alwaysTruthy(type, node)) throw this.t.fail(node, "this value is always truthy, so the test does nothing");
+    throw this.t.fail(node, "truthiness of this type is not supported yet");
   }
 
   operand(node, env, lines) {
@@ -2056,6 +2146,10 @@ export class Scope {
     if (this.isArray(object)) throw this.t.fail(node, `\`.${node.name.text}\` is not supported on arrays yet`);
     const type = this.typeOf(object);
     if (type.isUnion()) throw this.t.fail(node, "reading a field of a union outside a `switch` is not supported yet");
+    const owner = this.checker.getApparentType(type);
+    if (!this.checker.getPropertyOfType(owner, node.name.text) && this.checker.getIndexInfosOfType(owner).length) {
+      throw this.t.fail(node, `\`.${node.name.text}\` is read through an index signature, which is not supported yet`);
+    }
     const read = `${this.expression(object, env, lines)}.${name(node.name.text)}`;
     // tsc narrowed the field here, as in `o.x !== null && o.x > 1`, but the record still holds an Option.
     const field = this.checker.getPropertyOfType(this.checker.getApparentType(type), node.name.text);

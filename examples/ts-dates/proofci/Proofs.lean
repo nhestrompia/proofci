@@ -2,16 +2,6 @@ import DateFnsExcerpt
 open Aeneas Aeneas.Std Result
 open src.parse._lib.utils src.parseISO.index
 
-/-- `x % y` for a positive divisor: the result is `Int.tmod`. -/
-@[step] theorem rem_spec (x y : Js.Num) (hy : 0 < y.val) :
-    Js.rem x y ⦃ r => r.val = Int.tmod x.val y.val ⦄ := by
-  have hy' : y.val ≠ 0 := by omega
-  have h1 := Int.tmod_lt_of_pos x.val hy
-  have h2 := Int.lt_tmod_of_pos x.val hy
-  have := y.hi
-  simp only [Js.rem, hy', ite_false]
-  exact Js.mk_spec _ (by omega) (by omega)
-
 /-- `omega` knows `∣` by a literal, but not `Int.tmod`. -/
 theorem tmod_zero_iff (x d : Int) : Int.tmod x d = 0 ↔ d ∣ x := Int.dvd_iff_tmod_eq_zero.symm
 

@@ -117,6 +117,7 @@ macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit ⟨_, by decide,
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_str; sim'; assumption))
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_arr; sim'; assumption))
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_; sim'; sim'))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_join; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.startsWith; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.endsWith; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
@@ -178,6 +179,10 @@ macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.coalesce_none; sim'; 
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.coalesce_some; sim_v; infer_instance))
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.optField_none; sim'; isnone; simp [nothingOk]))
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.array; siml))
+-- Tried after the plain rule below, which settles every array without `null` or `undefined`.
+macro_rules | `(tactic| siml) => `(tactic| (apply siml_cons_some; sim'; siml))
+macro_rules | `(tactic| siml) => `(tactic| (apply siml_cons_null; siml))
+macro_rules | `(tactic| siml) => `(tactic| (apply siml_cons_undef; siml))
 macro_rules | `(tactic| siml) => `(tactic| exact siml_nil)
 macro_rules | `(tactic| siml) => `(tactic| (apply siml_cons; sim'; siml))
 
@@ -330,6 +335,10 @@ macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.or_false
 macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.or_true; sim'; apply SimB.present_str; sim'; known))
 macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_t; apply SimB.present_num; sim'; known; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (has_present; apply SimE.cond_f; apply SimB.present_num; sim'; known; sim'))
+-- `f(x) || d` where the left side reads as an option: tested with the option's truth, then unwrapped.
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.or_false; (first | (apply SimB.opt_num; sim') | (apply SimB.opt_str; sim')); known; sim'))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.or_unwrap_num; sim'; known; known))
+macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.or_unwrap_str; sim'; known; known))
 -- `x?.m() ?? d`: the conclusions only match this shape, so these fail fast on anything else.
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_none; sim'; isnone; sim'))
 macro_rules | `(tactic| s_branch) => `(tactic| (apply SimE.chain_some; sim'; assumption; infer_instance; sim'; infer_instance))
@@ -542,7 +551,9 @@ elab "crun_go" : tactic => withMainContext do
   if branch && (kind == ``Stmt.ret || kind == ``Stmt.set) then
     let c ← whnfD (cs.getArg! 1)
     let e ← whnfR (c.getArg! (if kind == ``Stmt.ret then 0 else 1))
-    if e.isAppOf ``Expr.cond then
+    -- `(c ? a : b) || d` computes its left side first, so the pending branch is that one.
+    let left ← if e.isAppOf ``Expr.or || e.isAppOf ``Expr.and then whnfR (e.getArg! 0) else pure e
+    if e.isAppOf ``Expr.cond || left.isAppOf ``Expr.cond then
       evalTactic split
       return
   match kind with
@@ -575,6 +586,8 @@ elab "crun_go" : tactic => withMainContext do
           | none => false
         pure (← `(tactic| (apply step_ite; simb)), ← if lock then `(tactic| b_lock) else `(tactic| b_ite))
     if ← attempt first_ then evalTactic rest; return
+    if kind == ``Stmt.set then
+      if ← attempt (← `(tactic| (apply step_dead))) then evalTactic (← `(tactic| b_expr)); return
     if !tail then
       evalTactic (← `(tactic| vall))
       if ← attempt first_ then evalTactic rest; return

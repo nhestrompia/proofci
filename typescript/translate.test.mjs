@@ -736,3 +736,82 @@ test("switch on a string, number or field runs its tests in order", () => {
   rejects(`export function f(x: string) { switch (x) { default: return 0; case "a": return 1; } }`, /last case/);
   rejects(`export function f(x: string) { switch (x.trim()) { case "a": return 1; default: return 0; } }`, /this expression/);
 });
+
+test("a variable declared without a value is assigned on every path before it is read", () => {
+  // date-fns `normalizeTwoDigitYear`
+  const { source } = run(`
+export function f(twoDigitYear: number, currentYear: number): number {
+  const isCommonEra = currentYear > 0;
+  const absCurrentYear = isCommonEra ? currentYear : 1 - currentYear;
+  let result;
+  if (isCommonEra) {
+    const rangeEnd = absCurrentYear + 50;
+    const isPreviousCentury = twoDigitYear > rangeEnd % 100;
+    result = twoDigitYear + rangeEnd - (isPreviousCentury ? 100 : 0);
+  } else {
+    const rangeStart = absCurrentYear - 50;
+    const isPreviousCentury = twoDigitYear >= rangeStart % 100;
+    result = twoDigitYear + rangeStart + (isPreviousCentury ? 100 : 0);
+  }
+  return isCommonEra ? result : 1 - result;
+}`);
+  assert.match(source, /let result ← Result\.ok \(none : Option Js\.Num\)/);
+  assert.match(source, /let result_3 ← if isCommonEra = true then/);
+  assert.match(source, /Result\.ok result_3/);
+  emits(`export function f(n: number): string { let s: string; if (n > 9) { s = "big"; } else { s = "small"; } return s; }`,
+    "(none : Option Js.Str)");
+  emits(`export function f(n: number): number { let x; x = n + 1; x = x * 2; return x; }`, "Js.mul x_1");
+  emits(`export function f(n: number): number { let x; if (n > 5) { return 0; } x = n; return x; }`);
+});
+
+test("a variable declared without a value stops where it might be read unassigned", () => {
+  rejects(`export function f(n: number): number { let x; if (n > 0) { x = 1; } return n; }`, /`x` is not assigned on every path/);
+  rejects(`export function f(n: number): number { let x; if (n > 0) { x = 1; } return x; }`, /`x` is not assigned on every path|may be read before it is assigned|TypeScript error/);
+  rejects(`export function f(n: number): number { let x; return x + n; }`, /never assigned|may be read|TypeScript error/);
+  rejects(`export function f(n: number): number { let x; x += n; x = n; return x; }`, /may be read before it is assigned|not assigned on every path|TypeScript error/);
+  rejects(`export function f(n: number): number { let x; for (let i = 0; i < n; i++) { x = i; } return n; }`, /not assigned on every path/);
+  rejects(`export function f(n: number): string { let x; if (n > 0) { x = 1; } else { x = "a"; } return String(x); }`, /different types|may be read/);
+  rejects(`export function f(n: number): number | null { let x: number | null; x = n; return x; }`, /can't hold `null`/);
+});
+
+test("|| and && take any left side, which runs once", () => {
+  // date-fns `validateDate` in parseISO
+  const { source } = run(`
+const DAYS_IN_MONTH = [31, null, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+function isLeapYearIndex(year: number): boolean { return year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0); }
+export function f(year: number, month: number, date: number): boolean {
+  return month >= 0 && month <= 11 && date >= 1 && date <= (DAYS_IN_MONTH[month] || (isLeapYearIndex(year) ? 29 : 28));
+}`);
+  assert.match(source, /\(Js\.at_ tmp\d+ month\)\.join/);
+  assert.match(source, /if Js\.truthyNum tmp\d+ = true then/);
+  assert.match(source, /Js\.unwrap tmp\d+/);
+  emits(`export function f(a: number, b: number): number { return Math.max(a, b) || 7; }`, "Js.max a b", "≠ 0");
+  emits(`export function f(a: string): string { return a.trim() && a.slice(1); }`, "Js.trim a", "≠ []");
+  emits(`export function f(xs: number[], i: number): number { return xs[i] || 1; }`, "Js.at_ xs i");
+  emits(`export function f(a: number, b: number, c: number): number { return (a > b ? a : b) || c; }`);
+  emits(`export function f(xs: (number | null)[], i: number): number { return xs[i] || 1; }`, ".join");
+  rejects(`export function f(xs: (number | null)[], i: number): number | null { return xs[i] && 1; }`, /`&&` on a value that may be/);
+});
+
+test("null and undefined sit in an array whose elements allow them", () => {
+  emits(`export function f(a: number): (number | null)[] { return [a, null, 3]; }`, "some a", "none");
+  emits(`export function f(a: number): (number | undefined)[] { return [undefined, a]; }`, "none", "some a");
+  emits(`export function f(a: string): (string | null)[] { return [null, a, null]; }`, "[none, (some a), none]");
+  emits(`export function f(a: number): ((number | null)[] | null)[] { return [[a, null], null]; }`);
+  emits(`const SLOTS = [31, null, 30];\nexport function f(): number { let n = 0; for (const s of SLOTS) { if (s !== null) n += s; } return n; }`, "(List (Option Js.Num))");
+  rejects(`export function f(a: number): number[] { return [a, null]; }`, /null|assignable|type/);
+});
+
+test("an index signature leaves the named fields, and a read through it stops", () => {
+  const types = `interface Point { type: "Point"; coordinates: number[]; [foreign: string]: unknown }
+interface Bag { count: number; [key: string]: number }\n`;
+  const { source } = run(`${types}export function f(p: Point): number { return p.coordinates.length; }`);
+  assert.match(source, /structure a\.Point where/);
+  assert.doesNotMatch(source, /foreign/);
+  emits(`${types}export function f(b: Bag): number { return b.count + 1; }`, "b.count");
+  emits(`interface Feature { type: "Feature"; id: number; [foreign: string]: unknown }\nexport function f(n: number): Feature { return { type: "Feature", id: n }; }`);
+  rejects(`${types}export function f(b: Bag): number { return b.other; }`, /read through an index signature/);
+  rejects(`${types}export function f(b: Bag, k: string): number { return b[k]; }`, /only supported on arrays/);
+  rejects(`${types}export function f(b: Bag): Bag { return { ...b, count: 1 }; }`, /spreading a value with an index signature/);
+  rejects(`${types}export function f(b: Bag): number { return Object.keys(b).length; }`, /Object|not supported|unsupported|call/);
+});

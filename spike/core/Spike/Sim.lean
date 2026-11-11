@@ -932,6 +932,36 @@ theorem SimE.at_ {p s o i α} {_ : TyRep α} {a : List α} {b : Js.Num} (ho : Si
       simp only [h1, h2, Option.getD_none]
       exact rfl
 
+/-- `xs[i]` on an array whose elements may be `null`: past the end it is `undefined`, and the typed
+function keeps one missing value for both. -/
+theorem SimE.at_join {p s o i α} {_ : TyRep α} {a : List (Option α)} {b : Js.Num}
+    (ho : SimE p s o a) (hi : SimE p s i b) : SimE (α := Option α) p s (.index o i) (Js.at_ a b).join := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, eo, h₂, l, vs, rfl, hl, hf⟩ := ho s₁ h₁
+  obtain ⟨n, s₃, ei, h₃, x, rfl, hx⟩ := hi s₂ (h₁.trans h₂)
+  have hl' := lookup_mono h₃.2 hl
+  have hf' := hf.imp fun _ _ hr => mono h₃.2 hr
+  refine ⟨_, s₃, Evals.index eo ei rfl hl', h₂.trans h₃, ?_⟩
+  by_cases hb : b.val < 0
+  · have : x.index = none := by
+      rcases hx with rfl | ⟨h0, rfl⟩
+      · exact F64.index_ofInt_neg hb
+      · omega
+    simp only [Js.at_, hb, ite_true, this, Option.join_none, Option.getD_none]
+    exact Or.inl rfl
+  · have hn := F64.index_isInt hx (by omega)
+    simp only [Js.at_, hb, ite_false, hn, Option.bind_some]
+    by_cases hlt : b.val.toNat < a.length
+    · obtain ⟨c, w, h1, h2, h3⟩ := Forall₂_get hf' _ hlt
+      simp only [h1, h2, Option.getD_some, Option.join_some]
+      cases c with
+      | none => exact h3
+      | some y => exact h3
+    · have h1 : a[b.val.toNat]? = none := by simp; omega
+      have h2 : vs[b.val.toNat]? = none := by simp; rw [← hf'.length_eq]; omega
+      simp only [h1, h2, Option.join_none, Option.getD_none]
+      exact Or.inl rfl
+
 theorem asNum_isInt {x : F64} {a : Js.Num} (h : Core.F64.IsInt x a.val) : asNum (.num x) = some a := by
   have key : ∀ (s : Bool) (n : Nat) (i : Int), F64.signed s n = i → (∀ hl hh, (⟨i, hl, hh⟩ : Js.Num) = a) →
       -9007199254740991 ≤ i → i ≤ 9007199254740991 → asNum (.num (.fin s (n * F64.unit))) = some a := by
@@ -990,6 +1020,19 @@ theorem siml_cons {p s e es α} {_ : TyRep α} {a : α} {xs : List α} (h : SimE
   obtain ⟨v, s₂, ev, h₂, rv⟩ := h s₁ h₁
   obtain ⟨vs, s₃, el, h₃, hl⟩ := t s₂ (h₁.trans h₂)
   exact ⟨v :: vs, s₃, EvalsL.cons ev el, h₂.trans h₃, .cons (mono h₃.2 rv) hl⟩
+/-- An array that holds `null` or `undefined` next to values: a present value is a `some`. -/
+theorem siml_cons_opt {p s e es k α} {_ : TyRep α} {a : Opt k α} {xs : List (Opt k α)} (h : SimE (α := Opt k α) p s e a)
+    (t : SimL (α := Opt k α) p s es xs) : SimL (α := Opt k α) p s (e :: es) (a :: xs) := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rv⟩ := h s₁ h₁
+  obtain ⟨vs, s₃, el, h₃, hl⟩ := t s₂ (h₁.trans h₂)
+  exact ⟨v :: vs, s₃, EvalsL.cons ev el, h₂.trans h₃, .cons (mono h₃.2 rv) hl⟩
+theorem siml_cons_some {p s e es k α} {_ : TyRep α} {a : α} {xs : List (Opt k α)} (h : SimE p s e a) (t : SimL (α := Opt k α) p s es xs) :
+    SimL (α := Opt k α) p s (e :: es) (Option.some a :: xs) := siml_cons_opt (SimE.some h) t
+theorem siml_cons_null {p s es α} {_ : TyRep α} {xs : List (Opt .null α)} (t : SimL (α := Opt .null α) p s es xs) :
+    SimL (α := Opt .null α) p s (.lit .null :: es) (Option.none :: xs) := siml_cons_opt (SimE.lit_null (by simp [nothingOk])) t
+theorem siml_cons_undef {p s es α} {_ : TyRep α} {xs : List (Opt .undef α)} (t : SimL (α := Opt .undef α) p s es xs) :
+    SimL (α := Opt .undef α) p s (.lit .undef :: es) (Option.none :: xs) := siml_cons_opt (SimE.lit_undef (by simp [nothingOk])) t
 theorem SimE.array {p s es α} {_ : TyRep α} {xs : List α} (h : SimL p s es xs) : SimE p s (.array es) xs := by
   intro s₁ h₁
   obtain ⟨vs, s₂, el, h₂, hl⟩ := h s₁ h₁
@@ -1336,6 +1379,11 @@ theorem step_set {p s x e cs Φ α} {_ : TyRep α} {a : α} (he : SimE p s e a)
   obtain ⟨r, s₃, hrest, hΦ⟩ := k { s₂ with env := s₂.env.put x v } ⟨v, by simp [Env.put], rv⟩
     ⟨h₂.2, fun y hy => by simp [Env.put, hy, h₂.1]⟩
   exact ⟨r, s₃, ExecsL.cons_normal (Execs.set ev) hrest, hΦ⟩
+
+/-- `let x;`: the variable holds `undefined`, and the typed function has no value for it until
+the first assignment, which sets it again. -/
+theorem step_dead {p s x cs Φ} (k : ∀ s', Upd s s' x → Wp p s' cs Φ) : Wp p s (.set x (.lit .undef) :: cs) Φ :=
+  step_set (α := Opt .undef Js.Num) (a := Option.none) (SimE.lit_undef (by simp [nothingOk])) (fun s' _ u => k s' u)
 
 theorem step_expr {p s e cs Φ α} {_ : TyRep α} {a : α} (he : SimE p s e a)
     (k : ∀ s', Ext s s' → Wp p s' cs Φ) : Wp p s (.expr e :: cs) Φ := by
@@ -2159,6 +2207,17 @@ theorem ite_intro {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α
   · simp only [h, ite_false]; exact f h
 theorem unwrap_iff {α} {x : Option α} {r : α} : Js.unwrap x = ok r ↔ x = some r := by
   cases x <;> simp [Js.unwrap]
+/-- `o || b` where `o` reads as an option that turns out present and truthy: the value is `o`'s. -/
+theorem SimE.or_unwrap_num {p s a b k} {o : Opt k Js.Num} {x : Js.Num} (ha : SimE p s a o)
+    (hu : Js.unwrap o = ok x) (ht : Js.truthyNum o = true) : SimE p s (.or a b) x := by
+  have e : o = Option.some x := unwrap_iff.mp hu
+  subst e
+  exact SimE.or_true (SimE.some_inv ha) (SimB.opt_num ha) ht
+theorem SimE.or_unwrap_str {p s a b k} {o : Opt k (List Nat)} {x : List Nat} (ha : SimE p s a o)
+    (hu : Js.unwrap o = ok x) (ht : Js.truthyStr o = true) : SimE p s (.or a b) x := by
+  have e : o = Option.some x := unwrap_iff.mp hu
+  subst e
+  exact SimE.or_true (SimE.some_inv ha) (SimB.opt_str ha) ht
 theorem ite_pos_of {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} (h : c) (e : (if c then a else b) = ok r) : a = ok r := by
   simpa [h] using e
 theorem ite_neg_of {α : Type} {c : Prop} [Decidable c] {a b : Result α} {r : α} (h : ¬c) (e : (if c then a else b) = ok r) : b = ok r := by

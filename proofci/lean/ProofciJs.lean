@@ -135,6 +135,16 @@ theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 90071992547
 @[step] theorem neg_spec (x : Num) : neg x ⦃ r => r.val = -x.val ⦄ :=
   mk_spec _ (by have := x.hi; omega) (by have := x.lo; omega)
 
+/-- `x % y` for a positive divisor: Lean's `Int.tmod`, which truncates toward zero like JavaScript. -/
+@[step] theorem rem_spec (x y : Num) (hy : 0 < y.val) :
+    rem x y ⦃ r => r.val = Int.tmod x.val y.val ⦄ := by
+  have hy' : y.val ≠ 0 := by omega
+  have h1 := Int.tmod_lt_of_pos x.val hy
+  have h2 := Int.lt_tmod_of_pos x.val hy
+  have := y.hi
+  simp only [rem, hy', ite_false]
+  exact mk_spec _ (by omega) (by omega)
+
 @[step] theorem floorDiv_spec (x y : Num) (hy : 0 < y.val) :
     floorDiv x y ⦃ r => r.val = x.val / y.val ⦄ := by
   have hy' : y.val ≠ 0 := by omega
