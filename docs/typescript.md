@@ -1,7 +1,44 @@
 # TypeScript support
 
-TypeScript support is experimental and isn't in a release yet. This page covers
-what works, what a proof means, and the survey behind the plan.
+## Status: experimental
+
+TypeScript support is experimental and isn't in a release yet. Use it to try the idea
+on a function you care about, not to rely on it.
+
+**What works.** The pull request flow: a manifest names the functions, a pull request
+that breaks a proved one is blocked, and one that weakens the policy waits for a
+maintainer. A project's packages are installed from its lockfile so that their types
+resolve. A call into a package can be listed in the policy with `assumes`. Functions a
+guarantee reaches must write out their types.
+
+**How much it covers.** On eight repositories the rules were never tuned on (tldraw,
+Rocket.Chat, plane, AFFiNE, medusa, umami, trigger.dev, cal.com), the translator accepted
+227 of 2,785 pure functions (8.2%). That is a lower bound,
+because those clones had no packages installed, so imported types were unknown. For
+178 of the accepted functions (78.4%) a bridge theorem was proved
+within 120 seconds. Most functions that aren't accepted use regular expressions, `Date`,
+classes or `any`.
+
+**What "proved" means here.** Two different things are proved, and the numbers above are
+only the first. The first is a theorem, generated for each function, that ties the Lean view
+you read to a formal model of JavaScript (Core). If Lean accepts it, the view means what the
+code means under that model. It is generated and checked in [`spike/core`](../spike/core),
+and isn't part of the action's check yet: the action compares the translation with Node on
+generated inputs. The second is yours: a guarantee about the function, stated in
+`Contract.lean` and proved in `Proofs.lean`. The bridge theorem doesn't give you that.
+
+**What is trusted.** The lowering from TypeScript to Core (`spike/core/lower.mjs`) and the
+semantics of Core are trusted. They are tested against Node, not against the official
+conformance suite (test262). The package install is the only step with network access, and
+nothing restricts it at the network level: it relies on the package manager's settings and
+the lockfile's hashes.
+
+**What it can't do yet.** Regular expressions, `Date`, `async`, classes and methods,
+recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
+out. Reading a member only an index signature allows, and a variable that might be read
+before it is assigned, are also `unsupported`. The check's proofs about your guarantees can
+use `%` (`Js.rem` has a step lemma), but the theorem that ties a function's view to Core has
+no rule for `%` yet, so functions that use it are never counted as proved above.
 
 ## What works today
 
@@ -34,13 +71,18 @@ and the report says so.
 | Supported | Details |
 |---|---|
 | Values | `number`, `bigint`, `boolean`, `string`, `T \| null`, `T \| undefined` |
-| Types | Interfaces, string-literal unions, unions tagged by `kind`, arrays, `Map`, `Set` |
+| Types | Interfaces, string-literal unions, unions tagged by `kind`, arrays (with `null` or `undefined` in them when their elements allow it), `Map`, `Set` |
 | Functions | Module-level functions and arrow functions across files, self-recursion, inline callbacks |
 | Control flow | `if`, `switch`, `for`, `while`, `for...of`, `break`, `continue`, `throw`, `try`/`catch` |
-| Local changes | Reassignment, `+=`, `++`, and in-place changes to a value only one name can see |
+| Local changes | Reassignment, `+=`, `++`, `let x;` assigned on every path before it is read, and in-place changes to a value only one name can see |
 | Arrays | `length`, `[i]`, `push`, `map`, `filter`, `reduce`, `find`, `some`, `every`, `slice`, `includes`, `join` and more |
 | Strings | `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`, `replace` with a string, templates, ASCII case changes |
 | Numbers | `+ - * / %`, comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
+
+`||` and `&&` work on any operand, such as `daysInMonth[month] || 28`. An interface with an
+index signature (`[key: string]: T`) keeps its named fields; the members the signature
+allows are left out, so reading one by name, indexing the value with a key or spreading
+it is `unsupported`.
 
 Everything else is `unsupported`, with the source line. That includes fractions,
 regular expressions, classes, `async`, `??`, `?.` and calls into packages.

@@ -13,6 +13,13 @@ generator and tactics as of `fc125b0`, nothing changed during the run:
 | Bridge generated | 213 | |
 | Proved at 120 s, standard axioms | 176 | 78.6% of accepted, 6.3% of pure |
 
+The same eight repositories, run again after the translator learned bare `let x;`
+declarations, `||` and `&&` on any operand, `null` in arrays and index signatures, gave 227
+accepted (8.2% of pure), 216 with a bridge and 178 proved (78.4% of accepted, 6.4% of pure).
+None of the 176 proved before was lost, and the generated text of the 213 earlier bridges is
+byte for byte the same. Of the three newly accepted functions, two were proved and one got
+stuck in its proof.
+
 The proof rate matches the tuned 76% within noise (about ±5 points at this size), so the
 tactics weren't overfitted. Acceptance is a lower bound: these clones had no packages
 installed, unlike the tuned sample, so imported types counted as unknown. One repository

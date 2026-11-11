@@ -18,6 +18,23 @@ discover -s tests -t .` where PyYAML is installed. The translator's own tests ar
 `node --test typescript/translate.test.mjs`. `tests.test_examples` installs the
 packages of `examples/ts-packages` and is skipped when the npm registry can't be reached.
 
+## Bridge fixtures
+
+`spike/core` holds the experiment that ties the Lean view of a TypeScript function to a
+model of JavaScript. A new form the translator accepts needs a fixture there as well:
+add a function to [`fixtures/gaps/gaps.ts`](../spike/core/fixtures/gaps/gaps.ts) and its
+name to [`corpus-gaps.tsv`](../spike/core/corpus-gaps.tsv), then generate the bridges and
+check each file with Lean inside the toolchain image:
+
+```sh
+cd spike/core && mkdir -p /tmp/gaps
+CORPUS=$PWD/fixtures node bridge3.mjs corpus-gaps.tsv /tmp/gaps
+# then, in the image with the spike's .lake volume: lake env lean /tmp/gaps/F0.lean
+```
+
+A bridge that proves must print only the standard axioms. `mutate.py` plants wrong
+translations in proved files, and every one must fail to check.
+
 ## Toolchain
 
 [`toolchain/Dockerfile`](../toolchain/Dockerfile) pins every component by
