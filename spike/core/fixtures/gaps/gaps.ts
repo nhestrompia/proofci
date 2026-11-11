@@ -1,6 +1,6 @@
 // Forms the translator learned late, each shaped like code from date-fns or @types/geojson.
 // They go through the bridge: `corpus-gaps.tsv` lists them, with this directory as the repository.
-// No `%` here: Core has no bridge rule for it yet.
+// `%` and rounded division are in `../rem/rem.ts`.
 
 // `let x;` assigned on every path before it is read (date-fns `normalizeTwoDigitYear`).
 export function centuryStart(twoDigitYear: number, currentYear: number): number {
