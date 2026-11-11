@@ -79,13 +79,13 @@ and the report says so.
 | Strings | `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`, `replace` with a string, templates, ASCII case changes |
 | Numbers | `+ - * / %`, comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
 
-`||` and `&&` work on any operand, such as `daysInMonth[month] || 28`. An interface with an
+`??` and `?.` work on values that may be `null` or `undefined`. `||` and `&&` work on any operand, such as `daysInMonth[month] || 28`. An interface with an
 index signature (`[key: string]: T`) keeps its named fields; the members the signature
 allows are left out, so reading one by name, indexing the value with a key or spreading
 it is `unsupported`.
 
 Everything else is `unsupported`, with the source line. That includes fractions,
-regular expressions, classes, `async`, `??`, `?.` and calls into packages.
+regular expressions, classes, `async` and calls into packages that aren't listed under `assumes`.
 
 ### In-place changes
 
