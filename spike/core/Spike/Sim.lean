@@ -290,6 +290,87 @@ theorem SimE.math {p s e} {f : F64 → F64} {a : Js.Num} (hf : ∀ {x n}, Core.F
   obtain ⟨v, s₂, ev, h₂, x, rfl, hi⟩ := hx s₁ h₁
   exact ⟨_, s₂, Evals.math ev, h₂, _, rfl, hf hi⟩
 
+theorem rem_val {x y r : Js.Num} (h : Js.rem x y = ok r) : y.val ≠ 0 ∧ r.val = Int.tmod x.val y.val := by
+  simp only [Js.rem] at h
+  split at h
+  · simp at h
+  · rename_i h0
+    simp only [Js.mk] at h
+    split at h
+    · simp only [ok.injEq] at h
+      subst h
+      exact ⟨h0, rfl⟩
+    · simp at h
+
+theorem SimE.rem {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.rem a b = ok r) :
+    SimE p s (.bin .rem x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ ⟨x, rfl, hx⟩ ⟨y, rfl, hy⟩
+  obtain ⟨hb, hv⟩ := rem_val h
+  exact ⟨_, rfl, _, rfl, hv ▸ F64.rem_isInt hx hy hb⟩
+
+theorem floorDiv_val {x y r : Js.Num} (h : Js.floorDiv x y = ok r) : y.val ≠ 0 ∧ r.val = Int.fdiv x.val y.val := by
+  simp only [Js.floorDiv] at h
+  split at h
+  · simp at h
+  · rename_i h0
+    simp only [Js.mk] at h
+    split at h
+    · simp only [ok.injEq] at h
+      subst h
+      exact ⟨h0, rfl⟩
+    · simp at h
+
+theorem ceilDiv_val {x y r : Js.Num} (h : Js.ceilDiv x y = ok r) : y.val ≠ 0 ∧ r.val = -Int.fdiv (-x.val) y.val := by
+  simp only [Js.ceilDiv] at h
+  split at h
+  · simp at h
+  · rename_i h0
+    simp only [Js.mk] at h
+    split at h
+    · simp only [ok.injEq] at h
+      subst h
+      exact ⟨h0, rfl⟩
+    · simp at h
+
+theorem truncDiv_val {x y r : Js.Num} (h : Js.truncDiv x y = ok r) : y.val ≠ 0 ∧ r.val = Int.tdiv x.val y.val := by
+  simp only [Js.truncDiv] at h
+  split at h
+  · simp at h
+  · rename_i h0
+    simp only [Js.mk] at h
+    split at h
+    · simp only [ok.injEq] at h
+      subst h
+      exact ⟨h0, rfl⟩
+    · simp at h
+
+/-- `Math.floor`, `ceil` or `trunc` of a quotient, whatever the divisor. -/
+theorem sim_roundDiv {p s x y} {a b r : Js.Num} {f : F64 → F64} (hx : SimE p s x a) (hy : SimE p s y b)
+    (hf : ∀ {u w : F64}, Core.F64.IsInt u a.val → Core.F64.IsInt w b.val → Core.F64.IsInt (f (u.div w)) r.val) :
+    SimE p s (.math f (.bin .div x y)) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ex, h₂, rv⟩ := hx s₁ h₁
+  obtain ⟨w, s₃, ey, h₃, rw⟩ := hy s₂ (h₁.trans h₂)
+  obtain ⟨u, rfl, hu⟩ := mono h₃.2 rv
+  obtain ⟨w', rfl, hw⟩ := rw
+  exact ⟨_, s₃, Evals.math (Evals.bin ex ey rfl), h₂.trans h₃, _, rfl, hf hu hw⟩
+
+theorem SimE.floorDiv {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.floorDiv a b = ok r) :
+    SimE p s (.math F64.floor (.bin .div x y)) r := by
+  obtain ⟨hb, hv⟩ := floorDiv_val h
+  exact sim_roundDiv hx hy fun hu hw => hv ▸ F64.floorDiv_isInt hu hw hb a.lo a.hi b.lo b.hi
+
+theorem SimE.ceilDiv {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.ceilDiv a b = ok r) :
+    SimE p s (.math F64.ceil (.bin .div x y)) r := by
+  obtain ⟨hb, hv⟩ := ceilDiv_val h
+  exact sim_roundDiv hx hy fun hu hw => hv ▸ F64.ceilDiv_isInt hu hw hb a.lo a.hi b.lo b.hi
+
+theorem SimE.truncDiv {p s x y a b r} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.truncDiv a b = ok r) :
+    SimE p s (.math F64.trunc (.bin .div x y)) r := by
+  obtain ⟨hb, hv⟩ := truncDiv_val h
+  exact sim_roundDiv hx hy fun hu hw => hv ▸ F64.truncDiv_isInt hu hw hb a.lo a.hi b.lo b.hi
+
 theorem SimE.neg {p s e} {a r : Js.Num} (hx : SimE p s e a) (h : Js.neg a = ok r) : SimE p s (.neg e) r := by
   have hv : r.val = -a.val := by simp only [Js.neg, Js.mk] at h; split at h <;> simp_all; subst h; rfl
   intro s₁ h₁
