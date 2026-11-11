@@ -352,12 +352,12 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
 
 
 def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=None, timeout=300):
-    checkout = getattr(extraction, "checkout", None) or checkout
     """Compare the translated functions with Node on generated inputs.
 
     Returns (disagreements, notes). Only code that passed the translator's
     checks runs here, and only in the sandbox: it is the candidate's code, so
     this finds translator bugs and defends against nothing else."""
+    checkout = getattr(extraction, "checkout", None) or checkout  # the copy with packages mounted
     out = work / "differential"
     out.mkdir()
     # The model of an assumed call has no body to run, so nothing can be compared.

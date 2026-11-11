@@ -1,5 +1,23 @@
 # What to build next
 
+## Score on code the rules weren't tuned on
+
+Eight repositories never used for tuning or earlier held-out tests (tldraw, Rocket.Chat,
+plane, AFFiNE, medusa, umami, trigger.dev, cal.com; commits in the run's notes), with the
+generator and tactics as of `fc125b0`, nothing changed during the run:
+
+| | Count | Share |
+|---|---:|---:|
+| Pure functions | 2,785 | |
+| Accepted | 224 | 8.0% of pure |
+| Bridge generated | 213 | |
+| Proved at 120 s, standard axioms | 176 | 78.6% of accepted, 6.3% of pure |
+
+The proof rate matches the tuned 76% within noise (about ±5 points at this size), so the
+tactics weren't overfitted. Acceptance is a lower bound: these clones had no packages
+installed, unlike the tuned sample, so imported types counted as unknown. One repository
+supplies 41% of the accepted functions.
+
 The translator stops at a function's first problem, so a tally of its failures
 undercounts everything behind that problem. Package types showed this: `extends`
 errors fell from 90 to 0 across eight repositories, yet accepted functions only
