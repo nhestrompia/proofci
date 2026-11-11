@@ -116,8 +116,9 @@ macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit _ rfl)
 macro_rules | `(tactic| s_misc) => `(tactic| exact SimE.len_lit ⟨_, by decide, by decide⟩ rfl)
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_str; sim'; assumption))
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.len_arr; sim'; assumption))
-macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_; sim'; sim'))
+-- Tried after `at_`, which settles every array whose elements aren't options.
 macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_join; sim'; sim'))
+macro_rules | `(tactic| s_misc) => `(tactic| (apply SimE.at_; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.startsWith; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.endsWith; sim'; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimC.strIncludes; sim'; sim'))
@@ -586,11 +587,12 @@ elab "crun_go" : tactic => withMainContext do
           | none => false
         pure (← `(tactic| (apply step_ite; simb)), ← if lock then `(tactic| b_lock) else `(tactic| b_ite))
     if ← attempt first_ then evalTactic rest; return
-    if kind == ``Stmt.set then
-      if ← attempt (← `(tactic| (apply step_dead))) then evalTactic (← `(tactic| b_expr)); return
     if !tail then
       evalTactic (← `(tactic| vall))
       if ← attempt first_ then evalTactic rest; return
+    -- `let x;` has no value in the typed function, so nothing is left to pair with it.
+    if kind == ``Stmt.set then
+      if ← attempt (← `(tactic| (apply step_dead))) then evalTactic (← `(tactic| b_expr)); return
     if (← todoHead).isSome then
       if let some (m, _) ← todoHead then
         if ← isBranch m then evalTactic split; return
