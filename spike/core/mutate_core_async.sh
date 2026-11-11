@@ -14,15 +14,20 @@ import json, sys
 src, d = sys.argv[1], sys.argv[2]
 expected = json.load(open(f"{src}/expected.json"))
 rows = json.load(open(f"{d}/index.json"))
-survived = []
+survived, timeouts = [], []
 for r in rows:
     out = open(f"{d}/M{r['i']}.out").read()
     code = open(f"{d}/M{r['i']}.code").read().strip()
     got = [l for l in out.splitlines() if l.startswith("ASYNC")]
+    if code == "124":
+        timeouts.append(r)
+        continue
     if code != "0" or "error" in out or got != expected:
         continue
     survived.append(r)
-print(f"{len(rows) - len(survived)} of {len(rows)} mutants rejected")
+print(f"{len(rows) - len(survived) - len(timeouts)} of {len(rows)} mutants rejected, {len(survived)} survived, {len(timeouts)} timed out")
+for r in timeouts:
+    print("timed out:", r["kind"], "line", r["line"])
 for r in survived:
     print("survived:", r["kind"], "line", r["line"])
 PY

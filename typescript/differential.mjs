@@ -224,6 +224,18 @@ function chance(seed) {
 const MESSAGES = ["boom", "", "database down", "x y"];
 const text = value => `([${Array.from({ length: value.length }, (_, i) => value.charCodeAt(i)).join(", ")}] : Js.Str)`;
 
+// Answers from a database are often empty or missing in the way that matters: an empty string is falsy
+// but present. Random values rarely reach that, so some strings in an answer are emptied.
+function emptied(type, value, random) {
+  switch (type.kind) {
+    case "string": return random() < 0.25 ? "" : value;
+    case "array": return value.map(item => emptied(type.item, item, random));
+    case "optional": return value == null ? value : emptied(type.inner, value, random);
+    case "record": return Object.fromEntries(type.fields.map(f => [f.name, emptied(f.type, value[f.name], random)]));
+    default: return value;
+  }
+}
+
 // Runs an async function in Node against stand-ins for its outside calls. Each call is answered
 // from a random script (a value of the declared type, or a rejection), after a random number of
 // turns of the event loop, so the real scheduler is exercised. Returns what happened.
@@ -235,7 +247,7 @@ export async function runAsync(fn, inputs, effects, seed) {
     const effect = effects.find(e => e.id === id);
     const answer = random() < 0.2
       ? { reject: MESSAGES[Math.floor(random() * MESSAGES.length)] }
-      : { value: value(effect.returns) };
+      : { value: emptied(effect.returns, value(effect.returns), random) };
     trace.push({ id, args: effect.params.map((_, i) => args[i]), answer });
     const settle = () => (answer.reject !== undefined ? reject(new Error(answer.reject)) : resolve(answer.value));
     const turns = Math.floor(random() * 3);

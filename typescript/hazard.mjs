@@ -112,13 +112,11 @@ export function createHazards(ts, checker, program) {
     const result = { awaits: awaits.length, hazards: [], arguments: [] };
     if (!awaits.length) return result;
     const loops = loopsWithAwait(fn, awaits);
-    const firstEnd = Math.min(...awaits.map(a => a.end));
-    const after = (n, id) => {
+    const after = id => {
       const at = id.getStart();
-      if (awaits.some(a => a.end <= at && !(a.pos <= at && at < a.end))) return true;
+      if (awaits.some(a => a.end <= at)) return true;
       return loops.some(l => at >= l.pos && at < l.end);
     };
-    void firstEnd;
 
     // Variables that hold, or alias, an argument whose type is not immutable.
     const flagged = new Set();
@@ -162,7 +160,7 @@ export function createHazards(ts, checker, program) {
 
     const seen = new Set();
     references(fn.body, id => {
-      if (!after(fn.body, id)) return;
+      if (!after(id)) return;
       if (id.kind === ts.SyntaxKind.ThisKeyword) {
         result.hazards.push({ node: id, message: "`this` is read after an `await`, and other code may change it" });
         return;

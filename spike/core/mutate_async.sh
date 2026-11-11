@@ -13,15 +13,19 @@ python3 - "$2" <<'PY'
 import json, sys, collections
 d = sys.argv[1]
 rows = json.load(open(f"{d}/index.json"))
-survived, killed = [], collections.Counter()
+survived, killed, timeouts = [], collections.Counter(), []
 for r in rows:
     out = open(f"{d}/M{r['i']}.out").read()
     code = open(f"{d}/M{r['i']}.code").read().strip()
-    if "PROOFCI_DIFF differ" in out or "error" in out or code not in ("0",):
+    if code == "124":
+        timeouts.append(r)
+    elif "PROOFCI_DIFF differ" in out or "error" in out or code not in ("0",):
         killed[r["kind"]] += 1
     else:
         survived.append(r)
-print(f"{len(rows) - len(survived)} of {len(rows)} mutants rejected")
+print(f"{len(rows) - len(survived) - len(timeouts)} of {len(rows)} mutants rejected, {len(survived)} survived, {len(timeouts)} timed out")
+for r in timeouts:
+    print("timed out:", r["kind"], "line", r["line"])
 for r in survived:
     print("survived:", r["kind"], "line", r["line"])
 PY
