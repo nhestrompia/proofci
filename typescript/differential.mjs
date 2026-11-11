@@ -15,7 +15,7 @@ const EDGES = [0, 1, -1, 2, -2, 3, 7, 10, -10, 100, 500, 1000, 9999, 10000, 1000
 
 const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&"];
 
-function generator(seed) {
+export function generator(seed) {
   let state = seed >>> 0;
   const next = () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -146,7 +146,7 @@ function importedNames(statement) {
 // Files reached by a target run for real. Anything else they import is replaced,
 // so the comparison runs only code that was translated, and doesn't depend on
 // packages being installed.
-function compile(root, files, imports, out, effects = []) {
+export function compile(root, files, imports, out, effects = []) {
   const realRoot = realpathSync(root);
   // An outside call is replaced by a stand-in that asks the test's world, wherever it is declared.
   const byName = new Map(effects.map(e => [e.call.split("::").at(-1), e]));
@@ -227,7 +227,7 @@ const text = value => `([${Array.from({ length: value.length }, (_, i) => value.
 // Runs an async function in Node against stand-ins for its outside calls. Each call is answered
 // from a random script (a value of the declared type, or a rejection), after a random number of
 // turns of the event loop, so the real scheduler is exercised. Returns what happened.
-async function runAsync(fn, inputs, effects, seed) {
+export async function runAsync(fn, inputs, effects, seed) {
   const random = chance(seed);
   const value = generator(seed + 7919);
   const trace = [];

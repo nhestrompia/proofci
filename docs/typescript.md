@@ -34,8 +34,15 @@ conformance suite (test262). The package install is the only step with network a
 nothing restricts it at the network level: it relies on the package manager's settings and
 the lockfile's hashes.
 
-**What it can't do yet.** Regular expressions, `Date`, `async`, classes and methods,
-recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
+**What is trusted for `async` code.** The Lean library `ProofciAsync.lean` (the oracle, the
+history, `Eff`), the hazard rule (`typescript/hazard.mjs`), which the translator and the
+lowering both use, and the policy's `effects`. There is no bridge theorem for `async` code yet:
+the view is compared with Node on scripted outside calls (in the action, and on the fixtures),
+and the lowering to `CoreAsync.lean` is compared with Node the same way. See
+[`spike/core/ASYNC.md`](../spike/core/ASYNC.md).
+
+**What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
+timers), classes and methods, recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
 out. Reading a member only an index signature allows, and a variable that might be read
 before it is assigned, are also `unsupported`. The check's proofs about your guarantees can
 use `%` (`Js.rem` has a step lemma). `%` and `Math.floor/ceil/trunc(a / b)` also bridge to

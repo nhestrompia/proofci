@@ -243,7 +243,9 @@ export function lower(root, targets, { paths, eff } = {}) {
       if (!first?.questionDotToken) return undefined;
       const base = E(first.expression);
       const body = links.reduce((value, link) => {
-        const prim = STRING_METHODS[`${link.expression.name.text}/${link.arguments.length}`];
+        // `xs?.includes(v)` is the array method, not the string one.
+        const receiver = checker.getNonNullableType(checker.getTypeAtLocation(link.expression.expression));
+        const prim = (checker.isArrayType(receiver) ? ARRAY_METHODS : STRING_METHODS)[`${link.expression.name.text}/${link.arguments.length}`];
         if (!prim) throw new Error(`method ${link.getText()}`);
         return `.prim .${prim} [${[value, ...link.arguments.map(E)].join(", ")}]`;
       }, `(${base})`);
