@@ -12,6 +12,12 @@ docker run --rm --network none \
 
 Building the image from scratch takes about 17 minutes.
 
+The unit tests need no toolchain (`tests.test_typescript_deps` replaces the sandbox and
+the package managers with fakes), so they also run with plain `python3 -m unittest
+discover -s tests -t .` where PyYAML is installed. The translator's own tests are
+`node --test typescript/translate.test.mjs`. `tests.test_examples` installs the
+packages of `examples/ts-packages` and is skipped when the npm registry can't be reached.
+
 ## Toolchain
 
 [`toolchain/Dockerfile`](../toolchain/Dockerfile) pins every component by
@@ -22,6 +28,10 @@ version and SHA-256:
 - Aeneas nightly-2026.11.02
 - Charon at the commit Aeneas pins
 - Rust nightly-2026-09-17
+- Node 24.19.0 with the TypeScript compiler (`typescript/package-lock.json`), its own npm,
+  and pnpm and Yarn 1 pinned by `toolchain/package-managers/package-lock.json`. The
+  package managers only install a TypeScript project's packages; see
+  [packages](typescript.md#packages)
 
 Mathlib is pruned to the modules Aeneas imports. The image is 1.7 GB compressed
 and built for Linux x86_64 and arm64.
