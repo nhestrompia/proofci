@@ -153,16 +153,20 @@ def _install_command(manager: str, cache: Path):
     tools = _tools()
     program = tools[manager]
     if manager == "npm":
+        # Empty settings files, so that nothing but the flags below configures npm.
+        user, system = cache / "npmrc-user", cache / "npmrc-global"
+        user.write_text("")
+        system.write_text("")
         return ["node", str(program), "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--no-update-notifier",
-                "--userconfig", "/dev/null", "--globalconfig", "/dev/null", "--registry", "https://registry.npmjs.org/",
-                "--cache", str(cache)]
+                "--userconfig", str(user), "--globalconfig", str(system), "--registry", "https://registry.npmjs.org/",
+                "--cache", str(cache / "npm")]
     if manager == "pnpm":
         return ["node", str(program), "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile",
-                "--config.manage-package-manager-versions=false", "--store-dir", str(cache),
+                "--config.manage-package-manager-versions=false", "--store-dir", str(cache / "pnpm-store"),
                 "--registry", "https://registry.npmjs.org/"]
     return ["node", str(program), "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-engines",
-            "--non-interactive", "--no-progress", "--cache-folder", str(cache),
-            "--registry", "https://registry.npmjs.org/", "--use-yarnrc", "/dev/null"]
+            "--non-interactive", "--no-progress", "--cache-folder", str(cache / "yarn"),
+            "--registry", "https://registry.npmjs.org/", "--use-yarnrc", str(cache / "yarnrc")]
 
 
 def _module_dirs(root: Path):
@@ -208,32 +212,32 @@ def install(checkout: Path, package_rel: str, vendor_dir: Path, work: Path):
     return modules
 
 
-def link_dependencies(staged: Path, vendor_dir: Path):
-    """Point each installed `node_modules` into the private copy of the code."""
-    index = Path(vendor_dir) / INDEX
-    if not index.is_file():
-        return
-    for relative in json.loads(index.read_text())["modules"]:
-        target = Path(vendor_dir) / MODULES / relative / "node_modules"
-        place = staged / relative
-        if target.is_dir() and place.is_dir() and not (place / "node_modules").exists():
-            (place / "node_modules").symlink_to(target)
-
-
 def prepare(checkout: Path, work: Path, vendor_dir=None):
-    """The code the translator and the comparison with Node read. It is the
-    checkout itself unless packages were installed for it, in which case it is a
-    private copy with those packages linked in, because the checkout is read-only."""
-    if vendor_dir is None or not (Path(vendor_dir) / INDEX).is_file():
-        return checkout
+    """The code the translator and the comparison with Node read, and the
+    directories to mount into it: `(root, binds)`.
+
+    It is the checkout itself unless packages were installed for it. Then it is
+    a private copy with an empty `node_modules` where each installed one belongs,
+    because the translator only reads declarations that sit inside the code it
+    reads, and the checkout is read-only. The sandbox mounts the installed
+    packages onto those empty directories."""
+    index = Path(vendor_dir) / INDEX if vendor_dir else None
+    if index is None or not index.is_file():
+        return checkout, []
     staged = stage(checkout, work / "code")
-    link_dependencies(staged, vendor_dir)
-    return staged
+    binds = []
+    for relative in json.loads(index.read_text())["modules"]:
+        source = Path(vendor_dir) / MODULES / relative / "node_modules"
+        place = staged / relative
+        if source.is_dir() and place.is_dir() and not (place / "node_modules").exists():
+            (place / "node_modules").mkdir()
+            binds.append((source, place / "node_modules"))
+    return staged, binds
 
 
 def extract(checkout: Path, package_rel: str, work: Path, functions, policy_checkout=None, assumes=(),
             vendor_dir=None) -> Extraction:
-    checkout = prepare(checkout, work, vendor_dir)
+    checkout, binds = prepare(checkout, work, vendor_dir)
     root = checkout / package_rel
     crate_name = module_name(root)
     module = lean_module_name(crate_name)
@@ -245,8 +249,8 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
                                   "repository": str(checkout), "policyRoot": str(policy), "requireTypes": True,
                                   "assumes": [{"call": call, "signature": signature} for call, signature in assumes]}))
     program = translator()
-    readable = [checkout, policy, program.parent] + ([Path(vendor_dir)] if vendor_dir else [])
-    result = sandbox.run(["node", str(program), str(config)], readable=readable, writable=[out], cwd=out, timeout=300)
+    result = sandbox.run(["node", str(program), str(config)], readable=[checkout, policy, program.parent],
+                         binds=binds, writable=[out], cwd=out, timeout=300)
     if result.status != 0:
         raise Unsupported("the TypeScript translator failed:\n" + result.output[-4000:])
     outcome = json.loads(result.output.splitlines()[-1])
@@ -260,7 +264,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction.files = outcome["files"]
     extraction.imports = outcome["imports"]
     extraction.checkout = checkout
-    extraction.vendor_dir = vendor_dir
+    extraction.binds = binds
     return extraction
 
 
@@ -286,9 +290,8 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
         "signatures": signatures, "files": extraction.files,
         "imports": extraction.imports}))
     program = translator().parent / "differential.mjs"
-    vendor = getattr(extraction, "vendor_dir", None)
-    node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent] + ([Path(vendor)] if vendor else []),
-                       writable=[out], cwd=out, timeout=60)
+    node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
+                       binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)
     if node.status != 0:
         return ["the comparison with Node did not run: " + node.output[-600:]], []
     notes = skipped + [f"not compared with Node: {item}" for item in json.loads(node.output.splitlines()[-1])["skipped"]]

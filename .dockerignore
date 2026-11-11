@@ -1,6 +1,8 @@
 *
 !proofci
 !toolchain/prune.py
+!toolchain/package-managers/package.json
+!toolchain/package-managers/package-lock.json
 !typescript/package.json
 !typescript/package-lock.json
 !typescript/translate.mjs
