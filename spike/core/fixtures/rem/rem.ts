@@ -105,11 +105,11 @@ export function pagesFor(sizes: number[], per: number): number {
   return sizes.reduce((acc, s) => acc + Math.ceil(s / per), 0);
 }
 
-// date-fns `validateDate`.
+// date-fns `validateDate`, with the table of month lengths written as conditions.
 export function validateDate(year: number, month: number, date: number): boolean {
-  const daysInMonths = [31, year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (month < 0 || month > 11) return false;
-  return date >= 1 && date <= daysInMonths[month];
+  const days = month === 1 ? (isLeapYearIndex(year) ? 29 : 28) : month === 3 || month === 5 || month === 8 || month === 10 ? 30 : 31;
+  return date >= 1 && date <= days;
 }
 
 export function weekOfYear(dayOfYear: number): number {
@@ -122,4 +122,58 @@ export function roundUpTo(n: number, step: number): number {
 
 export function remainderIsZero(a: number, b: number): boolean {
   return a % b === 0;
+}
+
+export function gcd(a: number, b: number): number {
+  let x = a < 0 ? -a : a;
+  let y = b < 0 ? -b : b;
+  while (y !== 0) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x;
+}
+
+export function halfIfEven(n: number): number {
+  return n % 2 === 0 ? n / 2 : n;
+}
+
+export function powersOfTwo(n: number): number {
+  let count = 0;
+  let rest = n;
+  while (rest !== 0 && rest % 2 === 0) {
+    rest = Math.trunc(rest / 2);
+    count += 1;
+  }
+  return count;
+}
+
+export function daysBetween(from: number, to: number): number {
+  return Math.trunc((to - from) / 86400000);
+}
+
+export function negativeLiterals(n: number): number {
+  return Math.floor(n / -2) + (n % -3) + Math.ceil(n / -5) + Math.trunc(n / -7);
+}
+
+export function residues(xs: number[]): number[] {
+  return xs.map(x => x % 7);
+}
+
+export function anyMultiple(xs: number[], d: number): boolean {
+  return xs.some(x => x % d === 0);
+}
+
+export function allOdd(xs: number[]): boolean {
+  return xs.every(x => x % 2 !== 0);
+}
+
+export function clockHour(hour: number): number {
+  const h = hour % 12;
+  return h === 0 ? 12 : h;
+}
+
+export function isEvenIndex(xs: number[], i: number): boolean {
+  return xs.length > 0 && i % 2 === 0 && i < xs.length;
 }

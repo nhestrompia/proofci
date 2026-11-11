@@ -67,6 +67,15 @@ KINDS = {
     "narrow-none": (r"\bJs\.unwrap (\S+)$", r"Js.unwrap (Option.filter (fun _ => false) \1)"),
     "some-every": (r"\bJs\.some_\b", "Js.every"),
     "every-some": (r"\bJs\.every\b", "Js.some_"),
+    # `%` and rounded division
+    "rem-sub": (r"\bJs\.rem\b", "Js.sub"),
+    "rem-mul": (r"\bJs\.rem\b", "Js.mul"),
+    "floor-trunc": (r"\bJs\.floorDiv\b", "Js.truncDiv"),
+    "floor-ceil": (r"\bJs\.floorDiv\b", "Js.ceilDiv"),
+    "trunc-floor": (r"\bJs\.truncDiv\b", "Js.floorDiv"),
+    "ceil-floor": (r"\bJs\.ceilDiv\b", "Js.floorDiv"),
+    "ceil-trunc": (r"\bJs\.ceilDiv\b", "Js.truncDiv"),
+    "rem-zero": (r"tmp\d+\.val = 0", "False"),
 }
 rng = random.Random(20261105)
 made = []

@@ -23,3 +23,13 @@ rem	rem.ts	validateDate
 rem	rem.ts	weekOfYear
 rem	rem.ts	roundUpTo
 rem	rem.ts	remainderIsZero
+rem	rem.ts	gcd
+rem	rem.ts	halfIfEven
+rem	rem.ts	powersOfTwo
+rem	rem.ts	daysBetween
+rem	rem.ts	negativeLiterals
+rem	rem.ts	residues
+rem	rem.ts	anyMultiple
+rem	rem.ts	allOdd
+rem	rem.ts	clockHour
+rem	rem.ts	isEvenIndex
