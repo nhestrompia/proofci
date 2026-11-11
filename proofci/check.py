@@ -44,6 +44,8 @@ class Outcome:
     assumes: list = field(default_factory=list)    # ProofCI models the function relies on
     warnings: list = field(default_factory=list)   # contract shape warnings
     assumed: list = field(default_factory=list)    # outside calls the proof rests on
+    effects: list = None            # `async` code only: the effects the proof ranges over
+    arguments_stable: list = None   # `async` code only: reads that rest on arguments staying unchanged
 
 
 @dataclass
@@ -120,6 +122,24 @@ def policy_changes(base_checkout, base, head_checkout, head):
     for gid in new["guarantees"]:
         if gid not in old["guarantees"]:
             changes.append(f"guarantee `{gid}` was added")
+    for call, signature in old["assumes"].items():
+        if call not in new["assumes"]:
+            changes.append(f"the assumed call `{call}` was removed")
+        elif new["assumes"][call] != signature:
+            changes.append(f"the assumed call `{call}` changed its signature")
+    for call in new["assumes"]:
+        if call not in old["assumes"]:
+            changes.append(f"the call `{call}` was assumed")
+    # Outside operations are what a proof about `async` code may lean on, so every difference
+    # counts, in either direction: a looser signature or a different `kind` changes the claim.
+    for effect_id, entry in old["effects"].items():
+        if effect_id not in new["effects"]:
+            changes.append(f"effect `{effect_id}` was removed")
+        elif new["effects"][effect_id] != entry:
+            changes.append(f"effect `{effect_id}` changed")
+    for effect_id in new["effects"]:
+        if effect_id not in old["effects"]:
+            changes.append(f"effect `{effect_id}` was added")
     if _tree_digest(base_checkout, base.lean, "Contract") != _tree_digest(head_checkout, head.lean, "Contract"):
         changes.append(f"the contract `{head.contract}` changed")
     return changes
@@ -172,7 +192,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         extraction, failures = None, {}
         if active.language == "typescript":
             try:
-                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout, active.assumes, vendor_dir)
+                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout, active.assumes, vendor_dir, active.effects)
                 failures = extraction.failures
                 if len(failures) == len(functions):
                     extraction = None
@@ -249,6 +269,9 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             o.assumes = [model_names[n] for n in item.get("models", []) if n in model_names]
             if extraction.assumed:
                 o.assumed = [f"{call}: {extraction.assumptions[call]}" for call in extraction.assumed.get(o.function, [])]
+            if extraction.effects is not None and o.function in extraction.effects:
+                o.effects = [f"{e}: {extraction.effect_text[e]}" for e in extraction.effects[o.function]]
+                o.arguments_stable = list(extraction.arguments_relied.get(o.function, []))
             if item.get("hypothesis_mentions_function"):
                 o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
                                   "may assume what it should prove")

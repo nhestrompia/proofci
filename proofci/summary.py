@@ -49,6 +49,20 @@ def markdown(report):
                   "These proofs hold only if each function below has this type and gives the same "
                   "result for the same arguments. ProofCI didn't check that code:", ""]
         lines += [f"- `{c}`" for c in outside]
+    awaited = [g for g in report["guarantees"] if g["status"] == "verified" and g.get("effects") is not None]
+    if awaited:
+        lines += ["", "### Outside effects", "",
+                  "These guarantees are about `async` code. Each holds for every answer the listed outside "
+                  "calls could give, and for every history of them, and no answer is assumed unless the "
+                  "contract states it as a hypothesis. ProofCI didn't check the code behind these calls:", ""]
+        for g in awaited:
+            lines.append(f"- `{g['target']}/{g['guarantee']}`: "
+                         + (", ".join(f"`{e}`" for e in g["effects"]) if g["effects"] else "no outside calls"))
+            lines.append("  - " + (
+                "relied on arguments not being changed by other code while a call is pending, "
+                "through: " + ", ".join(f"`{a}`" for a in g["arguments_stable"])
+                if g["arguments_stable"] else
+                "did not rely on arguments staying unchanged while a call is pending"))
     warned = [g for g in report["guarantees"] if g.get("warnings")]
     if warned:
         lines += ["", "### Contract warnings", "",

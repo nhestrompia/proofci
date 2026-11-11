@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, relative, sep } from "node:path";
 import ts from "typescript";
 import { protectedPaths } from "./paths.mjs";
+import { createHazards } from "./hazard.mjs";
 
 export class Unsupported extends Error {}
 
@@ -43,6 +44,7 @@ export const OPTIONS = {
 };
 
 
+const PROJECT_FILE = /\.[cm]?tsx?$/;
 const COMPILER_SWITCH = /@ts-(ignore|expect-error|nocheck)/;
 const SHADOW_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx"];
 const ROUNDING = { floor: "floorDiv", ceil: "ceilDiv", trunc: "truncDiv" };
@@ -106,14 +108,16 @@ const unwrap = node => {
 };
 
 export class Translator {
-  constructor(root, targets, paths = {}, repository = root, assumes = []) {
+  constructor(root, targets, paths = {}, repository = root, assumes = [], effects = []) {
     this.root = realpathSync(root);
     this.repository = realpathSync(repository);
     this.files = [...new Set(targets.map(t => join(this.root, t.split("::")[0])))];
     for (const file of this.files) {
       if (!existsSync(file)) throw new Unsupported(`${relative(this.root, file)} does not exist`);
     }
-    const build = options => this.assumedProgram(options, assumes);
+    // A package function listed under `effects` is declared the same way as an assumed one.
+    const outside = effects.filter(e => e.call && !PROJECT_FILE.test(e.call.split("::")[0]));
+    const build = options => this.assumedProgram(options, [...assumes, ...outside]);
     this.program = build({ ...OPTIONS, paths });
     this.checker = this.program.getTypeChecker();
     this.lenient = build({ ...OPTIONS, ...LENIENT, paths });
@@ -130,6 +134,14 @@ export class Translator {
     this.assumed = new Map();   // `module::name` -> its Lean name
     this.assumedBy = new Map(); // declaration -> what it relies on, through its calls
     this.current = [];
+    this.effects = new Map(effects.filter(e => e.call).map(e => [e.call, e])); // `module::name` -> its policy entry
+    this.otherEffects = effects.filter(e => !e.call); // `method` and `param` entries
+    this.effectOps = new Map();  // `module::name` -> { id, lean, args, result }
+    this.effectsBy = new Map();  // declaration -> the effect ids it can call, through its calls
+    this.argsBy = new Map();     // declaration -> the reads after an `await` that rest on stable arguments
+    this.typeTexts = new Set();  // the entries of `order` that declare types
+    this.usesWorld = false;      // some async function was translated
+    this.hazardsOf = null;
   }
 
   fail(node, message) {
@@ -291,6 +303,7 @@ export class Translator {
       const lines = fields.map(f => `  ${name(f.name)} : ${f.lean}`);
       const text = [`structure ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n");
       this.anonymous.set(key, { lean, kind: "record", fields: fields.map(f => f.name) });
+      this.typeTexts.add(text);
       this.order.push(text);
       this.shaped.push({ type, node });
     }
@@ -389,6 +402,7 @@ export class Translator {
     else shape = this.declareRecord(declaration, type, lean);
     this.types.set(key, { lean, ...shape });
     this.shaped.push({ type, node });
+    this.typeTexts.add(shape.text);
     this.order.push(shape.text);
     return lean;
   }
@@ -495,7 +509,9 @@ export class Translator {
         const described = this.describe(this.checker.getTypeAtLocation(p), p);
         return p.initializer && described.kind !== "optional" ? { kind: "optional", nothing: "undefined", inner: described } : described;
       }),
-      result: this.describe(this.checker.getReturnTypeOfSignature(signature), fn),
+      result: this.describe(this.isAsync(fn) ? this.promised(this.checker.getReturnTypeOfSignature(signature), fn)
+        : this.checker.getReturnTypeOfSignature(signature), fn),
+      ...(this.isAsync(fn) ? { async: true } : {}),
     };
   }
 
@@ -591,13 +607,15 @@ export class Translator {
     const missing = this.requireTypes ? this.untyped(declaration) : [];
     if (missing.length) throw this.fail(declaration, `add ${missing.join(" and ")}: functions a guarantee reaches must write out their types`);
     if (fn.asteriskToken) throw this.fail(fn, "generators are not supported");
-    if (fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) throw this.fail(fn, "`async` is not supported yet");
+    const isAsync = this.isAsync(fn);
     const lean = this.leanName(declaration, declaration.name.text);
-    const entry = { lean, pending: true, recursive: false };
+    const entry = { lean, pending: true, recursive: false, async: isAsync };
     this.functions.set(declaration, entry);
     this.current.push(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
-    const returns = this.checker.getReturnTypeOfSignature(signature);
+    const written = this.checker.getReturnTypeOfSignature(signature);
+    const returns = isAsync ? this.promised(written, fn) : written;
+    if (isAsync) this.checkAsync(declaration, fn);
     const scope = new Scope(this, fn);
     const prologue = [];
     const env = new Map();
@@ -607,12 +625,77 @@ export class Translator {
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
-    const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : Result ${result} := do`, ...body.map(l => `  ${l}`)];
+    if (isAsync && entry.recursive) throw this.fail(fn, "a recursive `async` function is not supported yet");
+    const monad = isAsync ? `Proofci.Effects.Eff ${result}` : `Result ${result}`;
+    const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
     this.current.pop();
     entry.pending = false;
     this.order.push(lines.join("\n"));
     return lean;
+  }
+
+  declareEffect(key, entry, signature, parameters, node) {
+    const known = this.effectOps.get(key);
+    if (known) return known;
+    const types = parameters.map(p => this.type(this.checker.getTypeOfSymbolAtLocation(p, node), node));
+    const args = types.length === 0 ? "Unit" : types.join(" × ");
+    const result = this.type(this.promised(signature.getReturnType(), node), node);
+    const op = { id: entry.id, key, kind: entry.kind, lean: name(entry.id), args, result };
+    this.effectOps.set(key, op);
+    return op;
+  }
+
+  isAsync(fn) {
+    return Boolean(fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword));
+  }
+
+  // `Promise<T>`, from the standard library, and its `T`.
+  promised(type, node) {
+    const declaration = type.symbol?.declarations?.[0];
+    if (type.symbol?.name !== "Promise" || !declaration || !this.program.isSourceFileDefaultLibrary(declaration.getSourceFile())) {
+      throw this.fail(node, "an `async` function must have a return type of the form `Promise<T>`");
+    }
+    return this.checker.getTypeArguments(type)[0];
+  }
+
+  // What the trusted rule (hazard.mjs) says about an `async` function, kept for the report.
+  checkAsync(declaration, fn) {
+    this.usesWorld = true;
+    if (fn.asteriskToken) throw this.fail(fn, "async generators are not supported");
+    this.hazardsOf ??= createHazards(ts, this.checker, this.program);
+    const found = this.hazardsOf(fn);
+    if (found.hazards.length) {
+      const first = found.hazards[0];
+      throw this.fail(first.node, `${first.message}, so the function can't be read as if nothing else ran between its \`await\`s`);
+    }
+    this.argsBy.set(declaration, new Set(found.arguments.map(a => a.name)));
+  }
+
+  // Records what the function being translated relies on, through an async call.
+  noteEffects(ids, args = []) {
+    const owner = this.current.at(-1);
+    if (!owner) return;
+    if (!this.effectsBy.has(owner)) this.effectsBy.set(owner, new Set());
+    for (const id of ids) this.effectsBy.get(owner).add(id);
+    if (!this.argsBy.has(owner)) this.argsBy.set(owner, new Set());
+    for (const name of args) this.argsBy.get(owner).add(name);
+  }
+
+  // The `Proofci.Effects` module: the policy's outside operations as one world, which every
+  // async function in this translation runs against.
+  worldBlock() {
+    const ops = [...this.effectOps.values()];
+    const arm = (name, body) => `  | .${name} => ${body}`;
+    return [
+      "namespace Proofci.Effects", "",
+      "inductive Op where", ...ops.map(o => `  | ${o.lean}`), ...(ops.length ? ["  deriving DecidableEq, Repr"] : []), "",
+      "@[reducible] def Arg : Op → Type", ...(ops.length ? ops.map(o => arm(o.lean, o.args)) : ["  | x => nomatch x"]), "",
+      "@[reducible] def Res : Op → Type", ...(ops.length ? ops.map(o => arm(o.lean, o.result)) : ["  | x => nomatch x"]), "",
+      "abbrev world : Js.World := ⟨Op, Arg, Res⟩", "",
+      "abbrev Eff : Type → Type := Js.Eff world", "",
+      "def call (op : Op) (arg : Arg op) : Eff (Res op) := Js.Eff.call (W := world) op arg", "",
+      "end Proofci.Effects"].join("\n");
   }
 
   // An outside call the policy lists. Opaque, so a proof holds for any function of
@@ -647,9 +730,12 @@ export class Translator {
     const scope = new Stub(this, fn);
     const generics = this.generics(fn);
     const params = [...generics, ...fn.parameters.map((p, index) => scope.parameter(p, index, [], new Map()))];
-    const result = this.type(this.checker.getReturnTypeOfSignature(signature), fn);
+    const isAsync = this.isAsync(fn);
+    const returned = this.checker.getReturnTypeOfSignature(signature);
+    const result = this.type(isAsync ? this.promised(returned, fn) : returned, fn);
+    if (isAsync) this.usesWorld = true;
     const lean = this.leanName(declaration, declaration.name.text);
-    this.order.push(`axiom ${lean} ${params.join(" ")} : Result ${result}`);
+    this.order.push(`axiom ${lean} ${params.join(" ")} : ${isAsync ? "Proofci.Effects.Eff" : "Result"} ${result}`);
     return lean;
   }
 
@@ -696,6 +782,7 @@ export class Scope {
     this.t = translator;
     this.checker = translator.checker;
     this.fn = fn;
+    this.async = Boolean(fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword));
     this.counter = 0;
     this.names = new Set();
     this.taken = new Set(); // Lean names used so far in this function
@@ -1049,7 +1136,7 @@ export class Scope {
       }
       return this.returning(first.expression, flow, env);
     }
-    if (ts.isThrowStatement(first)) return this.throwing(first);
+    if (ts.isThrowStatement(first)) return this.throwing(first, env);
     if (ts.isBreakStatement(first) || ts.isContinueStatement(first)) {
       if (first.label) throw this.t.fail(first, "labels are not supported");
       const leave = ts.isBreakStatement(first) ? flow.brk : flow.cont;
@@ -1088,7 +1175,8 @@ export class Scope {
 
   // A thrown value stops the function. `.panic` is only ever produced here, which
   // is how `try` tells a thrown exception from leaving the model.
-  throwing(statement) {
+  throwing(statement, env) {
+    if (this.async) return this.rejecting(statement, env);
     const thrown = unwrap(statement.expression);
     let simple = ts.isNewExpression(thrown);
     const walk = node => {
@@ -1098,6 +1186,24 @@ export class Scope {
     walk(thrown);
     if (!simple) throw this.t.fail(statement, "only `throw new SomeError(...)` is supported for now");
     return ["Result.fail .panic"];
+  }
+
+  // In `async` code a thrown error is an outcome: the promise rejects with it, and a `catch`
+  // can read it. Only `Error` objects are thrown values: `throw new Error(message)`, the other
+  // built-in error classes, and `throw e` for a caught `e`.
+  rejecting(statement, env) {
+    const thrown = unwrap(statement.expression);
+    if (ts.isIdentifier(thrown) && env.get(this.symbol(thrown))?.exn) return [`Js.Eff.throw ${env.get(this.symbol(thrown)).lean}`];
+    if (!ts.isNewExpression(thrown) || !ts.isIdentifier(thrown.expression) || this.isLocal(thrown.expression)
+      || !/^(Range|Type|Syntax|Reference|URI|Eval)?Error$/.test(thrown.expression.text)) {
+      throw this.t.fail(statement, "only `throw new Error(message)`, another built-in error class, or rethrowing a caught error is supported in `async` code");
+    }
+    const args = thrown.arguments ?? [];
+    if (args.length > 1) throw this.t.fail(thrown, "an error with options is not supported yet");
+    if (args.length && !this.isText(args[0])) throw this.t.fail(thrown, "the message of a thrown error must be a string");
+    const lines = [];
+    const message = args.length ? this.convert(args[0], this.typeOf(args[0]), env, lines) : this.text("");
+    return [...lines, `Js.Eff.throw ({ «name» := ${this.text(thrown.expression.text)}, message := ${message} } : Js.Exn)`];
   }
 
   variable(statement, rest, flow, env) {
@@ -1177,6 +1283,8 @@ export class Scope {
       this.update(target, op, ONE, next, lines);
     } else if (ts.isCallExpression(node)) {
       if (!this.mutation(node, next, lines)) this.expression(node, next, lines);
+    } else if (ts.isAwaitExpression(node)) {
+      this.expression(node, next, lines);
     } else {
       throw this.t.fail(node, "this statement is not supported yet");
     }
@@ -1344,6 +1452,7 @@ export class Scope {
   // `try`: the catch block runs only for a thrown exception. A value that left
   // the model stays a failure, so it can't be mistaken for one.
   attempt(statement, rest, flow, env) {
+    if (this.async) return this.settling(statement, rest, flow, env);
     if (statement.finallyBlock) throw this.t.fail(statement, "`finally` is not supported yet");
     const clause = statement.catchClause;
     if (clause.variableDeclaration && this.usedIn(clause.variableDeclaration, clause.block)) {
@@ -1366,6 +1475,51 @@ export class Scope {
     if (!vars) return ["Js.attempt (do", ...body];
     const after = new Map(env);
     return [`let ${this.pattern(vars, after)} ← Js.attempt (do`, ...body, ...this.block(rest, flow, after)];
+  }
+
+  // `try`/`catch`/`finally` in `async` code. A rejected `await` and a `throw` are caught; leaving the
+  // model (`Result.fail`) is not. The caught value is an `Error` object, and `catch (e)` can read
+  // its `name` and `message`, test `e instanceof Error`, or throw it again.
+  settling(statement, rest, flow, env) {
+    const clause = statement.catchClause;
+    const attempted = statement.tryBlock;
+    const cleanup = statement.finallyBlock;
+    if (this.assignedIn([attempted]).length) {
+      throw this.t.fail(attempted, "assigning to an outer variable inside `try` is not supported yet");
+    }
+    if (cleanup && (this.jumps(cleanup) || this.assignedIn([cleanup]).length)) {
+      throw this.t.fail(cleanup, "`finally` that returns, jumps or assigns an outer variable is not supported yet");
+    }
+    const bothReturn = this.jumps(attempted) || (clause && this.jumps(clause.block));
+    let inner = flow, vars = null;
+    if (!bothReturn) {
+      vars = clause ? this.assignedIn([clause.block]) : [];
+      inner = this.joinFlow(vars, flow);
+    } else if (!this.exits(attempted) || (clause && !this.exits(clause.block))) {
+      throw this.t.fail(statement, "`try` must either always return or never return for now");
+    }
+    // `return p` inside `try` would leave the promise uncaught; every call here is awaited, so `return await` is what runs.
+    const body = this.indent(this.block([...attempted.statements], inner, new Map(env)));
+    let code = ["(do", ...body, ")"];
+    if (clause) {
+      const handlerEnv = new Map(env);
+      const declaration = clause.variableDeclaration;
+      let parameter = "_";
+      if (declaration) {
+        if (!ts.isIdentifier(declaration.name)) throw this.t.fail(clause, "a destructured catch variable is not supported");
+        parameter = this.rebind(this.symbol(declaration.name), handlerEnv, { exn: true });
+      }
+      const handler = this.indent(this.block([...clause.block.statements], inner, handlerEnv));
+      code = ["Js.Eff.tryCatch", ...this.indent(code), `  (fun ${parameter} => do`, ...this.indent(handler), "  )"];
+    }
+    if (cleanup) {
+      const done = this.indent(this.block([...cleanup.statements], this.joinFlow([], flow), new Map(env)));
+      code = ["Js.Eff.tryFinally", ...this.indent(clause ? ["(", ...this.indent(code), ")"] : code), "  (do", ...this.indent(done), "  )"];
+    }
+    if (bothReturn) return code;
+    const after = new Map(env);
+    const pattern = vars.length ? this.pattern(vars, after) : "_";
+    return [`let ${pattern} ← ${code[0]}`, ...code.slice(1), ...this.block(rest, flow, after)];
   }
 
   usedIn(declaration, node) {
@@ -1400,8 +1554,8 @@ export class Scope {
     };
     const lines = step(body, inside, leave, again);
     const result = returns ? `Sum (${flow.result}) (${afterType})` : afterType;
-    const header = `(Aeneas.Std.loop (fun (state : ${stateType}) => match state with | ${pattern} => do`;
-    const call = [header, ...this.indent(lines), `) ${this.tuple(vars, env)} : Result (${result}))`];
+    const header = `(${this.async ? "Js.Eff.loop" : "Aeneas.Std.loop"} (fun (state : ${stateType}) => match state with | ${pattern} => do`;
+    const call = [header, ...this.indent(lines), `) ${this.tuple(vars, env)} : ${this.async ? "Proofci.Effects.Eff" : "Result"} (${result}))`];
     const after = new Map(env);
     if (!returns) return [`let ${this.pattern(leaving, after)} ← ${call[0]}`, ...call.slice(1), ...this.block(rest, flow, after)];
     if (!flow.ret) throw this.t.fail(statement, "`return` here is not supported yet");
@@ -1914,6 +2068,7 @@ export class Scope {
       return item && this.nullable(item) ? `(${read}).join` : `(${read})`;
     }
     if (ts.isNonNullExpression(node)) return this.nonNull(node, env, lines);
+    if (ts.isAwaitExpression(node)) return this.awaiting(node, env, lines);
     if (ts.isCallExpression(node)) return this.call(node, env, lines);
     if (ts.isConditionalExpression(node)) return this.ternary(node, env, lines);
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return this.nullish(node, env, lines);
@@ -2120,6 +2275,10 @@ export class Scope {
     const object = unwrap(node.expression);
     const known = env.get(this.fieldKey(node));
     if (known) return known.lean;
+    if (ts.isIdentifier(object) && env.get(this.symbol(object))?.exn) {
+      if (node.name.text !== "message" && node.name.text !== "name") throw this.t.fail(node, `\`.${node.name.text}\` of a caught error is not supported; only \`message\` and \`name\` are`);
+      return `${env.get(this.symbol(object)).lean}.${name(node.name.text)}`;
+    }
     if (ts.isIdentifier(object) && object.text === "Number" && !this.isLocal(object)) {
       if (node.name.text === "MAX_SAFE_INTEGER") return this.t.number(Number.MAX_SAFE_INTEGER, node);
       if (node.name.text === "MIN_SAFE_INTEGER") return this.t.number(Number.MIN_SAFE_INTEGER, node);
@@ -2222,9 +2381,15 @@ export class Scope {
     return fresh;
   }
 
-  call(node, env, lines) {
+  call(node, env, lines, awaited = false) {
     const callee = unwrap(node.expression);
     if (node.questionDotToken) throw this.t.fail(node, "optional calls are not supported yet");
+    if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Promise" && !this.isLocal(callee.expression)) {
+      throw this.t.fail(node, `\`Promise.${callee.name.text}\` is not supported yet`);
+    }
+    if (ts.isPropertyAccessExpression(callee) && ["then", "catch", "finally"].includes(callee.name.text) && this.isPromise(callee.expression)) {
+      throw this.t.fail(node, `\`.${callee.name.text}(...)\` on a promise is not supported yet; use \`await\``);
+    }
     if (ts.isOptionalChain(node)) {
       const chained = this.optionalChain(node, env, lines);
       if (chained) return chained;
@@ -2241,15 +2406,31 @@ export class Scope {
       return this.toText(node.arguments[0], env, lines);
     }
     const signature = this.checker.getResolvedSignature(node);
+    const effect = this.effectFor(callee, node);
+    if (effect) {
+      if (!awaited) throw this.t.fail(node, `\`${effect.key}\` returns a promise that is never awaited`);
+      return this.effectCall(effect, signature, node, env, lines);
+    }
     const outside = this.outsideName(callee);
     if (outside && this.t.assumes.has(outside)) return this.assumedCall(outside, signature, node, env, lines);
     let declaration = signature?.declaration;
     if (declaration && !ts.isFunctionDeclaration(declaration)) declaration = declaration.parent;
     declaration = this.t.resolve(declaration);
-    if (!declaration) throw this.t.fail(node, "this call isn't to a function the translator can see");
-    if (declaration.getSourceFile().isDeclarationFile) throw this.t.fail(node, "this function has no source in the package");
+    if (!declaration) {
+      throw this.t.fail(node, awaited ? "this `await` is not on an `async` function of the package or an `effects` entry"
+        : "this call isn't to a function the translator can see");
+    }
+    if (declaration.getSourceFile().isDeclarationFile) throw this.t.fail(node, awaited
+      ? "this `await` is on a function with no source in the package, and `effects` doesn't list it" : "this function has no source in the package");
+    const calleeAsync = this.t.isAsync(this.t.bodyOf(declaration));
+    if (calleeAsync && !awaited) throw this.t.fail(node, "an `async` function is called without `await`, so its promise would be dropped or raced");
+    if (awaited && !calleeAsync) throw this.t.fail(node, "`await` on a call to a function that isn't `async`");
     const lean = this.t.declareFunction(declaration);
     this.t.noteAssumed(this.t.assumedBy.get(declaration) ?? []);
+    if (calleeAsync) {
+      const name = this.t.bodyOf(declaration) && declaration.name?.text;
+      this.t.noteEffects(this.t.effectsBy.get(declaration) ?? [], [...this.t.argsBy.get(declaration) ?? []].map(a => `${name}: ${a}`));
+    }
     const parameters = signature.getParameters();
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
     const args = parameters.map((parameter, index) => {
@@ -2325,7 +2506,23 @@ export class Scope {
     if (!first?.questionDotToken || links.at(-1) !== node) return undefined;
     const base = unwrap(first.expression);
     const type = this.typeOf(base);
-    if (!this.nullable(type) || this.leanOf(this.checker.getNonNullableType(type), base) !== "Js.Str") return undefined;
+    if (!this.nullable(type)) return undefined;
+    // `xs?.includes(v)` on an optional array of strings or numbers.
+    const bare = this.checker.getNonNullableType(type);
+    if (this.checker.isArrayType(bare) && links.length === 1 && unwrap(node.expression).name.text === "includes" && node.arguments.length === 1) {
+      const item = this.checker.getTypeArguments(bare)[0];
+      if (item.flags & ts.TypeFlags.Object) throw this.t.fail(node, "`includes` on objects compares identity, which is not supported");
+      const path = n => { n = unwrap(n); return ts.isIdentifier(n) || (ts.isPropertyAccessExpression(n) && path(n.expression)); };
+      if (!path(base)) throw this.t.fail(node, "`?.` on an expression is not supported yet");
+      const present = this.fresh(), arm = [];
+      const subject = this.expression(base, env, lines);
+      const value = `(Js.includes ${present} ${this.convert(node.arguments[0], item, env, arm)})`;
+      const fresh = this.fresh();
+      lines.push(`let ${fresh} ← match ${subject} with`, `  | some ${present} => do`,
+        ...arm.map(line => `    ${line}`), `    Result.ok (some ${value})`, "  | none => Result.ok none");
+      return fresh;
+    }
+    if (this.leanOf(bare, base) !== "Js.Str") return undefined;
     if (!ts.isIdentifier(base) && !this.isFieldPath(base)) throw this.t.fail(node, "`?.` on an expression is not supported yet");
     const present = this.fresh(), arm = [];
     let value = present;
@@ -2463,6 +2660,68 @@ export class Scope {
     return this.bind(`_root_.${lean} ${args.join(" ")}`, lines);
   }
 
+  isPromise(node) {
+    const symbol = this.typeOf(node).symbol;
+    const declaration = symbol?.declarations?.[0];
+    return symbol?.name === "Promise" && Boolean(declaration) && this.t.program.isSourceFileDefaultLibrary(declaration.getSourceFile());
+  }
+
+  awaiting(node, env, lines) {
+    if (!this.async) throw this.t.fail(node, "`await` outside an `async` function");
+    const inner = unwrap(node.expression);
+    if (!ts.isCallExpression(inner)) throw this.t.fail(node, "`await` is only supported on a call for now");
+    return this.call(inner, env, lines, true);
+  }
+
+  // The `effects` entry for a call, if the policy lists it. A project function is named by its
+  // file and name, a package function by the module it is imported from.
+  effectFor(callee, node) {
+    if (!ts.isIdentifier(callee)) {
+      if (this.t.otherEffects.length && ts.isPropertyAccessExpression(callee)) {
+        throw this.t.fail(node, "a call through an object or a function-typed parameter would be an `effects` entry of the `method` or `param` form, which needs handle and function types, and isn't supported yet");
+      }
+      return undefined;
+    }
+    let symbol = this.checker.getSymbolAtLocation(callee);
+    if (!symbol) return undefined;
+    const outside = this.outsideName(callee);
+    if (symbol.flags & ts.SymbolFlags.Alias) symbol = this.checker.getAliasedSymbol(symbol);
+    const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+    if (declaration && !declaration.getSourceFile().isDeclarationFile) {
+      const text = ts.isFunctionDeclaration(declaration) ? declaration.name?.text
+        : ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) ? declaration.name.text : undefined;
+      const file = relative(this.t.root, realpathSync(declaration.getSourceFile().fileName)).split(sep).join("/");
+      const key = text && `${file}::${text}`;
+      if (key && this.t.effects.has(key)) return { key, entry: this.t.effects.get(key) };
+    }
+    return outside && this.t.effects.has(outside) ? { key: outside, entry: this.t.effects.get(outside) } : undefined;
+  }
+
+  // `await f(args)` for a listed outside call: one step of the oracle, recorded in the history.
+  effectCall({ key, entry }, signature, node, env, lines) {
+    const site = signature.declaration;
+    if (signature.typeParameters?.length || signature.target || site?.typeParameters?.length) throw this.t.fail(node, `\`${key}\` is generic, so it can't be an effect yet`);
+    if (site?.parameters.some(p => p.dotDotDotToken)) throw this.t.fail(node, `\`${key}\` takes a rest parameter, so it can't be an effect yet`);
+    const found = this.checker.signatureToString(signature);
+    const plain = text => text.replace(/\s+/g, " ").trim();
+    if (plain(found) !== plain(entry.signature)) {
+      const hint = /\bany\b/.test(found) ? ", and narrowing `any` in an entry isn't supported yet" : "";
+      throw this.t.fail(node, `\`${key}\` has the signature \`${found}\`, but \`effects\` lists \`${entry.signature}\`${hint}`);
+    }
+    const parameters = signature.getParameters();
+    if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
+    const op = this.t.declareEffect(key, entry, signature, parameters, node);
+    const args = parameters.map((parameter, index) => {
+      const argument = node.arguments[index];
+      if (argument) return this.convert(argument, this.checker.getTypeOfSymbolAtLocation(parameter, node), env, lines);
+      if (!site.parameters[index].questionToken && !site.parameters[index].initializer) throw this.t.fail(node, "a missing argument");
+      return "none";
+    });
+    this.t.noteEffects([entry.id]);
+    const arg = args.length === 0 ? "()" : args.length === 1 ? args[0] : `(${args.join(", ")})`;
+    return this.bind(`Proofci.Effects.call .${op.lean} ${arg}`, lines);
+  }
+
   bindCallback(method, callback, rest, lines) {
     const fresh = this.fresh();
     lines.push(`let ${fresh} ← Js.${method} (${callback[0]}`, ...callback.slice(1), `  ) ${rest}`);
@@ -2537,6 +2796,11 @@ export class Scope {
           return `${this.expression(node.left, env, lines)} ${ORDER[op]} ${this.expression(node.right, env, lines)}`;
         }
         return `${this.valueOf(node.left, env, lines)} ${ORDER[op]} ${this.valueOf(node.right, env, lines)}`;
+      }
+      if (op === ts.SyntaxKind.InstanceOfKeyword) {
+        const left = unwrap(node.left), right = unwrap(node.right);
+        if (ts.isIdentifier(left) && env.get(this.symbol(left))?.exn && ts.isIdentifier(right) && right.text === "Error" && !this.isLocal(right)) return "True";
+        throw this.t.fail(node, "`instanceof` is only supported on a caught error and `Error`");
       }
       if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) return this.logical(node, env, lines);
       if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
@@ -2681,20 +2945,22 @@ export function findDeclaration(translator, target) {
   throw new Unsupported(`\`${functionName}\` is not a top-level function in ${path}`);
 }
 
-export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes, assumes }) {
+export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes, assumes, effects }) {
   const resolved = policyRoot ? protectedPaths(policyRoot, repository) : paths;
-  const translator = new Translator(root, targets, resolved, repository, assumes);
+  const translator = new Translator(root, targets, resolved, repository, assumes, effects);
   translator.requireTypes = Boolean(requireTypes);
   const failures = {};
   const names = {};
   const signatures = {};
   const assumed = {};
+  const effectsUsed = {};
+  const argumentsRelied = {};
   let fatal = null;
   for (const target of targets) {
     const snapshot = {
       order: translator.order.length, types: new Map(translator.types),
       functions: new Map(translator.functions), constants: new Map(translator.constants),
-      assumed: new Map(translator.assumed),
+      assumed: new Map(translator.assumed), effectOps: new Map(translator.effectOps), anonymous: new Map(translator.anonymous),
     };
     let declaration;
     try {
@@ -2702,6 +2968,10 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       names[target] = translator.declareFunction(declaration);
       signatures[target] = translator.signature(declaration);
       assumed[target] = [...translator.assumedBy.get(declaration) ?? []].sort();
+      if (translator.isAsync(translator.bodyOf(declaration))) {
+        effectsUsed[target] = [...translator.effectsBy.get(declaration) ?? []].sort();
+        argumentsRelied[target] = [...translator.argsBy.get(declaration) ?? []].sort();
+      }
     } catch (error) {
       if (!(error instanceof Unsupported)) throw error;
       failures[target] = error.message;
@@ -2710,6 +2980,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       translator.functions = snapshot.functions;
       translator.assumed = snapshot.assumed;
       translator.constants = snapshot.constants;
+      translator.effectOps = snapshot.effectOps;
+      translator.anonymous = snapshot.anonymous;
       try {
         if (declaration) names[target] = translator.stub(declaration);
       } catch (stubError) {
@@ -2718,7 +2990,11 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       }
     }
   }
-  const header = ["import Aeneas", "import ProofciJs", "", "open Aeneas Aeneas.Std Result", ""];
+  const header = ["import Aeneas", "import ProofciJs", ...(translator.usesWorld ? ["import ProofciAsync"] : []), "", "open Aeneas Aeneas.Std Result", ""];
+  // The world lists every effect any async function calls, so it comes after all types and before the code.
+  const order = translator.usesWorld
+    ? [...translator.order.filter(t => translator.typeTexts.has(t)), translator.worldBlock(), ...translator.order.filter(t => !translator.typeTexts.has(t))]
+    : translator.order;
   const reached = [...translator.fileChecks.keys()];
   const packages = Object.fromEntries([...translator.packages.values()].filter(Boolean).map(p => [p.name, p.version]));
   const local = file => relative(translator.root, realpathSync(file));
@@ -2726,7 +3002,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   const records = () => translator.shaped.flatMap(({ type, node }) => {
     try { return [translator.describe(type, node)]; } catch { return []; }
   });
-  return { module, source: `${[...header, ...translator.order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, packages, records,
+  const effectList = [...translator.effectOps.values()].map(({ id, key, kind }) => ({ id, call: key, kind }));
+  return { module, source: `${[...header, ...order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, effects: effectsUsed, argumentsRelied, effectList, packages, records,
     files: reached.map(f => local(f.fileName)),
     imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
 }

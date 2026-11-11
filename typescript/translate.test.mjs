@@ -815,3 +815,239 @@ interface Bag { count: number; [key: string]: number }\n`;
   rejects(`${types}export function f(b: Bag): Bag { return { ...b, count: 1 }; }`, /spreading a value with an index signature/);
   rejects(`${types}export function f(b: Bag): number { return Object.keys(b).length; }`, /Object|not supported|unsupported|call/);
 });
+
+// ---------------------------------------------------------------------------------------- async
+
+const WORLD = `export interface Link { id: string; userId: string | null }
+export async function getLink(id: string): Promise<Link | null> { throw new Error("outside"); }
+export async function save(id: string, name: string): Promise<void> { throw new Error("outside"); }
+export async function count(): Promise<number> { throw new Error("outside"); }\n`;
+const EFFECTS = [
+  { id: "getLink", call: "world.ts::getLink", signature: "(id: string): Promise<Link | null>", kind: "read" },
+  { id: "save", call: "world.ts::save", signature: "(id: string, name: string): Promise<void>", kind: "write" },
+  { id: "count", call: "world.ts::count", signature: "(): Promise<number>", kind: "read" },
+];
+
+function runAsync(body, { effects = EFFECTS, world = WORLD, target = "f" } = {}) {
+  const root = join(dir, `p${count++}`);
+  mkdirSync(root);
+  writeFileSync(join(root, "world.ts"), world);
+  writeFileSync(join(root, "a.ts"), `import { getLink, save, count } from "./world";\nimport type { Link } from "./world";\n${body}\n`);
+  return translate({ root, module: "M", targets: [`a.ts::${target}`], requireTypes: true, effects });
+}
+
+function asyncEmits(body, ...fragments) {
+  const result = runAsync(body);
+  assert.deepEqual(result.failures, {}, body);
+  assert.equal(result.fatal, null);
+  for (const fragment of fragments) assert.ok(result.source.includes(fragment), `${fragment}\nin\n${result.source}`);
+  return result;
+}
+
+function asyncRejects(body, pattern, options) {
+  const result = runAsync(body, options);
+  const reason = result.failures["a.ts::f"] ?? result.fatal;
+  assert.ok(reason, `accepted:\n${body}`);
+  assert.match(reason, pattern);
+}
+
+test("an awaited call listed under effects is one step of the world, recorded in the history", () => {
+  const result = asyncEmits(`export async function f(id: string): Promise<boolean> {
+    const link = await getLink(id);
+    return link !== null;
+  }`, "import ProofciAsync", "namespace Proofci.Effects", "| getLink", "Proofci.Effects.call .getLink id",
+    ": Proofci.Effects.Eff Bool := do", "  | .getLink => (Option _root_.world.Link)");
+  assert.deepEqual(result.effects["a.ts::f"], ["getLink"]);
+  assert.equal(result.signatures["a.ts::f"].async, true);
+  assert.equal(result.signatures["a.ts::f"].result.kind, "boolean");
+});
+
+test("the world lists only the effects that were awaited, with the argument types", () => {
+  const { source } = asyncEmits(`export async function f(id: string): Promise<number> {
+    await save(id, "x");
+    return await count();
+  }`, "| save", "| count", "Js.Str × Js.Str", "Proofci.Effects.call .save (id, (js!\"x\"))");
+  assert.doesNotMatch(source, /getLink/);
+});
+
+test("a function with no async code is translated as before, without the world", () => {
+  const result = run("export function f(a: number) { return a + 1; }");
+  assert.doesNotMatch(result.source, /Proofci\.Effects|ProofciAsync/);
+});
+
+test("an effect's signature has to be the one in the policy", () => {
+  asyncRejects(`export async function f(id: string): Promise<boolean> { return (await getLink(id)) !== null; }`,
+    /lists `\(id: string\): Promise<Link \| undefined>`/, {
+      effects: [{ ...EFFECTS[0], signature: "(id: string): Promise<Link | undefined>" }] });
+});
+
+test("an awaited async function that is not listed is translated, and one that can't be is refused", () => {
+  // Its body is part of the proof, so what it does is not left to the world.
+  const result = asyncEmits(`export async function f(id: string): Promise<number> { return await count(); }`);
+  assert.equal(runAsync(`export async function f(id: string): Promise<number> { return await count(); }`, { effects: [] }).failures["a.ts::f"], undefined);
+  assert.deepEqual(result.effects["a.ts::f"], ["count"]);
+  const opaque = `export async function count(): Promise<number> { return await Promise.resolve(1); }\n`;
+  asyncRejects(`export async function f(id: string): Promise<number> { return await count(); }`, /Promise\.resolve|not supported/, { effects: [], world: opaque });
+  asyncRejects(`import { readFile } from "fs/promises";
+    export async function f(id: string): Promise<number> { return (await readFile(id)).length; }`, /no source in the package|TypeScript error|Cannot find|effects/, { effects: [] });
+});
+
+test("a promise that is never awaited is refused", () => {
+  asyncRejects(`export async function f(id: string): Promise<void> { save(id, "x"); }`, /never awaited/);
+  asyncRejects(`async function g(id: string): Promise<void> { return; }
+    export async function f(id: string): Promise<void> { g(id); }`, /without `await`/);
+  asyncRejects(`async function g(id: string): Promise<number> { return 1; }
+    export function f(id: string): number { return g(id) as unknown as number; }`, /without `await`|type assertions|not supported/);
+});
+
+test("Promise.all, .then and the rest fail closed with a reason", () => {
+  asyncRejects(`export async function f(id: string): Promise<void> { await Promise.all([save(id, "a"), save(id, "b")]); }`, /`Promise.all` is not supported yet/);
+  asyncRejects(`export async function f(id: string): Promise<void> { await save(id, "a").then(() => 1); }`, /`\.then\(\.\.\.\)` on a promise/);
+  asyncRejects(`export async function f(id: string): Promise<void> { await new Promise<void>(r => setTimeout(r, 5)); }`, /await.*call|not supported/);
+  asyncRejects(`export async function f(ids: string[]): Promise<void> { for await (const x of ids) { await save(x, "a"); } }`, /for await/);
+  asyncRejects(`export async function* f(id: string): Promise<void> { await save(id, "a"); }`, /generators|Promise|TypeScript error/);
+});
+
+test("an async function has to write Promise<T> as its return type", () => {
+  asyncRejects(`export async function f(id: string) { return await count(); }`, /add a return type of `Promise<number>`/);
+});
+
+test("calls through an object or a function-typed parameter are not effects yet", () => {
+  asyncRejects(`export async function f(deps: { load: () => Promise<number> }): Promise<number> { return await deps.load(); }`,
+    /method.*param|handle|not supported/, {
+      effects: [...EFFECTS, { id: "load", param: "deps.load", signature: "(): Promise<number>", kind: "read" }] });
+});
+
+test("reading shared state that other code may change after an await is refused", () => {
+  const world = `${WORLD}\n`;
+  asyncRejects(`let total = 0;\nexport async function f(id: string): Promise<number> { await save(id, "x"); return total; }`, /module-level `let`/);
+  asyncRejects(`const cache: string[] = [];\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return cache.length > 0; }`,
+    /module-level object that other code may change/, { world });
+  // Before the first await there is nothing to interleave with, and immutable data never changes.
+  asyncEmits(`const LIMIT = 5;\nconst NAMES: readonly string[] = ["a", "b"];\nexport async function f(id: string): Promise<boolean> {
+    await save(id, "x");
+    return NAMES.length < LIMIT;
+  }`);
+});
+
+test("a read after an await in a loop counts as after", () => {
+  asyncRejects(`const cache: string[] = [];\nexport async function f(ids: string[]): Promise<number> {
+    let n = 0;
+    for (const id of ids) {
+      n += cache.length;
+      await save(id, "x");
+    }
+    return n;
+  }`, /module-level object/);
+});
+
+test("the lost-update pattern is refused: read shared state, await, write it back", () => {
+  asyncRejects(`let stored = 0;\nexport async function f(id: string): Promise<number> {
+    const before = stored;
+    await save(id, "x");
+    stored = before + 1;
+    return stored;
+  }`, /module-level `let`|module-level/);
+});
+
+test("a function that reads a mutable argument after an await says so; primitives and readonly types don't", () => {
+  const first = asyncEmits(`interface Who { id: string; tags: string[] }
+    export async function f(who: Who, n: number): Promise<boolean> {
+      const link = await getLink(who.id);
+      return link !== null && who.tags.length > n;
+    }`);
+  assert.deepEqual(first.argumentsRelied["a.ts::f"], ["who"]);
+  const second = asyncEmits(`interface Who { readonly id: string; readonly tags: readonly string[] }
+    export async function f(who: Who, n: number): Promise<boolean> {
+      const link = await getLink(who.id);
+      return link !== null && who.tags.length > n;
+    }`);
+  assert.deepEqual(second.argumentsRelied["a.ts::f"], []);
+  const third = asyncEmits(`export async function f(id: string, n: number): Promise<boolean> {
+      const link = await getLink(id);
+      return link !== null && n > 1;
+    }`);
+  assert.deepEqual(third.argumentsRelied["a.ts::f"], []);
+  // Read before the await only: nothing to rely on.
+  const fourth = asyncEmits(`interface Who { id: string; tags: string[] }
+    export async function f(who: Who): Promise<boolean> {
+      const n = who.tags.length;
+      const link = await getLink(who.id);
+      return link !== null && n > 1;
+    }`);
+  assert.deepEqual(fourth.argumentsRelied["a.ts::f"], []);
+});
+
+test("a callee's reliance on arguments and its effects reach the caller", () => {
+  const result = asyncEmits(`interface Who { id: string; tags: string[] }
+    async function g(who: Who): Promise<boolean> { const l = await getLink(who.id); return l !== null && who.tags.length > 1; }
+    export async function f(w: Who): Promise<boolean> { return await g(w); }`);
+  assert.deepEqual(result.effects["a.ts::f"], ["getLink"]);
+  assert.deepEqual(result.argumentsRelied["a.ts::f"], ["g: who"]);
+});
+
+test("throw, try, catch and finally are outcomes of the computation", () => {
+  asyncEmits(`export async function f(id: string): Promise<void> {
+    if (id === "") throw new Error("empty id");
+    await save(id, "x");
+  }`, "Js.Eff.throw ({ «name» := (js!\"Error\"), message := (js!\"empty id\") } : Js.Exn)");
+  asyncEmits(`export async function f(id: string): Promise<string> {
+    try {
+      const link = await getLink(id);
+      return link === null ? "none" : link.id;
+    } catch (e) {
+      if (e instanceof Error) return e.message;
+      throw e;
+    }
+  }`, "Js.Eff.tryCatch", "(fun e => do", "e.message", "Js.Eff.throw e");
+  asyncEmits(`export async function f(id: string): Promise<number> {
+    try {
+      return await count();
+    } finally {
+      await save(id, "done");
+    }
+  }`, "Js.Eff.tryFinally");
+  asyncRejects(`export async function f(id: string): Promise<void> { throw "text"; }`, /only `throw new Error\(message\)`/);
+  asyncRejects(`export async function f(id: string): Promise<void> { throw new Error(1 as unknown as string, { cause: id }); }`, /options|type assertions/);
+  asyncRejects(`export async function f(id: string): Promise<string> {
+    try { await save(id, "x"); return "a"; } catch (e) { if (e instanceof Error) return e.stack ?? ""; throw e; }
+  }`, /only `message` and `name`|not supported/);
+});
+
+test("an await inside a loop keeps the history in the loop's state", () => {
+  asyncEmits(`export async function f(ids: string[]): Promise<number> {
+    let n = 0;
+    for (const id of ids) {
+      const link = await getLink(id);
+      if (link !== null) n += 1;
+    }
+    return n;
+  }`, "Js.Eff.loop", ": Proofci.Effects.Eff (");
+  asyncEmits(`export async function f(limit: number): Promise<number> {
+    let tries = 0;
+    while (tries < limit) {
+      if ((await count()) > 2) return tries;
+      tries += 1;
+    }
+    return -1;
+  }`, "Js.Eff.loop");
+});
+
+test("an await in a short-circuited position runs only when the left side lets it", () => {
+  asyncEmits(`export async function f(id: string, ok: boolean): Promise<boolean> {
+    return ok && (await getLink(id)) !== null;
+  }`, "if ok = true then");
+});
+
+test("a failed async target leaves a declaration the contract can still use", () => {
+  const result = runAsync(`export async function f(id: string): Promise<void> { await Promise.all([save(id, "a")]); }`);
+  assert.ok(result.failures["a.ts::f"]);
+  assert.match(result.source, /axiom a\.f \(id : Js\.Str\) : Proofci\.Effects\.Eff Unit/);
+  assert.match(result.source, /import ProofciAsync/);
+});
+
+test("an effect can be a project function whose body is never read", () => {
+  const world = `${WORLD}\nexport async function weird(id: string): Promise<number> { return [1].reduce((a, b) => a + b, 0) + (await new Promise<number>(r => r(1))); }\n`;
+  asyncEmits(`export async function f(id: string): Promise<number> { return await count(); }`);
+  void world;
+});

@@ -1,0 +1,8 @@
+[
+  { "id": "getLink", "call": "world.ts::getLink", "signature": "(linkId: string): Promise<Link | null>", "kind": "read" },
+  { "id": "getTeamUser", "call": "world.ts::getTeamUser", "signature": "(teamId: string, userId: string): Promise<TeamUser | null>", "kind": "read" },
+  { "id": "getRow", "call": "world.ts::getRow", "signature": "(id: string): Promise<Row | null>", "kind": "read" },
+  { "id": "loadSettings", "call": "world.ts::loadSettings", "signature": "(id: string): Promise<Settings>", "kind": "read" },
+  { "id": "sendMail", "call": "world.ts::sendMail", "signature": "(id: string): Promise<void>", "kind": "write" },
+  { "id": "audit", "call": "world.ts::audit", "signature": "(id: string): Promise<void>", "kind": "write" }
+]

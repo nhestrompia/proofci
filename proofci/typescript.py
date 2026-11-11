@@ -313,7 +313,7 @@ def missing_packages_hint(checkout: Path, package_rel: str, vendor_dir=None):
 
 
 def extract(checkout: Path, package_rel: str, work: Path, functions, policy_checkout=None, assumes=(),
-            vendor_dir=None) -> Extraction:
+            vendor_dir=None, effects=()) -> Extraction:
     original = checkout
     checkout, binds = prepare(checkout, work, vendor_dir)
     root = checkout / package_rel
@@ -325,7 +325,8 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     policy = Path(policy_checkout or checkout)
     config.write_text(json.dumps({"root": str(root), "module": module, "out": str(out), "targets": list(functions),
                                   "repository": str(checkout), "policyRoot": str(policy), "requireTypes": True,
-                                  "assumes": [{"call": call, "signature": signature} for call, signature in assumes]}))
+                                  "assumes": [{"call": call, "signature": signature} for call, signature in assumes],
+                                  "effects": [e.entry() for e in effects]}))
     program = translator()
     result = sandbox.run(["node", str(program), str(config)], readable=[checkout, policy, program.parent],
                          binds=binds, writable=[out], cwd=out, timeout=300)
@@ -341,6 +342,9 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction.signatures = outcome["signatures"]
     extraction.assumptions = {call: signature for call, signature in assumes}
     extraction.assumed = outcome["assumed"]
+    extraction.effects = outcome.get("effects") or {}
+    extraction.arguments_relied = outcome.get("argumentsRelied") or {}
+    extraction.effect_text = {e.id: f"{e.kind} {e.target}{e.signature}" for e in effects}
     extraction.files = outcome["files"]
     extraction.imports = outcome["imports"]
     for function, reason in list(extraction.failures.items()):
@@ -361,8 +365,11 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     out = work / "differential"
     out.mkdir()
     # The model of an assumed call has no body to run, so nothing can be compared.
-    signatures = {t: s for t, s in extraction.signatures.items() if not extraction.assumed.get(t)}
-    skipped = [f"not compared with Node: {t} relies on an assumed outside call" for t in extraction.signatures if t not in signatures]
+    signatures = {t: s for t, s in extraction.signatures.items() if not extraction.assumed.get(t) and not s.get("async")}
+    skipped = [f"not compared with Node: {t} relies on an assumed outside call"
+               for t in extraction.signatures if extraction.assumed.get(t)]
+    # An `async` function runs against an oracle, which this comparison has no stand-in for yet.
+    skipped += [f"not compared with Node: {t} is async" for t, s in extraction.signatures.items() if s.get("async")]
     if not signatures:
         return [], skipped
     if cases is None:  # each case takes about 8 ms to replay

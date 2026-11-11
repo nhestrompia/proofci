@@ -30,6 +30,7 @@ AUDIT_MARKER = "PROOFCI_AUDIT "
 MAX_LEAN_BYTES = 2 * 1024 * 1024
 MAX_LEAN_FILES = 200
 JS_RUNTIME = Path(__file__).parent / "lean" / "ProofciJs.lean"
+ASYNC_RUNTIME = Path(__file__).parent / "lean" / "ProofciAsync.lean"
 
 
 class ContractError(Exception):
@@ -142,6 +143,7 @@ def assemble(root: Path, extracted_file: Path, crate_module: str, contract_dir: 
     _copy_lean_tree(proofs_dir, "Proofs", root, required=False)
     (root / "ProofciSpecs.lean").write_text(specs_module())
     shutil.copyfile(JS_RUNTIME, root / "ProofciJs.lean")
+    shutil.copyfile(ASYNC_RUNTIME, root / "ProofciAsync.lean")
     (root / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\n"
         "package proofci_check\n"
@@ -149,6 +151,7 @@ def assemble(root: Path, extracted_file: Path, crate_module: str, contract_dir: 
         f"lean_lib {crate_module}\n"
         "lean_lib ProofciSpecs\n"
         "lean_lib ProofciJs\n"
+        "lean_lib ProofciAsync\n"
         + _lib("Contract", root) + _lib("Proofs", root)
     )
     (root / "lake-manifest.json").write_text(json.dumps(_lake_manifest("proofci_check"), indent=1))
