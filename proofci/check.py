@@ -330,6 +330,12 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 else:
                     judge_each(candidates, trial)
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
+    if active.language == "typescript":
+        for o in report.outcomes:
+            if o.status == UNPROVEN and o.reason and not o.reason.startswith("no proofs found"):
+                o.reason += ("\nIf the code changed, its translation changed with it. Compare "
+                             "`proofci dev --show` with the proof: either the proof needs to follow the code, "
+                             "or the change broke what the guarantee says.")
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
 
