@@ -184,6 +184,11 @@ def run(extraction, work: Path, functions, timeout=None, budget=None, jobs=None)
     for function in functions:
         if function in (extraction.effects or {}):
             results[function] = FunctionStatus(function, TESTED, NO_ASYNC_BRIDGE)
+        elif (extraction.assumed or {}).get(function):
+            calls = ", ".join(f"`{call}`" for call in extraction.assumed[function])
+            results[function] = FunctionStatus(
+                function, TESTED, f"it relies on the assumed outside call {calls}, which has no code to bridge "
+                "(and the comparison with Node skips it too: the assumption is all there is)")
         else:
             todo.append(function)
     if not todo:

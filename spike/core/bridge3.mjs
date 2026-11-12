@@ -239,10 +239,12 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const shapes = recordShapes(lean);
   const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : recordRules(t, shapes));
   const source = (viewSource ?? view.source).replace(/^import.*\n/gm, "").replace(/^open Aeneas.*\n/m, "");
-  const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]);
   // Callees first: the view lists a function after what it calls.
   const position = s => source.indexOf(`def ${s.sig.lean} `);
   const ordered = [...sigs].sort((a, b) => position(a) - position(b));
+  // Only the constants these functions use: a module that translates other functions too has more.
+  const reachable = ordered.map(s => { const at = position(s); return at < 0 ? "" : source.slice(at, source.indexOf("\n\n", at) < 0 ? undefined : source.indexOf("\n\n", at)); }).join("\n");
+  const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]).filter(c => reachable.includes(c));
   const cbNames = [...lean.matchAll(/^def (\S+_cb\d+) : Fn/gm)].map(m => m[1]);
   const cbRules = cbNames.map(n => `theorem ${n}_prog : prog ${q(n)} = some ${n} := by simp [prog]
 macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n");
