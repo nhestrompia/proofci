@@ -29,6 +29,8 @@ def main(argv=None):
     c.add_argument("--summary", type=Path, help="write a Markdown summary here")
     c.add_argument("--work-dir", type=Path)
     c.add_argument("--vendor", type=Path, help="crates.io dependencies downloaded by `proofci fetch`")
+    c.add_argument("--bridge-timeout", type=int, help="seconds one TypeScript function's bridge proof may take (default 120)")
+    c.add_argument("--bridge-budget", type=int, help="seconds all bridge proofs together may take (default 900)")
     c.add_argument("--fetch", action="store_true",
                    help="download crates.io dependencies first (needs network; for local use)")
     f = sub.add_parser("fetch", help="download the candidate's crates.io dependencies (needs network)")
@@ -81,7 +83,8 @@ def main(argv=None):
             except check_mod.extract.Unsupported as error:
                 print(f"proofci: {error}", file=sys.stderr)
         report = check_mod.check(args.base.resolve(), args.head.resolve(), args.policy, args.work_dir,
-                                 vendor_dir=vendor)
+                                 vendor_dir=vendor, bridge_timeout=args.bridge_timeout,
+                                 bridge_budget=args.bridge_budget)
     except (check_mod.ConfigError, manifest.ManifestError, sandbox.SandboxUnavailable,
             FileNotFoundError, ValueError) as error:
         print(f"proofci: {error}", file=sys.stderr)

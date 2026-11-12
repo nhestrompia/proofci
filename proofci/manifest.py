@@ -86,6 +86,13 @@ class Manifest:
     # Outside operations `async` code may await. They extend `assumes` and are protected the same
     # way: a pull request can't add or change one for itself.
     effects: tuple = ()
+    # TypeScript only. A function whose bridge theorem didn't check ("tested, not proved") normally
+    # still passes. True blocks that for every function, a tuple of function paths for those only.
+    # It is policy: a pull request can't relax it for itself.
+    require_bridge: object = False
+
+    def bridge_required(self, function):
+        return self.require_bridge is True or (isinstance(self.require_bridge, tuple) and function in self.require_bridge)
 
     @property
     def contract(self):
@@ -113,6 +120,7 @@ class Manifest:
             },
             "assumes": dict(self.assumes),
             "effects": {e.id: e.entry() for e in self.effects},
+            "require_bridge": list(self.require_bridge) if isinstance(self.require_bridge, tuple) else self.require_bridge,
         }
 
 
@@ -213,6 +221,21 @@ def _effects(entries, language):
     return tuple(sorted(found, key=lambda e: e.id))
 
 
+def _require_bridge(value, language, functions):
+    if value is False:
+        return False
+    if language != "typescript":
+        raise ManifestError("require_bridge is only available for TypeScript")
+    if value is True:
+        return True
+    if not isinstance(value, list) or not value or not all(isinstance(x, str) for x in value):
+        raise ManifestError("require_bridge must be true, false, or a list of target functions")
+    unknown = sorted(set(value) - set(functions))
+    if unknown:
+        raise ManifestError(f"require_bridge names {unknown[0]!r}, which is not the function of any target")
+    return tuple(sorted(set(value)))
+
+
 def parse(data: bytes) -> Manifest:
     if len(data) > MAX_MANIFEST_BYTES:
         raise ManifestError("manifest is larger than 64 KiB")
@@ -220,7 +243,7 @@ def parse(data: bytes) -> Manifest:
         raw = yaml.load(data.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as error:
         raise ManifestError(f"manifest is not valid YAML: {error}") from None
-    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes", "effects"), ("version", "targets"), "manifest")
+    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes", "effects", "require_bridge"), ("version", "targets"), "manifest")
     if raw["version"] != 1:
         raise ManifestError("only manifest version 1 is supported")
     language = raw.get("language", "rust")
@@ -280,4 +303,5 @@ def parse(data: bytes) -> Manifest:
             raise ManifestError("policy.approvers must be a list of GitHub logins (may be empty)")
         approvers = tuple(sorted({x.lower() for x in logins}))
     return Manifest(crate, lean, tuple(targets), approvers, language, _assumes(raw.get("assumes", []), language),
-                    _effects(raw.get("effects", []), language))
+                    _effects(raw.get("effects", []), language),
+                    _require_bridge(raw.get("require_bridge", False), language, {t.function for t in targets}))
