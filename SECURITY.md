@@ -138,6 +138,15 @@ A TypeScript guarantee also assumes:
   result for the same arguments. ProofCI checks none of that code, and doesn't
   compare functions that rely on it with Node. Listing a call that isn't a function
   of its arguments makes a proof about it meaningless.
+- A guarantee about `async` code holds for every answer the calls listed under `effects` could give,
+  and says nothing about the code behind them. A rejection is modelled as an `Error` with a `name` and a
+  `message`, so `e instanceof Error` is true of everything caught. Where the policy narrows an `any` in a
+  call's signature (`narrowed`), the guarantee assumes the call answers with the narrowed type; the report
+  lists it. Arguments aren't changed by their caller while a call is pending (the report names the ones a
+  guarantee relied on). A module-level table read after an `await` is one nothing in the program writes, and,
+  if it is exported, nothing outside the program does either (the report names those too). Objects of a
+  class or library type are opaque: the guarantee assumes nothing about what they are, only that a listed
+  method call on one is answered like any other outside call.
 
 ## Reporting a vulnerability
 
