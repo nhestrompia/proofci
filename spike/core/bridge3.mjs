@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lower } from "./lower.mjs";
 import { translate } from "../../typescript/translate.mjs";
-import { workspacePaths } from "../../typescript/survey/analyze.mjs";
+import { workspacePaths } from "../../typescript/paths.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const units = t => `[${[...Array(t.length).keys()].map(i => t.charCodeAt(i)).join(", ")}]`;
@@ -214,10 +214,13 @@ macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${si} <;> sim))`);
   return lines.join("\n");
 }
 
-export function generate(root, target, paths) {
+// `viewSource` is the text of the typed view to prove about; without it the view is translated
+// afresh. The action passes the module it extracted, so the bridge is about the very definitions a
+// user's proof is about. `options` are the further settings the translator was given there.
+export function generate(root, target, paths, { viewSource, options } = {}) {
   const { names: coreNames, lean, sources, loops: loopMeta } = lower(root, [target], { paths });
   const targets = sources.map(s => `${s.file}::${s.name}`);
-  const view = translate({ root, module: "V", paths, targets });
+  const view = translate({ root, module: "V", paths, targets, ...options });
   for (const t of targets) if (view.failures[t]) throw new Error(`callee rejected: ${view.failures[t]}`);
   const types = new Map();
   const scan = t => {
@@ -235,7 +238,7 @@ export function generate(root, target, paths) {
   for (const t of view.records()) if (t.kind === "record" && encodable(t)) scan(t);
   const shapes = recordShapes(lean);
   const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : recordRules(t, shapes));
-  const source = view.source.replace(/^import.*\n/gm, "").replace(/^open Aeneas.*\n/m, "");
+  const source = (viewSource ?? view.source).replace(/^import.*\n/gm, "").replace(/^open Aeneas.*\n/m, "");
   const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]);
   // Callees first: the view lists a function after what it calls.
   const position = s => source.indexOf(`def ${s.sig.lean} `);
@@ -245,6 +248,7 @@ export function generate(root, target, paths) {
 macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n");
   const theorems = ordered.map(({ key, sig }) => {
     const defAt = source.indexOf(`def ${sig.lean} `);
+    if (defAt < 0) throw new Error(`the view has no definition of ${sig.lean}`);
     const defText = source.slice(defAt, source.indexOf("\n\n", defAt) < 0 ? undefined : source.indexOf("\n\n", defAt));
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
     if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
