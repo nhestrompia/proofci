@@ -122,8 +122,17 @@ To say something about a particular answer, state it as a hypothesis on the orac
 example `(hmiss : o ⟨.getLink⟩ ... = .value none)`. The hypothesis is part of the contract, so
 a pull request can't change it.
 
+An object passed in (a database client, a mailer) is a `Js.Handle`, a number that tells two objects
+apart. A listed method call, `Db#find`, takes it as the first argument of the question, so
+`o ⟨.dbFind, db, id⟩ hist` is what the oracle is asked, and a fact about *which* object was asked is a fact
+about that number. The value of a recursive type below its first level is a `Js.Handle` too. A caught error
+prints as `Js.Exn.show e` (`name: message`, or whichever of the two is not empty).
+
 What to check in the report: the effects listed under the guarantee are the ones you
-meant, and the arguments it names are the ones you accept to be unchanged during the call.
+meant, the arguments it names are the ones you accept to be unchanged during the call, any
+exported table it names is one you accept that no code outside the program changes, and, where
+a call's published types say `any`, the narrowed type the policy gives it is what the call
+really answers.
 
 ## Patterns
 

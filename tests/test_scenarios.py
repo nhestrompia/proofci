@@ -357,6 +357,15 @@ def ts_async_unrelated_change(head):
 
 
 def ts_async_reads_shared_state(head):
+    # Something writes the array, so reading it after an `await` could see another task's write.
+    edit(head / ASYNC_LINK, "export async function canViewLink",
+         "const seen: string[] = [];\n\nexport function markSeen(linkId: string): void {\n  seen.push(linkId);\n}\n\nexport async function canViewLink")
+    edit(head / ASYNC_LINK, "  const link = await getLink(linkId);\n",
+         "  const link = await getLink(linkId);\n  if (seen.includes(linkId)) {\n    return false;\n  }\n")
+
+
+def ts_async_reads_constant_table(head):
+    # The same read of a table that nothing writes is fine: it can't change between the awaits.
     edit(head / ASYNC_LINK, "export async function canViewLink",
          "const seen: string[] = [];\n\nexport async function canViewLink")
     edit(head / ASYNC_LINK, "  const link = await getLink(linkId);\n",
@@ -602,6 +611,8 @@ SCENARIOS.update({
     "ts-async-effect-kind-changed": (ts_async_effect_kind_changed, dict.fromkeys(ASYNC_GUARANTEES, V), 1),
     "ts-async-unrelated-change": (ts_async_unrelated_change, dict.fromkeys(ASYNC_GUARANTEES, V), 0),
     "ts-async-reads-shared-state": (ts_async_reads_shared_state, dict.fromkeys(ASYNC_GUARANTEES, X), 1),
+    # Translated (no `unsupported`); the extra early `return false` is a reason the second proof no longer covers.
+    "ts-async-reads-constant-table": (ts_async_reads_constant_table, {ASYNC_NO_LOOKUP: V, ASYNC_SOUND: U}, 1),
     "ts-async-promise-all": (ts_async_promise_all, dict.fromkeys(ASYNC_GUARANTEES, X), 1),
     "ts-async-effect-signature-drifts": (ts_async_effect_signature_drifts, dict.fromkeys(ASYNC_GUARANTEES, X), 1),
     "ts-async-dropped-await": (ts_async_dropped_await, dict.fromkeys(ASYNC_GUARANTEES, X), 1),
