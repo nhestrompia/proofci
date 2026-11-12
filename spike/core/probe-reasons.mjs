@@ -19,10 +19,10 @@ T.Scope.prototype.effectFor = function (callee, node) {
   // A call on an object (a handle) is listed as a `method` effect with its own signature, as a policy could.
   if (ts.isPropertyAccessExpression(callee)) {
     const receiver = this.checker.getTypeAtLocation(callee.expression);
-    const owner = receiver.flags & ts.TypeFlags.Object ? this.t.handleOf(receiver) : undefined;
+    const owner = receiver.flags & ts.TypeFlags.Object ? this.t.handleOf?.(receiver) : undefined;
     const signature = owner && this.checker.getResolvedSignature(node);
     const key = owner && `${owner}#${callee.name.text}`;
-    if (key && signature && this.checker.getReturnTypeOfSignature(signature).symbol?.name === "Promise" && !this.t.methodEffects.has(key)) {
+    if (key && signature && this.checker.getReturnTypeOfSignature(signature).symbol?.name === "Promise" && this.t.methodEffects && !this.t.methodEffects.has(key)) {
       this.t.methodEffects.set(key, { id: `auto${counter++}`, method: key, signature: this.checker.signatureToString(signature), kind: "read" });
     }
   }
