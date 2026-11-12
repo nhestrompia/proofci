@@ -1,0 +1,14 @@
+[
+  { "id": "getLink", "call": "world.ts::getLink", "signature": "(linkId: string): Promise<Link | null>", "kind": "read" },
+  { "id": "getTeamUser", "call": "world.ts::getTeamUser", "signature": "(teamId: string, userId: string): Promise<TeamUser | null>", "kind": "read" },
+  { "id": "getRow", "call": "world.ts::getRow", "signature": "(id: string): Promise<Row | null>", "kind": "read" },
+  { "id": "loadSettings", "call": "world.ts::loadSettings", "signature": "(id: string): Promise<Settings>", "kind": "read" },
+  { "id": "sendMail", "call": "world.ts::sendMail", "signature": "(id: string): Promise<void>", "kind": "write" },
+  { "id": "audit", "call": "world.ts::audit", "signature": "(id: string): Promise<void>", "kind": "write" },
+  { "id": "fetchAccount", "call": "world.ts::fetchAccount", "signature": "(userId: string): Promise<any>", "narrowed": "(userId: string): Promise<Account | null>", "kind": "read" },
+  { "id": "recordUsage", "call": "world.ts::recordUsage", "signature": "(userId: string, event: any): Promise<void>", "narrowed": "(userId: string, event: string): Promise<void>", "kind": "write" },
+  { "id": "dbFind", "method": "Db#find", "signature": "(id: string): Promise<Row | null>", "kind": "read" },
+  { "id": "dbRemove", "method": "Db#remove", "signature": "(id: string): Promise<void>", "kind": "write" },
+  { "id": "mailerSend", "method": "Mailer#send", "signature": "(to: string, body: string): Promise<void>", "kind": "write" },
+  { "id": "sendVia", "call": "world.ts::sendVia", "signature": "(mailer: Mailer, to: string): Promise<boolean>", "kind": "write" }
+]

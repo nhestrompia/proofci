@@ -112,6 +112,30 @@ RUN lake exe cache get && lake build Aeneas && lake build --no-build Aeneas \
  && python3 /tmp/prune.py /opt/aeneas/backends/lean \
  && chmod -R a+rX /opt/aeneas
 
+# --------------------------------------------------------------- Node 24.19.0
+# Runs the TypeScript translator. package-lock.json pins the compiler, and
+# --ignore-scripts keeps its installation from running anything.
+FROM base AS node
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+      amd64) asset=linux-x64 sha=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647 ;; \
+      arm64) asset=linux-arm64 sha=01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc ;; \
+      *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL --retry 3 -o /tmp/node.tar.xz "https://nodejs.org/dist/v24.19.0/node-v24.19.0-${asset}.tar.xz" \
+ && echo "${sha}  /tmp/node.tar.xz" | sha256sum -c - \
+ && mkdir -p /opt/node && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1 && rm /tmp/node.tar.xz
+COPY typescript/package.json typescript/package-lock.json /opt/proofci/typescript/
+# npm stays, and pnpm and Yarn 1 are added at pinned versions, because the
+# dependency installation of a TypeScript project uses them (proofci/typescript.py).
+# They run only in that step, which has the network and never runs project code.
+COPY toolchain/package-managers/package.json toolchain/package-managers/package-lock.json /opt/proofci/tools/
+RUN cd /opt/proofci/typescript && /opt/node/bin/node /opt/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --no-audit --no-fund \
+ && cd /opt/proofci/tools && /opt/node/bin/node /opt/node/lib/node_modules/npm/bin/npm-cli.js ci --ignore-scripts --no-audit --no-fund \
+ && cd /opt/proofci/typescript \
+ && rm -rf node_modules/typescript/lib/*/ package.json package-lock.json /opt/proofci/tools/package.json /opt/proofci/tools/package-lock.json \
+            /opt/node/include /opt/node/share /opt/node/lib/node_modules/corepack /opt/node/bin/npm /opt/node/bin/npx /opt/node/bin/corepack
+
 # Checking proofs needs the Lean binaries, shared libraries and .olean files,
 # not the static libraries used to compile Lean programs.
 FROM lean AS lean-run
@@ -122,15 +146,19 @@ RUN find /opt/lean/lib -name '*.a' -delete
 # CI publishes it under a hash of toolchain/ and pull requests reuse it.
 FROM base AS toolchain
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo \
-    PATH=/opt/charon/bin:/opt/aeneas:/opt/lean/bin:/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
+    PATH=/opt/node/bin:/opt/charon/bin:/opt/aeneas:/opt/lean/bin:/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
     PROOFCI_AENEAS_LEAN=/opt/aeneas/backends/lean PYTHONPATH=/opt/proofci
 COPY --from=rust-run /opt/rustup /opt/rustup
 COPY --from=rust-run /opt/cargo /opt/cargo
 COPY --from=charon /opt/charon /opt/charon
 COPY --from=lean-run /opt/lean /opt/lean
 COPY --from=aeneas /opt/aeneas /opt/aeneas
-# bubblewrap (used by ProofCI and lake comparator) mounts a tmpfs here.
-RUN mkdir -p /run/user && chmod 1777 /run/user
+COPY --from=node /opt/node /opt/node
+COPY --from=node /opt/proofci/typescript /opt/proofci/typescript
+# bubblewrap (used by ProofCI and lake comparator) mounts a tmpfs here. A volume
+# mounted at /tmp/proofci-dev (`proofci dev`) copies this directory's mode on first use,
+# so the non-root user can write to it.
+RUN mkdir -p /run/user /tmp/proofci-dev && chmod 1777 /run/user /tmp/proofci-dev
 ENV HOME=/tmp
 USER 1000:1000
 WORKDIR /work
@@ -141,3 +169,4 @@ ENTRYPOINT ["python3", "-m", "proofci"]
 # adds the same layer on top of a published toolchain base.
 FROM toolchain
 COPY proofci /opt/proofci/proofci
+COPY typescript/translate.mjs typescript/differential.mjs typescript/paths.mjs typescript/hazard.mjs typescript/narrow.mjs typescript/lean-tokens.json /opt/proofci/typescript/

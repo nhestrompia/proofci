@@ -4,3 +4,4 @@
 ARG BASE=proofci-toolchain:base
 FROM ${BASE}
 COPY proofci /opt/proofci/proofci
+COPY typescript/translate.mjs typescript/differential.mjs typescript/paths.mjs typescript/hazard.mjs typescript/narrow.mjs typescript/lean-tokens.json /opt/proofci/typescript/

@@ -1,0 +1,1 @@
+[ { "id": "save", "call": "world.ts::save", "signature": "(id: string, name: string): Promise<void>", "kind": "write" } ]

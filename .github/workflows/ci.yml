@@ -35,6 +35,8 @@ jobs:
       - run: python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user --quiet pyyaml
       - run: python3 -m compileall -q proofci action tests
       - run: python3 -m unittest tests.test_manifest tests.test_models tests.test_action tests.test_examples -v
+      - run: npm ci --ignore-scripts && node --test
+        working-directory: typescript
 
   plan:
     if: "!startsWith(github.ref, 'refs/tags/')"
@@ -48,7 +50,7 @@ jobs:
         with:
           persist-credentials: false
       - id: hash
-        run: echo "hash=$(cat toolchain/Dockerfile toolchain/prune.py .dockerignore | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+        run: echo "hash=$(cat toolchain/Dockerfile toolchain/prune.py toolchain/package-managers/package-lock.json .dockerignore typescript/package-lock.json | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io

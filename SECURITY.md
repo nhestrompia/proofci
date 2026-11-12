@@ -82,6 +82,72 @@ A "verified" result is only as good as these components:
 - **Collaborator approval:** without `policy.approvers`, any collaborator other than the author can approve a policy change. Name approvers, or use `approvers: []`, for strict repositories.
 - **Denial of service:** a pull request can make the check slow or fail (timeouts, memory limits). That blocks the PR; it never makes it pass.
 
+## TypeScript
+
+TypeScript support is experimental and isn't released yet. The translator is
+ProofCI's own code, so it is part of what you trust, without the outside review
+Charon and Aeneas have. Each check reduces that risk by running the translated
+functions in Node on generated inputs and comparing them with the Lean model.
+Any disagreement blocks the guarantees.
+
+The translator rejects what it can't model exactly, and only reads and
+type-checks the code. It ignores the project's `tsconfig.json`, and it rejects
+files with `@ts-` comments, compiled JavaScript beside the source, module-level
+code other than declarations, and declaration files standing in for source.
+
+### Installing packages
+
+The type checker needs the declarations of the packages a project imports, so the
+dependency step installs them from the project's lockfile. That is the one step with
+network access, and the trade-offs are these:
+
+- It runs `npm ci`, `pnpm install --frozen-lockfile` or `yarn install
+  --frozen-lockfile` with install scripts off, in the same bubblewrap sandbox as
+  every other step, inside the container's own network, on a private copy of the
+  repository. The package managers are pinned in the toolchain image.
+- The copy leaves out `.npmrc`, `.yarnrc*`, `.yarn/`, `.pnpmfile.cjs` and `.pnp.*`.
+  They are pull request content, and some run code (`.pnpmfile.cjs`, Yarn's
+  `yarnPath`), so no setting in the project reaches the installer. A consequence is
+  that private registries and custom install settings aren't supported.
+- Packages must come from `registry.npmjs.org` (or `registry.yarnpkg.com`) over
+  HTTPS, so a pull request can't make the installer fetch from a host of its
+  choosing, such as an internal address on the runner's network. The lockfile's
+  integrity hashes decide the contents. npm packages from elsewhere are left out and
+  named in the report; pnpm and Yarn lockfiles that contain one are refused. Yarn 2
+  and later is refused, because it runs project code while installing.
+- Network access isn't narrowed to those hosts at the network level; that would need
+  an egress proxy. A package manager that follows a redirect could reach another host,
+  but whatever it fetches is only ever read as package files, never run.
+- A pull request can change the lockfile, and so which package versions the
+  declarations come from. That is a change to the code the guarantees are judged
+  against, like any other, and it goes through the same proof and comparison with Node.
+  The installed packages are mounted read-only into a copy of the code for the
+  translator and for the comparison with Node. The comparison runs functions in Node,
+  and importing a module can load installed packages, which run in the sandbox without
+  network, as the project's own code does.
+- The install needs the network, which a malicious package can't use: its scripts
+  never run, and the check that reads it is offline.
+
+A TypeScript guarantee also assumes:
+
+- Callers pass values of the declared types, without getters or proxies.
+- Code elsewhere in the program doesn't replace built-ins such as `Math.floor`.
+- The program runs the TypeScript source as written, so bundler replacements and
+  macros are outside the guarantee.
+- Each outside call listed under `assumes` has the listed type and gives the same
+  result for the same arguments. ProofCI checks none of that code, and doesn't
+  compare functions that rely on it with Node. Listing a call that isn't a function
+  of its arguments makes a proof about it meaningless.
+- A guarantee about `async` code holds for every answer the calls listed under `effects` could give,
+  and says nothing about the code behind them. A rejection is modelled as an `Error` with a `name` and a
+  `message`, so `e instanceof Error` is true of everything caught. Where the policy narrows an `any` in a
+  call's signature (`narrowed`), the guarantee assumes the call answers with the narrowed type; the report
+  lists it. Arguments aren't changed by their caller while a call is pending (the report names the ones a
+  guarantee relied on). A module-level table read after an `await` is one nothing in the program writes, and,
+  if it is exported, nothing outside the program does either (the report names those too). Objects of a
+  class or library type are opaque: the guarantee assumes nothing about what they are, only that a listed
+  method call on one is answered like any other outside call.
+
 ## Reporting a vulnerability
 
 Please use GitHub's private vulnerability reporting on this repository

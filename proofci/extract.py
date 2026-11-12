@@ -32,7 +32,7 @@ from . import models, sandbox
 
 MAX_STAGED_BYTES = 64 * 1024 * 1024
 MAX_STAGED_FILES = 5000
-RESERVED_MODULES = {"Contract", "Proofs", "ProofciAudit", "ProofciSpecs"}
+RESERVED_MODULES = {"Contract", "Proofs", "ProofciAudit", "ProofciSpecs", "ProofciJs", "ProofciAsync"}
 SKIP_DIRS = {"target", "node_modules"}
 DEP_TABLES = ("dependencies", "build-dependencies")
 CARGO_ENV = {"CARGO_NET_OFFLINE": "true", "CARGO_TERM_COLOR": "never"}
@@ -53,6 +53,18 @@ class Extraction:
     crate_name: str
     log: str
     modelled: list = None   # library functions given ProofCI models
+    names: dict = None      # function in the manifest -> Lean name, where they differ
+    failures: dict = None   # function in the manifest -> why it can't be translated
+    signatures: dict = None # TypeScript: the shape of each translated function
+    assumptions: dict = None # TypeScript: the outside calls the policy allows
+    assumed: dict = None     # TypeScript: which of them each function relies on
+    effects: dict = None     # TypeScript: the `effects` entries each async function can call, by id
+    effect_text: dict = None # TypeScript: each listed effect as `kind, signature`
+    effect_list: list = None # TypeScript: the effects the translation used, with their types
+    arguments_relied: dict = None  # TypeScript: reads after an `await` that rest on stable arguments
+    constants_relied: dict = None  # TypeScript: exported tables read after an `await` that nothing in the program changes
+    files: list = None      # TypeScript: the source files translated
+    imports: dict = None    # TypeScript: where each of those files' imports resolve
 
 
 @dataclass

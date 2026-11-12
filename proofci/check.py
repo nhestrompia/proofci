@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import extract, lean, manifest as manifest_mod
+from . import extract, lean, manifest as manifest_mod, typescript
 
 VERIFIED = "verified"
 UNPROVEN = "unproven"
@@ -43,12 +43,17 @@ class Outcome:
     reason: str = ""
     assumes: list = field(default_factory=list)    # ProofCI models the function relies on
     warnings: list = field(default_factory=list)   # contract shape warnings
+    assumed: list = field(default_factory=list)    # outside calls the proof rests on
+    effects: list = None            # `async` code only: the effects the proof ranges over
+    arguments_stable: list = None   # `async` code only: reads that rest on arguments staying unchanged
+    constants_stable: list = None   # `async` code only: exported tables read after an `await`, assumed unchanged by code outside the program
 
 
 @dataclass
 class Report:
     outcomes: list = field(default_factory=list)
     policy_source: str = "base"
+    language: str = "rust"
     policy_changes: list = field(default_factory=list)
     policy_approvers: object = None   # from the protected base policy
     notes: list = field(default_factory=list)
@@ -64,6 +69,7 @@ class Report:
         return {
             "version": 1,
             "passed": self.passed,
+            "language": self.language,
             "policy_source": self.policy_source,
             "policy_changes": self.policy_changes,
             "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
@@ -100,7 +106,7 @@ def policy_changes(base_checkout, base, head_checkout, head):
         return ["proofci.yaml was removed or is invalid in the pull request"]
     changes = []
     old, new = base.summary(), head.summary()
-    for key in ("crate", "lean"):
+    for key in ("language", "crate", "lean"):
         if old[key] != new[key]:
             changes.append(f"`{key}` changed from `{old[key]}` to `{new[key]}`")
     if old["approvers"] != new["approvers"]:
@@ -117,6 +123,24 @@ def policy_changes(base_checkout, base, head_checkout, head):
     for gid in new["guarantees"]:
         if gid not in old["guarantees"]:
             changes.append(f"guarantee `{gid}` was added")
+    for call, signature in old["assumes"].items():
+        if call not in new["assumes"]:
+            changes.append(f"the assumed call `{call}` was removed")
+        elif new["assumes"][call] != signature:
+            changes.append(f"the assumed call `{call}` changed its signature")
+    for call in new["assumes"]:
+        if call not in old["assumes"]:
+            changes.append(f"the call `{call}` was assumed")
+    # Outside operations are what a proof about `async` code may lean on, so every difference
+    # counts, in either direction: a looser signature or a different `kind` changes the claim.
+    for effect_id, entry in old["effects"].items():
+        if effect_id not in new["effects"]:
+            changes.append(f"effect `{effect_id}` was removed")
+        elif new["effects"][effect_id] != entry:
+            changes.append(f"effect `{effect_id}` changed")
+    for effect_id in new["effects"]:
+        if effect_id not in old["effects"]:
+            changes.append(f"effect `{effect_id}` was added")
     if _tree_digest(base_checkout, base.lean, "Contract") != _tree_digest(head_checkout, head.lean, "Contract"):
         changes.append(f"the contract `{head.contract}` changed")
     return changes
@@ -132,6 +156,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         head = None
     report.policy_changes = policy_changes(base_checkout, base, head_checkout, head)
     report.policy_approvers = base.approvers
+    report.language = base.language
     if policy == "head":
         if head is None:
             raise ConfigError("the candidate has no valid proofci.yaml")
@@ -166,24 +191,33 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                                    vendor_dir=vendor_dir, opaque=opaque)
 
         extraction, failures = None, {}
-        try:
-            extraction = translate(functions)
-        except extract.Unsupported as error:
-            if len(functions) > 1:
-                for function in functions:
-                    try:
-                        translate([function])
-                    except extract.Unsupported as single:
-                        failures[function] = str(single)
-            if failures and len(failures) < len(functions):
-                # Keep the failing functions as bare declarations so the
-                # contract still elaborates and the other targets are judged.
-                try:
-                    extraction = translate(functions, opaque=sorted(failures))
-                except extract.Unsupported:
+        if active.language == "typescript":
+            try:
+                extraction = typescript.extract(head_checkout, active.crate, work, functions, policy_checkout, active.assumes, vendor_dir, active.effects)
+                failures = extraction.failures
+                if len(failures) == len(functions):
                     extraction = None
-            if extraction is None and len(failures) != len(functions):
+            except extract.Unsupported as error:
                 failures = dict.fromkeys(functions, str(error))
+        else:
+            try:
+                extraction = translate(functions)
+            except extract.Unsupported as error:
+                if len(functions) > 1:
+                    for function in functions:
+                        try:
+                            translate([function])
+                        except extract.Unsupported as single:
+                            failures[function] = str(single)
+                if failures and len(failures) < len(functions):
+                    # Keep the failing functions as bare declarations so the
+                    # contract still elaborates and the other targets are judged.
+                    try:
+                        extraction = translate(functions, opaque=sorted(failures))
+                    except extract.Unsupported:
+                        extraction = None
+                if extraction is None and len(failures) != len(functions):
+                    failures = dict.fromkeys(functions, str(error))
         for o in report.outcomes:
             if o.function in failures:
                 o.status, o.reason = UNSUPPORTED, failures[o.function]
@@ -195,6 +229,21 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         # 2. Workspace: extracted model + protected contract + candidate proofs.
         ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
                            policy_checkout / active.lean, head_checkout / active.lean)
+        if active.language == "typescript":
+            problem = lean.build_translation(ws)
+            if problem:
+                reason = "ProofCI translated this code but the result does not compile; please report it:\n" + problem
+                for o in pending:
+                    o.status, o.reason = UNSUPPORTED, reason
+                return report
+            disagreements, notes = typescript.differential(head_checkout, active.crate, work, ws, extraction)
+            report.notes += notes
+            if disagreements:
+                reason = ("ProofCI's model of this code disagrees with Node, so a proof about it would mean "
+                          "nothing; please report it. First disagreement: " + disagreements[0])
+                for o in pending:
+                    o.status, o.reason = UNSUPPORTED, reason
+                return report
         if not (ws.root / "Proofs.lean").is_file():
             mark(UNPROVEN, f"no proofs found at `{active.proofs}`", only={o.theorem for o in pending})
             return report
@@ -204,7 +253,9 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         try:
             lean.build_contract(ws)
             model_names = {f"{extraction.crate_name}.{name}": path for path, name in (extraction.modelled or [])}
-            audit = lean.audit(ws, [(o.theorem, lean_function(o.function)) for o in pending], list(model_names))
+            names = extraction.names or {}
+            audit = lean.audit(ws, [(o.theorem, names.get(o.function, lean_function(o.function))) for o in pending],
+                               list(model_names))
         except lean.ContractError as error:
             names = {o.theorem for o in pending}
             mark(CONTRACT_STALE, "the protected contract no longer elaborates against this code; "
@@ -217,6 +268,12 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         for o in pending:
             item = audit[o.theorem]
             o.assumes = [model_names[n] for n in item.get("models", []) if n in model_names]
+            if extraction.assumed:
+                o.assumed = [f"{call}: {extraction.assumptions[call]}" for call in extraction.assumed.get(o.function, [])]
+            if extraction.effects is not None and o.function in extraction.effects:
+                o.effects = [f"{e}: {extraction.effect_text[e]}" for e in extraction.effects[o.function]]
+                o.arguments_stable = list(extraction.arguments_relied.get(o.function, []))
+                o.constants_stable = list((extraction.constants_relied or {}).get(o.function, []))
             if item.get("hypothesis_mentions_function"):
                 o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
                                   "may assume what it should prove")
@@ -298,6 +355,12 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 else:
                     judge_each(candidates, trial)
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
+    if active.language == "typescript":
+        for o in report.outcomes:
+            if o.status == UNPROVEN and o.reason and not o.reason.startswith("no proofs found"):
+                o.reason += ("\nIf the code changed, its translation changed with it. Compare "
+                             "`proofci dev --show` with the proof: either the proof needs to follow the code, "
+                             "or the change broke what the guarantee says.")
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
 
@@ -305,6 +368,11 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
 def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
     """Vendor the candidate's crates.io dependencies (the step with network)."""
     active = load_manifest(head_checkout if policy == "head" else base_checkout)
+    if active.language == "typescript":
+        # Package declarations are installed for the type checker; no package code runs.
+        with tempfile.TemporaryDirectory(prefix="proofci-fetch-", dir=vendor_dir) as tmp:
+            typescript.install(head_checkout, active.crate, vendor_dir, Path(tmp))
+        return
     with tempfile.TemporaryDirectory(prefix="proofci-fetch-") as tmp:
         extract.fetch(head_checkout, active.crate, vendor_dir, Path(tmp))
 

@@ -1,0 +1,8 @@
+{
+  "name": "proofci-typescript",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": { "test": "node --test" },
+  "dependencies": { "typescript": "6.0.3" }
+}

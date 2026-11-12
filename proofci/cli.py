@@ -41,13 +41,14 @@ def main(argv=None):
     d.add_argument("--work-dir", type=Path, default=Path("/tmp/proofci-dev"))
     d.add_argument("--vendor", type=Path, help="crates.io dependencies downloaded by `proofci fetch`")
     d.add_argument("--judge", action="store_true", help="also run the comparator on each guarantee")
+    d.add_argument("--show", action="store_true", help="print the translated Lean, the code proofs talk about")
     args = parser.parse_args(argv)
 
     if args.command == "dev":
         from . import dev
         try:
             return dev.run(args.repo, args.work_dir.resolve(),
-                           args.vendor.resolve() if args.vendor else None, args.judge)
+                           args.vendor.resolve() if args.vendor else None, args.judge, args.show)
         except (check_mod.ConfigError, manifest.ManifestError, sandbox.SandboxUnavailable,
                 FileNotFoundError, ValueError) as error:
             print(f"proofci: {error}", file=sys.stderr)
@@ -88,12 +89,19 @@ def main(argv=None):
             args.summary.write_text(f"## ProofCI\n\n**Error:** {error}\n")
         return 2
     data = report.to_json()
-    if args.report:
-        args.report.write_text(json.dumps(data, indent=2) + "\n")
     text = markdown(data)
-    if args.summary:
-        args.summary.write_text(text)
     print(text)
+    try:
+        if args.report:
+            args.report.write_text(json.dumps(data, indent=2) + "\n")
+        if args.summary:
+            args.summary.write_text(text)
+    except OSError as error:
+        # The verdict is above; say why it could not be kept (usually a path that
+        # only exists on the host, when running in Docker).
+        print(f"proofci: could not write {error.filename}: {error.strerror}. "
+              "Inside Docker, write to a mounted directory such as /out.", file=sys.stderr)
+        return 2
     if any(o.status == check_mod.ERROR for o in report.outcomes):
         return 2
     return 0 if report.passed else 1

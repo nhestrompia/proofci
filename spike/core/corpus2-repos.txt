@@ -1,0 +1,10 @@
+core vuejs/core 8b479a8
+directus directus/directus b17d2e9
+documenso documenso/documenso fdd0337
+dub dubinc/dub 6b463b4
+formbricks formbricks/formbricks 7088212
+hoppscotch hoppscotch/hoppscotch 55908a7
+mermaid mermaid-js/mermaid c9b1273
+novu novuhq/novu 46249e3
+payload payloadcms/payload 526bd4f
+query TanStack/query 284abac

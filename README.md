@@ -100,7 +100,7 @@ or editing the contract also blocks, until someone allowed by
 
 **Not supported:**
 
-- Other languages (TypeScript is planned)
+- Other languages. TypeScript is [experimental](docs/typescript.md#status-experimental): it is not in a release, covers a small share of real code, and proves only that the Lean view of a function matches the code
 - Git dependencies and `[patch]`
 - Verified functions that reach raw pointers, threads, I/O or async, or call into
   a dependency's functions

@@ -12,6 +12,47 @@ docker run --rm --network none \
 
 Building the image from scratch takes about 17 minutes.
 
+The unit tests need no toolchain (`tests.test_typescript_deps` replaces the sandbox and
+the package managers with fakes), so they also run with plain `python3 -m unittest
+discover -s tests -t .` where PyYAML is installed. The translator's own tests are
+`node --test typescript/translate.test.mjs`. `tests.test_examples` installs the
+packages of `examples/ts-packages` and is skipped when the npm registry can't be reached.
+
+## Bridge fixtures
+
+`spike/core` holds the experiment that ties the Lean view of a TypeScript function to a
+model of JavaScript. A new form the translator accepts needs a fixture there as well:
+add a function to [`fixtures/gaps/gaps.ts`](../spike/core/fixtures/gaps/gaps.ts) and its
+name to [`corpus-gaps.tsv`](../spike/core/corpus-gaps.tsv), then generate the bridges and
+check each file with Lean inside the toolchain image:
+
+```sh
+cd spike/core && mkdir -p /tmp/gaps
+CORPUS=$PWD/fixtures node bridge3.mjs corpus-gaps.tsv /tmp/gaps
+# then, in the image with the spike's .lake volume: lake env lean /tmp/gaps/F0.lean
+```
+
+A bridge that proves must print only the standard axioms. `mutate.py` plants wrong
+translations in proved files, and every one must fail to check.
+
+## `async` fixtures
+
+[`fixtures/async`](../spike/core/fixtures/async) holds `async` code in the shapes the survey found
+(umami's `canViewLink`, a lobe-chat guard, polling loops, `try`/`catch`/`finally`), with the outside
+calls it awaits listed in `effects.json`. The Lean view of an async function is compared with Node
+on scripted answers for those calls. From `spike/core`, with the spike's Lean volume
+(`proofci-spike-lake-dev`) built so that `lake build ProofciAsync` has run:
+
+```sh
+./asynccheck.sh /tmp/ac 40            # Node vs the view: results and the trace of calls must agree
+./mutate_async.sh /tmp/ac /tmp/am     # plants wrong translations; each must be rejected by that comparison
+node hazardcheck.mjs                  # the lost-update pattern is refused, and does lose updates in Node
+```
+
+A new `async` form needs a function in `async.ts` (and an effect in `effects.json` if it awaits a
+new call), and a mutant kind in `mutate_async.py` if it is a new kind of control flow. The same
+comparison runs in the action for `async` targets (`typescript/differential.mjs`).
+
 ## Toolchain
 
 [`toolchain/Dockerfile`](../toolchain/Dockerfile) pins every component by
@@ -22,6 +63,10 @@ version and SHA-256:
 - Aeneas nightly-2026.11.02
 - Charon at the commit Aeneas pins
 - Rust nightly-2026-09-17
+- Node 24.19.0 with the TypeScript compiler (`typescript/package-lock.json`), its own npm,
+  and pnpm and Yarn 1 pinned by `toolchain/package-managers/package-lock.json`. The
+  package managers only install a TypeScript project's packages; see
+  [packages](typescript.md#packages)
 
 Mathlib is pruned to the modules Aeneas imports. The image is 1.7 GB compressed
 and built for Linux x86_64 and arm64.
@@ -30,6 +75,10 @@ The image has two parts:
 
 - **Toolchain base** (`--target toolchain`): Rust, Charon, Lean, Mathlib and Aeneas. It changes only when a pin in `toolchain/` changes, and `main` publishes it under a hash of `toolchain/`.
 - **Release image** ([`toolchain/Release.Dockerfile`](../toolchain/Release.Dockerfile)): adds ProofCI's code on top in seconds.
+
+When Aeneas or Lean changes, regenerate `typescript/lean-tokens.json` from
+`Lean.Parser.getTokenTable`, keeping the identifier-shaped entries. Generated code
+puts `«»` around those words, so a field called `name` still compiles.
 
 ## CI
 

@@ -1,0 +1,10 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+targets:
+  - id: longitude
+    function: src/longitude.ts::wrapLongitude
+    guarantees:
+      - id: in-range
+        theorem: wrap_longitude_in_range
