@@ -86,9 +86,29 @@ A "verified" result is only as good as these components:
 
 TypeScript support is experimental and isn't released yet. The translator is
 ProofCI's own code, so it is part of what you trust, without the outside review
-Charon and Aeneas have. Each check reduces that risk by running the translated
-functions in Node on generated inputs and comparing them with the Lean model.
-Any disagreement blocks the guarantees.
+Charon and Aeneas have. Two checks reduce that risk, and the report says which of
+them backs each function:
+
+- **The bridge.** For each synchronous function a guarantee names, ProofCI generates a
+  theorem that the Lean view the translator wrote means the same as the TypeScript
+  source under a model of JavaScript (Core), and has Lean check it. A function whose
+  bridge checked, using only the standard axioms, is **proved**. What this adds to the
+  trust base is the lowering from TypeScript to Core, Core and its number model, the
+  proof tactics, and the generator. All of them are built into the toolchain image from
+  this repository (`spike/core`, `toolchain/bridge`); the pull request supplies only the
+  source being lowered, and files with those names in it are never read. Core is tested
+  against Node, not against test262.
+- **The comparison with Node.** The translated functions run in Node on generated inputs
+  and are compared with the Lean model. Any disagreement blocks the guarantees (**failed**).
+
+A bridge that does not check (the generator does not cover the function, the proof
+timed out, or Lean rejected it) leaves the function **tested, not proved**: the
+guarantee holds of the Lean view, and that the view matches JavaScript rests on the
+comparison with Node alone. ProofCI cannot tell a tactic that gave up from a wrong
+view, so it never reports a failed bridge as "failed" and never as proved; a repository
+that wants such a function to block sets `require_bridge` in `proofci.yaml` (policy: a
+pull request cannot change it). `async` functions have no bridge yet, so they are always
+tested, not proved.
 
 The translator rejects what it can't model exactly, and only reads and
 type-checks the code. It ignores the project's `tsconfig.json`, and it rejects

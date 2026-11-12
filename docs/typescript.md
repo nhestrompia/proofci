@@ -20,26 +20,76 @@ because those clones had no packages installed, so imported types were unknown. 
 within 120 seconds. Most functions that aren't accepted use regular expressions, `Date`,
 classes or `any`.
 
-**What "proved" means here.** Two different things are proved, and the numbers above are
-only the first. The first is a theorem, generated for each function, that ties the Lean view
-you read to a formal model of JavaScript (Core). If Lean accepts it, the view means what the
-code means under that model. It is generated and checked in [`spike/core`](../spike/core),
-and isn't part of the action's check yet: the action compares the translation with Node on
-generated inputs. The second is yours: a guarantee about the function, stated in
-`Contract.lean` and proved in `Proofs.lean`. The bridge theorem doesn't give you that.
+**What "proved" means here.** Two different things are proved. The first is yours: a
+guarantee about the function, stated in `Contract.lean` and proved in `Proofs.lean`, about the
+Lean *view* the translator wrote. The second is a theorem the action generates for each
+function, the **bridge**, that ties that view to a formal model of JavaScript (Core). If Lean
+accepts it, the view means what the code means under that model. The action generates and
+checks it on every run, in the same sandbox as everything else, and reports each function
+with one of three statuses:
 
-**What is trusted.** The lowering from TypeScript to Core (`spike/core/lower.mjs`) and the
-semantics of Core are trusted. They are tested against Node, not against the official
-conformance suite (test262). The package install is the only step with network access, and
-nothing restricts it at the network level: it relies on the package manager's settings and
-the lockfile's hashes.
+| Status | What was checked | What it means for your guarantee |
+|---|---|---|
+| **proved** | The bridge theorem for the function (and what it calls) checked, with only the standard axioms (`propext`, `Classical.choice`, `Quot.sound`). | The guarantee holds of the function's JavaScript semantics, up to what is trusted below. The comparison with Node ran as well, and found no difference wherever it could run (it can't call a function that isn't exported, so there a checked bridge stands alone; the report's notes say which). |
+| **tested, not proved** | The bridge could not be generated, did not finish in time, or did not check, and the comparison with Node found no difference. | The guarantee still holds **of the Lean view**. That the view matches JavaScript is tested on generated inputs for this function, not proved. This does not block the pull request unless `require_bridge` is set. |
+| **failed** | The comparison with Node found a difference between the view and the code. | Blocked, as before: a proof about a view that disagrees with Node would mean nothing. |
+
+The report lists every function with its status and the reason, and a summary count
+(`2 proved, 1 tested but not proved, 0 failed`). The same data is in `report.json` as
+`functions` and `bridge_summary`, and each guarantee carries its function's `bridge` status.
+
+Reasons for "tested, not proved" you will see: `no bridge for async code yet`; the function
+relies on an assumed outside call (there is no code to bridge); the generator doesn't cover a
+form the function uses (a handle, a recursive type, a form of loop the tactics don't handle
+yet); `the bridge proof did not finish in 120 seconds`; or `the bridge theorem did not check`
+with Lean's first error.
+
+**A bridge that doesn't check is never called "failed".** The tactics stop with the same message
+(`STUCK`) when a function uses a form they don't cover yet and when the view is wrong, for
+example a `<` where the code has `<=`, so the output can't say which it was. Calling it failed
+would block pull requests on the tactics' limits; calling it proved would be false. So it is
+"tested, not proved", and a repository that wants a wrong-or-unproven view to block uses the
+setting below. Only the comparison with Node can produce "failed".
+
+**Requiring the bridge.** In `proofci.yaml`:
+
+```yaml
+require_bridge: true                       # every function a guarantee names
+# or
+require_bridge:
+  - src/ledger.ts::transfer                # only these (they must be targets' functions)
+```
+
+With it, a function that is "tested, not proved" blocks the guarantees that depend on it, and the
+report says why. It is policy, like `assumes` and `effects`: the pull request's own value is
+ignored, and any change to it is reported as a policy change that waits for approval. The default
+is `false`.
+
+**Limits.** One function's bridge may take 120 seconds (the `bridge-timeout` input, or
+`--bridge-timeout`), all of them together 900 seconds (`bridge-budget`, `--bridge-budget`), and
+at most four Lean processes run at once. A function that runs out of either is "tested, not
+proved". On the examples a bridge takes 1 to 15 seconds.
+
+**What the bridge trusts, and where it comes from.** The generator, the lowering from TypeScript
+to Core (`spike/core/lower.mjs`), Core and its number model (`Core.lean`, `F64.lean`) and the
+tactics (`Spike/Tac.lean`, `Spike/Sim.lean`) are built into the toolchain image from this
+repository. A pull request supplies only the source text that is lowered and the Lean view the
+translator wrote from it, and files with those names in a pull request are never read. The theorem
+is proved about the very text of the view that your proofs are written against.
+
+**What is trusted.** The lowering from TypeScript to Core and the semantics of Core are trusted.
+They are tested against Node, not against the official conformance suite (test262). The package
+install is the only step with network access, and nothing restricts it at the network level: it
+relies on the package manager's settings and the lockfile's hashes.
 
 **What is trusted for `async` code.** The Lean library `ProofciAsync.lean` (the oracle, the
 history, `Eff`), the hazard rule (`typescript/hazard.mjs`), which the translator and the
-lowering both use, and the policy's `effects`. There is no bridge theorem for `async` code yet:
-the view is compared with Node on scripted outside calls (in the action, and on the fixtures),
-and the lowering to `CoreAsync.lean` is compared with Node the same way. See
-[`spike/core/ASYNC.md`](../spike/core/ASYNC.md).
+lowering both use, and the policy's `effects`. There is no bridge theorem for `async` code yet,
+so an `async` function is always "tested, not proved" (`no bridge for async code yet`): the view is
+compared with Node on scripted outside calls (in the action, and on the fixtures), and the lowering
+to `CoreAsync.lean` is compared with Node the same way. See
+[`spike/core/ASYNC.md`](../spike/core/ASYNC.md). The same holds for functions with handles,
+recursive types or empty records, which have no synchronous bridge.
 
 **What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
 timers), classes and methods, recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are

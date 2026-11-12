@@ -73,6 +73,12 @@ def fail(message):
     sys.exit(2)
 
 
+def bridge_limits():
+    """`docker run` options that hand the TypeScript bridge's time limits to the check."""
+    names = ("PROOFCI_BRIDGE_TIMEOUT", "PROOFCI_BRIDGE_BUDGET")
+    return [option for name in names if os.environ.get(name) for option in ("-e", f"{name}={os.environ[name]}")]
+
+
 def run_image(base, head, policy, out):
     out.mkdir(parents=True, exist_ok=True)
     os.chmod(out, 0o777)
@@ -83,6 +89,7 @@ def run_image(base, head, policy, out):
         "--cpus", str(os.cpu_count() or 2), "--memory", "8g", "--pids-limit", "4096",
         "-v", f"{base}:/base:ro", "-v", f"{head}:/head:ro", "-v", f"{out}:/out",
         "-v", f"{vendor}:/vendor:ro",
+        *bridge_limits(),
         os.environ["IMAGE"], "check", "--base", "/base", "--head", "/head", "--vendor", "/vendor",
         "--policy", policy, "--report", "/out/report.json", "--summary", "/out/summary.md",
     ]

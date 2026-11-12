@@ -8,6 +8,31 @@ def _translator(report):
             else "the pinned Charon/Aeneas toolchain")
 
 
+BRIDGE_ICON = {"proved": "✅", "tested": "🧪", "failed": "❌"}
+BRIDGE_WORDS = {"proved": "proved", "tested": "tested, not proved", "failed": "failed"}
+
+
+def _functions(report):
+    """TypeScript: how each function's Lean view relates to JavaScript."""
+    functions = report.get("functions") or []
+    if not functions:
+        return []
+    count = {s: sum(f["status"] == s for f in functions) for s in BRIDGE_WORDS}
+    lines = ["", "### Does the Lean view match JavaScript?", "",
+             f"{count['proved']} proved, {count['tested']} tested but not proved, {count['failed']} failed, "
+             f"of {len(functions)} function{'s' if len(functions) != 1 else ''}.", "",
+             "| | Function | Status | Why | Seconds |", "|---|---|---|---|---|"]
+    for f in functions:
+        why = (f["reason"] or "").replace("|", "\\|").replace("\n", " ")[:300]
+        seconds = "" if f.get("seconds") is None else f["seconds"]
+        lines.append(f"| {BRIDGE_ICON[f['status']]} | `{f['function']}` | {BRIDGE_WORDS[f['status']]} | {why} | {seconds} |")
+    if count["tested"]:
+        lines += ["", "**Tested, not proved** means the guarantee holds of the Lean view, and that the view matches what "
+                  "JavaScript does has been tested on generated inputs but not proved for that function. A repository can "
+                  "refuse such functions with `require_bridge` in `proofci.yaml`."]
+    return lines
+
+
 def markdown(report):
     lines = ["## ProofCI", ""]
     lines.append("**Result: passed**" if report["passed"] else "**Result: blocked**")
@@ -27,6 +52,7 @@ def markdown(report):
         lines.append(
             f"| {ICON.get(g['status'], '')} | `{g['target']}/{g['guarantee']}` | `{g['function']}` | "
             f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {g['status']} |")
+    lines += _functions(report)
     details = [g for g in report["guarantees"] if g["reason"]]
     reasons = {g["reason"] for g in details}
     if details and len(reasons) == 1 and len(details) == len(report["guarantees"]):
@@ -84,6 +110,10 @@ def markdown(report):
     lines += ["", "Verified means the Lean kernel (and nanoda) accepted a proof of the exact protected "
               f"statement about the code as translated by {_translator(report)}. "
               "It covers only the listed guarantees."]
+    if report.get("functions"):
+        lines += ["", "For TypeScript, the table above says how far that translation is trusted: *proved* functions "
+                  "have a checked theorem that the Lean view means what the code means under ProofCI's model of "
+                  "JavaScript; *tested, not proved* ones are only compared with Node."]
     timings = report.get("timings_seconds") or {}
     if timings:
         lines += ["", "Timings: " + ", ".join(f"{k} {v}s" for k, v in timings.items())]

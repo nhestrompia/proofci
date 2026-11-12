@@ -317,6 +317,7 @@ contract_no_panic.also_base = no_panic_contract
 ASYNC_LINK = "src/permissions/link.ts"
 ASYNC_GUARANTEES = ("can-view-link/anonymous-no-lookup", "can-view-link/true-only-for-a-reason")
 ASYNC_NO_LOOKUP, ASYNC_SOUND = ASYNC_GUARANTEES
+ASYNC_FN = ASYNC_LINK + "::canViewLink"
 
 
 def ts_async_flipped_owner_check(head):
@@ -433,9 +434,30 @@ SCENARIOS = {
 }
 
 
+def function_problems(data, options):
+    """The bridge status of each function, where a scenario says what it should be."""
+    problems = []
+    got = {f["function"]: f for f in data.get("functions", [])}
+    for function, status in options.get("functions", {}).items():
+        if function not in got:
+            problems.append(f"no bridge status for {function}: {sorted(got)}")
+        elif got[function]["status"] != status:
+            problems.append(f"{function} is {got[function]['status']} ({got[function]['reason']!r}), expected {status}")
+    for function, wanted in options.get("function_reasons", {}).items():
+        if wanted not in got.get(function, {}).get("reason", ""):
+            problems.append(f"the reason for {function} should mention {wanted!r}: {got.get(function)}")
+    if "summary" in options and data.get("bridge_summary") != options["summary"]:
+        problems.append(f"bridge summary {data.get('bridge_summary')} != {options['summary']}")
+    for change in options.get("policy_changes", []):
+        if not any(change in c for c in data["policy_changes"]):
+            problems.append(f"policy change not reported: {change!r}: {data['policy_changes']}")
+    return problems
+
+
 def run_scenario(name, out_dir=None):
     """Run one scenario. Returns a list of mismatches (empty when it passed)."""
-    mutate, expected, expected_exit = SCENARIOS[name]
+    mutate, expected, expected_exit, *rest = SCENARIOS[name]
+    options = rest[0] if rest else {}
     example = TS_ASYNC_EXAMPLE if name.startswith("ts-async-") else TS_EXAMPLE if name.startswith("ts-") else EXAMPLE
     with tempfile.TemporaryDirectory() as tmp:
         base, head = Path(tmp) / "base", Path(tmp) / "head"
@@ -450,7 +472,7 @@ def run_scenario(name, out_dir=None):
         done = subprocess.run(
             [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report,
              *(["--vendor", vendor] if vendor.is_dir() else [])],
-            cwd=ROOT, capture_output=True, text=True, timeout=3600)
+            cwd=ROOT, capture_output=True, text=True, timeout=3600, env={**os.environ, **options.get("env", {})})
         if not report.exists():
             return [f"no report:\n{done.stdout}{done.stderr}"]
         data = json.loads(report.read_text())
@@ -463,6 +485,7 @@ def run_scenario(name, out_dir=None):
         problems.append(f"statuses {statuses} != expected {expected}")
     if done.returncode != expected_exit:
         problems.append(f"exit {done.returncode} != expected {expected_exit}")
+    problems += function_problems(data, options)
     wanted = TS_REASONS.get(name)
     if wanted and not any(wanted in g["reason"] for g in data["guarantees"]):
         problems.append(f"no guarantee was rejected for the expected reason: {wanted!r}")
@@ -594,15 +617,94 @@ def ts_contract_weakened(head):
     edit(head / "proofci/Contract.lean", "fee.val ≤ 500", "fee.val ≤ 5000")
 
 
+# --- the bridge: is the Lean view proved to match JavaScript, or only tested against Node?
+
+BR_FEE, BR_TRANSFER, BR_SUM = (f"{TS_LEDGER}::{f}" for f in ("calculateFee", "transfer", "sumAmounts"))
+BR_ALL_PROVED = {BR_FEE: "proved", BR_TRANSFER: "proved", BR_SUM: "proved"}
+HOOKS = ROOT / "tests" / "fixtures"
+RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_rare.mjs")}      # a view that is wrong for one input
+COMMON = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_common.mjs")}  # a view that is wrong for most inputs
+
+
+def require_bridge(checkout):
+    with open(checkout / "proofci.yaml", "a") as manifest:
+        manifest.write("\nrequire_bridge: true\n")
+
+
+def policy_requires_bridge(head):
+    require_bridge(head)
+
+
+policy_requires_bridge.also_base = require_bridge
+
+
+def pr_requires_bridge(head):
+    require_bridge(head)
+
+
+def pr_drops_require_bridge(head):
+    pass  # the head is the example, which has no requirement; the base has one (below)
+
+
+pr_drops_require_bridge.also_base = require_bridge
+
+
+def pr_replaces_the_bridge(head):
+    # The semantics, the tactics, the generator and the Lean libraries are the image's. Nothing in a
+    # pull request can reach them, wherever it puts files with these names.
+    for path, text in (("spike/core/Core.lean", "axiom everything : False\n"),
+                       ("spike/core/Spike/Tac.lean", "import Spike.Sim\naxiom everything : False\n"),
+                       ("spike/core/Spike/Sim.lean", "-- a weaker Sim\n"),
+                       ("spike/core/F64.lean", "-- a different number model\n"),
+                       ("spike/core/lakefile.lean", "-- a different package\n"),
+                       ("spike/core/lower.mjs", "export function lower() { throw new Error('replaced'); }\n"),
+                       ("spike/core/bridge3.mjs", "export function generate() { return { text: 'theorem fake : True := trivial' }; }\n"),
+                       ("spike/core/action_bridge.mjs", "console.log(JSON.stringify({results: {}}));\n"),
+                       ("toolchain/bridge/lakefile.lean", "-- different\n"),
+                       ("proofci/Core.lean", "axiom everything : False\n"),
+                       ("proofci/Spike/Tac.lean", "axiom everything : False\n")):
+        target = head / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+
+
+def pr_replaces_the_bridge_and_breaks_a_function(head):
+    pr_replaces_the_bridge(head)
+    ts_sum_skips_an_item(head)
+
+
 SCENARIOS.update({
-    "ts-baseline": (None, ts_results(), 0),
+    "ts-baseline": (None, ts_results(), 0, {"functions": BR_ALL_PROVED, "summary": {"proved": 3, "tested": 0, "failed": 0}}),
+    "ts-bridge-required-and-proved": (policy_requires_bridge, ts_results(), 0, {"functions": BR_ALL_PROVED}),
+    # The view says `amount = 4242` is refused; the code moves the money. No sample finds that, the bridge does.
+    # The proof of rejects-overdraft is written for the view's exact shape, so the extra condition breaks it.
+    "ts-bridge-mistranslated-view": (None, {**ts_results(), TS_OVERDRAFT: U}, 1, {
+        "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"},
+        "function_reasons": {BR_TRANSFER: "did not check"}, "summary": {"proved": 2, "tested": 1, "failed": 0}}),
+    "ts-bridge-mistranslated-view-required": (policy_requires_bridge, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1, {
+        "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"}}),
+    # A view that is wrong for most inputs never reaches the bridge: Node disagrees first, as before.
+    "ts-bridge-mistranslated-view-seen-by-node": (None, dict.fromkeys(TS_GUARANTEES, X), 1, {
+        "env": COMMON, "functions": {BR_TRANSFER: "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 3}}),
+    "ts-bridge-requirement-added-by-pr": (pr_requires_bridge, ts_results(), 1, {
+        "functions": BR_ALL_PROVED, "policy_changes": ["`require_bridge` changed"]}),
+    # A pull request that drops the requirement doesn't get what it wants: the base policy still applies.
+    "ts-bridge-requirement-dropped-by-pr": (pr_drops_require_bridge, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1, {
+        "env": RARE, "functions": {BR_TRANSFER: "tested"}, "policy_changes": ["`require_bridge` changed"]}),
+    "ts-bridge-ignores-spike-files-in-the-pr": (pr_replaces_the_bridge, ts_results(), 0, {"functions": BR_ALL_PROVED}),
+    "ts-bridge-ignores-spike-files-and-still-sees-a-bug": (pr_replaces_the_bridge_and_breaks_a_function, {**ts_results(), TS_SUM: U}, 1, {
+        "functions": {**BR_ALL_PROVED, BR_SUM: "proved"}}),
     "ts-transfer-loses-money": (ts_transfer_loses_money, {**ts_results(), TS_CONSERVES: U}, 1),
     "ts-fee-cap-raised": (ts_fee_cap_raised, {**ts_results(), TS_FEE: U}, 1),
     "ts-overdraft-check-removed": (ts_overdraft_check_removed, {**ts_results(), TS_CONSERVES: U, TS_OVERDRAFT: U}, 1),
     "ts-fractional-fee": (ts_fractional_fee, {**ts_results(), TS_FEE: X}, 1),
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
-    "ts-async-baseline": (None, dict.fromkeys(ASYNC_GUARANTEES, V), 0),
+    "ts-async-baseline": (None, dict.fromkeys(ASYNC_GUARANTEES, V), 0, {
+        "functions": {ASYNC_FN: "tested"}, "function_reasons": {ASYNC_FN: "no bridge for async code yet"},
+        "summary": {"proved": 0, "tested": 1, "failed": 0}}),
+    "ts-async-bridge-required": (policy_requires_bridge, dict.fromkeys(ASYNC_GUARANTEES, X), 1, {
+        "functions": {ASYNC_FN: "tested"}}),
     "ts-async-flipped-owner-check": (ts_async_flipped_owner_check, {ASYNC_NO_LOOKUP: V, ASYNC_SOUND: U}, 1),
     "ts-async-anonymous-looks-up": (ts_async_anonymous_looks_up, dict.fromkeys(ASYNC_GUARANTEES, U), 1),
     "ts-async-guarantee-removed": (ts_async_guarantee_removed, dict.fromkeys(ASYNC_GUARANTEES, V), 1),
@@ -636,6 +738,10 @@ SCENARIOS.update({
 
 # A crash in the translator also reports `unsupported`, so these check the cause.
 TS_REASONS = {
+    "ts-async-bridge-required": "no bridge for async code yet",
+    "ts-bridge-mistranslated-view-required": "require_bridge",
+    "ts-bridge-requirement-dropped-by-pr": "require_bridge",
+    "ts-bridge-mistranslated-view-seen-by-node": "disagrees with Node",
     "ts-fractional-fee": "not a safe integer",
     "ts-cast-hides-a-type": "only `number` operands",
     "ts-return-type-not-written": "add a return type of `number`",

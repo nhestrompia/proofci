@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import extract, lean, manifest as manifest_mod, typescript
+from . import bridge, extract, lean, manifest as manifest_mod, typescript
 
 VERIFIED = "verified"
 UNPROVEN = "unproven"
@@ -47,6 +47,7 @@ class Outcome:
     effects: list = None            # `async` code only: the effects the proof ranges over
     arguments_stable: list = None   # `async` code only: reads that rest on arguments staying unchanged
     constants_stable: list = None   # `async` code only: exported tables read after an `await`, assumed unchanged by code outside the program
+    bridge: str = None              # TypeScript only: how the function's view relates to JavaScript (proved, tested or failed)
 
 
 @dataclass
@@ -58,6 +59,7 @@ class Report:
     policy_approvers: object = None   # from the protected base policy
     notes: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)
+    functions: list = field(default_factory=list)   # TypeScript only: one bridge.FunctionStatus per translated function
 
     @property
     def passed(self):
@@ -74,6 +76,9 @@ class Report:
             "policy_changes": self.policy_changes,
             "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
             "guarantees": [o.__dict__ for o in self.outcomes],
+            "functions": [f.entry() for f in self.functions],
+            "bridge_summary": {status: sum(f.status == status for f in self.functions)
+                               for status in (bridge.PROVED, bridge.TESTED, bridge.FAILED)},
             "notes": self.notes,
             "timings_seconds": self.timings,
         }
@@ -141,12 +146,15 @@ def policy_changes(base_checkout, base, head_checkout, head):
     for effect_id in new["effects"]:
         if effect_id not in old["effects"]:
             changes.append(f"effect `{effect_id}` was added")
+    if old["require_bridge"] != new["require_bridge"]:
+        changes.append(f"`require_bridge` changed from `{old['require_bridge']}` to `{new['require_bridge']}`")
     if _tree_digest(base_checkout, base.lean, "Contract") != _tree_digest(head_checkout, head.lean, "Contract"):
         changes.append(f"the contract `{head.contract}` changed")
     return changes
 
 
-def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None, vendor_dir=None):
+def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None, vendor_dir=None,
+          bridge_timeout=None, bridge_budget=None):
     started = time.monotonic()
     report = Report(policy_source=policy)
     base = load_manifest(base_checkout)
@@ -236,14 +244,28 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 for o in pending:
                     o.status, o.reason = UNSUPPORTED, reason
                 return report
-            disagreements, notes = typescript.differential(head_checkout, active.crate, work, ws, extraction)
+            detail = {}
+            disagreements, notes = typescript.differential(head_checkout, active.crate, work, ws, extraction, detail=detail)
             report.notes += notes
             if disagreements:
                 reason = ("ProofCI's model of this code disagrees with Node, so a proof about it would mean "
                           "nothing; please report it. First disagreement: " + disagreements[0])
                 for o in pending:
                     o.status, o.reason = UNSUPPORTED, reason
+                differ = set(detail.get("differ", []))
+                report.functions = [bridge.FunctionStatus(
+                    f, bridge.FAILED, reason if f in differ or not differ else
+                    "not checked: the model of another function disagrees with Node, which blocks the whole check")
+                    for f in functions if f not in failures]
+                _attach(report)
                 return report
+
+            # 3. The bridge: is the view the same as the JavaScript semantics, or only tested against Node?
+            t0 = time.monotonic()
+            report.functions = _bridge(report, extraction, active, work, [f for f in functions if f not in failures],
+                                       bridge_timeout, bridge_budget)
+            pending = [o for o in pending if o.status == ERROR]
+            report.timings["bridge"] = round(time.monotonic() - t0, 1)
         if not (ws.root / "Proofs.lean").is_file():
             mark(UNPROVEN, f"no proofs found at `{active.proofs}`", only={o.theorem for o in pending})
             return report
@@ -363,6 +385,38 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                              "or the change broke what the guarantee says.")
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
+
+
+def _attach(report):
+    """Record on each guarantee how its function's view stands."""
+    by_function = {f.function: f for f in report.functions}
+    for f in report.functions:
+        f.guarantees = [f"{o.target}/{o.guarantee}" for o in report.outcomes if o.function == f.function]
+    for o in report.outcomes:
+        if o.function in by_function:
+            o.bridge = by_function[o.function].status
+
+
+def _bridge(report, extraction, active, work, functions, timeout, budget):
+    """Bridge every translated function and block the guarantees that depend on one whose status the
+    policy doesn't accept. Returns the per-function statuses."""
+    results = bridge.run(extraction, work, functions, timeout, budget)
+    for f in functions:
+        status = results[f]
+        refused = None
+        if status.status == bridge.FAILED:
+            refused = status.reason
+        elif status.status == bridge.TESTED and active.bridge_required(f):
+            refused = ("`require_bridge` is set in proofci.yaml, and the bridge theorem for this function did not check "
+                       f"({status.reason}). Its view is only tested against Node, not proved to match JavaScript.")
+        if refused:
+            for o in report.outcomes:
+                if o.function == f and o.status == ERROR:
+                    o.status, o.reason = UNSUPPORTED, refused
+    ordered = [results[f] for f in functions]
+    report.functions = ordered
+    _attach(report)
+    return ordered
 
 
 def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
