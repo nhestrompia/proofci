@@ -142,7 +142,9 @@ export class Translator {
     this.assumedBy = new Map(); // declaration -> what it relies on, through its calls
     this.current = [];
     this.effects = new Map(effects.filter(e => e.call).map(e => [e.call, e])); // `module::name` -> its policy entry
-    this.otherEffects = effects.filter(e => !e.call); // `method` and `param` entries
+    this.methodEffects = new Map(effects.filter(e => e.method).map(e => [e.method, e])); // `Class#method` -> its policy entry
+    this.otherEffects = effects.filter(e => !e.call && !e.method); // `param` entries
+    this.usesHandles = false;    // a class or library type was met and is an opaque handle
     this.effectOps = new Map();  // `module::name` -> { id, lean, args, result }
     this.effectsBy = new Map();  // declaration -> the effect ids it can call, through its calls
     this.argsBy = new Map();     // declaration -> the reads after an `await` that rest on stable arguments
@@ -281,6 +283,13 @@ export class Translator {
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (this.bound(type)) return this.type(this.bound(type), node);
     if (type.flags & TypeFlags.TypeParameter) return name(type.symbol.name);
+    if (type.flags & TypeFlags.Object && this.handleOf(type)) {
+      if (this.current.length && !this.current.some(d => this.isAsync(this.bodyOf(d)))) {
+        throw this.fail(node, `the type \`${this.checker.typeToString(type)}\` is not supported yet (a value of a class or library type is an opaque handle, and handles are only supported in \`async\` code)`);
+      }
+      this.usesHandles = true;
+      return "Js.Handle";
+    }
     if (type.isUnion()) {
       const parts = type.types.filter(t => !(t.flags & (TypeFlags.Null | TypeFlags.Undefined)));
       if (parts.length < type.types.length) {
@@ -470,8 +479,25 @@ export class Translator {
   }
 
   // A description of a type, for generating and reading values of it.
+  // A value of a class, or of a type with methods (a service or a library object), is an opaque handle:
+  // a function may pass it around, compare it with `null` and use it as the receiver of a call listed
+  // under `effects`, and nothing else. The class name when it is one, otherwise nothing.
+  handleOf(type) {
+    const symbol = type.symbol;
+    if (!symbol || !(type.flags & ts.TypeFlags.Object) || this.checker.isArrayType(type) || this.checker.isTupleType(type) || this.collection(type)) return undefined;
+    if (type.getCallSignatures().length || type.getConstructSignatures().length) return undefined; // a function, not an object
+    if (["Promise", "PromiseLike", "ReadonlyArray", "ArrayLike", "Iterable", "IterableIterator", "Generator", "AsyncGenerator", "Function", "Symbol"].includes(symbol.name)) return undefined;
+    const isClass = Boolean(symbol.flags & ts.SymbolFlags.Class);
+    const hasMethods = this.checker.getPropertiesOfType(type).some(property => {
+      const declaration = property.valueDeclaration ?? property.declarations?.[0];
+      return declaration && this.checker.getTypeOfSymbolAtLocation(property, declaration).getCallSignatures().length > 0;
+    });
+    return isClass || hasMethods ? (type.aliasSymbol?.name ?? symbol.name) : undefined;
+  }
+
   describe(type, node) {
     const lean = this.type(type, node);
+    if (lean === "Js.Handle") return { kind: "handle", name: this.handleOf(type) };
     if (lean === "Js.Num") return { kind: "number" };
     if (lean === "Bool") return { kind: "boolean" };
     if (lean === "Int") return { kind: "bigint" };
@@ -645,15 +671,15 @@ export class Translator {
     return lean;
   }
 
-  declareEffect(key, entry, signature, parameters, node) {
+  declareEffect(key, entry, signature, parameters, node, receiver) {
     const known = this.effectOps.get(key);
     if (known) return known;
-    const types = parameters.map(p => this.type(this.checker.getTypeOfSymbolAtLocation(p, node), node));
+    const types = [...(receiver ? ["Js.Handle"] : []), ...parameters.map(p => this.type(this.checker.getTypeOfSymbolAtLocation(p, node), node))];
     const args = types.length === 0 ? "Unit" : types.join(" × ");
     const result = this.type(this.promised(signature.getReturnType(), node), node);
     const promised = this.promised(signature.getReturnType(), node);
     const op = { id: entry.id, key, kind: entry.kind, narrowed: entry.narrowed, lean: name(entry.id), args, result,
-      params: parameters.map(p => this.describe(this.checker.getTypeOfSymbolAtLocation(p, node), node)),
+      params: [...(receiver ? [{ kind: "handle", name: receiver }] : []), ...parameters.map(p => this.describe(this.checker.getTypeOfSymbolAtLocation(p, node), node))],
       returns: this.describe(promised, node) };
     this.effectOps.set(key, op);
     return op;
@@ -961,6 +987,7 @@ export class Scope {
       return `(${argument} : (Option ${this.t.type(type, p)}))`;
     }
     if (!ts.isObjectBindingPattern(p.name) || p.initializer) throw this.t.fail(p, "this parameter shape is not supported yet");
+    this.refuseHandle(p, p);
     const argument = `arg${index}`;
     this.taken.add(argument);
     for (const element of p.name.elements) {
@@ -1280,6 +1307,7 @@ export class Scope {
         continue;
       }
       if (!ts.isObjectBindingPattern(declaration.name)) throw this.t.fail(declaration, "array destructuring is not supported yet");
+      this.refuseHandle(declaration.initializer, declaration);
       const source = this.expression(declaration.initializer, next, lines);
       for (const element of declaration.name.elements) {
         if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) {
@@ -2367,6 +2395,7 @@ export class Scope {
     if (this.isArray(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
     if (this.isArray(object)) throw this.t.fail(node, `\`.${node.name.text}\` is not supported on arrays yet`);
     const type = this.typeOf(object);
+    this.refuseHandle(object, node);
     if (type.isUnion()) throw this.t.fail(node, "reading a field of a union outside a `switch` is not supported yet");
     const owner = this.checker.getApparentType(type);
     if (!this.checker.getPropertyOfType(owner, node.name.text) && this.checker.getIndexInfosOfType(owner).length) {
@@ -2379,7 +2408,19 @@ export class Scope {
     return read;
   }
 
+  // A value of a class or library type is opaque: the only things that can be done with it are to pass it
+  // around and to call a method listed under `effects`.
+  refuseHandle(object, node) {
+    const type = this.checker.getNonNullableType(this.typeOf(object));
+    const owner = type.flags & ts.TypeFlags.Object ? this.t.handleOf(type) : undefined;
+    if (owner) {
+      throw this.t.fail(node, `\`${node.name?.text ?? node.getText()}\` is read from a \`${owner}\`, whose fields and methods can't be read: values of class and library types are opaque handles. `
+        + "Only an `effects` entry of the `method` form (`Class#method`) can call one");
+    }
+  }
+
   optionalField(node, object, env, lines) {
+    this.refuseHandle(object, node);
     if (!this.nullable(this.typeOf(object))) return this.expression(ts.factory.createPropertyAccessExpression(object, node.name), env, lines);
     const value = this.expression(object, env, lines);
     const field = name(node.name.text);
@@ -2473,6 +2514,11 @@ export class Scope {
     if (effect) {
       if (!awaited) throw this.t.fail(node, `\`${effect.key}\` returns a promise that is never awaited`);
       return this.effectCall(effect, signature, node, env, lines);
+    }
+    if (ts.isPropertyAccessExpression(callee)) {
+      const receiver = this.checker.getNonNullableType(this.typeOf(callee.expression));
+      const owner = receiver.flags & ts.TypeFlags.Object ? this.t.handleOf(receiver) : undefined;
+      if (owner) throw this.t.fail(node, `\`${owner}#${callee.name.text}\` is a call on an opaque \`${owner}\` object; list it under \`effects\` as \`method: ${owner}#${callee.name.text}\``);
     }
     const outside = this.outsideName(callee);
     if (outside && this.t.assumes.has(outside)) return this.assumedCall(outside, signature, node, env, lines);
@@ -2739,6 +2785,12 @@ export class Scope {
   // The `effects` entry for a call, if the policy lists it. A project function is named by its
   // file and name, a package function by the module it is imported from.
   effectFor(callee, node) {
+    if (ts.isPropertyAccessExpression(callee) && this.t.methodEffects.size) {
+      const type = this.checker.getTypeAtLocation(callee.expression);
+      const owner = type.flags & ts.TypeFlags.Object ? this.t.handleOf(type) : undefined;
+      const key = owner && `${owner}#${callee.name.text}`;
+      if (key && this.t.methodEffects.has(key)) return { key, entry: this.t.methodEffects.get(key), receiver: callee.expression, owner };
+    }
     if (!ts.isIdentifier(callee)) {
       if (this.t.otherEffects.length && ts.isPropertyAccessExpression(callee)) {
         throw this.t.fail(node, "a call through an object or a function-typed parameter would be an `effects` entry of the `method` or `param` form, which needs handle and function types, and isn't supported yet");
@@ -2761,12 +2813,13 @@ export class Scope {
   }
 
   // `await f(args)` for a listed outside call: one step of the oracle, recorded in the history.
-  effectCall({ key, entry }, signature, node, env, lines) {
+  effectCall({ key, entry, receiver, owner }, signature, node, env, lines) {
     const site = signature.declaration;
     if (signature.typeParameters?.length || signature.target || site?.typeParameters?.length) throw this.t.fail(node, `\`${key}\` is generic, so it can't be an effect yet`);
     if (site?.parameters.some(p => p.dotDotDotToken)) throw this.t.fail(node, `\`${key}\` takes a rest parameter, so it can't be an effect yet`);
     const found = this.checker.signatureToString(signature);
     const plain = text => text.replace(/\s+/g, " ").trim();
+    if (entry.narrowed && !entry.call) throw this.t.fail(node, `\`${key}\`: narrowing \`any\` is only supported for entries of the \`call\` form`);
     if (entry.narrowed) {
       const problem = this.t.narrowProblem(entry);
       if (problem) throw this.t.fail(node, problem);
@@ -2778,7 +2831,8 @@ export class Scope {
     }
     const parameters = signature.getParameters();
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
-    const op = this.t.declareEffect(key, entry, signature, parameters, node);
+    const op = this.t.declareEffect(key, entry, signature, parameters, node, owner);
+    const self = receiver ? [this.expression(receiver, env, lines)] : [];
     const args = parameters.map((parameter, index) => {
       const argument = node.arguments[index];
       if (argument) return this.convert(argument, this.checker.getTypeOfSymbolAtLocation(parameter, node), env, lines);
@@ -2786,6 +2840,7 @@ export class Scope {
       return "none";
     });
     this.t.noteEffects([entry.id]);
+    args.unshift(...self);
     const arg = args.length === 0 ? "()" : args.length === 1 ? args[0] : `(${args.join(", ")})`;
     return this.bind(`Proofci.Effects.call .${op.lean} ${arg}`, lines);
   }
@@ -3066,7 +3121,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       }
     }
   }
-  const header = ["import Aeneas", "import ProofciJs", ...(translator.usesWorld ? ["import ProofciAsync"] : []), "", "open Aeneas Aeneas.Std Result", ""];
+  const header = ["import Aeneas", "import ProofciJs", ...(translator.usesWorld || translator.usesHandles ? ["import ProofciAsync"] : []), "", "open Aeneas Aeneas.Std Result", ""];
   // The world lists every effect any async function calls, so it comes after all types and before the code.
   const order = translator.usesWorld
     ? [...translator.order.filter(t => translator.typeTexts.has(t)), translator.worldBlock(), ...translator.order.filter(t => !translator.typeTexts.has(t))]

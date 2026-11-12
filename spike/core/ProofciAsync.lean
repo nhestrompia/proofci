@@ -44,6 +44,13 @@ def Exn.show (e : Exn) : Str :=
   else if e.message = [] then e.«name»
   else e.«name» ++ [58, 32] ++ e.message
 
+/-- An object of a class or library type, as far as the program is concerned: something it can pass
+around, compare with `===` and use as the receiver of a listed call, and nothing else. The number only tells
+two objects apart; it says nothing about what the object is or does. -/
+structure Handle where
+  id : Nat
+  deriving DecidableEq, Repr
+
 /-- How a promise settled. -/
 inductive Settled (α : Type) where
   | fulfilled (a : α)

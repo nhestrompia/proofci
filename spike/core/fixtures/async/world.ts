@@ -45,3 +45,19 @@ export async function fetchAccount(userId: string): Promise<any> {
 export async function recordUsage(userId: string, event: any): Promise<void> {
   throw new Error("outside");
 }
+// Objects the code is handed: it passes them around and calls their listed methods, nothing else.
+export interface Db {
+  find(id: string): Promise<Row | null>;
+  remove(id: string): Promise<void>;
+}
+export interface Mailer {
+  send(to: string, body: string): Promise<void>;
+}
+export interface Ctx {
+  db: Db;
+  mailer: Mailer | null;
+  user: string;
+}
+export async function sendVia(mailer: Mailer, to: string): Promise<boolean> {
+  throw new Error("outside");
+}

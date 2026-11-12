@@ -272,9 +272,33 @@ does is part of the proof. `signature` must be exactly what the compiler reports
 call, with the return type written out as `Promise<T>`; a mismatch stops the check, so a
 change to the callee's type can't pass unseen. `kind: read` claims that the call doesn't
 change what later calls answer. It is reported, and it will matter for `Promise.all`,
-which isn't supported yet. Entries of the forms `method: Class#method` (an injected object)
-and `param: deps.fetch` (a function-typed parameter) are accepted in the policy, and a call
-that would use one stops with a message: they need class and function types.
+which isn't supported yet. An entry of the form `param: deps.fetch` (a function-typed
+parameter) is accepted in the policy, and a call that would use one stops with a message:
+it needs function types.
+
+### Objects: class and library types
+
+A value of a class, or of an interface with methods (a database client, a logger, a mailer,
+a `Response`), is an **opaque handle**: the function may pass it around (as an argument, in a
+record, as a result), compare it with `null`, and call a method on it that the policy lists.
+It can't read a field or a method from it, destructure it, test its truthiness as data or
+compare two of them. The call is an effect like any other, with the object as its first
+argument:
+
+```yaml
+effects:
+  - id: dbFind
+    method: Db#find
+    signature: "(id: string): Promise<Row | null>"
+    kind: read
+```
+
+`method` is `Class#method`, where `Class` is the name of the object's type (class or
+interface) and the call is `x.method(...)` for any `x` of that type, whether `x` is a
+parameter, a field of a record or an answer. The signature is what the compiler reports for
+the call, and a call that isn't listed stops with the entry to write. Handles work in `async`
+code only; a synchronous function that holds one is `unsupported`. Handles are not module-level
+state either: a module-level `const db = new Db()` read after an `await` is still refused.
 
 ### Effects whose published types say `any`
 

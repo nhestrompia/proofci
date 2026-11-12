@@ -1069,6 +1069,50 @@ export async function f(id: string): Promise<string> {
   assert.match(run({ fetchAccount: { narrowed: "(id: string)" } }).failures["a.ts::f"], /return type/);
 });
 
+const OBJECTS = `${WORLD}export interface Row { id: string; owner: string }
+export interface Db { find(id: string): Promise<Row | null>; remove(id: string): Promise<void> }
+export class Mailer { name = "m"; send(to: string, body: string): Promise<void> { throw new Error("outside"); } }
+export interface Ctx { db: Db; user: string; mailer: Mailer | null }
+export async function audit(mailer: Mailer, id: string): Promise<boolean> { throw new Error("outside"); }\n`;
+const OBJECT_EFFECTS = [
+  { id: "dbFind", method: "Db#find", signature: "(id: string): Promise<Row | null>", kind: "read" },
+  { id: "dbRemove", method: "Db#remove", signature: "(id: string): Promise<void>", kind: "write" },
+  { id: "send", method: "Mailer#send", signature: "(to: string, body: string): Promise<void>", kind: "write" },
+  { id: "audit", call: "world.ts::audit", signature: "(mailer: Mailer, id: string): Promise<boolean>", kind: "write" },
+];
+const withObjects = (body, options = {}) => runAsync(`import { audit } from "./world";\nimport type { Db, Mailer, Ctx } from "./world";\n${body}`, { world: OBJECTS, effects: OBJECT_EFFECTS, ...options });
+
+test("an object of a class or library type is an opaque handle: passed around, or the receiver of a listed method", () => {
+  const ok = withObjects(`export async function f(db: Db, id: string): Promise<boolean> { const row = await db.find(id); if (!row) return false; await db.remove(id); return true; }`);
+  assert.deepEqual(ok.failures, {});
+  assert.ok(ok.source.includes("import ProofciAsync"));
+  assert.ok(ok.source.includes("| .dbFind => Js.Handle × Js.Str"), ok.source);
+  assert.ok(ok.source.includes("Proofci.Effects.call .dbFind (db, id)"), ok.source);
+  assert.deepEqual(ok.effectList.map(e => e.params[0]), [{ kind: "handle", name: "Db" }, { kind: "handle", name: "Db" }]);
+  for (const body of [
+    `export async function f(ctx: Ctx, id: string): Promise<string> { const row = await ctx.db.find(id); return row ? row.owner : ctx.user; }`,
+    `export async function f(mailer: Mailer, id: string): Promise<string> { await mailer.send(id, "hi"); await audit(mailer, id); return id; }`,
+    `export async function f(mailer: Mailer | null, id: string): Promise<boolean> { if (mailer === null) return false; await mailer.send(id, "x"); return true; }`,
+    `export async function f(mailer: Mailer): Promise<Mailer> { await mailer.send("a", "b"); return mailer; }`,
+    `export async function f({ db }: Ctx): Promise<void> { await db.remove("x"); }`,
+  ]) assert.deepEqual(withObjects(body).failures, {}, body);
+});
+
+test("an opaque handle is never looked into, and a method nobody listed is not a call", () => {
+  const refused = (body, pattern, options) => {
+    const result = withObjects(body, options);
+    assert.match(result.failures["a.ts::f"] ?? `accepted:\n${body}`, pattern);
+  };
+  refused(`export async function f(mailer: Mailer): Promise<string> { return mailer.name; }`, /opaque handles/);
+  refused(`export async function f(ctx: Ctx): Promise<boolean> { return ctx.mailer?.name === "m"; }`, /opaque handles/);
+  refused(`export async function f(a: Mailer, b: Mailer): Promise<boolean> { return a === b; }`, /only supported on numbers/);
+  refused(`export async function f(m: Mailer): Promise<string> { const { name } = m; return name; }`, /opaque handles/);
+  refused(`export async function f(db: Db, id: string): Promise<void> { await db.remove(id); await db.find(id); }`, /list it under `effects` as `method: Db#find`/, { effects: OBJECT_EFFECTS.filter(e => e.id !== "dbFind") });
+  refused(`export async function f(db: Db, id: string): Promise<void> { await db.find(id); }`, /has the signature/, { effects: OBJECT_EFFECTS.map(e => (e.id === "dbFind" ? { ...e, signature: "(id: number): Promise<Row | null>" } : e)) });
+  // Handles belong to async code: a synchronous function that holds one stays unsupported.
+  refused(`export function f(m: Mailer): Mailer { return m; }`, /only supported in `async` code/);
+});
+
 test("a read after an await in a loop counts as after", () => {
   asyncRejects(`const cache: string[] = [];\nexport function remember(id: string): void { cache.push(id); }\nexport async function f(ids: string[]): Promise<number> {
     let n = 0;

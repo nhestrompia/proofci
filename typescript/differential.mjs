@@ -15,6 +15,10 @@ const EDGES = [0, 1, -1, 2, -2, 3, 7, 10, -10, 100, 500, 1000, 9999, 10000, 1000
 
 const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&"];
 
+// Every object of a class or library type the test makes gets its own number, which is also how the Lean
+// side names it (`Js.Handle.mk n`). The same number is the same object.
+let handles = 0;
+
 export function generator(seed) {
   let state = seed >>> 0;
   const next = () => {
@@ -45,6 +49,7 @@ export function generator(seed) {
       case "array": return Array.from({ length: Math.floor(next() * 7) }, () => value(type.item));
       case "optional": return next() < 0.3 ? (type.nothing === "null" ? null : undefined) : value(type.inner);
       case "enum": return pick(type.tags).tag;
+      case "handle": return { __proofciHandle: handles += 1, __class: type.name };
       case "record": return Object.fromEntries(type.fields.map(f => [f.name, value(f.type)]));
       case "tagged": {
         const variant = pick(type.variants);
@@ -93,6 +98,8 @@ export function term(type, value) {
       const inner = term(type.inner, value);
       return inner === undefined ? undefined : `(some ${inner})`;
     }
+    case "handle":
+      return Number.isSafeInteger(value?.__proofciHandle) ? `(Js.Handle.mk ${value.__proofciHandle})` : undefined;
     case "enum": {
       const tag = type.tags.find(t => t.tag === value);
       return tag ? `_root_.${type.lean}.${tag.lean}` : undefined;
@@ -243,13 +250,36 @@ function emptied(type, value, random) {
 // turns of the event loop, so the real scheduler is exercised. Returns what happened.
 export async function runAsync(fn, inputs, effects, seed) {
   const random = chance(seed);
+  // A handle is a stand-in object. A call on it, `h.method(...)`, is the outside call listed for its class
+  // and that method, and it is answered like any other. Reading anything else from it gives `undefined`.
+  const made = new Map();
+  const proxify = x => {
+    if (Array.isArray(x)) return x.map(proxify);
+    if (x instanceof Map) return new Map([...x].map(([k, v]) => [k, proxify(v)]));
+    if (x instanceof Set) return new Set([...x].map(proxify));
+    if (x === null || typeof x !== "object") return x;
+    if (x.__proofciHandle !== undefined) {
+      if (!made.has(x.__proofciHandle)) {
+        const target = { __proofciHandle: x.__proofciHandle, __class: x.__class };
+        made.set(x.__proofciHandle, new Proxy(target, {
+          get: (_, key) => {
+            if (key in target) return target[key];
+            const effect = typeof key === "string" && effects.find(e => e.call === `${target.__class}#${key}`);
+            return effect ? (...args) => globalThis.__proofciWorld(effect.id, [made.get(target.__proofciHandle), ...args]) : undefined;
+          },
+        }));
+      }
+      return made.get(x.__proofciHandle);
+    }
+    return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, proxify(v)]));
+  };
   const value = generator(seed + 7919);
   const trace = [];
   globalThis.__proofciWorld = (id, args) => new Promise((resolve, reject) => {
     const effect = effects.find(e => e.id === id);
     const answer = random() < 0.2
       ? { reject: MESSAGES[Math.floor(random() * MESSAGES.length)], kind: ERRORS[Math.floor(random() * ERRORS.length)] }
-      : { value: emptied(effect.returns, value(effect.returns), random) };
+      : { value: proxify(emptied(effect.returns, value(effect.returns), random)) };
     trace.push({ id, args: effect.params.map((_, i) => args[i]), answer });
     const settle = () => (answer.reject !== undefined ? reject(new globalThis[answer.kind](answer.reject)) : resolve(answer.value));
     const turns = Math.floor(random() * 3);
@@ -257,7 +287,7 @@ export async function runAsync(fn, inputs, effects, seed) {
   });
   let outcome;
   try {
-    outcome = { value: await fn(...inputs) };
+    outcome = { value: await fn(...proxify(inputs)) };
   } catch (error) {
     outcome = { error };
   }
@@ -291,9 +321,11 @@ function replay(trace, effects) {
 
 export async function differential({ root, out, module, signatures, files, imports = {}, cases = 200, effects = [] }) {
   const compiled = join(out, "js");
-  const names = effects.map(e => e.call.split("::").at(-1));
+  // A call on an object (`Class#method`) has no declaration to replace: the object is the stand-in.
+  const named = effects.filter(e => e.call.includes("::"));
+  const names = named.map(e => e.call.split("::").at(-1));
   const ambiguous = new Set(names.filter((n, i) => names.indexOf(n) !== i));
-  compile(root, files, imports, compiled, effects.filter(e => !ambiguous.has(e.call.split("::").at(-1))));
+  compile(root, files, imports, compiled, named.filter(e => !ambiguous.has(e.call.split("::").at(-1))));
   const lines = [`import ${module}`, ...(signatures && Object.values(signatures).some(s => s.async) ? ["import ProofciAsync"] : []),
     "open Aeneas Aeneas.Std Result", ""];
   const skipped = [];

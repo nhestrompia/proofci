@@ -1,6 +1,7 @@
 // Shapes of `async` code taken from real projects (umami, lobe-chat, trigger.dev), cut down to
 // what ProofCI reads. The outside calls are listed in effects.json.
-import { getLink, getTeamUser, getRow, loadSettings, sendMail, audit, fetchAccount, recordUsage } from "./world";
+import { getLink, getTeamUser, getRow, loadSettings, sendMail, audit, fetchAccount, recordUsage, sendVia } from "./world";
+import type { Db, Ctx, Mailer } from "./world";
 import type { Auth } from "./types";
 
 // umami src/permissions/link.ts
@@ -192,4 +193,33 @@ export async function seatsLeft(userId: string, wanted: number): Promise<number>
   }
   await recordUsage(userId, account.plan);
   return account.seats >= wanted ? account.seats - wanted : 0;
+}
+
+// an injected data-access object: its methods are listed calls, the object itself is never inspected
+export async function removeIfOwner(db: Db, id: string, owner: string): Promise<boolean> {
+  const row = await db.find(id);
+  if (!row || row.owner !== owner) {
+    return false;
+  }
+  await db.remove(id);
+  return true;
+}
+
+// objects held in a record, one of them optional
+export async function notifyOwner(ctx: Ctx, id: string): Promise<string> {
+  const row = await ctx.db.find(id);
+  if (row === null) {
+    return "";
+  }
+  if (ctx.mailer !== null) {
+    await ctx.mailer.send(row.owner, "removed " + id);
+  }
+  await audit(id);
+  return row.owner;
+}
+
+// an object handed on to a project function
+export async function relay(mailer: Mailer, to: string): Promise<string> {
+  const delivered = await sendVia(mailer, to);
+  return delivered ? "delivered" : "dropped";
 }
