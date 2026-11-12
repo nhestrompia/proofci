@@ -100,7 +100,7 @@ or editing the contract also blocks, until someone allowed by
 
 **Not supported:**
 
-- Other languages. TypeScript is [experimental](docs/typescript.md#status-experimental): it is not in a release, covers a small share of real code, and proves only that the Lean view of a function matches the code
+- Other languages. TypeScript is [experimental](docs/typescript.md#status-experimental): it is not in a release and covers a small share of real code. Each function a guarantee names is reported as *proved* (a generated theorem, checked on every run, ties its Lean view to a model of JavaScript), *tested, not proved* (the view is only compared with Node on generated inputs, as for `async` code, which has no bridge yet), or *failed* (Node disagrees). `require_bridge` in `proofci.yaml` makes *tested, not proved* block
 - Git dependencies and `[patch]`
 - Verified functions that reach raw pointers, threads, I/O or async, or call into
   a dependency's functions

@@ -20,6 +20,12 @@ MARKER = "PROOFCI_DIFF "
 MAX_CASES = 4000
 
 
+def support_dir():
+    """Where the translator's companions (the comparison with Node) sit, whatever `PROOFCI_TRANSLATOR` says."""
+    installed = Path("/opt/proofci/typescript")
+    return installed if installed.exists() else Path(__file__).resolve().parent.parent / "typescript"
+
+
 def translator():
     """The translator sits beside its installed compiler. Tests that mount a
     checkout over the code still use the compiler from the image."""
@@ -393,7 +399,7 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
         "root": str(checkout / package_rel), "out": str(out), "module": extraction.module, "cases": cases,
         "signatures": signatures, "files": extraction.files,
         "imports": extraction.imports, "effects": extraction.effect_list or []}))
-    program = translator().parent / "differential.mjs"
+    program = support_dir() / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
                        binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)
     if node.status != 0:

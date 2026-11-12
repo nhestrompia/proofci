@@ -23,6 +23,15 @@ inputs:
   token:
     description: Token used only to read pull request reviews when the policy changes.
     default: ${{ github.token }}
+  bridge-timeout:
+    description: >-
+      TypeScript only. Seconds one function's bridge proof may take (Lean checks that the function's
+      Lean view matches the JavaScript semantics). A function whose proof doesn't finish is reported
+      as "tested, not proved", which blocks only if `require_bridge` is set in proofci.yaml.
+    default: "120"
+  bridge-budget:
+    description: TypeScript only. Seconds all bridge proofs of one run may take together.
+    default: "900"
   artifact-name:
     description: Name of the uploaded report artifact. Set it when one job runs the action more than once.
     default: ""
@@ -138,6 +147,8 @@ runs:
         IMAGE: ${{ steps.image.outputs.image }}
         IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         PROOFCI_PATH: ${{ inputs.path }}
+        PROOFCI_BRIDGE_TIMEOUT: ${{ inputs.bridge-timeout }}
+        PROOFCI_BRIDGE_BUDGET: ${{ inputs.bridge-budget }}
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_AUTHOR: ${{ github.event.pull_request.user.login }}

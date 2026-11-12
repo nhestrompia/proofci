@@ -31,6 +31,14 @@ class FakeResponse(io.BytesIO):
         return False
 
 
+class BridgeLimitTests(unittest.TestCase):
+    def test_limits_reach_the_container_only_when_set(self):
+        with mock.patch.dict(os.environ, {"PROOFCI_BRIDGE_TIMEOUT": "30", "PROOFCI_BRIDGE_BUDGET": ""}):
+            self.assertEqual(run.bridge_limits(), ["-e", "PROOFCI_BRIDGE_TIMEOUT=30"])
+        with mock.patch.dict(os.environ, {"PROOFCI_BRIDGE_TIMEOUT": "", "PROOFCI_BRIDGE_BUDGET": "60"}):
+            self.assertEqual(run.bridge_limits(), ["-e", "PROOFCI_BRIDGE_BUDGET=60"])
+
+
 class ApprovalTests(unittest.TestCase):
     def approved(self, reviews, approvers=None, author="author"):
         env = {"PR_NUMBER": "7", "GH_TOKEN": "t", "API_URL": "https://api.github.test",

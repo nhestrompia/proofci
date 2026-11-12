@@ -32,6 +32,19 @@ CORPUS=$PWD/fixtures node bridge3.mjs corpus-gaps.tsv /tmp/gaps
 # then, in the image with the spike's .lake volume: lake env lean /tmp/gaps/F0.lean
 ```
 
+The action runs the same generator on every check: `spike/core/action_bridge.mjs` writes a bridge
+for the view the translator wrote (not a fresh one), and `proofci/bridge.py` checks it in the sandbox
+and classifies the result. The Lean side (Core, `F64`, the tactics) is built into the image by
+`toolchain/bridge/install.sh`, from the files listed in the final stage of `toolchain/Dockerfile`
+and in `.dockerignore`. A file the generator or the tactics newly need must be added to both. To
+try it on an example, run `proofci check` in the image and read the "Does the Lean view match
+JavaScript?" table; `PROOFCI_BRIDGE_TIMEOUT` and `PROOFCI_BRIDGE_BUDGET` (seconds) set the limits.
+
+`tests/test_scenarios.py` has the end-to-end cases (`ts-bridge-*`). To plant a mistranslation in
+the view the bridge must catch, it points `PROOFCI_TRANSLATOR` at `tests/fixtures/mistranslate_*.mjs`,
+which runs the real translator and edits its output. That is the only way to do so; the action has
+no setting that changes a view.
+
 A bridge that proves must print only the standard axioms. `mutate.py` plants wrong
 translations in proved files, and every one must fail to check.
 

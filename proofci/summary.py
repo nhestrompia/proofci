@@ -110,6 +110,10 @@ def markdown(report):
     lines += ["", "Verified means the Lean kernel (and nanoda) accepted a proof of the exact protected "
               f"statement about the code as translated by {_translator(report)}. "
               "It covers only the listed guarantees."]
+    if report.get("functions"):
+        lines += ["", "For TypeScript, the table above says how far that translation is trusted: *proved* functions "
+                  "have a checked theorem that the Lean view means what the code means under ProofCI's model of "
+                  "JavaScript; *tested, not proved* ones are only compared with Node."]
     timings = report.get("timings_seconds") or {}
     if timings:
         lines += ["", "Timings: " + ", ".join(f"{k} {v}s" for k, v in timings.items())]
