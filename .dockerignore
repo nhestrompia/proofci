@@ -9,5 +9,6 @@
 !typescript/differential.mjs
 !typescript/paths.mjs
 !typescript/hazard.mjs
+!typescript/narrow.mjs
 !typescript/lean-tokens.json
 **/__pycache__
