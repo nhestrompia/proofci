@@ -1110,7 +1110,27 @@ test("an opaque handle is never looked into, and a method nobody listed is not a
   refused(`export async function f(db: Db, id: string): Promise<void> { await db.remove(id); await db.find(id); }`, /list it under `effects` as `method: Db#find`/, { effects: OBJECT_EFFECTS.filter(e => e.id !== "dbFind") });
   refused(`export async function f(db: Db, id: string): Promise<void> { await db.find(id); }`, /has the signature/, { effects: OBJECT_EFFECTS.map(e => (e.id === "dbFind" ? { ...e, signature: "(id: number): Promise<Row | null>" } : e)) });
   // Handles belong to async code: a synchronous function that holds one stays unsupported.
-  refused(`export function f(m: Mailer): Mailer { return m; }`, /only supported in `async` code/);
+  refused(`export function f(m: Mailer): Mailer { return m; }`, /not supported yet/);
+});
+
+test("a recursive type is cut where it recurs: the inner value is an opaque handle", () => {
+  const types = `interface Entry { name: string; parent: Entry | null; children: Entry[] }\n`;
+  const ok = asyncEmits(`${types}export async function f(e: Entry, id: string): Promise<boolean> {
+    await save(id, e.name);
+    return e.parent !== null || e.children.length > 0;
+  }`);
+  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option Js\.Handle\)\n  children : \(List Js\.Handle\)/);
+  assert.deepEqual(ok.signatures["a.ts::f"].params[0].fields.map(f => f.type.kind), ["string", "optional", "array"]);
+  // The first level is all there is: reading into the inner value is refused, and so is comparing it.
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); return e.parent === null ? "" : e.parent.name; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<number> { await save(id, e.name); return e.children.filter(c => c.name !== "").length; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); const p = e.parent; return p === null ? "" : p.name; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f({ parent }: Entry, id: string): Promise<boolean> { await save(id, "x"); return parent === null; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Entry> { await save(id, e.name); return { name: id, parent: e, children: [] }; }`, /only `null`, `undefined` or `\[\]`/);
+  asyncEmits(`${types}export async function f(id: string): Promise<Entry> { await save(id, "x"); return { name: id, parent: null, children: [] }; }`);
+  // Without `async` there is no bridge to carry a handle, so the type stays unsupported.
+  rejects("interface T<A> { next: T<A> | null } export function f(a: T<number>) { return 1; }", /recursive/);
+  rejects(`${types}export function f(e: Entry): boolean { return e.parent !== null; }`, /recursive/);
 });
 
 test("a read after an await in a loop counts as after", () => {

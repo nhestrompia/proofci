@@ -2,7 +2,7 @@
 // what ProofCI reads. The outside calls are listed in effects.json.
 import { getLink, getTeamUser, getRow, loadSettings, sendMail, audit, fetchAccount, recordUsage, sendVia } from "./world";
 import type { Db, Ctx, Mailer } from "./world";
-import type { Auth } from "./types";
+import type { Auth, Entry } from "./types";
 
 // umami src/permissions/link.ts
 export async function canViewLink({ user, shareToken }: Auth, linkId: string): Promise<boolean> {
@@ -222,4 +222,10 @@ export async function notifyOwner(ctx: Ctx, id: string): Promise<string> {
 export async function relay(mailer: Mailer, to: string): Promise<string> {
   const delivered = await sendVia(mailer, to);
   return delivered ? "delivered" : "dropped";
+}
+
+// a tree node: only the first level is read, the rest is passed on or tested for presence
+export async function isTopLevel(entry: Entry, id: string): Promise<boolean> {
+  await audit(id);
+  return entry.parent === null && entry.children.length > 0 && entry.name !== "";
 }

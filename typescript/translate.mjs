@@ -145,6 +145,8 @@ export class Translator {
     this.methodEffects = new Map(effects.filter(e => e.method).map(e => [e.method, e])); // `Class#method` -> its policy entry
     this.otherEffects = effects.filter(e => !e.call && !e.method); // `param` entries
     this.usesHandles = false;    // a class or library type was met and is an opaque handle
+    this.cutHit = false;         // a recursive type was just cut to a handle
+    this.cutFields = new Set();  // the field declarations that hold such a handle in place of their type
     this.effectOps = new Map();  // `module::name` -> { id, lean, args, result }
     this.effectsBy = new Map();  // declaration -> the effect ids it can call, through its calls
     this.argsBy = new Map();     // declaration -> the reads after an `await` that rest on stable arguments
@@ -283,10 +285,7 @@ export class Translator {
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (this.bound(type)) return this.type(this.bound(type), node);
     if (type.flags & TypeFlags.TypeParameter) return name(type.symbol.name);
-    if (type.flags & TypeFlags.Object && this.handleOf(type)) {
-      if (this.current.length && !this.current.some(d => this.isAsync(this.bodyOf(d)))) {
-        throw this.fail(node, `the type \`${this.checker.typeToString(type)}\` is not supported yet (a value of a class or library type is an opaque handle, and handles are only supported in \`async\` code)`);
-      }
+    if (type.flags & TypeFlags.Object && this.handlesAllowed() && this.handleOf(type)) {
       this.usesHandles = true;
       return "Js.Handle";
     }
@@ -302,7 +301,8 @@ export class Translator {
     const declaration = symbol?.declarations?.[0];
     const library = declaration && this.program.isSourceFileDefaultLibrary(declaration.getSourceFile());
     if (declaration && !library && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
-      return `_root_.${this.declareType(declaration, type, node)}`;
+      const lean = this.declareType(declaration, type, node);
+      return lean === "Js.Handle" ? lean : `_root_.${lean}`;
     }
     if (type.flags & TypeFlags.Object && (symbol?.name === "__type" || symbol?.name === "__object")) {
       return `_root_.${this.declareAnonymous(type, node).lean}`;
@@ -400,7 +400,17 @@ export class Translator {
     const { key, suffix } = this.instantiation(declaration, type, node);
     if (this.types.has(key)) {
       const known = this.types.get(key);
-      if (!known) throw this.fail(declaration, "recursive types are not supported yet");
+      if (!known) {
+        // A type that contains itself is cut where it recurs: the inner value is an opaque handle, which a
+        // function can pass around and compare with `null` but not look into. A function that reads only
+        // as deep as the first level therefore means the same in the model as in JavaScript.
+        if (this.handlesAllowed()) {
+          this.usesHandles = true;
+          this.cutHit = true;
+          return "Js.Handle";
+        }
+        throw this.fail(declaration, "recursive types are not supported yet");
+      }
       return known.lean;
     }
     const file = declaration.getSourceFile();
@@ -417,8 +427,13 @@ export class Translator {
     this.typeOwners.set(lean, declaration);
     this.types.set(key, null);
     let shape;
-    if (type.isUnion()) shape = this.declareUnion(declaration, type, lean);
-    else shape = this.declareRecord(declaration, type, lean);
+    const outerCut = this.cutHit;
+    this.cutHit = false;
+    if (type.isUnion()) {
+      shape = this.declareUnion(declaration, type, lean);
+      if (this.cutHit) throw this.fail(declaration, "recursive types are not supported yet in a union");
+    } else shape = this.declareRecord(declaration, type, lean);
+    this.cutHit = outerCut;
     this.types.set(key, { lean, ...shape });
     this.shaped.push({ type, node });
     this.typeTexts.add(shape.text);
@@ -443,8 +458,16 @@ export class Translator {
     if (!(type.flags & ts.TypeFlags.Object)) throw this.fail(declaration, "this type is not supported yet");
     const fields = this.fields(type, declaration);
     if (!fields.length) throw this.fail(declaration, "empty records are not supported");
-    const lines = fields.map(f => `  ${name(f.name)} : ${this.fieldType(f)}`);
-    return { kind: "record", fields: fields.map(f => f.name),
+    const cuts = [];
+    const lines = fields.map(f => {
+      const outer = this.cutHit;
+      this.cutHit = false;
+      const lean = this.fieldType(f);
+      if (this.cutHit) { this.cutFields.add(f.node); cuts.push(f.name); }
+      this.cutHit = outer;
+      return `  ${name(f.name)} : ${lean}`;
+    });
+    return { kind: "record", fields: fields.map(f => f.name), cuts,
       text: [`structure ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
   }
 
@@ -479,11 +502,17 @@ export class Translator {
   }
 
   // A description of a type, for generating and reading values of it.
+  // Handles belong to async code, which has no bridge to Core to carry them through.
+  handlesAllowed() {
+    return !this.current.length || this.current.some(d => this.isAsync(this.bodyOf(d)));
+  }
+
   // A value of a class, or of a type with methods (a service or a library object), is an opaque handle:
   // a function may pass it around, compare it with `null` and use it as the receiver of a call listed
   // under `effects`, and nothing else. The class name when it is one, otherwise nothing.
   handleOf(type) {
     const symbol = type.symbol;
+    if (symbol?.name === "__type" || symbol?.name === "__object") return undefined; // written inline: a record
     if (!symbol || !(type.flags & ts.TypeFlags.Object) || this.checker.isArrayType(type) || this.checker.isTupleType(type) || this.collection(type)) return undefined;
     if (type.getCallSignatures().length || type.getConstructSignatures().length) return undefined; // a function, not an object
     if (["Promise", "PromiseLike", "ReadonlyArray", "ArrayLike", "Iterable", "IterableIterator", "Generator", "AsyncGenerator", "Function", "Symbol"].includes(symbol.name)) return undefined;
@@ -497,7 +526,7 @@ export class Translator {
 
   describe(type, node) {
     const lean = this.type(type, node);
-    if (lean === "Js.Handle") return { kind: "handle", name: this.handleOf(type) };
+    if (lean === "Js.Handle") return { kind: "handle", name: this.handleOf(type) ?? type.symbol?.name ?? "object" };
     if (lean === "Js.Num") return { kind: "number" };
     if (lean === "Bool") return { kind: "boolean" };
     if (lean === "Int") return { kind: "bigint" };
@@ -520,7 +549,19 @@ export class Translator {
       return { name: f.name, lean: name(f.name), type: optional ? { kind: "optional", nothing: "undefined", inner: described } : described };
     });
     if (shape.kind === "enum") return { kind: "enum", lean: shape.lean, tags: shape.tags.map(t => ({ tag: t, lean: name(t) })) };
-    if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type) };
+    // A type met again inside itself was cut to a handle there (see `declareType`), and is described as one.
+    this.describing ??= new Set();
+    if (this.describing.has(shape.lean)) return { kind: "handle", name: type.symbol?.name ?? "object" };
+    this.describing.add(shape.lean);
+    try {
+      if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type) };
+      return this.describeTagged(type, shape, fields, node);
+    } finally {
+      this.describing.delete(shape.lean);
+    }
+  }
+
+  describeTagged(type, shape, fields, node) {
     return { kind: "tagged", lean: shape.lean, variants: type.types.map(member => {
       const all = fields(member);
       const tag = all.find(f => f.name === "kind");
@@ -988,6 +1029,10 @@ export class Scope {
     }
     if (!ts.isObjectBindingPattern(p.name) || p.initializer) throw this.t.fail(p, "this parameter shape is not supported yet");
     this.refuseHandle(p, p);
+    this.leanOf(type, p); // declares the type, and with it which of its fields are cut
+    for (const element of p.name.elements) {
+      if (ts.isIdentifier(element.name)) this.refuseCut(element, p, element.propertyName?.getText() ?? element.name.text);
+    }
     const argument = `arg${index}`;
     this.taken.add(argument);
     for (const element of p.name.elements) {
@@ -1308,6 +1353,10 @@ export class Scope {
       }
       if (!ts.isObjectBindingPattern(declaration.name)) throw this.t.fail(declaration, "array destructuring is not supported yet");
       this.refuseHandle(declaration.initializer, declaration);
+      this.leanOf(this.typeOf(declaration.initializer), declaration);
+      for (const element of declaration.name.elements) {
+        if (ts.isIdentifier(element.name)) this.refuseCut(element, declaration.initializer, element.propertyName?.getText() ?? element.name.text);
+      }
       const source = this.expression(declaration.initializer, next, lines);
       for (const element of declaration.name.elements) {
         if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) {
@@ -2115,6 +2164,14 @@ export class Scope {
         }
         const slot = this.checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration);
         const declared = property.flags & ts.SymbolFlags.Optional ? this.optionalSlot(slot) : slot;
+        if (this.t.cutFields.has(property.valueDeclaration)) {
+          // The model holds a handle here, so only "nothing" can be written in its place.
+          const inner = unwrap(value);
+          const nothing = inner.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(inner) && inner.text === "undefined");
+          if (nothing && this.nullable(slot)) { parts.push(`${name(property.name)} := none`); continue; }
+          if (ts.isArrayLiteralExpression(inner) && !inner.elements.length) { parts.push(`${name(property.name)} := []`); continue; }
+          throw this.t.fail(value, `\`${property.name}\` holds a value of the type it sits in, which the model cuts to an opaque handle: only \`null\`, \`undefined\` or \`[]\` can be written there`);
+        }
         parts.push(`${name(property.name)} := ${this.convert(value, declared, env, lines)}`);
       }
       const leanType = this.t.type(type, node);
@@ -2363,6 +2420,7 @@ export class Scope {
 
   property(node, env, lines) {
     const object = unwrap(node.expression);
+    this.refuseCut(node, object);
     const known = env.get(this.fieldKey(node));
     if (known) return known.lean;
     const caught = this.caughtVariable(object);
@@ -2408,11 +2466,30 @@ export class Scope {
     return read;
   }
 
+  // A field that holds a recursive type is a handle in the model, so it can be tested for presence and
+  // its length read, and nothing more: any other use would treat a handle as the record it stands for.
+  refuseCut(node, object, name = node.name.text) {
+    const field = this.checker.getPropertyOfType(this.checker.getApparentType(this.typeOf(object)), name)?.valueDeclaration;
+    if (!field || !this.t.cutFields.has(field)) return;
+    let use = node;
+    while (ts.isParenthesizedExpression(use.parent) || ts.isNonNullExpression(use.parent)) use = use.parent;
+    const parent = use.parent;
+    const nothing = other => other.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(other) && other.text === "undefined");
+    const ok = (ts.isBinaryExpression(parent) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken].includes(parent.operatorToken.kind)
+        && nothing(unwrap(parent.left === use ? parent.right : parent.left)))
+      || (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken)
+      || ((ts.isIfStatement(parent) || ts.isConditionalExpression(parent)) && (ts.isIfStatement(parent) ? parent.expression : parent.condition) === use)
+      || (ts.isPropertyAccessExpression(parent) && parent.expression === use && parent.name.text === "length");
+    if (!ok) {
+      throw this.t.fail(node, `\`.${name}\` holds a value of the type it sits in, which the model cuts to an opaque handle: only whether it is present (\`!== null\`) or its length can be read`);
+    }
+  }
+
   // A value of a class or library type is opaque: the only things that can be done with it are to pass it
   // around and to call a method listed under `effects`.
   refuseHandle(object, node) {
     const type = this.checker.getNonNullableType(this.typeOf(object));
-    const owner = type.flags & ts.TypeFlags.Object ? this.t.handleOf(type) : undefined;
+    const owner = type.flags & ts.TypeFlags.Object && this.t.handlesAllowed() ? this.t.handleOf(type) : undefined;
     if (owner) {
       throw this.t.fail(node, `\`${node.name?.text ?? node.getText()}\` is read from a \`${owner}\`, whose fields and methods can't be read: values of class and library types are opaque handles. `
         + "Only an `effects` entry of the `method` form (`Class#method`) can call one");
@@ -2517,7 +2594,7 @@ export class Scope {
     }
     if (ts.isPropertyAccessExpression(callee)) {
       const receiver = this.checker.getNonNullableType(this.typeOf(callee.expression));
-      const owner = receiver.flags & ts.TypeFlags.Object ? this.t.handleOf(receiver) : undefined;
+      const owner = receiver.flags & ts.TypeFlags.Object && this.t.handlesAllowed() ? this.t.handleOf(receiver) : undefined;
       if (owner) throw this.t.fail(node, `\`${owner}#${callee.name.text}\` is a call on an opaque \`${owner}\` object; list it under \`effects\` as \`method: ${owner}#${callee.name.text}\``);
     }
     const outside = this.outsideName(callee);

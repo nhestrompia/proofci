@@ -11,3 +11,10 @@ export interface Auth {
     linkIds?: string[];
   };
 }
+
+// A type that contains itself: a function reads the first level, and deeper values are opaque.
+export interface Entry {
+  name: string;
+  parent: Entry | null;
+  children: Entry[];
+}

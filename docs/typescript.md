@@ -326,6 +326,16 @@ answers with the narrowed type`). Like the rest of the entry, it is protected po
 works for functions of the project, and for a package that isn't installed (where the entry
 is the declaration anyway); a function of an installed package keeps its published types.
 
+### Recursive types
+
+A type that contains itself (`interface Entry { name: string; parent: Entry | null; children: Entry[] }`)
+is cut where it recurs: in `async` code, the inner value is an opaque handle (`parent : Option Js.Handle`,
+`children : List Js.Handle`). A function that reads the first level is translated exactly, and a function
+that looks deeper is refused where it looks: the inner value can only be tested for presence
+(`e.parent !== null`, `!e.parent`, `if (e.parent)`) or have its length read (`e.children.length`). It can't be
+read into, mapped over, assigned to a variable or built (a literal can write `null`, `undefined` or `[]`
+there). A recursive type in a synchronous function stays unsupported.
+
 ### What is supported
 
 `async` and `await` of a listed call or of another `async` function of the package, in any
