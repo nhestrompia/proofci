@@ -222,6 +222,8 @@ function chance(seed) {
 }
 
 const MESSAGES = ["boom", "", "database down", "x y"];
+// A rejection is an Error, or sometimes one of the built-in subclasses code tells apart with `instanceof`.
+const ERRORS = ["Error", "Error", "TypeError", "RangeError"];
 const text = value => `([${Array.from({ length: value.length }, (_, i) => value.charCodeAt(i)).join(", ")}] : Js.Str)`;
 
 // Answers from a database are often empty or missing in the way that matters: an empty string is falsy
@@ -246,10 +248,10 @@ export async function runAsync(fn, inputs, effects, seed) {
   globalThis.__proofciWorld = (id, args) => new Promise((resolve, reject) => {
     const effect = effects.find(e => e.id === id);
     const answer = random() < 0.2
-      ? { reject: MESSAGES[Math.floor(random() * MESSAGES.length)] }
+      ? { reject: MESSAGES[Math.floor(random() * MESSAGES.length)], kind: ERRORS[Math.floor(random() * ERRORS.length)] }
       : { value: emptied(effect.returns, value(effect.returns), random) };
     trace.push({ id, args: effect.params.map((_, i) => args[i]), answer });
-    const settle = () => (answer.reject !== undefined ? reject(new Error(answer.reject)) : resolve(answer.value));
+    const settle = () => (answer.reject !== undefined ? reject(new globalThis[answer.kind](answer.reject)) : resolve(answer.value));
     const turns = Math.floor(random() * 3);
     if (turns === 0) queueMicrotask(settle); else setTimeout(settle, turns - 1);
   });
@@ -267,7 +269,7 @@ export async function runAsync(fn, inputs, effects, seed) {
 function replay(trace, effects) {
   const op = id => `Proofci.Effects.Op.${effects.find(e => e.id === id).lean}`;
   const answer = (effect, a) => (a.reject !== undefined
-    ? `Js.Answer.reject ⟨${text("Error")}, ${text(a.reject)}⟩`
+    ? `Js.Answer.reject ⟨${text(a.kind)}, ${text(a.reject)}⟩`
     : `Js.Answer.value ${term(effect.returns, a.value)}`);
   const arms = trace.map((call, i) => {
     const effect = effects.find(e => e.id === call.id);

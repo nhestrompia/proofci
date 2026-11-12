@@ -828,9 +828,10 @@ const EFFECTS = [
   { id: "count", call: "world.ts::count", signature: "(): Promise<number>", kind: "read" },
 ];
 
-function runAsync(body, { effects = EFFECTS, world = WORLD, target = "f" } = {}) {
+function runAsync(body, { effects = EFFECTS, world = WORLD, target = "f", files = {} } = {}) {
   const root = join(dir, `p${count++}`);
   mkdirSync(root);
+  for (const [path, text] of Object.entries(files)) writeFileSync(join(root, path), text);
   writeFileSync(join(root, "world.ts"), world);
   writeFileSync(join(root, "a.ts"), `import { getLink, save, count } from "./world";\nimport type { Link } from "./world";\n${body}\n`);
   return translate({ root, module: "M", targets: [`a.ts::${target}`], requireTypes: true, effects });
@@ -921,7 +922,7 @@ test("calls through an object or a function-typed parameter are not effects yet"
 test("reading shared state that other code may change after an await is refused", () => {
   const world = `${WORLD}\n`;
   asyncRejects(`let total = 0;\nexport async function f(id: string): Promise<number> { await save(id, "x"); return total; }`, /module-level `let`/);
-  asyncRejects(`const cache: string[] = [];\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return cache.length > 0; }`,
+  asyncRejects(`const cache: string[] = [];\nexport function remember(id: string): void { cache.push(id); }\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return cache.length > 0; }`,
     /module-level object that other code may change/, { world });
   // Before the first await there is nothing to interleave with, and immutable data never changes.
   asyncEmits(`const LIMIT = 5;\nconst NAMES: readonly string[] = ["a", "b"];\nexport async function f(id: string): Promise<boolean> {
@@ -930,8 +931,146 @@ test("reading shared state that other code may change after an await is refused"
   }`);
 });
 
+const TABLE = `const LIMITS = { free: 10, pro: 100 };\nconst TIERS = [{ name: "free", cap: 10 }, { name: "pro", cap: 100 }];\n`;
+const READS_TABLE = `export async function f(id: string, plan: "free" | "pro"): Promise<boolean> {
+  const n = await count();
+  return n < (plan === "free" ? LIMITS.free : LIMITS.pro);
+}`;
+
+test("a module-level table that nothing changes can be read after an await", () => {
+  asyncEmits(`${TABLE}${READS_TABLE}`);
+  asyncEmits(`${TABLE}export async function f(id: string, name: string): Promise<number> {
+    await save(id, name);
+    const tier = TIERS.find(t => t.name === name);
+    return tier === undefined ? 0 : tier.cap;
+  }`);
+  asyncEmits(`const NAMES = ["a", "b", "c"];\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return NAMES.includes(id); }`);
+  asyncEmits(`const NAMES = new Set(["a", "b"]);\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return NAMES.has(id); }`);
+  asyncEmits(`${TABLE}export async function f(id: string): Promise<number> {
+    await save(id, "x");
+    let n = 0;
+    for (const t of TIERS) { n += t.cap; }
+    return n + LIMITS.free;
+  }`);
+});
+
+test("a table that something changes is still refused: a property write, a method, an alias, an escape", () => {
+  const refused = extra => asyncRejects(`${TABLE}${extra}\nexport async function f(id: string, plan: "free" | "pro"): Promise<boolean> {
+    const n = await count();
+    return n < (plan === "free" ? LIMITS.free : LIMITS.pro) + TIERS.length;
+  }`, /module-level object that other code may change/);
+  refused(`export function raise(): void { LIMITS.free = 1; }`);
+  refused(`export function raise(k: "free" | "pro"): void { LIMITS[k] += 1; }`);
+  refused(`export function raise(): void { delete (LIMITS as { free?: number }).free; }`);
+  refused(`export function raise(): void { TIERS.push({ name: "x", cap: 1 }); }`);
+  refused(`export function raise(): void { TIERS[0].cap = 9; }`);
+  refused(`export function raise(): void { const t = TIERS[0]; t.cap = 9; }`);
+  refused(`export function raise(): void { for (const t of TIERS) { t.cap = 0; } }`);
+  refused(`export function raise(): void { TIERS.forEach(t => { t.cap++; }); }`);
+  refused(`export function raise(): void { TIERS.sort((a, b) => a.cap - b.cap); }`);
+  refused(`function spoil(o: object): void { (o as { free: number }).free = 0; }\nexport function raise(): void { spoil(LIMITS); }`);
+  refused(`export function leak(): { free: number; pro: number } { return LIMITS; }`);
+  refused(`export const copy = { inner: LIMITS };`);
+  refused(`export function raise(): void { Object.assign(LIMITS, { free: 0 }); }`);
+  refused(`export function raise(): void { const [first] = TIERS; first.cap = 0; }`);
+  refused(`export function raise(): void { const all = TIERS.map(t => t); all[0].cap = 0; }`);
+  asyncRejects(`const NAMES = new Set(["a"]);\nexport function add(n: string): void { NAMES.add(n); }\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return NAMES.has(id); }`,
+    /module-level object/);
+});
+
+test("a table built by a call or from another variable is not known to be untouched", () => {
+  asyncRejects(`function make(): { free: number } { return { free: 1 }; }\nconst LIMITS = make();\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return LIMITS.free > 0; }`, /module-level object/);
+  asyncRejects(`const shared = { free: 1 };\nconst LIMITS = { inner: shared };\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return LIMITS.inner.free > 0; }`, /module-level object/);
+  asyncRejects(`let LIMITS = { free: 1 };\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return LIMITS.free > 0; }`, /module-level `let`/);
+});
+
+test("an exported table is checked in every file, and is listed as an assumption", () => {
+  const table = `export const LIMITS = { free: 10, pro: 100 };\n`;
+  const body = `import { LIMITS } from "./table";\nexport async function f(id: string, plan: "free" | "pro"): Promise<boolean> { const n = await count(); return n < (plan === "free" ? LIMITS.free : LIMITS.pro); }`;
+  const ok = runAsync(body, { files: { "table.ts": table } });
+  assert.deepEqual(ok.failures, {});
+  assert.deepEqual(ok.constantsRelied["a.ts::f"], ["LIMITS"]);
+  const bad = runAsync(body, { files: { "table.ts": table, "other.ts": `import { LIMITS as L } from "./table";\nexport function raise(): void { L.free = 1; }\n` } });
+  assert.match(bad.failures["a.ts::f"] ?? "accepted: renamed import", /module-level object/);
+  const viaNamespace = runAsync(body, { files: { "table.ts": table, "other.ts": `import * as t from "./table";\nexport function raise(): void { t.LIMITS.free = 1; }\n` } });
+  assert.match(viaNamespace.failures["a.ts::f"] ?? "accepted: namespace", /module-level object/);
+  const escapes = runAsync(body, { files: { "table.ts": table, "other.ts": `import * as t from "./table";\nexport function all(): object { return t; }\n` } });
+  assert.match(escapes.failures["a.ts::f"] ?? "accepted: escapes", /module-level object/);
+});
+
+test("an exported table is refused only when a file outside the program can reach it", () => {
+  const table = `export const LIMITS = { free: 10, pro: 100 };\n`;
+  const body = `import { LIMITS } from "./table";\nexport async function f(id: string, plan: "free" | "pro"): Promise<boolean> { const n = await count(); return n < (plan === "free" ? LIMITS.free : LIMITS.pro); }`;
+  // A file that never imports the module, or only a test file that does, cannot change it in the running program.
+  const unrelated = runAsync(body, { files: { "table.ts": table, "other.ts": `export const c = 1;\nexport const LIMITS_COPY = "LIMITS";\n` } });
+  assert.deepEqual(unrelated.failures, {});
+  const tested = runAsync(body, { files: { "table.ts": table, "table.test.ts": `import { LIMITS } from "./table";\nLIMITS.free = 0;\n` } });
+  assert.deepEqual(tested.failures, {});
+  // A barrel that re-exports it hands it to files we can't see.
+  const barrel = runAsync(body, { files: { "table.ts": table, "index.ts": `export * from "./table";\n` } });
+  assert.match(barrel.failures["a.ts::f"] ?? "accepted: barrel", /module-level object/);
+});
+
+test("the caught value: String(e), a template, `e as Error`, instanceof of a built-in class, `catch (e: any)`", () => {
+  const caught = (handler, head = "") => asyncEmits(`${head}export async function f(id: string): Promise<string> { try { await save(id, "x"); return "ok"; } catch (e) { ${handler} } }`);
+  caught("return e instanceof Error ? e.message : String(e);", "");
+  const shown = caught("return `failed: ${e}`;");
+  assert.ok(shown.source.includes("Js.Exn.show"));
+  caught("return (e as Error).message;");
+  caught("throw new Error(`save failed: ${(e as Error).name}`);");
+  const klass = caught("if (e instanceof TypeError) { return \"bad\"; } if (e instanceof RangeError) { return \"retry\"; } throw e;");
+  assert.match(klass.source, /\.«name» = /);
+  asyncEmits(`export async function f(id: string): Promise<string> { try { await save(id, "x"); return "ok"; } catch (e: any) { return e.message; } }`);
+  asyncEmits(`export async function f(id: string): Promise<string> { try { await save(id, "x"); return "ok"; } catch (e: unknown) { return e instanceof Error ? e.name : "?"; } }`);
+});
+
+test("the caught value: what stays refused", () => {
+  const caught = handler => asyncRejects(`export async function f(id: string): Promise<string> { try { await save(id, "x"); return "ok"; } catch (e) { ${handler} } }`, /./);
+  caught("return (e as { code: string }).code;");
+  caught("return e.stack ?? \"\";");
+  caught("if (e instanceof Foo) { return \"foo\"; } return \"no\";");
+  caught("return String(e.cause);");
+});
+
+test("`any` in an effect's signature can be narrowed in the policy entry", () => {
+  const world = `${WORLD}export async function fetchAccount(id: string): Promise<any> { throw new Error("outside"); }
+export const fetchRow = async (id: any): Promise<any> => { throw new Error("outside"); };
+export interface Account { active: boolean; plan: string }\n`;
+  const entries = (changes = {}) => [
+    { id: "fetchAccount", call: "world.ts::fetchAccount", signature: "(id: string): Promise<any>", narrowed: "(id: string): Promise<Account | null>", kind: "read", ...changes.fetchAccount },
+    { id: "fetchRow", call: "world.ts::fetchRow", signature: "(id: any): Promise<any>", narrowed: "(id: string): Promise<{ count: number; }>", kind: "read", ...changes.fetchRow },
+  ];
+  const body = `import { fetchAccount, fetchRow } from "./world";\nimport type { Account } from "./world";
+export async function f(id: string): Promise<string> {
+  const account = await fetchAccount(id);
+  if (account === null || !account.active) return "none";
+  const row = await fetchRow(id);
+  return row.count > 1 ? account.plan : "few";
+}`;
+  const run = changes => {
+    const root = join(dir, `p${count++}`);
+    mkdirSync(root);
+    writeFileSync(join(root, "world.ts"), world);
+    writeFileSync(join(root, "a.ts"), body);
+    return translate({ root, module: "M", targets: ["a.ts::f"], requireTypes: true, effects: entries(changes) });
+  };
+  const ok = run();
+  assert.deepEqual(ok.failures, {});
+  assert.deepEqual(ok.effectList.map(e => e.narrowed), ["(id: string): Promise<Account | null>", "(id: string): Promise<{ count: number; }>"]);
+  assert.ok(ok.source.includes("| .fetchAccount => (Option _root_.world.Account)"), ok.source);
+  // Without `narrowed` the `any` still stops it.
+  assert.match(run({ fetchAccount: { narrowed: undefined } }).failures["a.ts::f"], /any/);
+  // `signature` must still be what the compiler reports for the callee as written.
+  assert.match(run({ fetchAccount: { signature: "(id: string): Promise<Account>" } }).failures["a.ts::f"], /no `any` to narrow|lists/);
+  assert.match(run({ fetchAccount: { signature: "(id: any): Promise<any>", narrowed: "(id: string): Promise<Account>" } }).failures["a.ts::f"], /has the signature/);
+  // A narrowing may change what is `any` and nothing else.
+  assert.match(run({ fetchAccount: { narrowed: "(id: number): Promise<Account | null>" } }).failures["a.ts::f"], /changes the type of `id`/);
+  assert.match(run({ fetchAccount: { narrowed: "(id: string, extra: string): Promise<Account | null>" } }).failures["a.ts::f"], /same parameters/);
+  assert.match(run({ fetchAccount: { narrowed: "(id: string)" } }).failures["a.ts::f"], /return type/);
+});
+
 test("a read after an await in a loop counts as after", () => {
-  asyncRejects(`const cache: string[] = [];\nexport async function f(ids: string[]): Promise<number> {
+  asyncRejects(`const cache: string[] = [];\nexport function remember(id: string): void { cache.push(id); }\nexport async function f(ids: string[]): Promise<number> {
     let n = 0;
     for (const id of ids) {
       n += cache.length;

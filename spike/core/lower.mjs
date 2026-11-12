@@ -36,7 +36,7 @@ export function lower(root, targets, { paths, eff } = {}) {
   const files = [...new Set([...targets.map(t => join(root, t.split("::")[0])), ...(ts.sys.fileExists(join(root, "src/prelude.ts")) ? [join(root, "src/prelude.ts")] : [])])];
   const program = ts.createProgram(files, { strict: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, noEmit: true, ...(paths ? { baseUrl: root, paths } : {}) });
   const checker = program.getTypeChecker();
-  const hazards = eff ? createHazards(ts, checker, program) : null;
+  const hazards = eff ? createHazards(ts, checker, program, realpathSync(root)) : null;
   const effectByKey = new Map((eff?.effects ?? []).map(e => [e.call, e]));
   const asyncKeys = new Set();
   const done = new Map();

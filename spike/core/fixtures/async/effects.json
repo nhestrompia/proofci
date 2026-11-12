@@ -4,5 +4,7 @@
   { "id": "getRow", "call": "world.ts::getRow", "signature": "(id: string): Promise<Row | null>", "kind": "read" },
   { "id": "loadSettings", "call": "world.ts::loadSettings", "signature": "(id: string): Promise<Settings>", "kind": "read" },
   { "id": "sendMail", "call": "world.ts::sendMail", "signature": "(id: string): Promise<void>", "kind": "write" },
-  { "id": "audit", "call": "world.ts::audit", "signature": "(id: string): Promise<void>", "kind": "write" }
+  { "id": "audit", "call": "world.ts::audit", "signature": "(id: string): Promise<void>", "kind": "write" },
+  { "id": "fetchAccount", "call": "world.ts::fetchAccount", "signature": "(userId: string): Promise<any>", "narrowed": "(userId: string): Promise<Account | null>", "kind": "read" },
+  { "id": "recordUsage", "call": "world.ts::recordUsage", "signature": "(userId: string, event: any): Promise<void>", "narrowed": "(userId: string, event: string): Promise<void>", "kind": "write" }
 ]

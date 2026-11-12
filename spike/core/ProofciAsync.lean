@@ -37,6 +37,13 @@ structure Exn where
   message : Str
   deriving DecidableEq, Repr
 
+/-- `String(e)` of an error, as `Error.prototype.toString` builds it: `name: message`, or one of the
+two when the other is empty. -/
+def Exn.show (e : Exn) : Str :=
+  if e.«name» = [] then e.message
+  else if e.message = [] then e.«name»
+  else e.«name» ++ [58, 32] ++ e.message
+
 /-- How a promise settled. -/
 inductive Settled (α : Type) where
   | fulfilled (a : α)

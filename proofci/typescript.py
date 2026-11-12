@@ -344,8 +344,9 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction.assumed = outcome["assumed"]
     extraction.effects = outcome.get("effects") or {}
     extraction.arguments_relied = outcome.get("argumentsRelied") or {}
+    extraction.constants_relied = outcome.get("constantsRelied") or {}
     extraction.effect_list = outcome.get("effectList") or []
-    extraction.effect_text = {e.id: f"{e.kind} {e.target}{e.signature}" for e in effects}
+    extraction.effect_text = {e.id: f"{e.kind} {e.target}{e.signature}" + (f", assumed to answer {e.narrowed}" if e.narrowed else "") for e in effects}
     extraction.files = outcome["files"]
     extraction.imports = outcome["imports"]
     for function, reason in list(extraction.failures.items()):

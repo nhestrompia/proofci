@@ -1,6 +1,6 @@
 // Shapes of `async` code taken from real projects (umami, lobe-chat, trigger.dev), cut down to
 // what ProofCI reads. The outside calls are listed in effects.json.
-import { getLink, getTeamUser, getRow, loadSettings, sendMail, audit } from "./world";
+import { getLink, getTeamUser, getRow, loadSettings, sendMail, audit, fetchAccount, recordUsage } from "./world";
 import type { Auth } from "./types";
 
 // umami src/permissions/link.ts
@@ -136,4 +136,60 @@ export async function copyOwner(id: string): Promise<string> {
   await sendMail(row.owner);
   await audit(id);
   return row.owner;
+}
+
+// cal.com-style: turn a failure into text for the caller
+export async function describeSend(id: string): Promise<string> {
+  try {
+    await sendMail(id);
+    return "sent";
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+// wrap a failure with context, printing the caught value
+export async function sendOrWrap(id: string): Promise<boolean> {
+  try {
+    await sendMail(id);
+    return true;
+  } catch (error) {
+    throw new Error(`send to ${id} failed: ${error}`);
+  }
+}
+
+// tell failures apart by their class, and give the rest back
+export async function sendClassified(id: string): Promise<string> {
+  try {
+    await sendMail(id);
+    return "sent";
+  } catch (err) {
+    if (err instanceof TypeError) {
+      return "bad input: " + err.message;
+    }
+    if (err instanceof RangeError) {
+      return "retry";
+    }
+    throw err;
+  }
+}
+
+// `catch (e: any)` and an assertion
+export async function sendNamed(id: string): Promise<string> {
+  try {
+    await sendMail(id);
+    return "sent";
+  } catch (e: any) {
+    return `${(e as Error).name}: ${e.message}`;
+  }
+}
+
+// an untyped client (`Promise<any>`), narrowed in the policy
+export async function seatsLeft(userId: string, wanted: number): Promise<number> {
+  const account = await fetchAccount(userId);
+  if (!account || !account.active) {
+    return 0;
+  }
+  await recordUsage(userId, account.plan);
+  return account.seats >= wanted ? account.seats - wanted : 0;
 }

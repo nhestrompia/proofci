@@ -27,3 +27,24 @@ export async function recordOnce(id: string, advances: number): Promise<number> 
   await save(id, "advance");
   return before + 1;
 }
+
+// A table nothing writes: read after the await, and the same under any schedule.
+const LIMITS = { free: 10, pro: 100 };
+
+export async function capFor(id: string, plan: "free" | "pro"): Promise<number> {
+  await save(id, "cap");
+  return plan === "free" ? LIMITS.free : LIMITS.pro;
+}
+
+// The same shape, but another function in the program writes the table: what the read sees depends on
+// when `raise` ran, which no history of outside calls explains.
+const CAPS = { free: 10, pro: 100 };
+
+export function raise(): void {
+  CAPS.free += 1;
+}
+
+export async function capAfterRaise(id: string): Promise<number> {
+  await save(id, "cap");
+  return CAPS.free;
+}

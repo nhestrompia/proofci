@@ -32,7 +32,12 @@ Three places hold the meaning, and they are checked against each other by tests,
   sequential reading is wrong if another task changes in-process state the function reads after an
   `await`. The rule is syntactic: after the first `await` (or anywhere in a loop that contains one), no
   variable declared outside the function is read unless it is a function, an import of a function or
-  class, or a `const` of an immutable type. It is the only thing between the sequential reading and
+  class, a `const` of an immutable type, or a module-level `const` table that nothing changes (built
+  from literals, and every use of it in the program is a read; an exported one is also refused when a
+  file outside the program imports its module, and is listed as an assumption in the report). The
+  table case is sound because the write that would meet the read does not exist in the program; the
+  uses are walked deny-by-default, so a write, a mutating method, passing it on, returning it or
+  storing it makes it "touched". It is the only thing between the sequential reading and
   a lost update, so `hazardcheck.mjs` is its negative control: the lost-update pattern is refused and
   loses an update in Node in 200 of 200 runs when run twice at once. The rule is conservative: it also
   refuses a counter that is incremented atomically after the `await`.
@@ -59,7 +64,8 @@ Three places hold the meaning, and they are checked against each other by tests,
   swapped order, wrong catch paths, flipped branches, dropped throws and so on); each must be rejected.
 * `asynccore.sh <out> [cases]`: Core's reading against Node, the same comparison.
 * `mutate_core_async.sh <out> <mutants>`: the same planted bugs in the lowering.
-* `hazardcheck.mjs`: the negative control for the hazard rule.
+* `hazardcheck.mjs`: the negative control for the hazard rule, including a table that a function in
+  the program writes (refused, and seen changing under a pending call) and one nothing writes (accepted).
 * `tests/test_scenarios.py` (`ts-async-*`): the example in the pull request flow.
 
 ## Not done
@@ -71,4 +77,5 @@ Three places hold the meaning, and they are checked against each other by tests,
 * `Promise.all`, `allSettled`, `race`, `.then`, timers, generators and `for await` fail closed.
 * Effects of the `method` and `param` forms are accepted in the policy and stop the translator with a
   message: they need class and function types.
-* Narrowing `any` in an effect's signature.
+* Narrowing `any` in an effect's signature works in the translator (`typescript/narrow.mjs`, the `narrowed`
+  field of an `effects` entry) but not in `lower.mjs`: Core's reading of such a function is not produced.

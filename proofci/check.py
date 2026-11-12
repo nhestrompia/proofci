@@ -46,6 +46,7 @@ class Outcome:
     assumed: list = field(default_factory=list)    # outside calls the proof rests on
     effects: list = None            # `async` code only: the effects the proof ranges over
     arguments_stable: list = None   # `async` code only: reads that rest on arguments staying unchanged
+    constants_stable: list = None   # `async` code only: exported tables read after an `await`, assumed unchanged by code outside the program
 
 
 @dataclass
@@ -272,6 +273,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             if extraction.effects is not None and o.function in extraction.effects:
                 o.effects = [f"{e}: {extraction.effect_text[e]}" for e in extraction.effects[o.function]]
                 o.arguments_stable = list(extraction.arguments_relied.get(o.function, []))
+                o.constants_stable = list((extraction.constants_relied or {}).get(o.function, []))
             if item.get("hypothesis_mentions_function"):
                 o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
                                   "may assume what it should prove")

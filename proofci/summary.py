@@ -58,11 +58,20 @@ def markdown(report):
         for g in awaited:
             lines.append(f"- `{g['target']}/{g['guarantee']}`: "
                          + (", ".join(f"`{e}`" for e in g["effects"]) if g["effects"] else "no outside calls"))
+            narrowed = [e for e in g["effects"] if ", assumed to answer " in e]
+            if narrowed:
+                lines.append("  - the published types of these calls say `any`; the policy narrows them, and the proof "
+                             "**assumes** each answers with the narrowed type: "
+                             + ", ".join(f"`{e.split(': ', 1)[0]}` ({e.split(', assumed to answer ', 1)[1]})" for e in narrowed))
             lines.append("  - " + (
                 "relied on arguments not being changed by other code while a call is pending, "
                 "through: " + ", ".join(f"`{a}`" for a in g["arguments_stable"])
                 if g["arguments_stable"] else
                 "did not rely on arguments staying unchanged while a call is pending"))
+            if g.get("constants_stable"):
+                lines.append("  - read these exported module-level tables after an `await`; nothing in the program changes "
+                             "them, and the proof assumes no code outside it does: "
+                             + ", ".join(f"`{c}`" for c in g["constants_stable"]))
     warned = [g for g in report["guarantees"] if g.get("warnings")]
     if warned:
         lines += ["", "### Contract warnings", "",

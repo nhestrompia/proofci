@@ -276,13 +276,42 @@ which isn't supported yet. Entries of the forms `method: Class#method` (an injec
 and `param: deps.fetch` (a function-typed parameter) are accepted in the policy, and a call
 that would use one stops with a message: they need class and function types.
 
+### Effects whose published types say `any`
+
+A function of the project that returns `Promise<any>`, or takes an `any` parameter, can't be
+translated as it is: the type of its answer is unknown. Write the type in the entry's
+`narrowed` field:
+
+```yaml
+effects:
+  - id: fetchAccount
+    call: src/billing/client.ts::fetchAccount
+    signature: "(userId: string): Promise<any>"            # exactly what the compiler reports
+    narrowed: "(userId: string): Promise<Account | null>"  # what the proof assumes it answers
+    kind: read
+```
+
+`signature` must still be what the compiler reports for the function as written, so a change
+to the callee's type is seen. `narrowed` may differ from it only where a parameter's or the
+return's written type contains `any` (same parameters, same names, same optionality), and the
+program the translator reads sees the callee as `narrowed` says, so a variable that holds an
+answer has the narrowed type with no cast. The narrowing is a claim about code ProofCI doesn't
+read: where the real function answers something else, the proof says nothing about that run.
+The report lists it with the guarantee (`the policy narrows them, and the proof assumes each
+answers with the narrowed type`). Like the rest of the entry, it is protected policy. It
+works for functions of the project, and for a package that isn't installed (where the entry
+is the declaration anyway); a function of an installed package keeps its published types.
+
 ### What is supported
 
 `async` and `await` of a listed call or of another `async` function of the package, in any
 position that is evaluated in order (a condition, an argument, the right side of `&&`, which
 runs only when the left side lets it); `throw new Error(message)` and the other built-in
-error classes; `try`, `catch` and `finally` around awaits; a `catch (e)` that reads
-`e.message` or `e.name`, tests `e instanceof Error` or throws `e` again; `return await`;
+error classes; `try`, `catch` and `finally` around awaits; a `catch (e)` (written with no type,
+`: unknown` or `: any`) that reads `e.message` or `e.name`, prints the error (`String(e)`,
+`` `${e}` ``, as `Error.prototype.toString` does), asserts `e as Error`, tests `e instanceof Error` or
+`instanceof TypeError` (and the other built-in classes, told apart by the `name` the model gives
+their errors), or throws `e` again; `return await`;
 `for`, `for...of` and `while` loops that contain an `await`.
 
 Everything else fails closed with the reason: `Promise.all`, `allSettled`, `race`, `.then`
@@ -296,14 +325,27 @@ called without `await`, and a recursive `async` function.
    restricts the answers. To lean on what a call does, state it as a hypothesis in the
    contract (`o ⟨.getLink, id⟩ hist = .value none`). ProofCI doesn't read the code behind
    an effect, and an effect's rejection is modelled as an `Error` object with a `name` and
-   a `message`. The report lists every effect a verified guarantee ranges over.
+   a `message`, which is also why `e instanceof Error` is always true there. The report lists
+   every effect a verified guarantee ranges over.
 2. **Shared state in the same process is refused.** The sequential reading is wrong if
    another task changes something the function reads after an `await`. So a function that,
    after its first `await` (or anywhere in a loop that awaits), reads a module-level `let`,
    a module-level object, array, map or set that isn't `readonly`, or `this`, is
-   `unsupported`. Immutable constants, functions and imports are fine. A `const` array is
-   mutable, so write `const NAMES: readonly string[]`. There is no way to declare that such
-   state is protected: the function has to be rewritten.
+   `unsupported`. Immutable constants, functions and imports are fine. A module-level `const`
+   table is also fine when nothing in the program can change it: it is built from literals
+   (object and array literals of numbers, strings, booleans, `null`, `as const`,
+   `Object.freeze`, `new Set([...])` or `new Map([...])`), and every use of it anywhere in the
+   program is a read (a property or element read, `map`, `find`, `includes`, `for...of`,
+   `Object.keys` and the like). A write, `delete`, `push`, `sort`, passing it to a function,
+   returning it or storing it anywhere makes it "touched", and then it is refused. This is
+   the whole check; it is a rule about the program, not about the type, so a `const` that
+   nothing changes needs no `readonly`. A table built by a call (`createStore()`), a class
+   instance and a cache that is filled in are not tables, and stay refused. For a table that
+   is `export`ed, files of the package outside the translated program that import the
+   module (or re-export from it) could change it, so they make it "touched" too (test
+   files don't count), and the report lists every exported table a guarantee read after an
+   `await` as an assumption: no code outside the program changes it. There is no way to
+   declare that other state is protected: the function has to be rewritten.
 3. **One standing assumption: arguments aren't changed by other code while a call is
    pending.** An object a caller passes in could be changed by the caller during an `await`,
    and nothing can check that. Only a function that reads a non-primitive, non-`readonly`

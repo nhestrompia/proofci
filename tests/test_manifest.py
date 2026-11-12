@@ -142,6 +142,18 @@ targets:
         self.assertEqual(m.effects[2].entry(), {"id": "getLink", "call": "src/queries/link.ts::getLink",
                                                 "signature": "(linkId: string): Promise<Link | null>", "kind": "read"})
 
+    def test_an_effect_can_narrow_any(self):
+        narrowed = self.EFFECTS.replace(b'signature: "(linkId: string): Promise<Link | null>"',
+                                        b'signature: "(linkId: string): Promise<any>"\n    narrowed: "(linkId: string): Promise<Link | null>"')
+        m = manifest.parse(narrowed)
+        self.assertEqual(m.effects[2].narrowed, "(linkId: string): Promise<Link | null>")
+        self.assertEqual(m.effects[2].entry()["narrowed"], "(linkId: string): Promise<Link | null>")
+        self.assertEqual(m.effects[3].narrowed, "")
+        self.assertNotIn("narrowed", m.effects[3].entry())
+        self.assertRejected(narrowed.replace(b'narrowed: "(linkId: string): Promise<Link | null>"', b'narrowed: "Link"'), "narrowed must be a TypeScript signature")
+        # The narrowing is part of the policy a pull request can't change for itself.
+        self.assertNotEqual(manifest.parse(narrowed).effects, manifest.parse(self.EFFECTS).effects)
+
     def test_effects_are_strict(self):
         cases = [
             (b"kind: write", b"kind: maybe", "must be one of: read, write"),

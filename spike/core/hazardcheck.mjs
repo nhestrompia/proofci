@@ -18,13 +18,14 @@ const ts = createRequire(import.meta.url)("../../typescript/node_modules/typescr
 const effects = JSON.parse(readFileSync(join(root, "effects.json"), "utf8"));
 
 const reasons = {};
-for (const name of ["recordAdvance", "countCalls", "recordOnce"]) {
+for (const name of ["recordAdvance", "countCalls", "recordOnce", "capFor", "capAfterRaise"]) {
   const r = translate({ root, module: "H", targets: [`hazard.ts::${name}`], requireTypes: true, effects });
   reasons[name] = r.failures[`hazard.ts::${name}`] ?? null;
 }
 console.log("translator:", JSON.stringify(reasons, null, 1));
 const refused = ["recordAdvance", "countCalls"].every(n => /module-level/.test(reasons[n] ?? ""));
-const accepted = reasons.recordOnce === null;
+const accepted = reasons.recordOnce === null && reasons.capFor === null; // a table nothing writes is fine
+const touched = /module-level/.test(reasons.capAfterRaise ?? ""); // one that `raise` writes is not
 
 // Run each function in Node, several calls at once, with a world that answers after random delays.
 const out = join(here, "work/hazard");
@@ -60,9 +61,24 @@ for (let i = 0; i < runs; i += 1) {
   const concurrent = await Promise.all([loaded.recordOnce("a", 5), loaded.recordOnce("b", 7)]);
   if (JSON.stringify(sequential) === JSON.stringify(concurrent)) stable += 1;
 }
+// The table `raise` writes: the answer follows when `raise` ran, not the outside answers.
+let seen = 0;
+for (let i = 0; i < runs; i += 1) {
+  const before = (await loaded.capAfterRaise("probe"));
+  const pending = loaded.capAfterRaise("a");
+  loaded.raise();
+  if ((await pending) === before + 1) seen += 1;
+}
+let tableStable = 0;
+for (let i = 0; i < runs; i += 1) {
+  const sequential = [await loaded.capFor("a", "free"), await loaded.capFor("b", "pro")];
+  const concurrent = await Promise.all([loaded.capFor("a", "free"), loaded.capFor("b", "pro")]);
+  if (JSON.stringify(sequential) === JSON.stringify(concurrent)) tableStable += 1;
+}
+console.log(`a table that raise() writes was seen changing under a pending call in ${seen} of ${runs}; the table nothing writes agreed with the sequential reading in ${tableStable}`);
 console.log(`Node, two calls at once, ${runs} runs each: recordAdvance lost an update in ${lost}; `
   + `countCalls (refused too, its update is atomic after the await, so the rule is conservative there) stayed correct in ${conservative}; `
   + `recordOnce agreed with the sequential reading in ${stable}`);
-const ok = refused && accepted && lost > runs * 0.9 && stable === runs;
+const ok = refused && accepted && touched && lost > runs * 0.9 && stable === runs && seen === runs && tableStable === runs;
 console.log(ok ? "negative control holds: the lost-update pattern is refused and does lose updates in Node; the accepted function is schedule-independent" : "NEGATIVE CONTROL FAILED");
 process.exit(ok ? 0 : 1);

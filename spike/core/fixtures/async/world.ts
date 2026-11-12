@@ -33,3 +33,15 @@ export async function sendMail(id: string): Promise<void> {
 export async function audit(id: string): Promise<void> {
   throw new Error("outside");
 }
+export interface Account {
+  active: boolean;
+  plan: string;
+  seats: number;
+}
+// An untyped client: the answer's type is written in the policy (`narrowed`).
+export async function fetchAccount(userId: string): Promise<any> {
+  throw new Error("outside");
+}
+export async function recordUsage(userId: string, event: any): Promise<void> {
+  throw new Error("outside");
+}

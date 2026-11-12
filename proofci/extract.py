@@ -62,6 +62,7 @@ class Extraction:
     effect_text: dict = None # TypeScript: each listed effect as `kind, signature`
     effect_list: list = None # TypeScript: the effects the translation used, with their types
     arguments_relied: dict = None  # TypeScript: reads after an `await` that rest on stable arguments
+    constants_relied: dict = None  # TypeScript: exported tables read after an `await` that nothing in the program changes
     files: list = None      # TypeScript: the source files translated
     imports: dict = None    # TypeScript: where each of those files' imports resolve
 

@@ -4,7 +4,7 @@
 // failure and carries on with a placeholder. The output is only a measurement,
 // so nothing here can change what a real translation accepts.
 // Usage: node survey/blockers.mjs <repo> <survey.json> <out.json>
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import ts from "typescript";
 import { Scope, Translator, Unsupported, findDeclaration } from "../translate.mjs";
 import { workspacePaths } from "./analyze.mjs";
@@ -35,7 +35,7 @@ export const category = message => {
   return text.replace(/`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 80);
 };
 
-const OUTSIDE = /this call isn't to a function|has no source in the package|outside the translated package/;
+const OUTSIDE = /this call isn't to a function|this `await` is not on an|has no source in the package|outside the translated package/;
 
 // Why an outside call's published types don't translate, or nothing if they do.
 function publishedTypes(translator, node) {
@@ -52,7 +52,7 @@ function publishedTypes(translator, node) {
 }
 
 // Each wrapper records into the function being translated.
-export function collecting(translator) {
+export function collecting(translator, { keepAsync = false } = {}) {
   const blockers = new Map(); // declaration -> Set of reasons
   const calls = new Map();    // declaration -> Set of callees
   const stack = [];
@@ -71,6 +71,7 @@ export function collecting(translator) {
       } catch (error) {
         if (probing) throw error; // Asking about a type isn't a finding either.
         // A placeholder can upset later code, which isn't a finding of its own.
+        if (process.env.BLOCKER_RAW && error instanceof Unsupported) appendFileSync(process.env.BLOCKER_RAW, `${error.message}\n`);
         note(error instanceof Unsupported ? category(error.message) : "(follow-on)");
         return fallback.call(this, args);
       }
@@ -90,6 +91,7 @@ export function collecting(translator) {
   const self = translator;
   recover(self, "checkFile", () => undefined);
   recover(self, "checkDeclaration", () => undefined);
+  if (keepAsync) recover(self, "checkAsync", () => undefined); // a hazard is a finding; the body is still read
   recover(self, "type", () => "Js.Num");
   recover(self, "describe", () => ({ kind: "number" }));
   // A type is only checked the first time it is met, so each use depends on it
@@ -128,7 +130,7 @@ export function collecting(translator) {
     // hide everything else the function needs. Only this measurement reads on.
     const fn = this.bodyOf(declaration);
     const modifiers = fn?.modifiers;
-    if (modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) {
+    if (!keepAsync && modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) {
       note("async");
       fn.modifiers = modifiers.filter(m => m.kind !== ts.SyntaxKind.AsyncKeyword);
     }
@@ -185,9 +187,9 @@ export function reached(declaration, blockers, calls) {
   return [...found].sort();
 }
 
-export function measure(root, targets, paths = {}) {
-  const translator = new Translator(root, targets, paths);
-  active = collecting(translator);
+export function measure(root, targets, paths = {}, options = {}) {
+  const translator = options.translator ?? new Translator(root, targets, paths);
+  active = collecting(translator, options);
   const rows = [];
   for (const target of targets) {
     try {

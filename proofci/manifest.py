@@ -48,9 +48,12 @@ class Effect:
     target: str
     signature: str
     kind: str
+    # What the proof assumes the call answers where `signature` says `any` (see typescript/narrow.mjs).
+    narrowed: str = ""
 
     def entry(self):
-        return {"id": self.id, self.form: self.target, "signature": self.signature, "kind": self.kind}
+        return {"id": self.id, self.form: self.target, "signature": self.signature, "kind": self.kind,
+                **({"narrowed": self.narrowed} if self.narrowed else {})}
 
 
 @dataclass(frozen=True)
@@ -177,7 +180,7 @@ def _effects(entries, language):
     found, ids, targets = [], set(), set()
     for index, entry in enumerate(entries):
         where = f"effects[{index}]"
-        _keys(entry, ("id", "call", "method", "param", "signature", "kind"), ("id", "signature", "kind"), where)
+        _keys(entry, ("id", "call", "method", "param", "signature", "narrowed", "kind"), ("id", "signature", "kind"), where)
         if not isinstance(entry["id"], str) or not EFFECT_ID.match(entry["id"]):
             raise ManifestError(f"{where}.id must match {EFFECT_ID.pattern}")
         if entry["id"] in ids:
@@ -202,7 +205,11 @@ def _effects(entries, language):
                                 "`Promise<T>` return type, for example `(id: string): Promise<Link | null>`")
         if entry["kind"] not in EFFECT_KINDS:
             raise ManifestError(f"{where}.kind must be one of: {', '.join(EFFECT_KINDS)}")
-        found.append(Effect(entry["id"], form, target, signature.strip(), entry["kind"]))
+        narrowed = entry.get("narrowed", "")
+        if narrowed != "" and (not isinstance(narrowed, str) or not EFFECT_SIGNATURE.match(narrowed.strip())):
+            raise ManifestError(f"{where}.narrowed must be a TypeScript signature with a written `Promise<T>` return type, "
+                                "the same as `signature` except where that says `any`")
+        found.append(Effect(entry["id"], form, target, signature.strip(), entry["kind"], narrowed.strip()))
     return tuple(sorted(found, key=lambda e: e.id))
 
 

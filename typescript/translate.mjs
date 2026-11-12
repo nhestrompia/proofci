@@ -15,6 +15,7 @@ import { dirname, join, relative, sep } from "node:path";
 import ts from "typescript";
 import { protectedPaths } from "./paths.mjs";
 import { createHazards } from "./hazard.mjs";
+import { narrowedSources, narrowingProblem, withSources } from "./narrow.mjs";
 
 export class Unsupported extends Error {}
 
@@ -102,6 +103,8 @@ const local = text => {
   return name(text);
 };
 
+const BUILT_IN_ERRORS = /^(Range|Type|Syntax|Reference|URI|Eval)?Error$/;
+
 const unwrap = node => {
   while (ts.isParenthesizedExpression(node)) node = node.expression;
   return node;
@@ -116,7 +119,11 @@ export class Translator {
       if (!existsSync(file)) throw new Unsupported(`${relative(this.root, file)} does not exist`);
     }
     // A package function listed under `effects` is declared the same way as an assumed one.
-    const outside = effects.filter(e => e.call && !PROJECT_FILE.test(e.call.split("::")[0]));
+    const outside = effects.filter(e => e.call && !PROJECT_FILE.test(e.call.split("::")[0])).map(e => ({ call: e.call, signature: e.narrowed ?? e.signature }));
+    this.paths = paths;
+    this.narrowed = new Map(effects.filter(e => e.call && e.narrowed).map(e => [e.call, e]));
+    // The compiler sees a narrowed project function as the policy says (see narrow.mjs).
+    this.rewritten = narrowedSources(this.root, effects);
     const build = options => this.assumedProgram(options, [...assumes, ...outside]);
     this.program = build({ ...OPTIONS, paths });
     this.checker = this.program.getTypeChecker();
@@ -139,6 +146,7 @@ export class Translator {
     this.effectOps = new Map();  // `module::name` -> { id, lean, args, result }
     this.effectsBy = new Map();  // declaration -> the effect ids it can call, through its calls
     this.argsBy = new Map();     // declaration -> the reads after an `await` that rest on stable arguments
+    this.constsBy = new Map();   // declaration -> exported module-level tables it reads after an `await`, which nothing in the program changes
     this.typeTexts = new Set();  // the entries of `order` that declare types
     this.usesWorld = false;      // some async function was translated
     this.hazardsOf = null;
@@ -147,7 +155,9 @@ export class Translator {
   fail(node, message) {
     const file = node.getSourceFile();
     const { line } = file.getLineAndCharacterOfPosition(node.getStart(file));
-    return new Unsupported(`${relative(this.root, file.fileName)}:${line + 1}: ${message}`);
+    const error = new Unsupported(`${relative(this.root, file.fileName)}:${line + 1}: ${message}`);
+    if (process.env.TRANSLATE_TRACE) console.error(error.stack);
+    return error;
   }
 
   // ---------------------------------------------------------------- files
@@ -560,10 +570,10 @@ export class Translator {
       if (ts.resolveModuleName(module, this.files[0], options, ts.sys).resolvedModule) continue;
       missing.set(module, [...missing.get(module) ?? [], `  export function ${fn}${signature};`]);
     }
-    if (!missing.size) return ts.createProgram(this.files, options);
+    if (!missing.size) return ts.createProgram(this.files, options, withSources(ts.createCompilerHost(options), this.rewritten));
     const path = join(this.root, "__proofci_assumed__.d.ts");
     const text = [...missing].map(([module, lines]) => `declare module ${JSON.stringify(module)} {\n${lines.join("\n")}\n}`).join("\n");
-    const host = ts.createCompilerHost(options);
+    const host = withSources(ts.createCompilerHost(options), this.rewritten);
     const { getSourceFile, fileExists, readFile } = host;
     host.getSourceFile = (name, ...rest) => (name === path ? ts.createSourceFile(name, text, ts.ScriptTarget.Latest) : getSourceFile.call(host, name, ...rest));
     host.fileExists = name => name === path || fileExists.call(host, name);
@@ -642,11 +652,38 @@ export class Translator {
     const args = types.length === 0 ? "Unit" : types.join(" × ");
     const result = this.type(this.promised(signature.getReturnType(), node), node);
     const promised = this.promised(signature.getReturnType(), node);
-    const op = { id: entry.id, key, kind: entry.kind, lean: name(entry.id), args, result,
+    const op = { id: entry.id, key, kind: entry.kind, narrowed: entry.narrowed, lean: name(entry.id), args, result,
       params: parameters.map(p => this.describe(this.checker.getTypeOfSymbolAtLocation(p, node), node)),
       returns: this.describe(promised, node) };
     this.effectOps.set(key, op);
     return op;
+  }
+
+  // Why the narrowing in a policy entry can't be used, or nothing. `signature` must be what the compiler
+  // reports for the callee as written (so a change to its type is seen), and `narrowed` may differ from it
+  // only where `any` is written.
+  narrowProblem(entry) {
+    if (this.narrowProblems?.has(entry.call)) return this.narrowProblems.get(entry.call);
+    this.narrowProblems ??= new Map();
+    const settle = problem => { this.narrowProblems.set(entry.call, problem); return problem; };
+    const bad = narrowingProblem(entry.signature, entry.narrowed);
+    if (bad) return settle(bad);
+    const [module, fn] = entry.call.split("::");
+    if (!PROJECT_FILE.test(module)) {
+      return settle(ts.resolveModuleName(module, this.files[0], { ...OPTIONS, paths: this.paths }, ts.sys).resolvedModule
+        ? "narrowing `any` in a function of an installed package is not supported yet; its published types are used as they are" : undefined);
+    }
+    this.original ??= ts.createProgram(this.files, { ...OPTIONS, paths: this.paths });
+    const file = this.original.getSourceFile(join(this.root, module));
+    const checker = this.original.getTypeChecker();
+    const declaration = file?.statements.flatMap(st => (ts.isFunctionDeclaration(st) && st.name?.text === fn ? [st]
+      : ts.isVariableStatement(st) ? st.declarationList.declarations.filter(d => ts.isIdentifier(d.name) && d.name.text === fn) : []))[0];
+    const body = declaration && this.bodyOf(declaration);
+    if (!body) return settle(`\`${entry.call}\` is not a function of the project that can be narrowed`);
+    const found = checker.signatureToString(checker.getSignatureFromDeclaration(body));
+    const plainText = text => text.replace(/\s+/g, " ").trim();
+    return settle(plainText(found) === plainText(entry.signature) ? undefined
+      : `\`${entry.call}\` has the signature \`${found}\`, but \`effects\` lists \`${entry.signature}\` before narrowing it`);
   }
 
   isAsync(fn) {
@@ -666,19 +703,22 @@ export class Translator {
   checkAsync(declaration, fn) {
     this.usesWorld = true;
     if (fn.asteriskToken) throw this.fail(fn, "async generators are not supported");
-    this.hazardsOf ??= createHazards(ts, this.checker, this.program);
+    this.hazardsOf ??= createHazards(ts, this.checker, this.program, realpathSync(this.root));
     const found = this.hazardsOf(fn);
     if (found.hazards.length) {
       const first = found.hazards[0];
       throw this.fail(first.node, `${first.message}, so the function can't be read as if nothing else ran between its \`await\`s`);
     }
     this.argsBy.set(declaration, new Set(found.arguments.map(a => a.name)));
+    this.constsBy.set(declaration, new Set(found.constants.map(c => c.name)));
   }
 
   // Records what the function being translated relies on, through an async call.
-  noteEffects(ids, args = []) {
+  noteEffects(ids, args = [], constants = []) {
     const owner = this.current.at(-1);
     if (!owner) return;
+    if (!this.constsBy.has(owner)) this.constsBy.set(owner, new Set());
+    for (const name of constants) this.constsBy.get(owner).add(name);
     if (!this.effectsBy.has(owner)) this.effectsBy.set(owner, new Set());
     for (const id of ids) this.effectsBy.get(owner).add(id);
     if (!this.argsBy.has(owner)) this.argsBy.set(owner, new Set());
@@ -1050,7 +1090,21 @@ export class Scope {
   }
 
   typeOf(node) {
+    // `e.message` and `e.name` of a caught `e` are strings, even when `e` was written `: any`.
+    if (ts.isPropertyAccessExpression(node) && (node.name.text === "message" || node.name.text === "name") && this.caughtVariable(node.expression)) return this.checker.getStringType?.() ?? this.checker.getTypeAtLocation(node);
     return this.checker.getTypeAtLocation(node);
+  }
+
+  // The `catch (e)` variable a node stands for, through parentheses and `as Error`.
+  caughtVariable(node) {
+    for (;;) {
+      node = unwrap(node);
+      if (ts.isAsExpression(node) && ts.isTypeReferenceNode(node.type) && ts.isIdentifier(node.type.typeName) && node.type.typeName.text === "Error" && !node.type.typeArguments) { node = node.expression; continue; }
+      break;
+    }
+    if (!ts.isIdentifier(node)) return undefined;
+    const declaration = this.symbol(node)?.valueDeclaration;
+    return declaration && ts.isVariableDeclaration(declaration) && ts.isCatchClause(declaration.parent) ? node : undefined;
   }
 
   isNumber(node) {
@@ -1196,7 +1250,8 @@ export class Scope {
   // built-in error classes, and `throw e` for a caught `e`.
   rejecting(statement, env) {
     const thrown = unwrap(statement.expression);
-    if (ts.isIdentifier(thrown) && env.get(this.symbol(thrown))?.exn) return [`Js.Eff.throw ${env.get(this.symbol(thrown)).lean}`];
+    const caught = this.caughtVariable(thrown);
+    if (caught && env.get(this.symbol(caught))?.exn) return [`Js.Eff.throw ${env.get(this.symbol(caught)).lean}`];
     if (!ts.isNewExpression(thrown) || !ts.isIdentifier(thrown.expression) || this.isLocal(thrown.expression)
       || !/^(Range|Type|Syntax|Reference|URI|Eval)?Error$/.test(thrown.expression.text)) {
       throw this.t.fail(statement, "only `throw new Error(message)`, another built-in error class, or rethrowing a caught error is supported in `async` code");
@@ -2077,6 +2132,8 @@ export class Scope {
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return this.nullish(node, env, lines);
     if (ts.isSatisfiesExpression(node) || ts.isAsExpression(node)) {
       if (ts.isAsExpression(node) && ts.isConstTypeReference(node.type)) return this.expression(node.expression, env, lines);
+      const caught = ts.isAsExpression(node) && this.caughtVariable(node);
+      if (caught && env.get(this.symbol(caught))?.exn) return env.get(this.symbol(caught)).lean;
       throw this.t.fail(node, "type assertions are not supported yet");
     }
     if (ts.isStringLiteralLike(node)) return this.text(node.text);
@@ -2226,6 +2283,8 @@ export class Scope {
 
   // How a value prints inside a template.
   toText(node, env, lines) {
+    const caught = this.caughtVariable(node);
+    if (caught && env.get(this.symbol(caught))?.exn) return `(Js.Exn.show ${env.get(this.symbol(caught)).lean})`;
     const type = this.typeOf(node);
     const missing = this.nothing(type);
     if (missing === "both") throw this.t.fail(node, "a value that may be `null` or `undefined` can't go in a template, because it isn't known which word prints");
@@ -2278,9 +2337,10 @@ export class Scope {
     const object = unwrap(node.expression);
     const known = env.get(this.fieldKey(node));
     if (known) return known.lean;
-    if (ts.isIdentifier(object) && env.get(this.symbol(object))?.exn) {
+    const caught = this.caughtVariable(object);
+    if (caught && env.get(this.symbol(caught))?.exn) {
       if (node.name.text !== "message" && node.name.text !== "name") throw this.t.fail(node, `\`.${node.name.text}\` of a caught error is not supported; only \`message\` and \`name\` are`);
-      return `${env.get(this.symbol(object)).lean}.${name(node.name.text)}`;
+      return `${env.get(this.symbol(caught)).lean}.${name(node.name.text)}`;
     }
     if (ts.isIdentifier(object) && object.text === "Number" && !this.isLocal(object)) {
       if (node.name.text === "MAX_SAFE_INTEGER") return this.t.number(Number.MAX_SAFE_INTEGER, node);
@@ -2432,7 +2492,7 @@ export class Scope {
     this.t.noteAssumed(this.t.assumedBy.get(declaration) ?? []);
     if (calleeAsync) {
       const name = this.t.bodyOf(declaration) && declaration.name?.text;
-      this.t.noteEffects(this.t.effectsBy.get(declaration) ?? [], [...this.t.argsBy.get(declaration) ?? []].map(a => `${name}: ${a}`));
+      this.t.noteEffects(this.t.effectsBy.get(declaration) ?? [], [...this.t.argsBy.get(declaration) ?? []].map(a => `${name}: ${a}`), [...this.t.constsBy.get(declaration) ?? []]);
     }
     const parameters = signature.getParameters();
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
@@ -2707,9 +2767,14 @@ export class Scope {
     if (site?.parameters.some(p => p.dotDotDotToken)) throw this.t.fail(node, `\`${key}\` takes a rest parameter, so it can't be an effect yet`);
     const found = this.checker.signatureToString(signature);
     const plain = text => text.replace(/\s+/g, " ").trim();
-    if (plain(found) !== plain(entry.signature)) {
-      const hint = /\bany\b/.test(found) ? ", and narrowing `any` in an entry isn't supported yet" : "";
-      throw this.t.fail(node, `\`${key}\` has the signature \`${found}\`, but \`effects\` lists \`${entry.signature}\`${hint}`);
+    if (entry.narrowed) {
+      const problem = this.t.narrowProblem(entry);
+      if (problem) throw this.t.fail(node, problem);
+    }
+    const listed = entry.narrowed ?? entry.signature;
+    if (plain(found) !== plain(listed)) {
+      const hint = /\bany\b/.test(found) ? ", and narrowing `any` in an entry takes a `narrowed` signature" : "";
+      throw this.t.fail(node, `\`${key}\` has the signature \`${found}\`, but \`effects\` lists \`${listed}\`${hint}`);
     }
     const parameters = signature.getParameters();
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
@@ -2802,8 +2867,14 @@ export class Scope {
       }
       if (op === ts.SyntaxKind.InstanceOfKeyword) {
         const left = unwrap(node.left), right = unwrap(node.right);
-        if (ts.isIdentifier(left) && env.get(this.symbol(left))?.exn && ts.isIdentifier(right) && right.text === "Error" && !this.isLocal(right)) return "True";
-        throw this.t.fail(node, "`instanceof` is only supported on a caught error and `Error`");
+        const caught = this.caughtVariable(left);
+        const state = caught && env.get(this.symbol(caught));
+        if (state?.exn && ts.isIdentifier(right) && !this.isLocal(right)) {
+          if (right.text === "Error") return "True";
+          // A built-in error class is told apart by the `name` it gives its errors.
+          if (BUILT_IN_ERRORS.test(right.text)) return `(${state.lean}.${name("name")} = ${this.text(right.text)})`;
+        }
+        throw this.t.fail(node, "`instanceof` is only supported on a caught error and `Error` or another built-in error class");
       }
       if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) return this.logical(node, env, lines);
       if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
@@ -2958,6 +3029,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   const assumed = {};
   const effectsUsed = {};
   const argumentsRelied = {};
+  const constantsRelied = {};
   let fatal = null;
   for (const target of targets) {
     const snapshot = {
@@ -2974,6 +3046,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       if (translator.isAsync(translator.bodyOf(declaration))) {
         effectsUsed[target] = [...translator.effectsBy.get(declaration) ?? []].sort();
         argumentsRelied[target] = [...translator.argsBy.get(declaration) ?? []].sort();
+        constantsRelied[target] = [...translator.constsBy.get(declaration) ?? []].sort();
       }
     } catch (error) {
       if (!(error instanceof Unsupported)) throw error;
@@ -3005,8 +3078,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   const records = () => translator.shaped.flatMap(({ type, node }) => {
     try { return [translator.describe(type, node)]; } catch { return []; }
   });
-  const effectList = [...translator.effectOps.values()].map(({ id, key, kind, lean, params, returns }) => ({ id, call: key, kind, lean, params, returns }));
-  return { module, source: `${[...header, ...order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, effects: effectsUsed, argumentsRelied, effectList, packages, records,
+  const effectList = [...translator.effectOps.values()].map(({ id, key, kind, narrowed, lean, params, returns }) => ({ id, call: key, kind, ...(narrowed ? { narrowed } : {}), lean, params, returns }));
+  return { module, source: `${[...header, ...order.flatMap(d => [d, ""])].join("\n")}\n`, failures, names, fatal, signatures, assumed, effects: effectsUsed, argumentsRelied, constantsRelied, effectList, packages, records,
     files: reached.map(f => local(f.fileName)),
     imports: Object.fromEntries(reached.map(f => [local(f.fileName), imports(f, translator.program)])) };
 }
