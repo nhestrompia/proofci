@@ -2,7 +2,7 @@
 // what ProofCI reads. The outside calls are listed in effects.json.
 import { getLink, getTeamUser, getRow, loadSettings, sendMail, audit, fetchAccount, recordUsage, sendVia } from "./world";
 import type { Db, Ctx, Mailer } from "./world";
-import type { Auth, Entry } from "./types";
+import type { Auth, Entry, SendOptions } from "./types";
 
 // umami src/permissions/link.ts
 export async function canViewLink({ user, shareToken }: Auth, linkId: string): Promise<boolean> {
@@ -228,4 +228,10 @@ export async function relay(mailer: Mailer, to: string): Promise<string> {
 export async function isTopLevel(entry: Entry, id: string): Promise<boolean> {
   await audit(id);
   return entry.parent === null && entry.children.length > 0 && entry.name !== "";
+}
+
+// an empty options record is passed along and never read
+export async function sendWith(id: string, options: SendOptions): Promise<SendOptions> {
+  await sendMail(id);
+  return options;
 }

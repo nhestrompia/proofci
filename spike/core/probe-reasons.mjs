@@ -3,7 +3,7 @@
 // alone buys") run on the real async translation: each awaited call to a function is listed as an effect with
 // its own signature, the most a policy could do, and every other limit is counted by `survey/blockers.mjs`.
 // The input is the census of the async study (classify.mjs). Only the translator decides.
-// usage: node probe-blockers.mjs <repo root> <census.json> <out.json>
+// usage: node probe-reasons.mjs <repo root> <census.json> <out.json>
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { relative, sep } from "node:path";
 import ts from "../../typescript/node_modules/typescript/lib/typescript.js";
@@ -16,6 +16,16 @@ const [root, census, out] = process.argv.slice(2);
 let counter = 0;
 const original = T.Scope.prototype.effectFor;
 T.Scope.prototype.effectFor = function (callee, node) {
+  // A call on an object (a handle) is listed as a `method` effect with its own signature, as a policy could.
+  if (ts.isPropertyAccessExpression(callee)) {
+    const receiver = this.checker.getTypeAtLocation(callee.expression);
+    const owner = receiver.flags & ts.TypeFlags.Object ? this.t.handleOf(receiver) : undefined;
+    const signature = owner && this.checker.getResolvedSignature(node);
+    const key = owner && `${owner}#${callee.name.text}`;
+    if (key && signature && this.checker.getReturnTypeOfSignature(signature).symbol?.name === "Promise" && !this.t.methodEffects.has(key)) {
+      this.t.methodEffects.set(key, { id: `auto${counter++}`, method: key, signature: this.checker.signatureToString(signature), kind: "read" });
+    }
+  }
   const listed = original.call(this, callee, node);
   if (listed || !ts.isIdentifier(callee)) return listed;
   let symbol = this.checker.getSymbolAtLocation(callee);

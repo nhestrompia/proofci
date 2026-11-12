@@ -41,6 +41,16 @@ Three places hold the meaning, and they are checked against each other by tests,
   a lost update, so `hazardcheck.mjs` is its negative control: the lost-update pattern is refused and
   loses an update in Node in 200 of 200 runs when run twice at once. The rule is conservative: it also
   refuses a counter that is incremented atomically after the `await`.
+* **`narrow.mjs`** (trusted, shipped with the translator): where an `effects` entry carries `narrowed`, the
+  compiler is shown the callee's declaration as the narrowed signature (in memory, never on disk), so every use of
+  an answer has the narrowed type. It checks that `signature` is what the compiler reports for the source as
+  written, and that `narrowed` differs from it only where `any` is written. The narrowing itself is a claim
+  about code that is not read; it is listed in the report for every guarantee that reaches the call.
+* **`Js.Handle`** (in `ProofciAsync.lean`, no axioms): an object of a class or library type, or the inner value
+  of a recursive type, is a number that tells two objects apart. The translator lets a function pass it around,
+  test it for presence and call a listed `method` effect on it, and refuses any read, so the model can't tell
+  what the object is. The harness gives the real function stand-in objects whose listed methods ask the scripted
+  world. A recursive type is cut to a handle where it recurs; reading its first level is exact.
 * **The standing assumption** (arguments are not changed by their caller while a call is pending)
   cannot be checked. The same file finds where a function relies on it, and the report says so for
   every guarantee.

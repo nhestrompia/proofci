@@ -314,7 +314,9 @@ export class Translator {
   // same shape written twice is one Lean type.
   declareAnonymous(type, node) {
     const fields = this.fields(type, node).map(f => ({ ...f, lean: this.fieldType(f) }));
-    if (!fields.length) throw this.fail(node, "empty records are not supported");
+    // A record with no named fields carries no information, so its Lean type has one value. That is only
+    // sound where nothing can read a member it hides (`property` refuses those), and in async code.
+    if (!fields.length && !this.handlesAllowed()) throw this.fail(node, "empty records are not supported");
     const key = fields.map(f => `${f.name}:${f.lean}`).sort().join(",");
     if (!this.anonymous.has(key)) {
       const hash = createHash("sha256").update(key).digest("hex").slice(0, 10);
@@ -457,7 +459,7 @@ export class Translator {
   declareRecord(declaration, type, lean) {
     if (!(type.flags & ts.TypeFlags.Object)) throw this.fail(declaration, "this type is not supported yet");
     const fields = this.fields(type, declaration);
-    if (!fields.length) throw this.fail(declaration, "empty records are not supported");
+    if (!fields.length && !this.handlesAllowed()) throw this.fail(declaration, "empty records are not supported");
     const cuts = [];
     const lines = fields.map(f => {
       const outer = this.cutHit;

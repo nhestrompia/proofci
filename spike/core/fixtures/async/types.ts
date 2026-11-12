@@ -18,3 +18,6 @@ export interface Entry {
   parent: Entry | null;
   children: Entry[];
 }
+
+// An options object with nothing in it (or only members a function never reads)
+export interface SendOptions {}
