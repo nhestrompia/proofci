@@ -974,6 +974,7 @@ test("a table that something changes is still refused: a property write, a metho
   refused(`export function raise(): void { Object.assign(LIMITS, { free: 0 }); }`);
   refused(`export function raise(): void { const [first] = TIERS; first.cap = 0; }`);
   refused(`export function raise(): void { const all = TIERS.map(t => t); all[0].cap = 0; }`);
+  refused(`export function raise(): void { TIERS.reduce((acc, t) => { acc.cap++; return t; }, { name: "x", cap: 0 }); }`);
   asyncRejects(`const NAMES = new Set(["a"]);\nexport function add(n: string): void { NAMES.add(n); }\nexport async function f(id: string): Promise<boolean> { await save(id, "x"); return NAMES.has(id); }`,
     /module-level object/);
 });
