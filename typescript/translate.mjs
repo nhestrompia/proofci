@@ -2752,6 +2752,9 @@ export class Scope {
       case "replace": exactly(2); return this.bind(`Js.replace ${value} ${text(0)} ${text(1)}`, lines);
       case "replaceAll": exactly(2); return this.bind(`Js.replaceAll ${value} ${text(0)} ${text(1)}`, lines);
       case "concat": exactly(1); return `(${value} ++ ${text(0)})`;
+      case "padStart": case "padEnd":
+        if (args.length !== 1) exactly(2);
+        return this.bind(`Js.${method} ${value} ${count(0)} ${args.length === 2 ? text(1) : this.text(" ")}`, lines);
       default: throw this.t.fail(node, `\`.${method}\` is not supported on strings yet`);
     }
   }
@@ -2774,7 +2777,9 @@ export class Scope {
     const global = ts.isIdentifier(callee) && !this.isLocal(callee);
     const onNumber = ts.isPropertyAccessExpression(callee) && !callee.questionDotToken
       && ts.isIdentifier(callee.expression) && callee.expression.text === "Number" && !this.isLocal(callee.expression);
-    const named = global ? callee.text : onNumber ? `Number.${callee.name.text}` : undefined;
+    const onArray = ts.isPropertyAccessExpression(callee) && !callee.questionDotToken
+      && ts.isIdentifier(callee.expression) && callee.expression.text === "Array" && !this.isLocal(callee.expression);
+    const named = global ? callee.text : onNumber ? `Number.${callee.name.text}` : onArray ? `Array.${callee.name.text}` : undefined;
     const test = name => (this.isNumber(args[0]) ? `(Js.${name} ${this.expression(args[0], env, lines)})` : undefined);
     if (args.length === 1) {
       switch (named) {
@@ -2784,6 +2789,18 @@ export class Scope {
         case "isFinite": return test("isFinite");
         case "isNaN": case "Number.isNaN": return test("isNaN");
         case "Boolean": return `(decide (¬¬(${this.condition(args[0], env, lines)})))`;
+        case "Number":
+          if (this.nullable(this.typeOf(args[0]))) break;
+          if (this.isNumber(args[0])) return this.expression(args[0], env, lines);
+          if (this.isString(args[0])) return this.bind(`Js.numOfStr ${this.expression(args[0], env, lines)}`, lines);
+          if (this.isBoolean(args[0])) return `(Js.boolNum ${this.expression(args[0], env, lines)})`;
+          break;
+        case "Array.isArray": {
+          const type = this.typeOf(args[0]);
+          if (!this.checker.isArrayType(this.checker.getNonNullableType(type))) throw this.t.fail(node, "`Array.isArray` is only supported on values typed as arrays");
+          if (this.nullable(type)) return `(Option.isSome ${this.expression(args[0], env, lines)})`;
+          return `(Js.isArray ${this.expression(args[0], env, lines)})`;
+        }
         default:
       }
     }

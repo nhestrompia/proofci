@@ -45,7 +45,7 @@ inductive Prim where
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
-  | numFinite | numNaN | toFixed | parseInt (auto : Bool)
+  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -221,6 +221,15 @@ def numNaN : Val → Option Bool
   | .undef | .null => some false
   | v => (asNum v).map fun _ => false
 
+/-- `Array.isArray` on an array or a nullish value. Sets are stored as arrays too, so the
+lowering only uses it on values typed as arrays. -/
+def isArrayV (h : Heap) : Val → Option Bool
+  | .undef | .null => some false
+  | .ref l => match h[l]? with
+    | some (.array _) => some true
+    | _ => none
+  | _ => none
+
 /-- How a value prints inside a template. Objects and functions aren't modelled here. -/
 def textOf : Val → Option (List Nat)
   | .undef => some Js.undefinedStr
@@ -288,6 +297,17 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .parseInt auto, h, [.str s] => match (Js.parseIntStr auto s).match with
     | .ok n => some (numVal n, h)
     | _ => none
+  | .toNum, h, [.str s] => match (Js.numOfStr s).match with
+    | .ok n => some (numVal n, h)
+    | _ => none
+  | .toNum, h, [.bool b] => some (numVal (Js.boolNum b), h)
+  | .isArray, h, [v] => (isArrayV h v).map fun b => (.bool b, h)
+  | .padStart, h, [.str s, n, .str f] => match asNum n with
+    | some n => (okStr (Js.padStart s n f)).map (·, h)
+    | none => none
+  | .padEnd, h, [.str s, n, .str f] => match asNum n with
+    | some n => (okStr (Js.padEnd s n f)).map (·, h)
+    | none => none
   | .setOf, h, [.ref l] => match h[l]? with
     | some (.array xs) => some (.ref h.length, h ++ [.array (xs.foldl addKey [])])
     | _ => none

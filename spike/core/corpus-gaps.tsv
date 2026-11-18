@@ -17,3 +17,8 @@ gaps	gaps.ts	pointKind
 gaps	gaps.ts	pointDimensions
 gaps	gaps.ts	totalPlusOne
 gaps	gaps.ts	makeCounts
+gaps	gaps.ts	twoDigits
+gaps	gaps.ts	column
+gaps	gaps.ts	portOf
+gaps	gaps.ts	flagCount
+gaps	gaps.ts	listCount
