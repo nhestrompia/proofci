@@ -340,6 +340,8 @@ test("generic functions keep their type parameters", () => {
   rejects("function g<T>(a: number): number { return a; } export function f() { return g<string>(1); }", /can't be read off this call/);
   rejects("export function f<T>(xs: T[], x: T) { return xs.includes(x); }", /could be an object/);
   rejects("export function f<T>(xs: T[] | undefined, x: T) { return xs?.includes(x); }", /compares identity/);
+  const nested = run("interface Box<T> { value: T } export function f(b: Box<Box<number>>): number { return b.value.value; }");
+  assert.equal(nested.signatures["a.ts::f"].params[0].fields[0].type.fields[0].type.kind, "number");
 });
 
 test("null checks in their other spellings", () => {

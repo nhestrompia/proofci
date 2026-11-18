@@ -661,15 +661,16 @@ export class Translator {
     if (shape.kind === "enum") return { kind: "enum", lean: shape.lean, tags: shape.tags.map(t => ({ tag: t, lean: name(t) })) };
     // A type met again inside itself was cut to a handle there (see `declareType`), and is described as one.
     this.describing ??= new Set();
-    if (this.describing.has(shape.lean)) return { kind: "handle", name: type.symbol?.name ?? "object" };
-    this.describing.add(shape.lean);
+    const key = shape.params ? this.typeWithParams(type, node).lean : shape.lean;
+    if (this.describing.has(key)) return { kind: "handle", name: type.symbol?.name ?? "object" };
+    this.describing.add(key);
     try {
       const generic = shape.params && { params: shape.params, args: this.typeArguments(type).map(t => this.describe(t, node)), declared: fields(shape.own) };
       if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type), ...generic };
       if (generic) throw this.fail(node, "a generic union over a type parameter has no description yet");
       return this.describeTagged(type, shape, fields, node);
     } finally {
-      this.describing.delete(shape.lean);
+      this.describing.delete(key);
     }
   }
 
