@@ -17,3 +17,5 @@ gaps	gaps.ts	pointKind
 gaps	gaps.ts	pointDimensions
 gaps	gaps.ts	totalPlusOne
 gaps	gaps.ts	makeCounts
+gaps	gaps.ts	itemTotal
+gaps	gaps.ts	jsonLeaves
