@@ -338,6 +338,8 @@ test("generic functions keep their type parameters", () => {
   emits("function g<T>(a: T): T { return a; } export function f(x?: number) { return g(x); }", "(T := (Option Js.Num))");
   emits("function g<T>(): T[] { return []; } export function f() { return g<number>(); }", "(T := Js.Num)");
   rejects("function g<T>(a: number): number { return a; } export function f() { return g<string>(1); }", /can't be read off this call/);
+  rejects("export function f<T>(xs: T[], x: T) { return xs.includes(x); }", /could be an object/);
+  rejects("export function f<T>(xs: T[] | undefined, x: T) { return xs?.includes(x); }", /compares identity/);
 });
 
 test("null checks in their other spellings", () => {
