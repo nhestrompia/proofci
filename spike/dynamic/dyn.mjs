@@ -377,6 +377,7 @@ export class Dyn {
     if (ts.isObjectLiteralExpression(e)) {
       const steps = [];
       let acc = "[]";
+      const pairs = [];
       for (const p of e.properties) {
         if (ts.isSpreadAssignment(p)) {
           const t = sc.fresh("s");
@@ -390,8 +391,12 @@ export class Dyn {
         const t = sc.fresh("f");
         steps.push(`let ${t} := ${v(val)}`);
         acc = `(mergeFields ${acc} [(${JSON.stringify(this.field(p, p.name.text))}, ${t})])`;
+        pairs.push([this.field(p, p.name.text), t]);
       }
-      return Mt(`(do ${[...steps, `record ${acc}`].join("; ")})`);
+      const keys = pairs.map(([k]) => k);
+      const flat = pairs.length === e.properties.length && new Set(keys).size === keys.length
+        ? `[${pairs.map(([k, t]) => `(${JSON.stringify(k)}, ${t})`).join(", ")}]` : null;
+      return Mt(`(do ${[...steps, `record ${flat ?? acc}`].join("; ")})`);
     }
     if (ts.isArrayLiteralExpression(e)) {
       const steps = [];

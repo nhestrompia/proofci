@@ -16,7 +16,7 @@ abbrev transfer.pre (accounts' : Val) (amount' : Val) (h : Heap) : Prop :=
 def transfer (accounts' : Val) (amount' : Val) : M Val := do
   if truthy (← (do let a1 := (← (do bin .le amount' (num 0))); if truthy a1 then pure a1 else (do bin .gt amount' (← (do (fun o => field o "from") accounts'))))) then
     return .null
-  return (← (do let f2 := (← (do bin .sub (← (do (fun o => field o "from") accounts')) amount')); let f3 := (← (do bin .add (← (do (fun o => field o "to") accounts')) amount')); record (mergeFields (mergeFields [] [("from", f2)]) [("to", f3)])))
+  return (← (do let f2 := (← (do bin .sub (← (do (fun o => field o "from") accounts')) amount')); let f3 := (← (do bin .add (← (do (fun o => field o "to") accounts')) amount')); record [("from", f2), ("to", f3)]))
 abbrev sumAmounts.pre (amounts' : Val) (h : Heap) : Prop :=
   Is h (.arr .num) amounts'
 def sumAmounts (amounts' : Val) : M Val := do

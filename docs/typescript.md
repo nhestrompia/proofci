@@ -528,8 +528,9 @@ type shape is a new feature. The plan is to add a second path that doesn't need 
    explicit heap, so TypeScript types become preconditions. That one change covers
    unions, `unknown`, aliasing, classes and closures. The typed path stays as the fast
    path. The [spike](../spike/dynamic/README.md) says go: real functions the typed path
-   rejects translate, match Node and can be proved, but proofs need generated step lemmas
-   to be as short as typed ones.
+   rejects translate, match Node and can be proved, and one tactic steps through generated
+   code, so straight-line proofs are as short as typed ones. Loops need invariants, as on
+   the typed path.
 3. **Fill in the runtime.** Library models, promises as an event queue, and binary64
    numbers with safe integers as lemmas on top.
 4. **Prove the translation.** Generate a proof, per function, that the typed output

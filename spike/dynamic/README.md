@@ -6,23 +6,24 @@ Lean types. Not wired into the action.
 
 ## Verdict
 
-Go, with one condition: the proofs need generated step lemmas before users can write them.
-The translation itself was easy: real corpus functions that the typed path rejects translate,
-run like Node, and can be proved. The proofs are slower to write than typed ones, not slower
-to check.
+Go. Real corpus functions that the typed path rejects translate, run like Node, and can be
+proved. The go condition from the first round, proofs as short as typed ones, is met for
+straight-line code: one tactic, `dsteps`, runs a generated function statement by statement,
+so `transfer_conserves` is `unfold; dsteps` plus the final arithmetic, as on the typed path.
+Loops cost what they cost on the typed path: the user writes the invariant.
 
 | Question | Result |
 |---|---|
 | Does one value type cover the rejected shapes? | Yes: `unknown`, unions, shared objects, closures that assign captured variables, and classes, from 6 corpus functions and 2 fixtures |
 | Does it match Node? | 1,080 random runs over 18 functions: 987 agree on the result and on every input after the call, 93 stop in the model, none differ |
-| Can users prove things about it? | Yes, 6 theorems below, standard axioms only |
-| Does a wrong translation fail? | 35 of 35 one-line mutants of the proved functions fail to check |
-| Proof checking time vs typed | Same order: 3.1-3.3 s for this file, 2.1-2.7 s for `ts-bank`'s typed proofs, both mostly startup |
-| Proof writing effort vs typed | Higher: `transfer_conserves` is 24 lines here and 2 (`unfold; step*`) on the typed path |
+| Can users prove things about it? | Yes, 8 theorems below, including a loop with captured variables and an array callback over shared objects |
+| Does a wrong translation fail? | 55 of 55 one-line mutants of the proved functions fail to check |
+| Proof checking time vs typed | Same order: about 2 s for imports, then under 0.1 s for `transfer_conserves` and about 4 s for the two loop proofs; `ts-bank`'s typed file takes 2.1-2.7 s |
+| Proof writing effort vs typed | Same for straight-line code: `transfer_conserves` is 2 lines here and 2 (`unfold; step*`) typed. Loops: 50-100 lines, most of it the invariant and the heap bookkeeping after each write |
 
-The differential test found a real bug in Core: its `Math.min` and `Math.max` lose `-0`
-(`Math.min(-0, 500)` is `-0` in Node and `0` in Core). This spike uses its own `minMax` on
-doubles; Core still has the bug.
+The first round's differential test found that Core's `Math.min` and `Math.max` lost `-0`
+(`Math.min(-0, 500)` is `-0` in Node). Core now computes them on doubles (`F64.fmin`/`fmax`,
+checked against Node in `f64cases.mjs`), and this spike uses Core's again.
 
 ## What's here
 
@@ -52,6 +53,8 @@ The functions, all rejected by the typed path today:
 | Theorem | Shape |
 |---|---|
 | `groupByFieldId_string` | For every value, the result is the value if it's a string and `""` otherwise |
+| `addSpace_spec` | `addSpaceToAnyEmptyMessages` returns the same messages, and every message whose content trims to nothing now has `" "` and the others keep theirs, even when a message is listed twice |
+| `colorIndexes_spec` | Each item comes out colored `"none"` if empty and `c` plus its place among the non-empty ones otherwise; an item that already has its color is returned as is, the others are copies |
 | `bump_adds` | A method call adds to the object it is called on |
 | `bumpBoth_shared` | The same counter passed twice is bumped twice |
 | `bumpBoth_separate` | Two counters are bumped once each |
@@ -63,20 +66,28 @@ which say the same as `Is` for the fields a proof needs.
 
 ## What it costs
 
-Checking is cheap: each generated module takes about 1.8 s, the same as the typed module for
-`ts-bank`, and the proofs file 3.2 s. Writing is the cost. A typed proof is often
-`unfold; step*` because each operation already has a spec on its Lean type. Here each heap read
-and write is a step that has to be rewritten by hand, and `simp` can't be used on whole
-programs: deciding that two different string literals differ by evaluation (`"n" == "__class"`)
-times out, so any `simp` that unfolds a record lookup on a literal list hangs. Proofs instead go
-through lemmas (`field_rec`, `setField_rec`, `isMethodOf_rec`, `push_arr`, `bin_add_num`, ...)
-and keep records abstract. That is mechanical, which is why it should be generated.
+Checking is cheap: each generated module takes about 1.7 s, the same as the typed module for
+`ts-bank`. Writing straight-line proofs is now cheap too. `dsteps` (in [Dyn.lean](Dyn.lean))
+rewrites with one lemma per operation (`spec_field`, `spec_setField`, `spec_get`, `spec_put`,
+`bin_add_num`, ...), finds the heap facts each one needs through the writes made since
+(`dheap`), proves arithmetic safe with `omega` and splits each branch. It never unfolds a whole
+program, which would make Lean decide that two string literals differ by evaluation, or
+evaluate `num`'s `2^1074`; both time out. So no lemma is generated per function: the
+translator's output is regular enough that the per-operation lemmas cover every statement, and
+`dyn.mjs` only had to emit object literals with distinct keys as plain lists.
+
+Loops are the remaining cost. `eachLoop_spec` and `jsMap_spec` take an invariant and prove the
+loop from one step; `dsteps` does the step. What's left is stating where each object is after
+the writes: `Frame` (objects from before the call are untouched), and for `colorIndexes` that
+the two captured variables live in cells after the original heap. That bookkeeping is most of
+the 105 lines of `colorIndexes_spec` and could be generated from which cells a function
+allocates.
 
 ## Not done
 
-- Loops: no theorem about a loop or an array callback yet, so `addSpaceToAnyEmptyMessages`
-  and `colorIndexes` are only differential-tested. Core's spike shows loop invariants work on
-  the same heap model; they need an `eachLoop` invariant lemma here.
+- `for ... of` loops (`forLoop`, in `sumAmounts`) have no invariant lemma yet; array callbacks do.
+- `addSpace_spec` assumes string contents, so `messageIsEmpty`'s array branch is unproved and
+  not mutated.
 - `parseChartDecimalPlaces` and `calculateFee` need lemmas for `Number.isInteger` and
   `Math.floor` on `num`; unfolding `num` makes Lean evaluate `2^1074`.
 - Library calls outside a small list are `stuck`: `throw new` of an unseen class, callbacks
@@ -88,8 +99,7 @@ and keep records abstract. That is mechanical, which is why it should be generat
 
 ## What productising needs
 
-1. A step generator, like Core's stepwise method: one lemma per statement, so a proof only
-   states loop invariants and the final claim.
+1. Frame and cell facts generated per function, so a loop proof states only its invariant.
 2. Specs for each library call on `Val` (strings, arrays, `Math`), proved once.
 3. The `Is` precondition turned into the facts proofs use (field lookups, array contents) by
    a generated lemma per type.
