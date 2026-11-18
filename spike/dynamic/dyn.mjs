@@ -378,7 +378,12 @@ export class Dyn {
       const steps = [];
       let acc = "[]";
       for (const p of e.properties) {
-        if (ts.isSpreadAssignment(p)) { acc = `(mergeFields ${acc} (← fieldsOf ${v(this.expr(p.expression, sc))}))`; continue; }
+        if (ts.isSpreadAssignment(p)) {
+          const t = sc.fresh("s");
+          steps.push(`let ${t} ← fieldsOf ${v(this.expr(p.expression, sc))}`);
+          acc = `(mergeFields ${acc} ${t})`;
+          continue;
+        }
         if (!(ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) || !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) || /^\d/.test(p.name.text))
           throw new Unsupported(p, "only named properties and spreads in object literals");
         const val = ts.isShorthandPropertyAssignment(p) ? this.ident(p.name, sc) : this.expr(p.initializer, sc);

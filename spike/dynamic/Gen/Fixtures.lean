@@ -17,7 +17,7 @@ def colorIndexes (items' : Val) : M Val := do
       if truthy (← (do bin .eq (← (do (fun o => field o "color") item')) color')) then
         return item'
       put changed' (.bool true)
-      return (← (do let f2 := color'; record (mergeFields (mergeFields [] (← fieldsOf item')) [("color", f2)])))))
+      return (← (do let s2 ← fieldsOf item'; let f3 := color'; record (mergeFields (mergeFields [] s2) [("color", f3)])))))
   return (← (do if truthy (← (get changed')) then (pure out') else (pure items')))
 def Counter.new  : M Val := do
   let this ← record [("__class", (str "Counter"))]
