@@ -81,6 +81,11 @@ export const textEqual = (a: string, b: string) => a === b;
 export const textAdd = (a: string, b: string) => a + "-" + b;
 export const textTemplate = (a: string, n: number, b: boolean, c: bigint) => `${a}=${n},${b},${c}`;
 export const textNumber = (n: number) => String(n);
+export const textPadStart = (a: string, n: number, b: string): string => a.padStart(n % 40, b);
+export const textPadEnd = (a: string, n: number): string => a.padEnd(n % 40);
+export const textToNumber = (a: string): number => Number(a);
+export const boolToNumber = (a: boolean, b: boolean): number => Number(a) - Number(b);
+export const isList = (xs: number[], ys: string[] | null): boolean => Array.isArray(xs) && !Array.isArray(ys);
 export function counted(xs: string[]) { const m = new Map<string, number>(); for (const x of xs) { const seen = m.get(x); if (seen === undefined) { m.set(x, 1); } else { m.set(x, seen + 1); } } m.delete("a"); return m; }
 export function unique(xs: number[]) { const s = new Set<number>(); for (const x of xs) { s.add(x); } s.delete(0); return s; }
 export const mapHas = (m: Map<number, string>, k: number) => m.has(k);

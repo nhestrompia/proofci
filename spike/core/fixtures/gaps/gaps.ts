@@ -128,6 +128,26 @@ export function makeCounts(n: number): Counts {
   return { total: n };
 }
 
+export function twoDigits(n: string): string {
+  return n.padStart(2, "0");
+}
+
+export function column(s: string, width: number): string {
+  return s.trim().padEnd(width);
+}
+
+export function portOf(s: string): number {
+  return Number(s.trim());
+}
+
+export function flagCount(a: boolean, b: boolean): number {
+  return Number(a) + Number(b);
+}
+
+export function listCount(xs: string[] | undefined, ys: number[]): number {
+  return (Array.isArray(xs) ? 1 : 0) + (Array.isArray(ys) ? 1 : 0);
+}
+
 export interface Page<T> {
   items: T[];
   total: number;

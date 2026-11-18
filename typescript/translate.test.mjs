@@ -1286,3 +1286,17 @@ test("an effect can be a project function whose body is never read", () => {
   asyncEmits(`export async function f(id: string): Promise<number> { return await count(); }`);
   void world;
 });
+
+test("library models: Number(), Array.isArray, padStart and padEnd", () => {
+  emits("export function f(a: string) { return Number(a); }", "Js.numOfStr a");
+  emits("export function f(a: boolean) { return Number(a); }", "Js.boolNum a");
+  emits("export function f(a: number) { return Number(a) + 1; }", "Js.add a");
+  emits("export function f(a: string[]) { return Array.isArray(a); }", "Js.isArray a");
+  emits("export function f(a: number[] | null) { return Array.isArray(a); }", "Option.isSome a");
+  emits("export function f(a: string) { return a.padStart(2, \"0\"); }", "Js.padStart a", "js!\"0\"");
+  emits("export function f(a: string, n: number) { return a.padEnd(n); }", "Js.padEnd a n (js!\" \")");
+  emits("export function f(a?: string) { return a?.trim().padStart(3, \"*\"); }", "Js.padStart");
+  rejects("export function f(a?: string) { return Number(a); }", /isn't to a function/);
+  rejects("export function f(a: { x: number }) { return Array.isArray(a); }", /typed as arrays/);
+  rejects("export function f(a: string) { return a.padStart(2, \"0\", 1 as never); }", /arguments/);
+});
