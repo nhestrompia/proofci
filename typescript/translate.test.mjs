@@ -1175,6 +1175,9 @@ export function f(list: Item | null, value: number): Item {
   return item;
 }`, /changed in place/);
   rejects("interface Item { value: number; next: Item | null } export function f(list: Item): Item { list.next = list; return list; }", /changed in place/);
+  // Lean equality is structural; JavaScript compares objects by identity, also inside a union.
+  rejects("interface Item { value: number; next: Item | null } export function f(xs: (Item | null)[], x: Item) { return xs.includes(x); }", /compares identity/);
+  rejects(`type J = { kind: "n"; v: number } | { kind: "l"; items: J[] }; export function f(xs: J[], x: J) { return xs.indexOf(x); }`, /compares identity/);
 });
 
 test("a read after an await in a loop counts as after", () => {

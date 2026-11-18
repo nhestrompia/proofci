@@ -2666,7 +2666,7 @@ export class Scope {
     const args = node.arguments;
     const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(callee.expression)))[0];
     const comparable = () => {
-      if (item.flags & ts.TypeFlags.Object) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported`);
+      if ((item.isUnion() ? item.types : [item]).some(t => t.flags & ts.TypeFlags.Object)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported`);
     };
     switch (method) {
       case "includes": comparable(); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
@@ -2720,7 +2720,7 @@ export class Scope {
     const bare = this.checker.getNonNullableType(type);
     if (this.checker.isArrayType(bare) && links.length === 1 && unwrap(node.expression).name.text === "includes" && node.arguments.length === 1) {
       const item = this.checker.getTypeArguments(bare)[0];
-      if (item.flags & ts.TypeFlags.Object) throw this.t.fail(node, "`includes` on objects compares identity, which is not supported");
+      if ((item.isUnion() ? item.types : [item]).some(t => t.flags & ts.TypeFlags.Object)) throw this.t.fail(node, "`includes` on objects compares identity, which is not supported");
       const path = n => { n = unwrap(n); return ts.isIdentifier(n) || (ts.isPropertyAccessExpression(n) && path(n.expression)); };
       if (!path(base)) throw this.t.fail(node, "`?.` on an expression is not supported yet");
       const present = this.fresh(), arm = [];
