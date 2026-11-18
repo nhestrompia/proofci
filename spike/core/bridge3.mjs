@@ -229,7 +229,8 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
     if (t.kind === "array") scan(t.item);
   };
   const sigs = sources.map(s => ({ ...s, sig: view.signatures[`${s.file}::${s.name}`] }));
-  if (sigs.some(({ sig }) => JSON.stringify(sig).includes('"recursive"'))) throw new Error("recursive types have no bridge yet");
+  const recursive = t => t?.kind === "recursive" || (t && typeof t === "object" && Object.values(t).some(recursive));
+  if (sigs.some(({ sig }) => recursive(sig))) throw new Error("recursive types have no bridge yet");
   for (const { sig } of sigs) { sig.params.forEach(scan); scan(sig.result); }
   // A record met only inside a constant or a callback, when every field has an encoding.
   const encodable = t => t.kind === "record" ? t.fields.every(f => encodable(f.type))
