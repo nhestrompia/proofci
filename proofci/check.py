@@ -48,6 +48,7 @@ class Outcome:
     arguments_stable: list = None   # `async` code only: reads that rest on arguments staying unchanged
     constants_stable: list = None   # `async` code only: exported tables read after an `await`, assumed unchanged by code outside the program
     bridge: str = None              # TypeScript only: how the function's view relates to JavaScript (proved, tested or failed)
+    hint: str = None                # TypeScript only: the smallest rewrite the translator accepts, when unsupported
 
 
 @dataclass
@@ -228,7 +229,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                     failures = dict.fromkeys(functions, str(error))
         for o in report.outcomes:
             if o.function in failures:
-                o.status, o.reason = UNSUPPORTED, failures[o.function]
+                o.status, (o.reason, o.hint) = UNSUPPORTED, typescript.split_hint(failures[o.function])
         report.timings["extract"] = round(time.monotonic() - t0, 1)
         if extraction is None:
             return report

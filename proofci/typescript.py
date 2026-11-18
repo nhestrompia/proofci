@@ -300,6 +300,21 @@ def prepare(checkout: Path, work: Path, vendor_dir=None):
     return staged, binds
 
 
+HINT = "\nHow to fix: "
+
+
+def with_note(reason, note):
+    """Adds `note` to a translator reason, before its hint."""
+    head, mark, hint = reason.partition(HINT)
+    return head + "\n" + note + mark + hint
+
+
+def split_hint(reason):
+    """A translator reason and its "How to fix" hint, or None."""
+    head, _, hint = reason.partition(HINT)
+    return head, hint or None
+
+
 def missing_packages_hint(checkout: Path, package_rel: str, vendor_dir=None):
     """Why a type from a package may be unknown: they were not installed."""
     index = Path(vendor_dir) / INDEX if vendor_dir else None
@@ -342,7 +357,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     hint = missing_packages_hint(original, package_rel, vendor_dir)
     unknown = re.compile(r"not supported yet|TypeScript error|Cannot find|no source")
     if outcome.get("fatal"):
-        raise Unsupported(outcome["fatal"] + ("\n" + hint if hint and unknown.search(outcome["fatal"]) else ""))
+        raise Unsupported(with_note(outcome["fatal"], hint) if hint and unknown.search(outcome["fatal"]) else outcome["fatal"])
     lean_file = out / f"{module}.lean"
     extraction = Extraction(module, lean_file, crate_name, result.output, [], outcome["names"], outcome["failures"])
     extraction.signatures = outcome["signatures"]
@@ -357,7 +372,7 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     extraction.imports = outcome["imports"]
     for function, reason in list(extraction.failures.items()):
         if hint and unknown.search(reason):
-            extraction.failures[function] = reason + "\n" + hint
+            extraction.failures[function] = with_note(reason, hint)
     extraction.checkout = checkout
     extraction.binds = binds
     # What the bridge generator needs to read the code the same way the translator did.
