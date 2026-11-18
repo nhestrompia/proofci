@@ -22,7 +22,10 @@ const STRING_METHODS = {
   "trimEnd/0": "trimEnd", "toLowerCase/0": "toLower", "toUpperCase/0": "toUpper", "slice/1": "sliceFrom", "slice/2": "slice",
   "indexOf/1": "strIndexOf", "lastIndexOf/1": "strLastIndexOf", "charAt/1": "charAt", "charCodeAt/1": "charCodeAt", "split/1": "split",
   "replace/2": "replace", "replaceAll/2": "replaceAll", "substring/2": "substring",
+  "padStart/1": "padStart", "padStart/2": "padStart", "padEnd/1": "padEnd", "padEnd/2": "padEnd",
 };
+// `s.padStart(n)` pads with spaces.
+const primArgs = (prim, args) => (prim.startsWith("pad") && args.length === 2 ? [...args, ".lit (.str [32])"] : args);
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };
 const isSet = t => t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet";
 const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numFinite", isSafeInteger: "numFinite", isNaN: "numNaN" };
@@ -247,7 +250,7 @@ export function lower(root, targets, { paths, eff } = {}) {
         const receiver = checker.getNonNullableType(checker.getTypeAtLocation(link.expression.expression));
         const prim = (checker.isArrayType(receiver) ? ARRAY_METHODS : STRING_METHODS)[`${link.expression.name.text}/${link.arguments.length}`];
         if (!prim) throw new Error(`method ${link.getText()}`);
-        return `.prim .${prim} [${[value, ...link.arguments.map(E)].join(", ")}]`;
+        return `.prim .${prim} [${primArgs(prim, [value, ...link.arguments.map(E)]).join(", ")}]`;
       }, `(${base})`);
       return `.cond (.isNullish (${base})) (.lit .undef) (${body})`;
     };
@@ -260,6 +263,16 @@ export function lower(root, targets, { paths, eff } = {}) {
       if (named === "parseInt" && args.length === 1) return `.prim (.parseInt true) [${E(args[0])}]`;
       if (named === "parseInt" && args.length === 2) return `.prim (.parseInt false) [${E(args[0])}]`;
       if (named === "Boolean" && args.length === 1) return `.not (.not (${E(args[0])}))`;
+      if (named === "Number" && ts.isIdentifier(callee) && args.length === 1) {
+        const t = checker.getTypeAtLocation(args[0]);
+        if (t.flags & ts.TypeFlags.NumberLike) return E(args[0]);
+        if (t.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike)) return `.prim .toNum [${E(args[0])}]`;
+      }
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === "isArray" && ts.isIdentifier(callee.expression)
+        && callee.expression.text === "Array" && inLibrary(callee.expression) && args.length === 1) {
+        if (!checker.isArrayType(checker.getNonNullableType(checker.getTypeAtLocation(args[0])))) throw new Error("`Array.isArray` on a value not typed as an array");
+        return `.prim .isArray [${E(args[0])}]`;
+      }
       if (ts.isPropertyAccessExpression(callee) && !callee.questionDotToken) {
         const t = checker.getTypeAtLocation(callee.expression);
         const number = t.flags & ts.TypeFlags.NumberLike, plain = t.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.BooleanLike);
@@ -387,7 +400,7 @@ export function lower(root, targets, { paths, eff } = {}) {
         const m = `${e.expression.name.text}/${e.arguments.length}`, recv = e.expression.expression;
         const t = checker.getTypeAtLocation(recv);
         const table = t.flags & ts.TypeFlags.StringLike ? STRING_METHODS : checker.isArrayType(t) ? ARRAY_METHODS : null;
-        if (table?.[m]) return `.prim .${table[m]} [${[recv, ...e.arguments].map(E).join(", ")}]`;
+        if (table?.[m]) return `.prim .${table[m]} [${primArgs(table[m], [recv, ...e.arguments].map(E)).join(", ")}]`;
         if (m === "has/1" && isSet(t)) return `.prim .setHas [${[recv, ...e.arguments].map(E).join(", ")}]`;
       }
       if (ts.isCallExpression(e) && e.expression.kind === ts.SyntaxKind.SuperKeyword) throw new Error("super call outside a constructor");

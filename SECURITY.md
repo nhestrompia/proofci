@@ -93,7 +93,7 @@ them backs each function:
   theorem that the Lean view the translator wrote means the same as the TypeScript
   source under a model of JavaScript (Core), and has Lean check it. A function whose
   bridge checked, using only the standard axioms, is **proved**. What this adds to the
-  trust base is the lowering from TypeScript to Core, Core and its number model, the
+  trust base is the lowering from TypeScript to Core, Core and its number and library models, the
   proof tactics, and the generator. All of them are built into the toolchain image from
   this repository (`spike/core`, `toolchain/bridge`); the pull request supplies only the
   source being lowered, and files with those names in it are never read. Core is tested

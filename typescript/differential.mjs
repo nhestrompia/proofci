@@ -13,7 +13,7 @@ import ts from "typescript";
 const MAX = Number.MAX_SAFE_INTEGER;
 const EDGES = [0, 1, -1, 2, -2, 3, 7, 10, -10, 100, 500, 1000, 9999, 10000, 10001, 94906265, 94906266, 2 ** 31, 2 ** 32, 2 ** 52, MAX - 1, MAX, -MAX];
 
-const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&"];
+const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&", " 42 ", "-7", "+3", "007", "-0", "1e3", "0x1F", "1.5", "9007199254740993"];
 
 // Every object of a class or library type the test makes gets its own number, which is also how the Lean
 // side names it (`Js.Handle.mk n`). The same number is the same object.

@@ -548,6 +548,42 @@ def parseIntStr (auto : Bool) (s : Str) : Result Num :=
     -- A minus sign on zero gives `-0`, which isn't a `Num`.
     if neg && n == 0 then fail .undef else mk (if neg then -n else n)
 
+/-- `Number(s)` for whitespace around an optional sign and decimal digits, and for blank
+    text, which is `0`. Fractions, exponents, other bases, `Infinity`, `-0` and `NaN` stop the model. -/
+def numOfStr (s : Str) : Result Num :=
+  let t := trim s
+  let (neg, u) := match t with
+    | 45 :: r => (true, r)
+    | 43 :: r => (false, r)
+    | r => (false, r)
+  if t.isEmpty then mk 0
+  else if u.isEmpty || !u.all (fun c => 48 ≤ c && c ≤ 57) then fail .undef
+  else
+    let n : Int := u.foldl (fun a c => a * 10 + ((c : Int) - 48)) 0
+    if neg && n == 0 then fail .undef else mk (if neg then -n else n)
+
+/-- `Number(b)` -/
+def boolNum (b : Bool) : Num := if b then ⟨1, by decide, by decide⟩ else ⟨0, by decide, by decide⟩
+
+/-- `Array.isArray(xs)`. It stays a name so that a test on it isn't simplified away. -/
+def isArray {α} (_ : List α) : Bool := true
+
+/-- The first `k` units of `fill` repeated. -/
+def padding (fill : Str) (k : Nat) : Str := (List.range k).map fun i => fill.getD (i % fill.length) 0
+
+/-- `s.padStart(n, fill)`. Past `2 ^ 20` units the model stops, far below the longest string
+    JavaScript allows. -/
+def padStart (s : Str) (n : Num) (fill : Str) : Result Str :=
+  if n.val ≤ s.length ∨ fill = [] then ok s
+  else if n.val ≤ 2 ^ 20 then ok (padding fill (n.val.toNat - s.length) ++ s)
+  else fail .undef
+
+/-- `s.padEnd(n, fill)`, on the same terms. -/
+def padEnd (s : Str) (n : Num) (fill : Str) : Result Str :=
+  if n.val ≤ s.length ∨ fill = [] then ok s
+  else if n.val ≤ 2 ^ 20 then ok (s ++ padding fill (n.val.toNat - s.length))
+  else fail .undef
+
 def undefinedStr : Str := js!"undefined"
 def nullStr : Str := js!"null"
 

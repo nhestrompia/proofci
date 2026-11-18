@@ -1286,6 +1286,43 @@ theorem SimE.parseIntStr {auto} {a : List Nat} {r : Js.Num} (hx : SimE p s x a) 
   refine sim_prim (args1 hx) ?_
   rintro _ _ ⟨_, rfl, rfl⟩
   exact ⟨numVal r, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.numOfStr {a : List Nat} {r : Js.Num} (hx : SimE p s x a) (h : Js.numOfStr a = ok r) :
+    SimE p s (.prim .toNum [x]) r := by
+  refine sim_prim (args1 hx) ?_
+  rintro _ _ ⟨_, rfl, rfl⟩
+  exact ⟨numVal r, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.boolNum {a : Bool} (hx : SimE p s x a) : SimE p s (.prim .toNum [x]) (Js.boolNum a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro _ _ ⟨_, rfl, rfl⟩
+  exact ⟨numVal (Js.boolNum a), _, by simp [primV], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.isArray {α} {_ : TyRep α} {a : List α} (hx : SimE p s x a) : SimE p s (.prim .isArray [x]) (Js.isArray a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨_, rfl, l, vs, rfl, hl, _⟩
+  exact ⟨.bool true, h, by simp [primV, Core.isArrayV, hl], List.prefix_refl _, rfl⟩
+theorem SimE.isArray_opt {k α} {_ : TyRep α} {a : Opt k (List α)} (hx : SimE p s x a) :
+    SimE p s (.prim .isArray [x]) (Option.isSome a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.isArrayV], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.isArrayV], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.isArrayV], List.prefix_refl _, rfl⟩
+  | some xs =>
+    obtain ⟨l, vs, rfl, hl, _⟩ : rep h xs v := ri
+    exact ⟨.bool true, h, by simp [primV, Core.isArrayV, hl], List.prefix_refl _, rfl⟩
+theorem SimE.padStart {a f r : List Nat} {n : Js.Num} (hx : SimE p s x a) (hy : SimE p s y n) (hz : SimE p s z f)
+    (h : Js.padStart a n f = ok r) : SimE p s (.prim .padStart [x, y, z]) r := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro _ _ ⟨_, v, _, rfl, rfl, ri, rfl⟩
+  exact ⟨_, _, by simp [primV, num_arg ri, okStr_ok h], List.prefix_refl _, rfl⟩
+theorem SimE.padEnd {a f r : List Nat} {n : Js.Num} (hx : SimE p s x a) (hy : SimE p s y n) (hz : SimE p s z f)
+    (h : Js.padEnd a n f = ok r) : SimE p s (.prim .padEnd [x, y, z]) r := by
+  refine sim_prim (args3 hx hy hz) ?_
+  rintro _ _ ⟨_, v, _, rfl, rfl, ri, rfl⟩
+  exact ⟨_, _, by simp [primV, num_arg ri, okStr_ok h], List.prefix_refl _, rfl⟩
 /-- Types whose values print the same in the typed view and in Core. -/
 class Shown (α : Type) [TyRep α] where
   text : α → List Nat
