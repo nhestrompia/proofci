@@ -123,6 +123,12 @@ const rewrites = [
   ["`===` with a value that may be undefined", /`== null`/,
     `export function f(x: number | null | undefined): boolean { return x === null; }`,
     `export function f(x: number | null | undefined): boolean { return x == null; }`],
+  ["`Math.pow` with a higher power", /`a \* a \* a` for `Math.pow\(a, 3\)`/,
+    `export function f(a: number): number { return Math.pow(a, 3); }`,
+    `export function f(a: number): number { return a * a * a; }`],
+  ["the result of `pop`", /`const last = xs\[xs\.length - 1\]; xs\.pop\(\);`/,
+    `export function f(xs: number[]): number { const ys = [...xs]; const last = ys.pop(); return last ?? 0; }`,
+    `export function f(xs: number[]): number { const ys = [...xs]; const last = ys[ys.length - 1]; ys.pop(); return last ?? 0; }`],
 ];
 
 for (const [uses, hint, before, after, options] of rewrites) {

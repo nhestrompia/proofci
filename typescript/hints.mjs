@@ -78,7 +78,7 @@ function emptyRecordHint({ node, checker }) {
 }
 
 const METHODS = {
-  pow: "write the product out (`a * a`)",
+  pow: "write the product out with one factor per power (`a * a * a` for `Math.pow(a, 3)`)",
   round: "for `Math.round(a / b)` with `b > 0`, write `Math.floor((2 * a + b) / (2 * b))`; a whole number rounds to itself",
   sign: "compare with 0 (`a > 0 ? 1 : a < 0 ? -1 : 0`)",
   random: none("randomness is not a function of the inputs"),
@@ -301,7 +301,7 @@ export const HINTS = [
   [/has the signature .*, but `(assumes|effects)` lists/, "copy the signature the compiler reports into proofci.yaml (a policy change, so a maintainer approves it), or change the code back"],
   [/takes no arguments, so it can't be a function of its inputs/, "call it outside and pass its result in as a parameter"],
   [/narrowing `any` is only supported|`narrowed`|`signature` could not be read/, "fix the `effects` entry in proofci.yaml as the reason says"],
-  [/is only supported as its own statement/, "call it on its own line, then read the array (`xs.push(v); const n = xs.length;`)"],
+  [/is only supported as its own statement/, "read what you need before the call, then call it on its own line (`const last = xs[xs.length - 1]; xs.pop();`, `xs.push(v); const n = xs.length;`)"],
   [/on objects compares identity/, "compare a field (`xs.some(x => x.id === y.id)`)"],
   [/`join` is only supported on strings/, "map to strings first (`xs.map(x => `${x}`).join(\",\")`)"],
   [/only `concat` of one array/, "spread instead (`[...a, ...b, ...c]`)"],
