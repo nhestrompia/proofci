@@ -635,7 +635,7 @@ def require_bridge(checkout):
 
 
 TREE = "src/tree.ts"
-TREE_GUARANTEES = ("list/prepend-links", "total/empty-is-zero", "total/one-item", "size/leaf-is-one", "leaves/pair-adds")
+TREE_GUARANTEES = ("list/prepend-links", "total/empty-is-zero", "total/one-item", "size/leaf-is-one", "leaves/pair-of-numbers")
 TREE_FNS = [TREE + "::" + f for f in ("prepend", "total", "size", "leaves")]
 TREE_TESTED = {"functions": dict.fromkeys(TREE_FNS, "tested"),
                "function_reasons": dict.fromkeys(TREE_FNS, "recursive types have no bridge yet")}

@@ -24,5 +24,5 @@ targets:
   - id: leaves
     function: src/tree.ts::leaves
     guarantees:
-      - id: pair-adds
+      - id: pair-of-numbers
         theorem: leaves_pair

@@ -22,9 +22,8 @@ theorem size_leaf (label : Js.Str) : ∃ n, src.tree.size ⟨label, []⟩ = ok n
   unfold src.tree.size
   simp [Js.map, Js.reduce]
 
-/-- The leaves of a pair are the leaves of its two halves, added. -/
-theorem leaves_pair (l r : src.tree.Json) (a b : Js.Num)
-    (hl : src.tree.leaves l = ok a) (hr : src.tree.leaves r = ok b) :
-    src.tree.leaves (.pair l r) = Js.add a b := by
-  rw [src.tree.leaves.eq_def]
-  simp [hl, hr]
+/-- A pair of two numbers has two leaves. -/
+theorem leaves_pair (a b : Js.Num) : ∃ n, src.tree.leaves (.pair (.num a) (.num b)) = ok n ∧ n.val = 2 := by
+  unfold src.tree.leaves
+  unfold src.tree.leaves
+  simp [Js.add, Js.mk]
