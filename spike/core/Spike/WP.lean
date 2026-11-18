@@ -165,7 +165,7 @@ theorem wps_ite {p s c t e Φ}
     exact ⟨_, _, Execs.ite_true he ht hb, hr⟩
 theorem wps_setField {p s o k e Φ}
     (h : WpE p s o fun ov s₁ => WpE p s₁ e fun v s₂ => ∃ l fs, ov = .ref l ∧ s₂.heap[l]? = some (.record fs) ∧
-      Φ .normal { s₂ with heap := s₂.heap.set l (.record ((k, v) :: fs.filter (·.1 != k))) }) :
+      Φ .normal { s₂ with heap := s₂.heap.set l (.record (putField fs k v)) }) :
     WpS p s (.setField o k e) Φ := by
   obtain ⟨ov, s₁, ho, v, s₂, he, l, fs, rfl, hl, hk⟩ := h
   exact ⟨_, _, Execs.setField ho he hl, hk⟩

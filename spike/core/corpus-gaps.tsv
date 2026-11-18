@@ -22,3 +22,10 @@ gaps	gaps.ts	column
 gaps	gaps.ts	portOf
 gaps	gaps.ts	flagCount
 gaps	gaps.ts	listCount
+gaps	gaps.ts	lastTag
+gaps	gaps.ts	lastScore
+gaps	gaps.ts	lastChar
+gaps	gaps.ts	rule
+gaps	gaps.ts	allRows
+gaps	gaps.ts	pairs
+gaps	gaps.ts	firstNegative

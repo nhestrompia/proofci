@@ -35,7 +35,7 @@ inductive Op where
 
 /-- Array methods that take a callback. -/
 inductive Hof where
-  | map | filter | some | every | find
+  | map | filter | some | every | find | findIndex
   deriving DecidableEq, Repr
 
 /-- Built-in methods. Each is defined once, on the runtime's own functions, so conformance
@@ -45,7 +45,7 @@ inductive Prim where
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
-  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd
+  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -230,6 +230,53 @@ def isArrayV (h : Heap) : Val → Option Bool
     | _ => none
   | _ => none
 
+/-- `o.k = v`: a key already there keeps its place and a new one goes last, so that the
+order of keys is JavaScript's. -/
+def putField (fs : List (String × Val)) (k : String) (v : Val) : List (String × Val) :=
+  if fs.any (·.1 == k) then fs.map (fun e => if e.1 == k then (k, v) else e) else fs ++ [(k, v)]
+
+theorem lookup_putField_same (fs : List (String × Val)) (k : String) (v : Val) :
+    (putField fs k v).lookup k = some v := by
+  unfold putField
+  split
+  · rename_i h
+    induction fs with
+    | nil => simp at h
+    | cons e rest ih =>
+      by_cases he : e.1 = k
+      · simp [List.lookup, he]
+      · have h' : rest.any (·.1 == k) = true := by simpa [he] using h
+        have hb : (k == e.1) = false := by simpa using Ne.symm he
+        have hb2 : (e.1 == k) = false := by simpa using he
+        simp only [List.map_cons, hb2, Bool.false_eq_true, ↓reduceIte, List.lookup, hb]
+        exact ih h'
+  · rename_i h
+    induction fs with
+    | nil => simp [List.lookup]
+    | cons e rest ih =>
+      have he : ¬ e.1 = k := by intro c; simp [c] at h
+      have h' : ¬ rest.any (·.1 == k) = true := by simpa [he] using h
+      have hb : (k == e.1) = false := by simpa using Ne.symm he
+      simp only [List.cons_append, List.lookup, hb]
+      exact ih h'
+
+/-- `Object.keys` of a record, in insertion order. Keys JavaScript would list first (array
+indices), keys that aren't plain ASCII, repeated keys and the class tag stop the model. -/
+def keysV (fs : List (String × Val)) : Option (List Val) :=
+  let ks : List String := fs.map Prod.fst
+  if ks.all (fun (k : String) => !k.isEmpty && !k.all Char.isDigit && k.all (fun (c : Char) => decide (c.toNat < 128)) && k != "__class" && k != "__proto__")
+    && ks.eraseDups.length == ks.length
+  then some (ks.map fun k => .str (k.toList.map Char.toNat)) else none
+
+/-- One level of `flat`, on an array whose items are all arrays. Anything else stops the model:
+JavaScript keeps other items as they are, and sets are stored as arrays here. -/
+def flatV (h : Heap) : List Val → Option (List Val)
+  | [] => some []
+  | .ref m :: rest => match h[m]? with
+    | some (.array ys) => (flatV h rest).map (ys ++ ·)
+    | _ => none
+  | _ => none
+
 /-- How a value prints inside a template. Objects and functions aren't modelled here. -/
 def textOf : Val → Option (List Nat)
   | .undef => some Js.undefinedStr
@@ -346,6 +393,24 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
     | _ => none
   | .append, h, [.ref l, v] => match h[l]? with
     | some (.array xs) => some (.ref h.length, h ++ [.array (xs ++ [v])])
+    | _ => none
+  | .strRepeat, h, [.str s, n] => match asNum n with
+    | some n => (okStr (Js.strRepeat s n)).map (·, h)
+    | none => none
+  | .lastIndexOfStr, h, [.ref l, .str t] => match h[l]? with
+    | some (.array xs) => (strsOf xs).bind fun ss => match (Js.lastIndexOf ss t).match with
+      | .ok n => some (numVal n, h)
+      | _ => none
+    | _ => none
+  | .atRel, h, [.ref l, n] => match h[l]?, asNum n with
+    | some (.array xs), some n => some ((Js.atRel xs n).getD .undef, h)
+    | _, _ => none
+  | .atRel, h, [.str s, n] => (asNum n).map fun n => ((Js.strAt s n).elim .undef .str, h)
+  | .flat, h, [.ref l] => match h[l]? with
+    | some (.array xs) => (flatV h xs).map fun ys => (.ref h.length, h ++ [.array ys])
+    | _ => none
+  | .keys, h, [.ref l] => match h[l]? with
+    | some (.record fs) => (keysV fs).map fun ks => (.ref h.length, h ++ [.array ks])
     | _ => none
   | .split, h, [.str s, .str sep] =>
     some (.ref h.length, h ++ [.array ((Js.split s sep).map .str)])
@@ -555,7 +620,7 @@ def exec : Nat → Prog → St → Stmt → Out Cmp
       | .ok (.ref l) s₁ => match eval f p s₁ e with
         | .ok v s₂ => match s₂.heap[l]? with
           | some (.record fs) =>
-            .ok .normal { s₂ with heap := s₂.heap.set l (.record ((k, v) :: fs.filter (·.1 != k))) }
+            .ok .normal { s₂ with heap := s₂.heap.set l (.record (putField fs k v)) }
           | _ => .thrown typeError s₂
         | .thrown v s₂ => .thrown v s₂
         | .stuck => .stuck
@@ -682,6 +747,7 @@ def hofRun : Nat → Prog → Hof → Fn → String → Env → Loc → Nat → 
       | .some => .ok (.bool false) ⟨env, h⟩
       | .every => .ok (.bool true) ⟨env, h⟩
       | .find => .ok .undef ⟨env, h⟩
+      | .findIndex => .ok (.num (F64.ofInt (-1))) ⟨env, h⟩
     else match h[l]? with
       | some (.array xs) => match xs[i]? with
         | some item => match execList f p ⟨env.put x item, h⟩ fn.body with
@@ -691,6 +757,7 @@ def hofRun : Nat → Prog → Hof → Fn → String → Env → Loc → Nat → 
             | .some => if truthy v then .ok (.bool true) ⟨env, s.heap⟩ else hofRun f p k fn x env l n (i + 1) out s.heap
             | .every => if truthy v then hofRun f p k fn x env l n (i + 1) out s.heap else .ok (.bool false) ⟨env, s.heap⟩
             | .find => if truthy v then .ok item ⟨env, s.heap⟩ else hofRun f p k fn x env l n (i + 1) out s.heap
+            | .findIndex => if truthy v then .ok (.num (F64.ofInt i)) ⟨env, s.heap⟩ else hofRun f p k fn x env l n (i + 1) out s.heap
           | .ok _ _ => .stuck
           | .thrown v s => .thrown v s
           | .stuck => .stuck

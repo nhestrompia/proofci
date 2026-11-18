@@ -2650,6 +2650,23 @@ export class Scope {
     switch (method) {
       case "includes": comparable(); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
       case "indexOf": comparable(); return this.bind(`Js.indexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
+      case "lastIndexOf":
+        if (args.length !== 1) throw this.t.fail(node, "`lastIndexOf` with a start index is not supported yet");
+        comparable(); return this.bind(`Js.lastIndexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
+      case "at":
+        if (args.length !== 1) throw this.t.fail(node, "`at` takes one index");
+        if (this.nullable(item)) throw this.t.fail(node, "`at` on an array that may hold `null` or `undefined` is not supported yet");
+        return `(Js.atRel ${list} ${this.numeric(args[0], env, lines)})`;
+      case "flat":
+        if (args.length) throw this.t.fail(node, "only `flat()` without a depth is supported");
+        if (!this.checker.isArrayType(item)) throw this.t.fail(node, "`flat` is only supported on an array of arrays");
+        return `(Js.flat ${list})`;
+      case "flatMap": {
+        const fn = this.checker.getSignaturesOfType(this.typeOf(args[0] ?? node), ts.SignatureKind.Call)[0];
+        if (!fn || !this.checker.isArrayType(fn.getReturnType())) throw this.t.fail(node, "`flatMap` is only supported with a callback that returns an array");
+        return `(Js.flat ${this.bindCallback("map", this.callback(args, 1, node, env), list, lines)})`;
+      }
+      case "findIndex": return this.bindCallback("findIndex", this.callback(args, 1, node, env), list, lines);
       case "slice":
         if (args.length === 0) return list;
         if (args.length === 1) return `(Js.sliceFrom ${list} ${this.numeric(args[0], env, lines)})`;
@@ -2752,6 +2769,8 @@ export class Scope {
       case "replace": exactly(2); return this.bind(`Js.replace ${value} ${text(0)} ${text(1)}`, lines);
       case "replaceAll": exactly(2); return this.bind(`Js.replaceAll ${value} ${text(0)} ${text(1)}`, lines);
       case "concat": exactly(1); return `(${value} ++ ${text(0)})`;
+      case "at": exactly(1); return `(Js.strAt ${value} ${count(0)})`;
+      case "repeat": exactly(1); return this.bind(`Js.strRepeat ${value} ${count(0)}`, lines);
       case "padStart": case "padEnd":
         if (args.length !== 1) exactly(2);
         return this.bind(`Js.${method} ${value} ${count(0)} ${args.length === 2 ? text(1) : this.text(" ")}`, lines);

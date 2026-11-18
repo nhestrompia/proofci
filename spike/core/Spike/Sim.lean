@@ -1779,6 +1779,46 @@ theorem hof_find {f : α → Result Bool} (henv : s.env = env) (hcb : Cb p s fn 
       refine ⟨v', t', ⟨F + G + 1, fun f hf' => ?_⟩, hpt.trans hpt', rv'⟩
       obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
       simp [hofRun, hlt, hl, hi, hF g (by omega), truthy, hG g (by omega)]
+theorem mk_ok_val {v : Int} {r : Js.Num} (h : Js.mk v = ok r) : r.val = v := by
+  unfold Js.mk at h
+  split at h
+  · simp only [ok.injEq] at h; subst h; rfl
+  · simp at h
+theorem hof_findIndex {f : α → Result Bool} (henv : s.env = env) (hcb : Cb p s fn x f) :
+    ∀ (xs : List α) i h (out : List Val) (r : Js.Num), s.heap <+: h → h[l]? = some (.array vs) →
+      List.Forall₂ (rep h) xs (vs.drop i) → Js.findIndexFrom f xs i = ok r →
+      ∃ v t, Hr p .findIndex fn x env l vs.length i out h v t ∧ h <+: t.heap ∧ rep t.heap r v := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro i h out r hpre hl hf hm
+    have hn := drop_nil (List.forall₂_nil_left_iff.mp hf)
+    have hr : r.val = -1 := mk_ok_val (v := -1) hm
+    refine ⟨.num (F64.ofInt (-1)), ⟨env, h⟩, ⟨1, fun f hf' => ?_⟩, List.prefix_refl _, _, rfl, by rw [hr]; exact Or.inl rfl⟩
+    obtain ⟨g, rfl, -⟩ := succ_of_le hf'
+    simp [hofRun, hn]
+  | cons q rest ih =>
+    intro i h out r hpre hl hf hm
+    obtain ⟨w, tail, hq, ht, hdrop⟩ := List.forall₂_cons_left_iff.mp hf
+    obtain ⟨hi, hd'⟩ := drop_cons hdrop
+    have hlt : ¬ vs.length ≤ i := fun hle => by simp [List.getElem?_eq_none hle] at hi
+    obtain ⟨hit, hy, hm'⟩ := bind_eq (show Aeneas.Std.bind (f q) _ = ok r from hm)
+    obtain ⟨v, t, he, hpt, rv⟩ := turn henv hpre hcb hq hy
+    have hv : v = .bool hit := rv
+    subst hv
+    obtain ⟨F, hF⟩ := he
+    cases hit with
+    | true =>
+      have hr : r.val = i := mk_ok_val (by simpa using hm')
+      refine ⟨.num (F64.ofInt i), ⟨env, t.heap⟩, ⟨F + 1, fun f hf' => ?_⟩, hpt, _, rfl, by rw [hr]; exact Or.inl rfl⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g hg, truthy]
+    | false =>
+      obtain ⟨v', t', ⟨G, hG⟩, hpt', rv'⟩ := ih (i + 1) t.heap out r (hpre.trans hpt) (lookup_mono hpt hl)
+        (hd' ▸ ht.imp fun _ _ r => mono hpt r) (by simpa using hm')
+      refine ⟨v', t', ⟨F + G + 1, fun f hf' => ?_⟩, hpt.trans hpt', rv'⟩
+      obtain ⟨g, rfl, hg⟩ := succ_of_le hf'
+      simp [hofRun, hlt, hl, hi, hF g (by omega), truthy, hG g (by omega)]
 end hofs
 
 /-- Enters a callback method: reads the array, then runs the turns. -/
@@ -1819,6 +1859,11 @@ theorem SimE.find {xs : List α} {f : α → Result Bool} {r} (hx : SimE p s a x
   sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
     have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
     exact hof_find (env := s₂.env) rfl hc xs 0 s₂.heap [] r (List.prefix_refl _) hl (by simpa using hf) h
+theorem SimE.findIndex {xs : List α} {f : α → Result Bool} {r : Js.Num} (hx : SimE p s a xs) (h : Js.findIndex f xs = ok r) (hg : p g = Option.some fn) (hp : fn.params = [x])
+    (hcb : Cb p s fn x f) : SimE p s (.hof .findIndex a g) r :=
+  sim_hof hx hg hp fun s₂ _ _ hx' hl hf => by
+    have hc : Cb p ⟨s₂.env, s₂.heap⟩ fn x f := fun s' e => hcb s' (Ext.trans hx' e)
+    exact hof_findIndex (env := s₂.env) rfl hc xs 0 s₂.heap [] r (List.prefix_refl _) hl (by simpa using hf) h
 theorem SimE.append {b : Expr} {xs : List α} {y : α} (hx : SimE p s a xs) (hy : SimE p s b y) :
     SimE p s (.prim .append [a, b]) (xs ++ [y]) := by
   refine sim_prim (args2 hx hy) ?_
@@ -2290,6 +2335,58 @@ theorem SimE.concat_arr {α} {_ : TyRep α} {a b : List α} (hx : SimE p s x a) 
   rintro h _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, ⟨m, ws, rfl, hm, hg⟩⟩
   refine ⟨.ref h.length, h ++ [.array (vs ++ ws)], by simp [primV, hl, hm], List.prefix_append _ _, h.length, vs ++ ws, rfl, by simp, ?_⟩
   exact List.rel_append (hf.imp fun _ _ r => mono (List.prefix_append _ _) r) (hg.imp fun _ _ r => mono (List.prefix_append _ _) r)
+theorem SimE.lastIndexOfStr {a : List (List Nat)} {b : List Nat} {r : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) (h : Js.lastIndexOf a b = ok r) :
+    SimE p s (.prim .lastIndexOfStr [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, ⟨l, vs, rfl, hl, hf⟩, rfl⟩
+  exact ⟨numVal r, _, by simp [primV, hl, strs_of hf, h, Result.match.ok], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+theorem SimE.strRepeat {a r : List Nat} {n : Js.Num} (hx : SimE p s x a) (hy : SimE p s y n) (h : Js.strRepeat a n = ok r) :
+    SimE p s (.prim .strRepeat [x, y]) r := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, v, rfl, rfl, ri⟩
+  exact ⟨_, _, by simp [primV, num_arg ri, okStr_ok h], List.prefix_refl _, rfl⟩
+theorem atRel_rel {α} {R : α → Val → Prop} {a : List α} {b : List Val} (hf : List.Forall₂ R a b) (n : Js.Num) :
+    (Js.atRel a n = none ∧ Js.atRel b n = none) ∨ ∃ c w, Js.atRel a n = some c ∧ Js.atRel b n = some w ∧ R c w := by
+  have hlen := hf.length_eq
+  unfold Js.atRel
+  rw [hlen]
+  generalize Js.relIndex b.length n.val = j
+  by_cases hj : j < 0
+  · simp [hj]
+  · simp only [if_neg hj]
+    by_cases hlt : j.toNat < a.length
+    · obtain ⟨c, w, h1, h2, h3⟩ := Forall₂_get hf _ hlt
+      exact Or.inr ⟨c, w, h1, h2, h3⟩
+    · exact Or.inl ⟨by simp; omega, by simp; omega⟩
+theorem SimE.atRel {α} {_ : TyRep α} {a : List α} {n : Js.Num} (hx : SimE p s x a) (hy : SimE p s y n) :
+    SimE (α := Opt .undef α) p s (.prim .atRel [x, y]) (Js.atRel a n) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, v, rfl, ⟨l, vs, rfl, hl, hf⟩, ri⟩
+  refine ⟨(Js.atRel vs n).getD .undef, h, by simp [primV, hl, num_arg ri], List.prefix_refl _, ?_⟩
+  rcases atRel_rel hf n with ⟨h1, h2⟩ | ⟨c, w, h1, h2, h3⟩
+  · rw [h1, h2]; exact rfl
+  · rw [h1, h2]; exact h3
+theorem SimE.atRel_str {a : List Nat} {n : Js.Num} (hx : SimE p s x a) (hy : SimE p s y n) :
+    SimE (α := Opt .undef (List Nat)) p s (.prim .atRel [x, y]) (Js.strAt a n) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro h _ ⟨_, v, rfl, rfl, ri⟩
+  refine ⟨(Js.strAt a n).elim .undef .str, h, by simp [primV, num_arg ri], List.prefix_refl _, ?_⟩
+  cases Js.strAt a n <;> rfl
+theorem flatV_rel {α} {_ : TyRep α} {h : Heap} {xss : List (List α)} {vs : List Val}
+    (hf : List.Forall₂ (rep h) xss vs) : ∃ ws, Core.flatV h vs = some ws ∧ List.Forall₂ (rep h) xss.flatten ws := by
+  induction hf with
+  | nil => exact ⟨[], rfl, .nil⟩
+  | cons hx _ ih =>
+    obtain ⟨m, ys, rfl, hm, hy⟩ := hx
+    obtain ⟨ws, hw, hr⟩ := ih
+    exact ⟨ys ++ ws, by simp [Core.flatV, hm, hw], by rw [List.flatten_cons]; exact List.rel_append hy hr⟩
+theorem SimE.flat {α} {_ : TyRep α} {a : List (List α)} (hx : SimE p s x a) :
+    SimE p s (.prim .flat [x]) (Js.flat a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨_, rfl, l, vs, rfl, hl, hf⟩
+  obtain ⟨ws, hw, hr⟩ := flatV_rel hf
+  refine ⟨.ref h.length, h ++ [.array ws], by simp [primV, hl, hw], List.prefix_append _ _, h.length, ws, rfl, by simp, ?_⟩
+  exact hr.imp fun _ _ r => mono (List.prefix_append _ _) r
 end moreprims2
 
 /-! Functions that return nothing. -/

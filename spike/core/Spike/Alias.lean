@@ -30,11 +30,11 @@ theorem heap_len {h : Heap} {l o} (hl : h[l]? = some o) : l < h.length := by
 
 /-- Writing `balance` at `l` is seen at `l`. -/
 theorem balance_write {h : Heap} {l fs v} (hl : h[l]? = some (.record fs)) :
-    balance (h.set l (.record (("balance", .num v) :: fs.filter (·.1 != "balance")))) l v := by
+    balance (h.set l (.record (putField fs "balance" (.num v)))) l v := by
   have : l < h.length := by
     by_contra hc
     simp [List.getElem?_eq_none (Nat.le_of_not_lt hc)] at hl
-  simp [balance, readField, this, List.lookup]
+  simp [balance, readField, this, lookup_putField_same]
 
 /-- Writing at `l` leaves other objects alone. -/
 theorem balance_frame {h : Heap} {l m o n} (hne : l ≠ m) (hb : balance h m n) :
