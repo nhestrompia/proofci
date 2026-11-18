@@ -17,3 +17,10 @@ gaps	gaps.ts	pointKind
 gaps	gaps.ts	pointDimensions
 gaps	gaps.ts	totalPlusOne
 gaps	gaps.ts	makeCounts
+gaps	gaps.ts	pageSize
+gaps	gaps.ts	pageItems
+gaps	gaps.ts	onePage
+gaps	gaps.ts	firstOf
+gaps	gaps.ts	orElse
+gaps	gaps.ts	repeatCount
+gaps	gaps.ts	numberPage

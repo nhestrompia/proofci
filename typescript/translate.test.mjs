@@ -86,14 +86,19 @@ test("`extends` flattens into one record, and the base is still a different type
     export function f(b: B) { return g(b); }`, /not supported|different|record/);
 });
 
-test("each use of a generic type is its own structure", () => {
+test("a generic type is one structure with parameters, or one per use when it can't be", () => {
   const result = run(`interface Box<T> { value: T }
     export function f(a: Box<number>, b: Box<string>) { return a.value + b.value.length; }`);
-  assert.equal([...result.source.matchAll(/structure a\.Box_\w+ where/g)].length, 2, result.source);
-  rejects("interface Box<T> { value: T } export function f<T>(a: Box<T>) { return 1; }", /type parameter/);
-  emits("interface L<T = number> { value: T } export function f(a: L) { return a.value; }", "value : Js.Num");
+  assert.equal([...result.source.matchAll(/structure a\.Box \(T : Type\) where/g)].length, 1, result.source);
+  assert.ok(result.source.includes("(a : (_root_.a.Box Js.Num)) (b : (_root_.a.Box Js.Str))"), result.source);
+  emits("interface Box<T> { value: T } export function f<T>(a: Box<T>) { return a.value; }", "(a : (_root_.a.Box T)) : Result T");
+  emits("interface Page<T> { items: T[] } interface W<T> { page: Page<T> } export function f<T>(a: W<T>): Page<T> { return a.page; }",
+    "page : (_root_.a.Page T)", "Result (_root_.a.Page T)");
+  emits("interface L<T = number> { value: T } export function f(a: L) { return a.value; }", "(a : (_root_.a.L Js.Num))");
+  rejects("interface B<T extends { id: string }> { value: T } export function f<T extends { id: string }>(a: B<T>) { return 1; }", /bound/);
+  rejects("export function f<T>(a: { value: T }) { return a.value; }", /inline object type over a type parameter/);
   emits("type P<T> = { value: T; next: T | null }; export function f(a: P<string>) { return a.value; }", "next : (Option Js.Str)");
-  emits("interface Box<T> { value: T } export function f(a: number): Box<number> { return { value: a }; }", "Box_");
+  emits("interface Box<T> { value: T } export function f(a: number): Box<number> { return { value: a }; }", "({ value := a } : (_root_.a.Box Js.Num))");
   rejects("interface T<A> { next: T<A> | null } export function f(a: T<number>) { return 1; }", /recursive/);
 });
 
@@ -321,6 +326,18 @@ test("inline object types are one type per shape", () => {
 test("generic functions keep their type parameters", () => {
   emits("export function f<T>(xs: T[]): T[] { return xs.slice(1); }", "{T : Type}");
   rejects("export function f<T>(a: T, b: T) { return a === b; }", /only supported/);
+  // `Option T` is only `T | undefined` when `T` itself can't be `undefined`.
+  rejects("export function f<T>(xs: T[]): T | undefined { return xs[0]; }", /`T` could itself be `null` or `undefined`.*T extends \{\}/);
+  rejects("export function f<T>(a: T | null): T | null { return a; }", /T extends \{\}/);
+  emits("export function f<T extends {}>(xs: T[]): T | undefined { return xs[0]; }", "(xs : (List T)) : Result (Option T)");
+  emits("export function f<T extends {}>(a: T | undefined, d: T): T { return a ?? d; }", "(a : (Option T)) (d : T) : Result T");
+  // A call names the type arguments, read off the callee's declared and instantiated types.
+  emits("function g<T>(a: T): T[] { return [a]; } export function f(x: string) { return g(x); }", "_root_.a.g (T := Js.Str) x");
+  emits("interface Box<T> { v: T } function g<T>(b: Box<T>): T { return b.v; } export function f(b: Box<number>) { return g(b); }", "_root_.a.g (T := Js.Num) b");
+  emits("function g<T>(a: T): T[] { return [a]; } export function f<U>(x: U) { return g(x); }", "_root_.a.g (T := U) x");
+  emits("function g<T>(a: T): T { return a; } export function f(x?: number) { return g(x); }", "(T := (Option Js.Num))");
+  emits("function g<T>(): T[] { return []; } export function f() { return g<number>(); }", "(T := Js.Num)");
+  rejects("function g<T>(a: number): number { return a; } export function f() { return g<string>(1); }", /can't be read off this call/);
 });
 
 test("null checks in their other spellings", () => {
@@ -607,7 +624,11 @@ test("an outside call is only usable as the policy lists it", () => {
   assert.deepEqual(find.failures, {});
   assert.ok(find.source.includes("(js!\"x\") none"), find.source);
   const refused = (fn, signature, args, pattern) => assert.match(call(using(fn, args), [{ call: `slugger::${fn}`, signature }]).failures["a.ts::f"], pattern);
-  refused("id", "(a: string): string", '"x"', /generic/);
+  refused("id", "(a: string): string", '"x"', /signature `<T>\(a: T\): T`/);
+  const id = call(using("id"), [{ call: "slugger::id", signature: "<T>(a: T): T" }]);
+  assert.deepEqual(id.failures, {});
+  assert.ok(id.source.includes("opaque Proofci.Assumed.slugger.id {T : Type} : T → Result T"), id.source);
+  assert.ok(id.source.includes("_root_.Proofci.Assumed.slugger.id (T := Js.Str) (js!\"x\")"), id.source);
   refused("all", "(...a: string[]): string", '"x"', /rest parameter/);
   assert.match(call(`import { now } from "slugger";\nexport function f(): number { return now(); }`, [{ call: "slugger::now", signature: "(): number" }]).failures["a.ts::f"], /no arguments/);
   refused("later", "(a: string): Promise<string>", '"x"', /Promise/);

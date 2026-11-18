@@ -110,6 +110,31 @@ const unwrap = node => {
   return node;
 };
 
+// Matches a Lean type that mentions `params` against a concrete one, filling in `found`.
+function unify(pattern, target, params, found) {
+  const tokens = text => text.match(/[()]|[^\s()]+/g) ?? [];
+  const p = tokens(pattern), t = tokens(target);
+  let j = 0;
+  const term = () => {
+    if (t[j] !== "(") return t[j++];
+    const start = j;
+    let depth = 0;
+    do depth += t[j] === "(" ? 1 : t[j] === ")" ? -1 : 0; while (++j < t.length && depth > 0);
+    return depth ? undefined : t.slice(start, j).join(" ").replace(/\( /g, "(").replace(/ \)/g, ")");
+  };
+  for (const token of p) {
+    if (j >= t.length) return false;
+    if (!params.has(token)) {
+      if (token !== t[j++]) return false;
+      continue;
+    }
+    const value = term();
+    if (value === undefined || value === ")" || (found.has(token) && found.get(token) !== value)) return false;
+    found.set(token, value);
+  }
+  return j === t.length;
+}
+
 export class Translator {
   constructor(root, targets, paths = {}, repository = root, assumes = [], effects = []) {
     this.root = realpathSync(root);
@@ -146,6 +171,7 @@ export class Translator {
     this.otherEffects = effects.filter(e => !e.call && !e.method); // `param` entries
     this.usesHandles = false;    // a class or library type was met and is an opaque handle
     this.cutHit = false;         // a recursive type was just cut to a handle
+    this.paramHit = false;       // a type parameter was just written into a type
     this.cutFields = new Set();  // the field declarations that hold such a handle in place of their type
     this.effectOps = new Map();  // `module::name` -> { id, lean, args, result }
     this.effectsBy = new Map();  // declaration -> the effect ids it can call, through its calls
@@ -284,7 +310,14 @@ export class Translator {
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (this.bound(type)) return this.type(this.bound(type), node);
-    if (type.flags & TypeFlags.TypeParameter) return name(type.symbol.name);
+    if (type.flags & TypeFlags.TypeParameter) {
+      this.paramHit = true;
+      return name(type.symbol.name);
+    }
+    // `NonNullable<T>` is `T & {}`. A `T` that can't hold `null` or `undefined` never gets here.
+    if (type.flags & TypeFlags.Intersection && type.types.some(t => t.flags & TypeFlags.TypeParameter)) {
+      throw this.fail(node, this.nullableParameter(type.types.find(t => t.flags & TypeFlags.TypeParameter)));
+    }
     if (type.flags & TypeFlags.Object && this.handlesAllowed() && this.handleOf(type)) {
       this.usesHandles = true;
       return "Js.Handle";
@@ -292,6 +325,8 @@ export class Translator {
     if (type.isUnion()) {
       const parts = type.types.filter(t => !(t.flags & (TypeFlags.Null | TypeFlags.Undefined)));
       if (parts.length < type.types.length) {
+        const loose = parts.find(t => t.flags & TypeFlags.TypeParameter && !this.bound(t) && !this.nonNullish(t));
+        if (loose) throw this.fail(node, this.nullableParameter(loose));
         const rest = parts.length === 1 ? parts[0] : this.checker.getNonNullableType(type);
         return `(Option ${this.type(rest, node)})`;
       }
@@ -302,7 +337,9 @@ export class Translator {
     const library = declaration && this.program.isSourceFileDefaultLibrary(declaration.getSourceFile());
     if (declaration && !library && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
       const lean = this.declareType(declaration, type, node);
-      return lean === "Js.Handle" ? lean : `_root_.${lean}`;
+      if (lean === "Js.Handle") return lean;
+      const { args } = this.instantiation(declaration, type, node);
+      return args ? `(_root_.${lean} ${args.join(" ")})` : `_root_.${lean}`;
     }
     if (type.flags & TypeFlags.Object && (symbol?.name === "__type" || symbol?.name === "__object")) {
       return `_root_.${this.declareAnonymous(type, node).lean}`;
@@ -313,7 +350,11 @@ export class Translator {
   // An inline object type becomes a structure named after its shape, so that the
   // same shape written twice is one Lean type.
   declareAnonymous(type, node) {
+    const outer = this.paramHit;
+    this.paramHit = false;
     const fields = this.fields(type, node).map(f => ({ ...f, lean: this.fieldType(f) }));
+    if (this.paramHit) throw this.fail(node, "an inline object type over a type parameter is not supported yet; declare it as a generic `interface`");
+    this.paramHit = outer;
     // A record with no named fields carries no information, so its Lean type has one value. That is only
     // sound where nothing can read a member it hides (`property` refuses those), and in async code.
     if (!fields.length && !this.handlesAllowed()) throw this.fail(node, "empty records are not supported");
@@ -379,27 +420,84 @@ export class Translator {
     return bound;
   }
 
+  // A `T` written next to `null` or `undefined` is only the same in Lean when `T` can't hold them
+  // itself: `Option T` at `T = number | undefined` has two values for one `undefined`.
+  nonNullish(type) {
+    return this.checker.getNonNullableType(type) === type;
+  }
+
+  nullableParameter(type) {
+    const text = type.symbol.name;
+    return `\`${text}\` could itself be \`null\` or \`undefined\`, which a union with them would hide; write \`${text} extends {}\` to rule that out`;
+  }
+
+  // The Lean type of `type`, and whether it mentions a type parameter.
+  typeWithParams(type, node) {
+    const outer = this.paramHit;
+    this.paramHit = false;
+    try {
+      const lean = this.type(type, node);
+      return { lean, params: this.paramHit };
+    } finally {
+      this.paramHit ||= outer;
+    }
+  }
+
   generics(fn) {
     return (fn.typeParameters ?? [])
       .filter(t => !this.bound(this.checker.getTypeAtLocation(t)))
       .map(t => `{${name(t.name.text)} : Type} [DecidableEq ${name(t.name.text)}]`);
   }
 
-  // Each use of a generic type is its own Lean type, so `Page<string>` and
-  // `Page<number>` are separate structures. Nothing else needs an argument.
+  // Each use of a generic type with known arguments is its own Lean type, so `Page<string>` and
+  // `Page<number>` are separate structures. A use over a type parameter (`Page<T>`) is one structure
+  // with Lean parameters, written from the declaration and applied to the arguments.
+  typeArguments(type) {
+    const declaration = (type.aliasSymbol ?? type.symbol).declarations[0];
+    const argumentTypes = type.aliasTypeArguments ?? (type.objectFlags & ts.ObjectFlags.Reference ? this.checker.getTypeArguments(type) : []);
+    return argumentTypes.slice(0, declaration.typeParameters.length);
+  }
+
   instantiation(declaration, type, node) {
     if (!declaration.typeParameters?.length) return { key: declaration, suffix: "" };
-    const argumentTypes = type.aliasTypeArguments ?? (type.objectFlags & ts.ObjectFlags.Reference ? this.checker.getTypeArguments(type) : []);
-    const given = argumentTypes.slice(0, declaration.typeParameters.length);
+    const given = this.typeArguments(type);
     if (given.length !== declaration.typeParameters.length) throw this.fail(node, "this use of a generic type has no arguments to read");
-    if (given.some(arg => arg.flags & ts.TypeFlags.TypeParameter)) throw this.fail(node, "a generic type over a type parameter is not supported yet");
-    const text = given.map(arg => this.type(arg, node)).join(",");
+    if (given.some(arg => arg.flags & ts.TypeFlags.TypeParameter && this.bound(arg))) throw this.fail(node, "a generic type over a type parameter with a bound is not supported yet");
+    const args = given.map(arg => this.typeWithParams(arg, node));
+    const generic = { key: `${this.leanTypeName(declaration)}<>`, suffix: "", args: args.map(arg => arg.lean), params: declaration.typeParameters.map(t => name(t.name.text)) };
+    if (args.some(arg => arg.params)) {
+      const own = declaration.typeParameters.map(t => this.checker.getTypeAtLocation(t));
+      if (own.some(t => this.bound(t))) throw this.fail(node, "a generic type over a type parameter is not supported yet when its own parameters have a bound");
+      return generic;
+    }
+    if (this.parameterized(declaration)) return generic;
+    const text = args.map(arg => arg.lean).join(",");
     const hash = createHash("sha256").update(text).digest("hex").slice(0, 10);
     return { key: `${this.leanTypeName(declaration)}<${text}>`, suffix: `_${hash}` };
   }
 
+  // Whether a generic declaration is one Lean structure with parameters, which every use shares.
+  // One whose fields can't be written over a free parameter is copied per use instead.
+  parameterized(declaration) {
+    this.generic ??= new Map();
+    if (this.generic.has(declaration)) return this.generic.get(declaration);
+    const own = declaration.typeParameters.map(t => this.checker.getTypeAtLocation(t));
+    if (own.some(t => this.bound(t))) return false;
+    this.generic.set(declaration, true);
+    const self = this.checker.getDeclaredTypeOfSymbol(this.checker.getSymbolAtLocation(declaration.name));
+    try {
+      this.declareType(declaration, self, declaration);
+    } catch (error) {
+      if (!(error instanceof Unsupported)) throw error;
+      this.generic.set(declaration, false);
+      this.types.delete(`${this.leanTypeName(declaration)}<>`);
+      this.typeOwners.delete(this.leanTypeName(declaration));
+    }
+    return this.generic.get(declaration);
+  }
+
   declareType(declaration, type, node = declaration) {
-    const { key, suffix } = this.instantiation(declaration, type, node);
+    const { key, suffix, params } = this.instantiation(declaration, type, node);
     if (this.types.has(key)) {
       const known = this.types.get(key);
       if (!known) {
@@ -431,11 +529,17 @@ export class Translator {
     let shape;
     const outerCut = this.cutHit;
     this.cutHit = false;
-    if (type.isUnion()) {
-      shape = this.declareUnion(declaration, type, lean);
+    const own = params ? this.checker.getDeclaredTypeOfSymbol(this.checker.getSymbolAtLocation(declaration.name)) : type;
+    if (own.isUnion()) {
+      shape = this.declareUnion(declaration, own, lean);
       if (this.cutHit) throw this.fail(declaration, "recursive types are not supported yet in a union");
-    } else shape = this.declareRecord(declaration, type, lean);
+    } else shape = this.declareRecord(declaration, own, lean);
     this.cutHit = outerCut;
+    if (params) {
+      if (shape.kind === "enum") throw this.fail(declaration, "this generic type is not supported yet");
+      const header = shape.text.indexOf(" where");
+      shape = { ...shape, params, own, text: `${shape.text.slice(0, header)} ${params.map(p => `(${p} : Type)`).join(" ")}${shape.text.slice(header)}` };
+    }
     this.types.set(key, { lean, ...shape });
     this.shaped.push({ type, node });
     this.typeTexts.add(shape.text);
@@ -536,7 +640,11 @@ export class Translator {
     if (lean === "Js.Str") return { kind: "string" };
     if (this.checker.isArrayType(type)) return { kind: "array", item: this.describe(this.checker.getTypeArguments(type)[0], node) };
     if (this.bound(type)) return this.describe(this.bound(type), node);
-    if (type.flags & ts.TypeFlags.TypeParameter) return { kind: "generic", name: type.symbol.name };
+    if (type.flags & ts.TypeFlags.TypeParameter) {
+      const bound = this.checker.getBaseConstraintOfType(type);
+      return { kind: "generic", name: type.symbol.name, lean: name(type.symbol.name), nonNull: this.nonNullish(type),
+        numbers: !bound || this.checker.isTypeAssignableTo(this.checker.getNumberType(), bound) };
+    }
     if (type.isUnion() && this.nullish(type)) {
       const nothing = type.types.some(t => t.flags & ts.TypeFlags.Null) ? "null" : "undefined";
       return { kind: "optional", nothing, both: type.types.filter(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)).length > 1, inner: this.describe(this.checker.getNonNullableType(type), node) };
@@ -556,7 +664,9 @@ export class Translator {
     if (this.describing.has(shape.lean)) return { kind: "handle", name: type.symbol?.name ?? "object" };
     this.describing.add(shape.lean);
     try {
-      if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type) };
+      const generic = shape.params && { params: shape.params, args: this.typeArguments(type).map(t => this.describe(t, node)), declared: fields(shape.own) };
+      if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type), ...generic };
+      if (generic) throw this.fail(node, "a generic union over a type parameter has no description yet");
       return this.describeTagged(type, shape, fields, node);
     } finally {
       this.describing.delete(shape.lean);
@@ -821,7 +931,8 @@ export class Translator {
     if (result === "Unit") throw this.fail(node, `\`${key}\` returns nothing, so it can only be called for its effects`);
     const lean = `Proofci.Assumed.${module.replace(/[^A-Za-z0-9]+/g, "_")}.${name(fn)}`;
     const body = `${parts.map(() => "fun _ => ").join("")}Result.fail .undef`;
-    this.order.push(`opaque ${lean} : ${[...parts, `Result ${result}`].join(" → ")} := ${body}`);
+    const generics = (signature.typeParameters ?? []).map(t => ` {${name(t.symbol.name)} : Type}`).join("");
+    this.order.push(`opaque ${lean}${generics} : ${[...parts, `Result ${result}`].join(" → ")} := ${body}`);
     this.assumed.set(key, lean);
     return lean;
   }
@@ -2621,21 +2732,44 @@ export class Scope {
     }
     const parameters = signature.getParameters();
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
+    const fn = this.t.bodyOf(declaration);
+    const generic = fn.typeParameters?.length > 0;
+    const pairs = [];
     const args = parameters.map((parameter, index) => {
       const site = parameter.valueDeclaration;
       const hasDefault = Boolean(site.initializer);
       const argument = node.arguments[index];
+      const declared = this.checker.getTypeAtLocation(site);
+      const slot = generic ? this.checker.getTypeOfSymbolAtLocation(parameter, node) : declared;
+      if (generic) pairs.push([this.t.type(declared, site), this.t.type(slot, node)]);
       if (!argument) {
         if (!hasDefault && !site.questionToken) throw this.t.fail(node, "a missing argument");
         return "none";
       }
-      const slot = this.checker.getTypeAtLocation(site);
       const value = this.convert(argument, slot, env, lines);
       return hasDefault ? `(some ${value})` : value;
     });
+    if (generic) {
+      const result = (returned, at) => this.t.type(calleeAsync ? this.t.promised(returned, at) : returned, at);
+      pairs.push([result(this.checker.getReturnTypeOfSignature(this.checker.getSignatureFromDeclaration(fn)), fn), result(signature.getReturnType(), node)]);
+    }
+    const typeArgs = this.typeArgs(this.t.generics(fn).map(g => g.match(/^\{(\S+) :/)[1]), pairs, declaration.name?.text ?? "this function", node);
     // A function can't name itself through `_root_` while it is being defined.
     const callee_ = this.t.functions.get(declaration)?.pending ? lean : `_root_.${lean}`;
-    return this.bind(`${callee_} ${args.join(" ")}`, lines);
+    return this.bind(`${callee_} ${[...typeArgs, ...args].join(" ")}`, lines);
+  }
+
+  // The Lean arguments for a generic callee's type parameters at this call, read off its
+  // declared and instantiated types. Lean is given them by name, so it never has to infer them.
+  typeArgs(params, pairs, key, node) {
+    if (!params.length) return [];
+    const found = new Map();
+    for (const [declared, given] of pairs) {
+      if (!unify(declared, given, new Set(params), found)) throw this.t.fail(node, `\`${key}\` is called at \`${given}\` where it takes \`${declared}\`, which is not supported yet`);
+    }
+    const missing = params.find(p => !found.has(p));
+    if (missing) throw this.t.fail(node, `\`${key}\`'s type parameter \`${missing}\` can't be read off this call`);
+    return params.map(p => `(${p} := ${found.get(p)})`);
   }
 
   arrayMethod(callee, node, env, lines) {
@@ -2822,9 +2956,11 @@ export class Scope {
     return module.startsWith(".") ? undefined : `${module}::${(site.propertyName ?? site.name).text}`;
   }
 
-  assumedCall(key, signature, node, env, lines) {
+  assumedCall(key, instance, node, env, lines) {
+    const signature = instance.target ?? instance;
     const site = signature.declaration;
-    if (signature.typeParameters?.length || signature.target || site?.typeParameters?.length) throw this.t.fail(node, `\`${key}\` is generic, so it can't be assumed yet`);
+    if (signature.target || (site?.typeParameters?.length ?? 0) !== (signature.typeParameters?.length ?? 0)) throw this.t.fail(node, `\`${key}\` is generic in a way that can't be assumed yet`);
+    if (signature.typeParameters?.some(t => this.checker.getBaseConstraintOfType(t))) throw this.t.fail(node, `\`${key}\` has a type parameter with a bound, so it can't be assumed yet`);
     const listed = this.t.assumes.get(key);
     const found = this.checker.signatureToString(signature);
     const plain = text => text.replace(/\s+/g, " ").trim();
@@ -2838,14 +2974,18 @@ export class Scope {
     if (!parameters.length) throw this.t.fail(node, `\`${key}\` takes no arguments, so it can't be a function of its inputs`);
     if (node.arguments.length > parameters.length) throw this.t.fail(node, "too many arguments");
     const lean = this.t.declareAssumed(key, signature, node);
-    const args = parameters.map((parameter, index) => {
+    const given = instance.getParameters();
+    const pairs = parameters.map((parameter, index) => [parameter, given[index]].map(p => this.t.type(this.checker.getTypeOfSymbolAtLocation(p, node), node)));
+    pairs.push([signature.getReturnType(), instance.getReturnType()].map(t => this.t.type(t, node)));
+    const typeArgs = this.typeArgs((signature.typeParameters ?? []).map(t => name(t.symbol.name)), pairs, key, node);
+    const args = given.map((parameter, index) => {
       const argument = node.arguments[index];
       if (argument) return this.convert(argument, this.checker.getTypeOfSymbolAtLocation(parameter, node), env, lines);
       if (!site.parameters[index].questionToken) throw this.t.fail(node, "a missing argument");
       return "none";
     });
     this.t.noteAssumed([key]);
-    return this.bind(`_root_.${lean} ${args.join(" ")}`, lines);
+    return this.bind(`_root_.${lean} ${[...typeArgs, ...args].join(" ")}`, lines);
   }
 
   isPromise(node) {
