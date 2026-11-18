@@ -13,7 +13,7 @@ const NAMED_TYPES = /^the type `(any|unknown|object|never|Record<.*|Date|Error|P
 
 // Names vary by repository, so a reason is reduced to its kind.
 export const category = message => {
-  const text = message.replace(/^[^:]*:\d+: /, "");
+  const text = message.split("\n")[0].replace(/^[^:]*:\d+: /, "");
   if (NAMED_TYPES.test(text)) return text.replace(NAMED_TYPES, (_, type) => `type ${type.replace(/<.*/, "<>")}`);
   if (text.startsWith("TypeScript error")) return text.replace(/'[^']*'/g, "'_'").replace(/"[^"]*"/g, "'_'").replace(/\d+/g, "N").slice(0, 70);
   // `async`, `AwaitExpression` or `.lastIndexOf`: the name is the finding.

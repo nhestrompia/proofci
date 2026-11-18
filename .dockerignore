@@ -10,6 +10,7 @@
 !typescript/paths.mjs
 !typescript/hazard.mjs
 !typescript/narrow.mjs
+!typescript/hints.mjs
 !typescript/lean-tokens.json
 !toolchain/bridge
 !spike/core/Core.lean

@@ -33,6 +33,13 @@ def _functions(report):
     return lines
 
 
+def _reason(g):
+    lines = ["```", g["reason"].strip()[:4000], "```"]
+    if g.get("hint"):
+        lines += ["", "**How to fix:** " + g["hint"].strip()[:1000]]
+    return lines
+
+
 def markdown(report):
     lines = ["## ProofCI", ""]
     lines.append("**Result: passed**" if report["passed"] else "**Result: blocked**")
@@ -54,15 +61,14 @@ def markdown(report):
             f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {g['status']} |")
     lines += _functions(report)
     details = [g for g in report["guarantees"] if g["reason"]]
-    reasons = {g["reason"] for g in details}
+    reasons = {(g["reason"], g.get("hint")) for g in details}
     if details and len(reasons) == 1 and len(details) == len(report["guarantees"]):
-        lines += ["", "### Details", "", "All guarantees: " + details[0]["status"], "",
-                  "```", details[0]["reason"].strip()[:4000], "```"]
+        lines += ["", "### Details", "", "All guarantees: " + details[0]["status"], ""] + _reason(details[0])
     elif details:
         lines += ["", "### Details", ""]
         for g in details:
             lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {g['status']}</summary>")
-            lines += ["", "```", g["reason"].strip()[:4000], "```", "", "</details>"]
+            lines += [""] + _reason(g) + ["", "</details>"]
     assumed = sorted({m for g in report["guarantees"] if g["status"] == "verified" for m in g.get("assumes", [])})
     if assumed:
         lines += ["", "### Trusted models", "",
