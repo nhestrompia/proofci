@@ -2816,6 +2816,7 @@ export class Scope {
     const args = node.arguments;
     const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(callee.expression)))[0];
     const comparable = () => {
+      if (args.length !== 1) throw this.t.fail(node, `\`${method}\` with a start index is not supported yet`);
       if (this.t.mayBeObject(item)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported${item.flags & ts.TypeFlags.TypeParameter ? "; a type parameter could be an object" : ""}`);
     };
     switch (method) {
