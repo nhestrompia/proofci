@@ -339,6 +339,46 @@ theorem lt_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) : x.l
   · simpa [ofInt, lt, signed_ofInt, signed] using lt_ofInt 0 b
   · simp [lt, signed]
 
+theorem min_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) :
+    IsInt (x.fmin y) (if a ≤ b then a else b) := by
+  have hl := lt_isInt hx hy
+  have hr := lt_isInt hy hx
+  have nx : x ≠ nan := by rcases hx with rfl | ⟨_, rfl⟩ <;> simp [ofInt]
+  have ny : y ≠ nan := by rcases hy with rfl | ⟨_, rfl⟩ <;> simp [ofInt]
+  unfold fmin
+  split
+  · exact absurd rfl nx
+  · exact absurd rfl ny
+  rw [hl, hr]
+  by_cases h1 : a < b
+  · simp [h1, show a ≤ b by omega, hx]
+  · by_cases h2 : b < a
+    · simp [h1, h2, show ¬ a ≤ b by omega, hy]
+    · have : a = b := by omega
+      subst this
+      simp only [h1, h2, decide_false, Bool.false_eq_true, if_false, le_refl, if_true]
+      split <;> assumption
+
+theorem max_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) :
+    IsInt (x.fmax y) (if a ≤ b then b else a) := by
+  have hl := lt_isInt hx hy
+  have hr := lt_isInt hy hx
+  have nx : x ≠ nan := by rcases hx with rfl | ⟨_, rfl⟩ <;> simp [ofInt]
+  have ny : y ≠ nan := by rcases hy with rfl | ⟨_, rfl⟩ <;> simp [ofInt]
+  unfold fmax
+  split
+  · exact absurd rfl nx
+  · exact absurd rfl ny
+  rw [hl, hr]
+  by_cases h1 : a < b
+  · simp [h1, show a ≤ b by omega, hy]
+  · by_cases h2 : b < a
+    · simp [h1, h2, show ¬ a ≤ b by omega, hx]
+    · have : a = b := by omega
+      subst this
+      simp only [h1, h2, decide_false, Bool.false_eq_true, if_false, le_refl, if_true]
+      split <;> assumption
+
 theorem eq_isInt {x y : F64} {a b : Int} (hx : IsInt x a) (hy : IsInt y b) : x.eq y = decide (a = b) := by
   rcases hx with rfl | ⟨rfl, rfl⟩ <;> rcases hy with rfl | ⟨rfl, rfl⟩
   · exact eq_ofInt a b

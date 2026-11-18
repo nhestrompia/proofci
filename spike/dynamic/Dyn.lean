@@ -241,18 +241,6 @@ theorem length_arr {h : Heap} {l xs} (hl : h[l]? = some (.array xs)) :
   show (match h[l]? with | some (.array xs) => _ | some (.record fs) => _ | none => _) = _
   rw [hl]
 
-/-- `Math.min`/`Math.max` on two numbers, keeping `NaN` and the sign of zero. Other
-arguments would be coerced, which isn't modelled. -/
-def minMax (isMax : Bool) : Val → Val → M Val
-  | .num .nan, .num _ | .num _, .num .nan => pure (.num .nan)
-  | .num a, .num b => pure (.num (
-      if a.lt b then (if isMax then b else a)
-      else if b.lt a then (if isMax then a else b)
-      else match a with
-        | .fin neg 0 => if neg != isMax then a else b
-        | _ => a))
-  | _, _ => stuck
-
 def abs : Val → M Val
   | .num (.fin _ n) => pure (.num (.fin false n))
   | .num (.inf _) => pure (.num (.inf false))

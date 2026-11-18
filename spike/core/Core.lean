@@ -297,12 +297,8 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .setHas, h, [.ref l, v] => match h[l]? with
     | some (.array xs) => some (.bool (xs.any (sameKey · v)), h)
     | _ => none
-  | .min, h, [a, b] => match asNum a, asNum b with
-    | some a, some b => some (numVal (Js.min a b), h)
-    | _, _ => none
-  | .max, h, [a, b] => match asNum a, asNum b with
-    | some a, some b => some (numVal (Js.max a b), h)
-    | _, _ => none
+  | .min, h, [.num a, .num b] => some (.num (a.fmin b), h)
+  | .max, h, [.num a, .num b] => some (.num (a.fmax b), h)
   | .abs, h, [a] => (asNum a).map fun a => (numVal (Js.abs a), h)
   | .includes, h, [.str s, .str t] => some (.bool (Js.strIncludes s t), h)
   | .includes, h, [.ref l, .str t] => match h[l]? with

@@ -470,7 +470,7 @@ export class Dyn {
       if (one && as.length === 1) { const x = this.expr(as[0], sc); return x.p !== undefined ? P(`(${one} ${x.p})`) : Mt(`(do pure (${one} ${v(x)}))`); }
       if (lib === "Array.isArray" && as.length === 1) return Mt(`(do isArray ${v(this.expr(as[0], sc))})`);
       if (["Math.floor", "Math.ceil", "Math.trunc"].includes(lib) && as.length === 1) return Mt(`(do math F64.${m} ${v(this.expr(as[0], sc))})`);
-      if ((lib === "Math.max" || lib === "Math.min") && as.length === 2) return Mt(`(do minMax ${lib === "Math.max"} ${v(this.expr(as[0], sc))} ${v(this.expr(as[1], sc))})`);
+      if ((lib === "Math.max" || lib === "Math.min") && as.length === 2) return Mt(`(do prim .${lib.slice(5)} [${v(this.expr(as[0], sc))}, ${v(this.expr(as[1], sc))}])`);
       if (lib === "Math.abs" && as.length === 1) return Mt(`(do abs ${v(this.expr(as[0], sc))})`);
       throw new Unsupported(e, `\`${lib}\``);
     }

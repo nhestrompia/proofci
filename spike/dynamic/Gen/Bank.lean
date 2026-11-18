@@ -9,7 +9,7 @@ abbrev calculateFee.pre (amount' : Val) (rateBps' : Val) (h : Heap) : Prop :=
   Is h .num amount' ∧
   Is h .num rateBps'
 def calculateFee (amount' : Val) (rateBps' : Val) : M Val := do
-  return (← (do minMax false (← (do math F64.floor (← (do bin .div (← (do bin .mul amount' rateBps')) (num 10000))))) (num 500)))
+  return (← (do prim .min [(← (do math F64.floor (← (do bin .div (← (do bin .mul amount' rateBps')) (num 10000))))), (num 500)]))
 abbrev transfer.pre (accounts' : Val) (amount' : Val) (h : Heap) : Prop :=
   Is h (.obj [("from", .num), ("to", .num)]) accounts' ∧
   Is h .num amount'
