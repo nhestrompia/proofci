@@ -91,6 +91,16 @@ to `CoreAsync.lean` is compared with Node the same way. See
 [`spike/core/ASYNC.md`](../spike/core/ASYNC.md). The same holds for functions with handles,
 recursive types or empty records, which have no synchronous bridge.
 
+**Library models.** Built-ins are modelled in `ProofciJs.lean` and `Core.lean`, bridged like
+the rest of Core, and compared with Node on generated inputs (`tests/test_js_numbers.py`):
+string methods (`trim`, `toLowerCase`, `startsWith`, `includes`, `slice`, `padStart`, `padEnd`
+and others, also after `?.`), `Number.isFinite` and the other `Number` tests, `Number(x)` of a
+number, a boolean or a string, and `Array.isArray` of a value typed as an array, possibly
+`null` or `undefined`. `Number(s)` covers blank text and decimal integers with an optional
+sign; other text (fractions, exponents, `0x`, `Infinity`, `-0`) makes the view stop.
+`padStart` and `padEnd` stop past 2^20 units. `Object.keys`, `JSON.stringify` and regular
+expressions have no model yet.
+
 **What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
 timers), classes and methods, recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
 out. Reading a member only an index signature allows, and a variable that might be read
