@@ -68,7 +68,9 @@ theorem spec_eq {m : M α} {h a h' P} (e : m h = .ok a h') : Spec m h P ↔ P a 
 /-! ## Values -/
 
 def num (i : Int) : Val := .num (F64.ofInt i)
-def str (s : String) : Val := .str (s.toList.map Char.toNat)
+/-- A string as JavaScript sees it: UTF-16 code units. -/
+def str (s : String) : Val := .str (s.toList.flatMap fun c =>
+  if c.toNat < 0x10000 then [c.toNat] else [0xD800 + (c.toNat - 0x10000) / 0x400, 0xDC00 + (c.toNat - 0x10000) % 0x400])
 
 /-- `typeof v`. -/
 def typeOf (v : Val) : Val := .str (typeName v)
@@ -143,7 +145,8 @@ def length (o : Val) : M Val := match o with
   | .str s => pure (num s.length)
   | .ref l => fun h => match h[l]? with
     | some (.array xs) => .ok (num xs.length) h
-    | _ => .stuck
+    | some (.record fs) => .ok ((fs.lookup "length").getD .undef) h
+    | none => .stuck
   | _ => stuck
 
 /-- `o[i]`, on arrays and strings by number and on records by string. -/
@@ -235,7 +238,7 @@ theorem push_arr {h : Heap} {l xs v} (hl : h[l]? = some (.array xs)) :
 
 theorem length_arr {h : Heap} {l xs} (hl : h[l]? = some (.array xs)) :
     length (.ref l) h = .ok (num xs.length) h := by
-  show (match h[l]? with | some (.array xs) => _ | _ => _) = _
+  show (match h[l]? with | some (.array xs) => _ | some (.record fs) => _ | none => _) = _
   rw [hl]
 
 /-- `Math.min`/`Math.max` on two numbers, keeping `NaN` and the sign of zero. Other

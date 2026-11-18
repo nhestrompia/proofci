@@ -31,7 +31,7 @@ const pick = (xs) => xs[Math.floor(rnd() * xs.length)];
 const NUMS = [0, 1, 2, 3, 4, 5, 6, -1, -3, 10, 100, 1.5, -0, NaN, 2 ** 53 + 2];
 
 class Gen {
-  constructor(d, strings) { this.d = d; this.c = d.checker; this.strings = [...strings, "", " ", "  ", "a", "x:y", "text", "list"]; this.made = []; this.classes = {}; }
+  constructor(d, strings) { this.d = d; this.c = d.checker; this.strings = [...strings, "", " ", "  ", "a", "x:y", "text", "list", "😀", "a😀:b"]; this.made = []; this.classes = {}; }
   str() {
     const r = rnd();
     if (r < 0.15) return Array.from({ length: 4 }, () => pick([...this.strings, String(pick([0, 1, 7]))])).join(":");
