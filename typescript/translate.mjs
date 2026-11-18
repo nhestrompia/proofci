@@ -111,6 +111,25 @@ const unwrap = node => {
 };
 
 // Matches a Lean type that mentions `params` against a concrete one, filling in `found`.
+// A generic record inside a description keeps its declared fields, not its instantiated ones,
+// so a nested use doesn't repeat itself at every level.
+function skeleton(t) {
+  if (Array.isArray(t)) return t.map(skeleton);
+  if (!t || typeof t !== "object") return t;
+  const out = {};
+  for (const [k, v] of Object.entries(t)) if (!(k === "fields" && t.declared)) out[k] = k === "declared" ? v : skeleton(v);
+  return out;
+}
+
+function substitute(t, by) {
+  if (Array.isArray(t)) return t.map(x => substitute(x, by));
+  if (!t || typeof t !== "object") return t;
+  if (t.kind === "generic") return by.get(t.lean) ?? t;
+  const out = {};
+  for (const [k, v] of Object.entries(t)) out[k] = k === "declared" ? v : k === "args" ? skeleton(substitute(v, by)) : substitute(v, by);
+  return out;
+}
+
 function unify(pattern, target, params, found) {
   const tokens = text => text.match(/[()]|[^\s()]+/g) ?? [];
   const p = tokens(pattern), t = tokens(target);
@@ -526,14 +545,22 @@ export class Translator {
     }
     this.typeOwners.set(lean, declaration);
     this.types.set(key, null);
+    this.nesting ??= new Map();
+    const depth = this.nesting.get(declaration) ?? 0;
+    if (depth > 8) throw this.fail(declaration, "a generic type that contains itself at a growing type argument is not supported");
+    this.nesting.set(declaration, depth + 1);
     let shape;
     const outerCut = this.cutHit;
     this.cutHit = false;
     const own = params ? this.checker.getDeclaredTypeOfSymbol(this.checker.getSymbolAtLocation(declaration.name)) : type;
-    if (own.isUnion()) {
-      shape = this.declareUnion(declaration, own, lean);
-      if (this.cutHit) throw this.fail(declaration, "recursive types are not supported yet in a union");
-    } else shape = this.declareRecord(declaration, own, lean);
+    try {
+      if (own.isUnion()) {
+        shape = this.declareUnion(declaration, own, lean);
+        if (this.cutHit) throw this.fail(declaration, "recursive types are not supported yet in a union");
+      } else shape = this.declareRecord(declaration, own, lean);
+    } finally {
+      this.nesting.set(declaration, depth);
+    }
     this.cutHit = outerCut;
     if (params) {
       if (shape.kind === "enum") throw this.fail(declaration, "this generic type is not supported yet");
@@ -661,16 +688,18 @@ export class Translator {
     if (shape.kind === "enum") return { kind: "enum", lean: shape.lean, tags: shape.tags.map(t => ({ tag: t, lean: name(t) })) };
     // A type met again inside itself was cut to a handle there (see `declareType`), and is described as one.
     this.describing ??= new Set();
-    const key = shape.params ? this.typeWithParams(type, node).lean : shape.lean;
-    if (this.describing.has(key)) return { kind: "handle", name: type.symbol?.name ?? "object" };
-    this.describing.add(key);
+    const args = shape.params && this.typeArguments(type).map(t => this.describe(t, node));
+    if (this.describing.has(shape.lean)) return { kind: "handle", name: type.symbol?.name ?? "object" };
+    this.describing.add(shape.lean);
     try {
-      const generic = shape.params && { params: shape.params, args: this.typeArguments(type).map(t => this.describe(t, node)), declared: fields(shape.own) };
-      if (shape.kind === "record") return { kind: "record", lean: shape.lean, fields: fields(type), ...generic };
-      if (generic) throw this.fail(node, "a generic union over a type parameter has no description yet");
-      return this.describeTagged(type, shape, fields, node);
+      if (!shape.params) return shape.kind === "record" ? { kind: "record", lean: shape.lean, fields: fields(type) } : this.describeTagged(type, shape, fields, node);
+      if (shape.kind !== "record") throw this.fail(node, "a generic union over a type parameter has no description yet");
+      // A use is its declaration with the arguments put in, so it is cut where the declaration is.
+      const declared = fields(shape.own);
+      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
+      return { kind: "record", lean: shape.lean, fields: substitute(declared, by), params: shape.params, args: args.map(skeleton), declared };
     } finally {
-      this.describing.delete(key);
+      this.describing.delete(shape.lean);
     }
   }
 
