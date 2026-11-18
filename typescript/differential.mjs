@@ -337,7 +337,7 @@ export async function differential({ root, out, module, signatures, files, impor
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
     // A generic function is run at `number` for each type parameter, when its bound allows that.
     const generics = [];
-    JSON.stringify(signature, (_, v) => { if (v?.kind === "generic") generics.push(v); return v; });
+    JSON.stringify(signature, (k, v) => { if (k === "declared") return undefined; if (v?.kind === "generic") generics.push(v); return v; });
     if (generics.some(g => !g.numbers)) { skipped.push(`${target}: generic with a bound that \`number\` doesn't meet`); continue; }
     const typeArgs = [...new Set(generics.map(g => g.lean))].map(g => `(${g} := Js.Num) `).join("");
     const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
