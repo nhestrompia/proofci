@@ -441,6 +441,13 @@ export class Translator {
 
   // A `T` written next to `null` or `undefined` is only the same in Lean when `T` can't hold them
   // itself: `Option T` at `T = number | undefined` has two values for one `undefined`.
+  mayBeObject(type) {
+    if (!(type.flags & ts.TypeFlags.TypeParameter)) return Boolean(type.flags & ts.TypeFlags.Object);
+    const bound = this.checker.getBaseConstraintOfType(type);
+    const primitive = ts.TypeFlags.NumberLike | ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike;
+    return !bound || bound === type || !(bound.isUnion() ? bound.types : [bound]).every(t => t.flags & primitive);
+  }
+
   nonNullish(type) {
     return this.checker.getNonNullableType(type) === type;
   }
@@ -2809,7 +2816,7 @@ export class Scope {
     const args = node.arguments;
     const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(callee.expression)))[0];
     const comparable = () => {
-      if (item.flags & (ts.TypeFlags.Object | ts.TypeFlags.TypeParameter)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported${item.flags & ts.TypeFlags.TypeParameter ? "; a type parameter could be an object" : ""}`);
+      if (this.t.mayBeObject(item)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported${item.flags & ts.TypeFlags.TypeParameter ? "; a type parameter could be an object" : ""}`);
     };
     switch (method) {
       case "includes": comparable(); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
@@ -2863,7 +2870,7 @@ export class Scope {
     const bare = this.checker.getNonNullableType(type);
     if (this.checker.isArrayType(bare) && links.length === 1 && unwrap(node.expression).name.text === "includes" && node.arguments.length === 1) {
       const item = this.checker.getTypeArguments(bare)[0];
-      if (item.flags & (ts.TypeFlags.Object | ts.TypeFlags.TypeParameter)) throw this.t.fail(node, "`includes` on objects compares identity, which is not supported");
+      if (this.t.mayBeObject(item)) throw this.t.fail(node, "`includes` on objects compares identity, which is not supported");
       const path = n => { n = unwrap(n); return ts.isIdentifier(n) || (ts.isPropertyAccessExpression(n) && path(n.expression)); };
       if (!path(base)) throw this.t.fail(node, "`?.` on an expression is not supported yet");
       const present = this.fresh(), arm = [];

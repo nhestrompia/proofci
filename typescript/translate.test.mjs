@@ -342,6 +342,7 @@ test("generic functions keep their type parameters", () => {
   rejects("export function f<T>(xs: T[] | undefined, x: T) { return xs?.includes(x); }", /compares identity/);
   const nested = run("interface Box<T> { value: T } export function f(b: Box<Box<number>>): number { return b.value.value; }");
   assert.equal(nested.signatures["a.ts::f"].params[0].fields[0].type.fields[0].type.kind, "number");
+  emits("export function f<T extends number | string>(xs: T[], x: T) { return xs.includes(x); }", "Js.includes xs x");
   rejects("interface N<T> { value: T; next: N<T[]> | null } export function f(l: N<number>): number { return l.value; }", /growing type argument/);
   const deep = run("interface B<T> { v: T } export function f(b: B<B<B<B<B<B<B<B<B<B<number>>>>>>>>>>): number { return 1; }");
   assert.ok(JSON.stringify(deep.signatures).length < 20000);
