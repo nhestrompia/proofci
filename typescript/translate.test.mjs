@@ -279,7 +279,7 @@ test("strings are code units, and text the model can't handle is rejected", () =
   emits(`export function f(a: string) { return "😀" + a; }`, "[55357, 56832]");
   emits(`export function f(a: string, b: string) { return a === b || a < b; }`, "Js.strLt a b");
   rejects(`export function f(a: string) { return a.match(/x/); }`, /not supported/);
-  rejects(`export function f(a: string) { return a.replace(/x/, "y"); }`, /regular expression/);
+  rejects(`export function f(a: string) { return a.replace(/x{2}/, "y"); }`, /regular expression/);
   rejects(`export function f(a: string, b: number) { return a + b; }`, /string and another type/);
   rejects(`export function f(a: string) { return a.localeCompare("b"); }`, /not supported on strings/);
 });
