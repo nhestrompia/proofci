@@ -36,6 +36,7 @@ function callHint({ node, checker }) {
     if (/^(parseInt|parseFloat|Number|String|Boolean|BigInt|isNaN|isFinite|encodeURIComponent|decodeURIComponent|structuredClone|setTimeout|setInterval|fetch)$/.test(callee.text)) {
       if (callee.text === "String") return "use a template (`${n}`) or `n.toString()`";
       if (callee.text === "Boolean") return "compare explicitly (`x !== null`, `s.length > 0`)";
+      if (callee.text === "Number") return "test for `null` or `undefined` first, so `Number` gets a plain `string`, `boolean` or `number`";
       return none(`\`${callee.text}\` has no model yet`);
     }
     const site = checker.getSymbolAtLocation(callee)?.declarations?.[0];
@@ -167,6 +168,7 @@ export const HINTS = [
   [/this use of a generic type has no arguments to read/, "write the type arguments out where the generic type is used (`Page<string>`)"],
   [/a generic type over a type parameter/, "use the generic type at a concrete type (`Page<string>`), not at the function's own type parameter"],
   [/recursive types are not supported yet|holds a value of the type it sits in/, none("recursive types are cut to an opaque handle; pass the parts the function needs")],
+  [/`Array\.isArray` is only supported on values typed as arrays/, "declare the value as an array (`T[]` or `T[] | undefined`); for any other declared type, drop the test"],
   [/would share a Lean name/, "rename one of the two declarations"],
   [/is not a plain field/, "declare it as a field (`name: T`), not a method, getter or computed key"],
   [/unions must be tagged records|union members need a string/, TAGGED],
