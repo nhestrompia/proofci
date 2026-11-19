@@ -715,6 +715,27 @@ theorem rel_reduce {γ : Type} {f : Js.Num → Js.Num → Result Js.Num} {xs : L
   have H' := H t z' hzt
   unfold Rel at H'; exact H' r er
 
+theorem strsOf_f2 {h : Heap} : ∀ {xs : List (List Nat)} {vs : List Val},
+    List.Forall₂ (crep h) xs vs → strsOf vs = some xs
+  | [], [], .nil => rfl
+  | _ :: _, _ :: _, .cons hx hr => by
+    obtain rfl := hx
+    simp [strsOf, strsOf_f2 hr]
+
+/-- `xs.lastIndexOf(s)` on an array of strings. -/
+theorem rel_lastIndexOf {β : Type} {xs : List (List Nat)} {vs : List Val} {l : Loc} {s : List Nat} {w : Val}
+    {g : Js.Num → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs) (hw : w = .str s)
+    (H : ∀ t : Js.Num, ∀ u, NumIs u t.val → Rel (g t) (k u) h Q) :
+    Rel (Std.bind (Js.lastIndexOf xs s) g) (method .lastIndexOf (.ref l) [w] >>= k) h Q := by
+  subst hw
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have ep : method .lastIndexOf (.ref l) [.str s] h = .ok (numVal t) h := by
+    simp [method, prim, primV, hl, strsOf_f2 hf, et, Result.match.ok]
+  rw [spec_bind, spec_eq ep]
+  exact H t (numVal t) ⟨_, rfl, Or.inl rfl⟩ r er
+
 /-- `for (const x of xs)` with one mutable variable, whose body leaves the heap alone. -/
 theorem rel_forOf {α β γ : Type} [CRep α] [CRep β]
     {B : List α × β → Result (ControlFlow (List α × β) β)} {xs : List α} {vs : List Val} {l : Loc}
@@ -810,6 +831,7 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_findIndex (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_some (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_every (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (refine rel_lastIndexOf (by assumption) (by assumption) (by first | rfl | decide) ?_; intro _ _ _)
   | (refine rel_reduce (by assumption) (by assumption) (by first | exact numIs_num | assumption) ?_ ?_ <;> intros)
   | (refine rel_padStart ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
   | (refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
