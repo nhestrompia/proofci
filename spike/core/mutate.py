@@ -49,6 +49,8 @@ KINDS = {
     "flat-id": (r"\(Js\.flat (\S+)\)", r"(Js.flat (List.reverse \1))"),
     "find-index": (r"\bJs\.findIndex\b", "(fun f l => Js.findIndexFrom f l 1)"),
     "rec-get": (r"\bJs\.recGet\b", "(fun d k => Js.recGet (d.drop 1) k)"),
+    "rec-set": (r"\bJs\.recSet\b", "(fun d k v => Js.recSet (d.drop 1) k v)"),
+    "rec-set-swap": (r"\bJs\.recSet (\S+) (\S+) (\S+)", r"Js.recSet \1 \2 \1"),
     "rec-has": (r"\bJs\.recHas\b", "(fun d k => Js.recHas (d.drop 1) k)"),
     "rec-keys": (r"\(List\.map Prod\.fst (\S+)\)", r"(List.reverse (List.map Prod.fst \1))"),
     "rec-values": (r"\(List\.map Prod\.snd (\S+)\)", r"(List.reverse (List.map Prod.snd \1))"),

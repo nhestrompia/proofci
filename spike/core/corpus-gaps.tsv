@@ -61,3 +61,6 @@ gaps	gaps.ts	moveX
 gaps	gaps.ts	rectDiff
 gaps	gaps.ts	resultOr
 gaps	gaps.ts	pickX
+gaps	gaps.ts	withFlag
+gaps	gaps.ts	tallyNames
+gaps	gaps.ts	labelled

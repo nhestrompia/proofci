@@ -2497,8 +2497,83 @@ instance (priority := high) dictTyRep {α} [TyRep α] : TyRep (List (List Nat ×
     exact ⟨l, fs, rfl, lookup_mono hp hl, dictRep_mono hp hd, hn⟩
 instance (priority := high) {α} [TyRep α] : IsObj (List (List Nat × α)) := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩
 
+theorem recKey_iff {k k' : List Nat} {s s' : String} (hk : recKey k = Option.some s) (hk' : recKey k' = Option.some s') :
+    k' = k ↔ s' = s := by
+  have e1 := recKey_toNat hk
+  have e2 := recKey_toNat hk'
+  constructor
+  · intro c; subst c; rw [hk] at hk'; exact (Option.some.inj hk').symm
+  · intro c; rw [← e1.1, ← e2.1, c]
+
+theorem dictRep_map {α} {_ : TyRep α} {h : Heap} {k : List Nat} {s : String} {x : α} {w : Val}
+    (hk : recKey k = Option.some s) (hr : TyRep.rep h x w) :
+    ∀ {d : List (List Nat × α)} {fs : List (String × Val)}, dictRep h d fs →
+      dictRep h (d.map fun e => if e.1 = k then (k, x) else e) (fs.map fun e => if e.1 == s then (s, w) else e)
+  | [], [], _ => trivial
+  | (k', x') :: d, (s', w') :: fs, ⟨hk', hr', hd⟩ => by
+    by_cases he : k' = k
+    · have hs : s' = s := (recKey_iff hk hk').1 he
+      simp only [List.map_cons, he, hs, ite_true, beq_self_eq_true]
+      exact ⟨hk, hr, dictRep_map hk hr hd⟩
+    · have hs : s' ≠ s := fun c => he ((recKey_iff hk hk').2 c)
+      have hb : (s' == s) = false := by simpa using hs
+      simp only [List.map_cons, he, ite_false, hb]
+      exact ⟨hk', hr', dictRep_map hk hr hd⟩
+
+theorem dictRep_append {α} {_ : TyRep α} {h : Heap} {k : List Nat} {s : String} {x : α} {w : Val}
+    (hk : recKey k = Option.some s) (hr : TyRep.rep h x w) :
+    ∀ {d : List (List Nat × α)} {fs : List (String × Val)}, dictRep h d fs → dictRep h (d ++ [(k, x)]) (fs ++ [(s, w)])
+  | [], [], _ => ⟨hk, hr, trivial⟩
+  | (_, _) :: _, (_, _) :: _, ⟨a, b, c⟩ => ⟨a, b, dictRep_append hk hr c⟩
+
+theorem dictRep_has {α} {_ : TyRep α} {h : Heap} {k : List Nat} {s : String} (hk : recKey k = Option.some s) :
+    ∀ {d : List (List Nat × α)} {fs : List (String × Val)}, dictRep h d fs → Js.dictHas d k = fs.any (·.1 == s)
+  | [], [], _ => rfl
+  | (k', x') :: d, (s', w') :: fs, ⟨hk', _, hd⟩ => by
+    have ih := dictRep_has hk hd
+    by_cases he : k' = k
+    · have hs : s' = s := (recKey_iff hk hk').1 he
+      subst he; subst hs
+      have l1 : Js.dictHas ((k', x') :: d) k' = true := by
+        simp only [Js.dictHas, List.lookup]; split <;> simp_all
+      rw [l1]; exact (List.any_eq_true.mpr ⟨(s', w'), List.mem_cons_self .., beq_self_eq_true s'⟩).symm
+    · have hs : s' ≠ s := fun c => he ((recKey_iff hk hk').2 c)
+      have hb : (s' == s) = false := by simpa using hs
+      have b3 : Js.dictHas ((k', x') :: d) k = Js.dictHas d k := by
+        simp only [Js.dictHas, List.lookup]; split <;> simp_all
+      rw [b3, ih]; simp [hb]
+
+theorem putField_keys (fs : List (String × Val)) (s : String) (w : Val) (hn : (fs.map Prod.fst).Nodup) :
+    ((putField fs s w).map Prod.fst).Nodup := by
+  unfold putField
+  split
+  · have : (fs.map fun e => if e.1 == s then (s, w) else e).map Prod.fst = fs.map Prod.fst := by
+      simp only [List.map_map]; apply List.map_congr_left; intro e _
+      by_cases h : e.1 = s <;> simp [h]
+    rw [this]; exact hn
+  · rename_i hany
+    simp only [List.map_append, List.map_cons, List.map_nil]
+    apply List.nodup_append.mpr
+    refine ⟨hn, List.nodup_singleton _, ?_⟩
+    intro a ha b hb
+    simp only [List.mem_singleton] at hb; subst hb
+    intro c; subst c
+    apply hany
+    obtain ⟨e, he, rfl⟩ := List.mem_map.mp ha
+    exact List.any_eq_true.mpr ⟨e, he, by simp⟩
+
+theorem dictRep_put {α} {_ : TyRep α} {h : Heap} {k : List Nat} {s : String} {x : α} {w : Val}
+    (hk : recKey k = Option.some s) (hr : TyRep.rep h x w) {d : List (List Nat × α)} {fs : List (String × Val)}
+    (hd : dictRep h d fs) : dictRep h (Js.dictSet d k x) (putField fs s w) := by
+  have hh := dictRep_has hk hd
+  unfold Js.dictSet putField
+  rw [hh]
+  split
+  · exact dictRep_map hk hr hd
+  · exact dictRep_append hk hr hd
+
 section recs
-variable {p : Prog} {s : St} {x y : Expr}
+variable {p : Prog} {s : St} {x y z : Expr}
 theorem SimE.recGet {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Nat} {r : Option α}
     (hx : SimE p s x d) (hy : SimE p s y k) (h : Js.recGet d k = ok r) :
     SimE (α := Opt .undef α) p s (.prim .recGet [x, y]) r := by
@@ -2573,6 +2648,24 @@ theorem SimE.recCopy {α} {_ : TyRep α} {d : List (List Nat × α)} (hx : SimE 
   have hk : keysV fs = Option.some (d.map fun e => Val.str e.1) := by simp [keysV, a1, hn, a2]
   exact ⟨.ref h.length, h ++ [.record fs], by simp [primV, hl, hk], List.prefix_append _ _, h.length, fs, rfl, by simp,
     dictRep_mono (List.prefix_append _ _) hd, hn⟩
+theorem SimE.recPut {α} {_ : TyRep α} {d d' : List (List Nat × α)} {k : List Nat} {a : α}
+    (hx : SimE p s x d) (hy : SimE p s y k) (hz : SimE p s z a) (h : Js.recSet d k a = ok d') :
+    SimE p s (.prim .recPut [x, y, z]) d' := by
+  unfold Js.recSet at h
+  split at h
+  · rename_i hok
+    simp only [ok.injEq] at h
+    subst h
+    have hk : recKey k = Option.some (String.ofList (k.map Char.ofNat)) := by simp [recKey, hok]
+    refine sim_prim (args3 hx hy hz) ?_
+    rintro h _ ⟨_, _, w, rfl, ⟨l, fs, rfl, hl, hd, hn⟩, rfl, rw⟩
+    refine ⟨.ref h.length, h ++ [.record (putField fs (String.ofList (k.map Char.ofNat)) w)], by simp [primV, hl, hk], List.prefix_append _ _,
+      h.length, putField fs (String.ofList (k.map Char.ofNat)) w, rfl, by simp, ?_, putField_keys fs _ w hn⟩
+    exact dictRep_mono (List.prefix_append _ _) (dictRep_put hk rw hd)
+  · simp at h
+theorem SimE.recEmpty {α} [TyRep α] {d : List (List Nat × α)} (hd : d = []) : SimE p s (.record []) d := by
+  subst hd
+  exact sim_record simf_nil (by rintro h _ rfl; exact ⟨h.length, [], rfl, by simp, trivial, List.nodup_nil⟩)
 end recs
 
 /-! Functions that return nothing. -/

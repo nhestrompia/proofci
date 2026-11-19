@@ -380,3 +380,25 @@ export function pickX(p: GapPick): number {
     case "none": return 0;
   }
 }
+
+export function withFlag(r: Record<string, boolean>, k: string): Record<string, boolean> {
+  const c = { ...r };
+  c[k] = true;
+  return c;
+}
+
+export function tallyNames(xs: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const x of xs) {
+    out[x] = (out[x] ?? 0) + 1;
+  }
+  return out;
+}
+
+export function labelled(v: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  out.name = v;
+  out.kind = "b";
+  out.name = "c";
+  return out;
+}

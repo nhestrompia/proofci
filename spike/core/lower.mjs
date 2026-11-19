@@ -181,6 +181,32 @@ export function lower(root, targets, { paths, eff } = {}) {
       });
       return ok;
     };
+    // `r[k] = v` as a new record is the same as JavaScript only if nothing else holds `r`.
+    const ownedRecord = sym => {
+      const d = sym?.valueDeclaration;
+      if (!d || !ts.isVariableDeclaration(d) || !d.initializer) return false;
+      let init = d.initializer;
+      while (ts.isAsExpression(init) || ts.isParenthesizedExpression(init) || ts.isSatisfiesExpression(init)) init = init.expression;
+      if (!ts.isObjectLiteralExpression(init) || init.properties.length > 1 || (init.properties.length && !ts.isSpreadAssignment(init.properties[0]))) return false;
+      let ok = true;
+      walk(decl.body, n => {
+        if (!ts.isIdentifier(n) || n === d.name || resolve(n) !== sym) return;
+        let u = n;
+        while (ts.isParenthesizedExpression(u.parent) || ts.isNonNullExpression(u.parent)) u = u.parent;
+        const p = u.parent;
+        if ((ts.isElementAccessExpression(p) || ts.isPropertyAccessExpression(p)) && p.expression === u) {
+          if (ts.isBinaryExpression(p.parent) && p.parent.left === p && ts.isAssignmentOperator(p.parent.operatorToken.kind)
+            && p.parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) ok = false;
+          return;
+        }
+        if (ts.isReturnStatement(p) || ts.isSpreadAssignment(p)) return;
+        if (ts.isBinaryExpression(p) && p.right === u && p.operatorToken.kind === ts.SyntaxKind.InKeyword) return;
+        if (ts.isCallExpression(p) && p.arguments.length === 1 && p.arguments[0] === u && ts.isPropertyAccessExpression(p.expression)
+          && ts.isIdentifier(p.expression.expression) && p.expression.expression.text === "Object" && ["keys", "values"].includes(p.expression.name.text)) return;
+        ok = false;
+      });
+      return ok;
+    };
     const visitCapt = n => {
       if (ts.isArrowFunction(n) && !isInlineCb(n)) {
         hasLambda = true;
@@ -660,7 +686,11 @@ export function lower(root, targets, { paths, eff } = {}) {
         else if (ts.isIdentifier(left)) out.push(`.set ${lean(scope.get(resolve(left)))} (${value})`);
         else if ((ts.isPropertyAccessExpression(left) || ts.isElementAccessExpression(left)) && isDict(left.expression)) {
           const key = ts.isElementAccessExpression(left) ? E(left.argumentExpression) : `.lit (.str ${UNITS(left.name.text)})`;
-          out.push(`.expr (.prim .recSet [${E(left.expression)}, ${key}, ${value}])`);
+          const r = ts.isIdentifier(left.expression) ? resolve(left.expression) : null;
+          if (r && scope.has(r) && !captured.has(r) && !decl.__env?.has(r) && ownedRecord(r)) {
+            const n = lean(scope.get(r));
+            out.push(`.set ${n} (.prim .recPut [.var ${n}, ${key}, ${value}])`);
+          } else out.push(`.expr (.prim .recSet [${E(left.expression)}, ${key}, ${value}])`);
         }
         else if (ts.isPropertyAccessExpression(left)) out.push(`.setField (${E(left.expression)}) ${lean(left.name.text)} (${value})`);
         else if (ts.isElementAccessExpression(left)) out.push(`.setIndex (${E(left.expression)}) (${E(left.argumentExpression)}) (${value})`);

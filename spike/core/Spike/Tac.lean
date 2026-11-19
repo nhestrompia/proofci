@@ -748,6 +748,7 @@ macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.recHas; sim'; sim'; ass
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.recKeys; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.recValues; sim'))
 macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.recCopy; sim'))
+macro_rules | `(tactic| s_prim) => `(tactic| (apply SimE.recPut; sim'; sim'; sim'; assumption))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.recKeys; sim'))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.recValues; sim'))
 macro_rules | `(tactic| sim_read) => `(tactic| (apply SimE.recCopy; sim'))

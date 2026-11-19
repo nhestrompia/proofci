@@ -45,7 +45,7 @@ inductive Prim where
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
-  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys | recGet | recHas | recSet | recValues | recCopy
+  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys | recGet | recHas | recSet | recValues | recCopy | recPut
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -419,6 +419,9 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
     | _, _ => none
   | .recSet, h, [.ref l, .str s, v] => match h[l]?, recKey s with
     | some (.record fs), some k => some (.undef, h.set l (.record (putField fs k v)))
+    | _, _ => none
+  | .recPut, h, [.ref l, .str s, v] => match h[l]?, recKey s with
+    | some (.record fs), some k => some (.ref h.length, h ++ [.record (putField fs k v)])
     | _, _ => none
   | .recValues, h, [.ref l] => match h[l]? with
     | some (.record fs) => (keysV fs).map fun _ => (.ref h.length, h ++ [.array (fs.map Prod.snd)])
