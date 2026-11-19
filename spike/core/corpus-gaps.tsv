@@ -42,3 +42,10 @@ gaps	gaps.ts	fieldNames
 gaps	gaps.ts	weights
 gaps	gaps.ts	ownerId
 gaps	gaps.ts	snapshot
+gaps	gaps.ts	itemTotal
+gaps	gaps.ts	jsonLeaves
+gaps	gaps.ts	itemSum
+gaps	gaps.ts	prependItem
+gaps	gaps.ts	countDown
+gaps	gaps.ts	firstKid
+gaps	gaps.ts	treeSize

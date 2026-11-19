@@ -93,6 +93,10 @@ KINDS = {
     "ceil-floor": (r"\bJs\.ceilDiv\b", "Js.floorDiv"),
     "ceil-trunc": (r"\bJs\.ceilDiv\b", "Js.truncDiv"),
     "rem-zero": (r"tmp\d+\.val = 0", "False"),
+    # Recursion over a type that holds itself
+    "rec-skip": (r"\b(\w+)\.next\b", r"(\1.next.bind (·.next))"),
+    "rec-tail": (r"\b(\w+)\.kids\b", r"(\1.kids.drop 1)"),
+    "rec-base": (r"Result\.ok \(Js\.Num\.mk \(0\)", "Result.ok (Js.Num.mk (1)"),
 }
 rng = random.Random(20261105)
 made = []
@@ -104,8 +108,10 @@ for kind, (pat, rep) in KINDS.items():
         if count >= per:
             break
         text = open(f"{src}/{n}.lean").read()
-        cut = text.index("set_option maxRecDepth 4000") if "set_option maxRecDepth 4000" in text else None
         head = text.find("def ")
+        # Only the view: the Core and the bridge's own rules come after it.
+        cut = text.find("set_option maxRecDepth", head)
+        cut = None if cut < 0 else cut
         lines = text[:cut].split("\n")
         body = [i for i, l in enumerate(lines) if re.search(pat, l) and not l.startswith(("structure", "inductive"))]
         if only and not any("Aeneas.Std.loop" in l or re.search(r"\bJs\.(map|filter|some_|every|find)\b", l) for l in lines):

@@ -238,3 +238,51 @@ export function ownerId(row: Record<string, number>): number {
 export function snapshot(row: Record<string, boolean>): Record<string, boolean> {
   return { ...row };
 }
+
+
+// Types that hold themselves (a linked list, a JSON-like union), and recursion over them.
+export interface GapItem {
+  value: number;
+  next: GapItem | null;
+}
+
+export function itemTotal(list: GapItem | null): number {
+  if (list === null) return 0;
+  return list.value + itemTotal(list.next);
+}
+
+export type GapJson = { kind: "num"; value: number } | { kind: "list"; items: GapJson[] };
+
+export function jsonLeaves(json: GapJson): number {
+  switch (json.kind) {
+    case "num": return 1;
+    case "list": return json.items.map(item => jsonLeaves(item)).reduce((a, b) => a + b, 0);
+  }
+}
+
+export function itemSum(list: GapItem | null, acc: number): number {
+  if (list === null) return acc;
+  return itemSum(list.next, acc + list.value);
+}
+
+export function prependItem(list: GapItem | null, value: number): GapItem {
+  return { value, next: list };
+}
+
+export function countDown(n: number): number {
+  if (n <= 0) return 0;
+  return 1 + countDown(n - 1);
+}
+
+export interface GapTree {
+  label: string;
+  kids: GapTree[];
+}
+
+export function firstKid(t: GapTree): string {
+  return t.kids.length > 0 ? t.kids[0].label : t.label;
+}
+
+export function treeSize(t: GapTree): number {
+  return t.kids.map(k => treeSize(k)).reduce((a, b) => a + b, 1);
+}
