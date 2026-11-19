@@ -505,26 +505,26 @@ function stepC(n: number, acc: number): number {
   return stepA(n - 1, acc - 3) + stepB(n - 1, acc);
 }
 
-export interface GapNode {
+export interface GapVertex {
   name: string;
-  edges: GapEdge[];
+  edges: GapArc[];
 }
 
-export interface GapEdge {
+export interface GapArc {
   weight: number;
-  to: GapNode | null;
+  to: GapVertex | null;
 }
 
-export function graphWeight(n: GapNode): number {
+export function graphWeight(n: GapVertex): number {
   return edgesWeight(n.edges, 0);
 }
 
-function edgesWeight(es: GapEdge[], i: number): number {
+function edgesWeight(es: GapArc[], i: number): number {
   if (i >= es.length) return 0;
   return edgeWeight(es[i]) + edgesWeight(es, i + 1);
 }
 
-function edgeWeight(e: GapEdge): number {
+function edgeWeight(e: GapArc): number {
   if (e.to === null) return e.weight;
   return e.weight + graphWeight(e.to);
 }
