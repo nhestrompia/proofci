@@ -39,9 +39,9 @@ function failure(text, options = {}) {
 
 // What the code uses, the hint it gets, and the rewrite the hint suggests.
 const rewrites = [
-  ["recursion through a second interface", /let the type hold itself directly/,
-    `interface A { value: number; b: B | null }\ninterface B { a: A }\nexport function f(a: A): number { return a.value; }`,
-    `interface A { value: number; next: A | null }\nexport function f(a: A): number { return a.value; }`],
+  ["recursion through an inline object type", /declare the inline object as a named `interface`/,
+    `interface A { value: number; kids: { a: A }[] }\nexport function f(a: A): number { return a.value; }`,
+    `interface A { value: number; kids: K[] }\ninterface K { a: A }\nexport function f(a: A): number { return a.value; }`],
   ["a recursive type with no end", /so a value can end/,
     `interface R { value: number; next: R }\nexport function f(r: R): number { return r.value; }`,
     `interface R { value: number; next: R | null }\nexport function f(r: R): number { return r.value; }`],

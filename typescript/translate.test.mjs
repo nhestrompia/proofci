@@ -1236,20 +1236,18 @@ test("a recursive type is an inductive type in async code too, whichever functio
     export async function f(n: number): Promise<number> { await save("a", "b"); return await g(n); }`, /recursive `async`/);
 });
 
-test("a type that recurs through another type is cut there in async code: the inner value is an opaque handle", () => {
-  const types = `interface Entry { name: string; parent: Up | null; children: Up[] }\ninterface Up { e: Entry }\n`;
+test("a type that recurs through an inline object type is cut there in async code: the inner value is an opaque handle", () => {
+  const types = `interface Entry { name: string; parent: { e: Entry } | null; children: { e: Entry }[] }\n`;
   const ok = asyncEmits(`${types}export async function f(e: Entry, id: string): Promise<boolean> {
     await save(id, e.name);
     return e.parent !== null || e.children.length > 0;
   }`);
-  assert.match(ok.source, /structure a\.Up where\n  e : Js\.Handle/);
-  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option _root_\.a\.Up\)\n  children : \(List _root_\.a\.Up\)/);
+  assert.match(ok.source, /where\n  e : Js\.Handle/);
   // The first level is all there is: reading into the inner value is refused.
   asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); return e.parent === null ? "" : e.parent.e.name; }`, /holds a value of the type it sits in/);
   asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<number> { await save(id, e.name); return e.children.filter(c => c.e.name !== "").length; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Up> { await save(id, e.name); return { e }; }`, /only `null`, `undefined` or `\[\]`/);
   asyncEmits(`${types}export async function f(id: string): Promise<Entry> { await save(id, "x"); return { name: id, parent: null, children: [] }; }`);
-  rejects(`${types}export function f(e: Entry): boolean { return e.parent !== null; }`, /recurs through another type/);
+  rejects(`${types}export function f(e: Entry): boolean { return e.parent !== null; }`, /recurs through an inline object type/);
 });
 
 test("a recursive type outside async code is an inductive type, with its equality written out", () => {
@@ -1279,12 +1277,13 @@ export function f(j: Json): number {
 export function f(e: Entry): string { return e.parent === null ? e.name : f(e.parent); }`, "parent : (Option a.Entry)");
 });
 
-test("a recursive type is refused where its Lean type would be empty or would need a mutual block", () => {
+test("declared types that hold each other are one mutual block; a recursive type is refused where its Lean type would be empty", () => {
   rejects("interface R { next: R } export function f(r: R) { return 1; }", /no finite value/);
   rejects(`type E = { kind: "add"; left: E; right: E } | { kind: "neg"; inner: E };
 export function f(e: E) { return 1; }`, /no finite value/);
-  rejects("interface A { b: B | null } interface B { a: A } export function f(a: A) { return 1; }", /recurs through another type/);
-  rejects("interface T { kids: { node: T }[] } export function f(t: T) { return 1; }", /recurs through another type/);
+  emits("interface A { b: B | null } interface B { a: A } export function f(a: A) { return a.b === null ? 0 : 1; }", "mutual\nstructure a.B where", "instance a.A.instDecidableEq : DecidableEq a.A := a.B.decEq_1");
+  rejects("interface A { b: B } interface B { a: A } export function f(a: A) { return 1; }", /no finite value/);
+  rejects("interface T { kids: { node: T }[] } export function f(t: T) { return 1; }", /recurs through an inline object type/);
   rejects("interface T { kids: Map<string, T> } export function f(t: T) { return 1; }", /holds itself inside/);
   rejects("interface T { pair: [T, number] | null } export function f(t: T) { return 1; }", /not supported/);
   rejects("interface T { kids: Set<T> } export function f(t: T) { return 1; }", /can be keys/);

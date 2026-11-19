@@ -180,7 +180,7 @@ export const HINTS = [
   [/a generic type over a type parameter/, "use the generic type at a concrete type (`Page<string>`), not at the function's own type parameter"],
   [/recursive types are not supported yet|holds a value of the type it sits in/, "in `async` code a recursive type is cut to an opaque handle, also in the functions it calls: pass the parts the function needs as parameters"],
   [/a generic type that holds itself/, "use it at concrete type arguments (`Tree<number>`), not at a type parameter"],
-  [/a type that recurs through another type/, "let the type hold itself directly, in one named interface (`children: Tree[]`, `next: Tree | null`), not through a second interface or an inline object"],
+  [/a type that recurs through an inline object type/, "declare the inline object as a named `interface`, so the types that hold each other are all declared (`interface Node { kids: Edge[] } interface Edge { to: Node }`)"],
   [/a recursive type that holds itself inside/, "hold the type itself in an array, `T | null` or an optional field (`children: Tree[]`), not in a `Map`, `Set` or tuple"],
   [/a recursive type with no finite value/, "make the field that holds the type nullable, optional or an array (`next: T | null`), so a value can end"],
   [/`lastIndexOf` with a start index/, "search the front of the array (`xs.slice(0, i + 1).lastIndexOf(v)` for `i >= 0`)"],
