@@ -946,7 +946,7 @@ twin, a typed `ok` bind, a branch on both sides at once, or one dynamic step. -/
 macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_min_ok ?_ ?_ ?_ <;> rmin)
   | (exfalso; simp only [not_true_eq_false, Bool.false_eq_true, truthy_bool, decide_eq_true_eq] at *; done)
-  | (exfalso; (try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not] at *); omega)
+  | (exfalso; (try simp only [truthy_bool, Bool.not_not, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not] at *); omega)
   | (exfalso; have := nullish_of_crep_none ‹crep _ (none : Option _) _›; simp_all; done)
   | (exfalso; have := not_nullish_of_crep_some ‹crep _ (some (_ : Js.Num)) _›; simp_all; done)
   | rops
