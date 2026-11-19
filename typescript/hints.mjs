@@ -24,7 +24,7 @@ function callHint({ node, checker }) {
     const receiver = callee.expression;
     const type = checker.getTypeAtLocation(receiver);
     if (ts.isRegularExpressionLiteral(receiver) || type.symbol?.name === "RegExp") return REGEX;
-    if (/^(Object|Reflect)\./.test(text)) return "read the fields by name, or keep the data in a `Map` (`m.has(k)`, `m.get(k)`, `m.size`); reflection has no model yet";
+    if (/^(Object|Reflect)\./.test(text)) return "read the fields by name, or keep the data in a `Map` (`m.has(k)`, `m.get(k)`, `m.size`); an object can have keys its type doesn't list, so `Object.keys` and other reflection aren't translated";
     if (/^JSON\./.test(text)) return none("`JSON` has no model; parse at the boundary and pass typed values in");
     if (/^Array\.(from|of)$/.test(text)) return "build the array with a literal, spread (`[...set]`) or a loop";
     if (/^Array\.isArray$/.test(text)) return "drop the test: the declared type already says whether it is an array";
@@ -89,12 +89,6 @@ const METHODS = {
   shift: "read the first element with `xs[0]` and continue from `xs.slice(1)`",
   push: "push onto a local array the function created (`const out: T[] = []`), then store it",
   splice: "build the new array with `slice` and spread (`[...xs.slice(0, i), ...xs.slice(i + 1)]`)",
-  flat: "spread the inner arrays in a loop, or use `reduce((all, x) => [...all, ...x], [])`",
-  flatMap: "use `map` and then flatten with `reduce((all, x) => [...all, ...x], [])`",
-  padStart: "build the padding in a loop or a template",
-  padEnd: "build the padding in a loop or a template",
-  at: "index from the end explicitly (`xs[xs.length - 1]`)",
-  findIndex: "use a `for` loop over the indices",
   forEach: "use a `for...of` loop",
   entries: "loop over the array with a `for` loop over the indices",
   keys: "loop over an array of the keys kept alongside the `Map`",
@@ -105,7 +99,6 @@ const METHODS = {
   test: REGEX,
   localeCompare: "compare with `<` and `===`, which compare UTF-16 code units",
   toFixed: "work in whole units (cents, not dollars) so no rounding is needed",
-  repeat: "build the string in a loop",
 };
 function calledMethod(node) {
   if (node && ts.isPropertyAccessExpression(node.parent) && ts.isCallExpression(node.parent.parent)) node = node.parent.parent;
@@ -168,6 +161,12 @@ export const HINTS = [
   [/this use of a generic type has no arguments to read/, "write the type arguments out where the generic type is used (`Page<string>`)"],
   [/a generic type over a type parameter/, "use the generic type at a concrete type (`Page<string>`), not at the function's own type parameter"],
   [/recursive types are not supported yet|holds a value of the type it sits in/, none("recursive types are cut to an opaque handle; pass the parts the function needs")],
+  [/`lastIndexOf` with a start index/, "search the front of the array (`xs.slice(0, i + 1).lastIndexOf(v)` for `i >= 0`)"],
+  [/`at` takes one index/, "pass one index (`xs.at(-1)`)"],
+  [/`at` on an array that may hold/, "index from the end explicitly (`xs[xs.length - 1]`)"],
+  [/only `flat\(\)` without a depth/, "call `flat()` once per level (`xs.flat().flat()`)"],
+  [/`flat` is only supported on an array of arrays/, "spread each inner collection into an array first (`xs.map(s => [...s]).flat()`)"],
+  [/`flatMap` is only supported with a callback that returns an array/, "return an array from the callback (`x => [f(x)]`), or use `map`"],
   [/`Array\.isArray` is only supported on values typed as arrays/, "declare the value as an array (`T[]` or `T[] | undefined`); for any other declared type, drop the test"],
   [/would share a Lean name/, "rename one of the two declarations"],
   [/is not a plain field/, "declare it as a field (`name: T`), not a method, getter or computed key"],
