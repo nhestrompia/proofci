@@ -104,9 +104,18 @@ callback that returns an array; strings have `at` and `repeat`, which stops past
 
 `Object.keys` is modelled in Core: a record keeps its keys in insertion order (a write to a key
 already there keeps its place), and keys JavaScript lists first (array indices), non-ASCII keys
-and repeated keys make Core stop. `spike/core/keyscheck.mjs` compares it with Node. The typed
-view still refuses `Object.keys`: an object can have keys its type doesn't list, so the type
-doesn't determine the result. `JSON.stringify` and regular expressions have no model yet.
+and repeated keys make Core stop. `spike/core/keyscheck.mjs` compares it with Node.
+
+`Record<string, V>`, and an object type whose only member is `[k: string]: V`, is a record of
+dynamic keys: the view holds it as `Js.Dict Js.Str V`, its entries in Core's insertion order.
+`r[k]` and `r.name` read `V | undefined`, `k in r` tests a key, `r[k] = v` writes to an owned copy
+(`{}` or `{ ...r }`; the in-place rules below apply), and `Object.keys` and `Object.values` list
+it. The bridge checks the record holds exactly those keys. A key that is empty, all digits
+(JavaScript lists those first), non-ASCII, or a name `Object.prototype` answers for (`__proto__`,
+`toString`, ...) makes the view stop. Records keyed by numbers, `Object.entries` (tuples) and an
+interface's `Object.keys` (it can have keys its type doesn't list) are refused. Writes have no
+bridge yet, so a function that writes to a record is tested, not proved. `JSON.stringify` and
+regular expressions have no model yet.
 
 **What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
 timers), classes and methods, recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
@@ -157,9 +166,10 @@ and the report says so.
 | Numbers | `+ - * / %` (`/` only where the quotient is whole), comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
 
 `??` and `?.` work on values that may be `null` or `undefined`. `||` and `&&` work on any operand, such as `daysInMonth[month] || 28`. An interface with an
-index signature (`[key: string]: T`) keeps its named fields; the members the signature
-allows are left out, so reading one by name, indexing the value with a key or spreading
-it is `unsupported`.
+index signature (`[key: string]: T`) next to named fields keeps its named fields; the members the
+signature allows are left out, so reading one by name, indexing the value with a key or
+spreading it is `unsupported`. With no named fields it is a record of dynamic keys, as
+`Record<string, T>` is (see above).
 
 Everything else is `unsupported`, with the source line. That includes fractions,
 regular expressions, classes, `Promise.all` and other concurrency, and calls into packages
