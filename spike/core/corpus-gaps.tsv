@@ -51,3 +51,6 @@ gaps	gaps.ts	nodeWeight
 gaps	gaps.ts	callFour
 gaps	gaps.ts	rotateTotal
 gaps	gaps.ts	nextValue
+gaps	gaps.ts	moveX
+gaps	gaps.ts	rectDiff
+gaps	gaps.ts	resultOr

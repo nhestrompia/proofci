@@ -317,3 +317,28 @@ export function nextValue(item: GapItem): number {
   if (item.next === null) return 0;
   return item.next.value;
 }
+
+export type GapMove = { kind: "left"; by: number } | { kind: "right"; by: number };
+
+export function moveX(m: GapMove): number {
+  switch (m.kind) {
+    case "left": return 0 - m.by;
+    case "right": return m.by;
+  }
+}
+
+export function rectDiff(s: GapShape): number {
+  switch (s.kind) {
+    case "circle": return s.r;
+    case "rect": return s.w - s.h;
+  }
+}
+
+export type GapResult<T> = { kind: "ok"; value: T } | { kind: "err"; code: number };
+
+export function resultOr(r: GapResult<number>, d: number): number {
+  switch (r.kind) {
+    case "ok": return r.value;
+    case "err": return d + r.code;
+  }
+}
