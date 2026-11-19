@@ -251,6 +251,7 @@ export function lower(root, targets, { paths, eff } = {}) {
         const receiver = checker.getNonNullableType(checker.getTypeAtLocation(link.expression.expression));
         const prim = (checker.isArrayType(receiver) ? ARRAY_METHODS : STRING_METHODS)[`${link.expression.name.text}/${link.arguments.length}`];
         if (!prim) throw new Error(`method ${link.getText()}`);
+        if (prim === "flat" && !checker.isArrayType(checker.getTypeArguments(receiver)[0])) throw new Error("`flat` of items that aren't arrays");
         return `.prim .${prim} [${primArgs(prim, [value, ...link.arguments.map(E)]).join(", ")}]`;
       }, `(${base})`);
       return `.cond (.isNullish (${base})) (.lit .undef) (${body})`;
@@ -397,6 +398,8 @@ export function lower(root, targets, { paths, eff } = {}) {
         && checker.isArrayType(checker.getTypeAtLocation(e.expression.expression))) {
         const m = e.expression.name.text, recv = e.expression.expression;
         if (HOF[m] && e.arguments.length === 1) return `.hof .${HOF[m]} (${E(recv)}) ${lean(callback(e.arguments[0], 1))}`;
+        if (m === "flatMap" && e.arguments.length === 1
+          && !checker.isArrayType(checker.getSignaturesOfType(checker.getTypeAtLocation(e.arguments[0]), ts.SignatureKind.Call)[0]?.getReturnType())) throw new Error("`flatMap` with a callback that doesn't return an array");
         if (m === "flatMap" && e.arguments.length === 1) return `.prim .flat [.hof .map (${E(recv)}) ${lean(callback(e.arguments[0], 1))}]`;
         if (m === "reduce" && e.arguments.length === 2) return `.reduce (${E(recv)}) (${E(e.arguments[1])}) ${lean(callback(e.arguments[0], 2))}`;
       }
@@ -404,6 +407,7 @@ export function lower(root, targets, { paths, eff } = {}) {
         const m = `${e.expression.name.text}/${e.arguments.length}`, recv = e.expression.expression;
         const t = checker.getTypeAtLocation(recv);
         const table = t.flags & ts.TypeFlags.StringLike ? STRING_METHODS : checker.isArrayType(t) ? ARRAY_METHODS : null;
+        if (table?.[m] === "flat" && !checker.isArrayType(checker.getTypeArguments(t)[0])) throw new Error("`flat` of items that aren't arrays");
         if (table?.[m]) return `.prim .${table[m]} [${primArgs(table[m], [recv, ...e.arguments].map(E)).join(", ")}]`;
         if (m === "has/1" && isSet(t)) return `.prim .setHas [${[recv, ...e.arguments].map(E).join(", ")}]`;
       }
