@@ -508,6 +508,90 @@ theorem eachLoop_spec {β} {l : Loc} {xs : List Val} {step : Nat → Val → β 
     simp only [eachLoop, harr i b h hI, List.getElem?_eq_getElem hi, e']
     exact ih (i + 1) b' h' (by omega) hI'
 
+/-- A `for ... of` loop over an array that stays `xs`, with invariant `I i acc h` before item `i`. -/
+theorem forLoop_spec {β} {l : Loc} {xs : List Val} {f : Val → β → M (ForInStep β)}
+    (I : Nat → β → Heap → Prop) (harr : ∀ i b h, I i b h → h[l]? = some (.array xs))
+    (hstep : ∀ i b h (hi : i < xs.length), I i b h →
+      Spec (f xs[i] b) h (fun r h' => ∃ b', r = .yield b' ∧ I (i + 1) b' h')) :
+    ∀ k i b h, i + k = xs.length → I i b h → Spec (forLoop l f k i b) h (fun b' h' => I xs.length b' h') := by
+  intro k
+  induction k with
+  | zero =>
+    intro i b h e hI
+    simp only [Nat.add_zero] at e; subst e
+    unfold Spec
+    simp only [forLoop, harr _ b h hI, Nat.lt_irrefl, ite_false]
+    exact hI
+  | succ k ih =>
+    intro i b h e hI
+    have hi : i < xs.length := by omega
+    obtain ⟨r, h', e', b', rfl, hI'⟩ := spec_ok (hstep i b h hi hI)
+    unfold Spec
+    simp only [forLoop, harr i b h hI, List.getElem?_eq_getElem hi, e']
+    exact ih (i + 1) b' h' (by omega) hI'
+
+theorem iter_arr {h : Heap} {l xs} (hl : h[l]? = some (.array xs)) : iter (.ref l) h = .ok ⟨l⟩ h := by
+  show (match h[l]? with | some (.array _) => _ | some (.record _) => _ | none => _) = _
+  rw [hl]
+
+theorem spec_forIn {β} {h : Heap} {l xs} {b : β} {f : Val → β → M (ForInStep β)} {P}
+    (hl : h[l]? = some (.array xs)) (hloop : Spec (forLoop l f xs.length 0 b) h P) :
+    Spec (forIn (⟨l⟩ : Live) b f) h P := by
+  unfold Spec at hloop ⊢
+  show (match (match h[l]? with | some (.array xs) => forLoop l f xs.length 0 b h | _ => .stuck) with
+    | .ok a h' => P a h' | _ => False)
+  rw [hl]; exact hloop
+
+/-- `xs.every(f)` when the callback answers `qs[i]` for item `i` and leaves the heap alone. -/
+theorem eachLoop_every {h : Heap} {l xs} {f : Val → Val → M Val} {qs : List Bool}
+    (hl : h[l]? = some (.array xs)) (hq : qs.length = xs.length)
+    (hf : ∀ (i : Nat) (hi : i < xs.length), f xs[i] (num i) h = .ok (.bool (qs.getD i false)) h) :
+    ∀ k i, i + k = xs.length →
+      eachLoop l (fun i x _ => do return if truthy (← f x (num i)) then .yield true else .done false) k i true h
+        = .ok ((qs.drop i).all id) h := by
+  intro k
+  induction k with
+  | zero =>
+    intro i e
+    simp only [Nat.add_zero] at e; subst e
+    simp [eachLoop, List.drop_of_length_le (by omega : qs.length ≤ xs.length)]
+    rfl
+  | succ k ih =>
+    intro i e
+    have hi : i < xs.length := by omega
+    have hqi : i < qs.length := by omega
+    have e2 : (do return if truthy (← f xs[i] (num i)) then ForInStep.yield true else .done false : M (ForInStep Bool)) h
+        = (R.ok (if qs.getD i false then .yield true else .done false) h : R (ForInStep Bool)) := by
+      show M.bind _ _ h = _
+      unfold M.bind; rw [hf i hi]; rfl
+    simp only [eachLoop, hl, List.getElem?_eq_getElem hi]
+    rw [e2]
+    rw [List.drop_eq_getElem_cons hqi, List.getD_eq_getElem _ _ hqi]
+    cases qs[i] <;> simp [ih (i + 1) (by omega)]
+
+theorem jsEvery_spec {h : Heap} {l xs} {f : Val → Val → M Val} {qs : List Bool} {P : Val → Heap → Prop}
+    (hl : h[l]? = some (.array xs)) (hq : qs.length = xs.length)
+    (hf : ∀ (i : Nat) (hi : i < xs.length), f xs[i] (num i) h = .ok (.bool (qs.getD i false)) h) :
+    Spec (jsEvery (.ref l) f) h P ↔ P (.bool (qs.all id)) h := by
+  have e := eachLoop_every hl hq hf xs.length 0 (by simp)
+  simp only [List.drop_zero] at e
+  unfold jsEvery each
+  simp only [spec_bind]
+  rw [spec_eq (items_arr hl)]
+  try simp only
+  rw [spec_eq e, spec_pure]
+
+theorem spec_isArray {h : Heap} {c xs} {P : Val → Heap → Prop} (hc : h[c]? = some (.array xs)) :
+    Spec (isArray (.ref c)) h P ↔ P (.bool true) h := by
+  unfold Spec isArray; simp only; rw [hc]
+
+theorem typeOf_ref_ne {c : Loc} : bin .eq (typeOf (.ref c)) (str "string") = pure (.bool false) := by
+  simp [bin, binary, typeOf, typeName, str, utf16]
+
+theorem ok_of_spec {α} {m : M α} {h : Heap} {v : α} (hs : Spec m h fun r h' => r = v ∧ h' = h) :
+    m h = .ok v h := by
+  unfold Spec at hs; split at hs <;> simp_all
+
 /-- `xs.map(f)` with invariant `I i out h` after the first `i` items. -/
 theorem jsMap_spec {h : Heap} {l xs} {f : Val → Val → M Val} {P : Val → Heap → Prop}
     (I : Nat → List Val → Heap → Prop) (h0 : I 0 [] h)

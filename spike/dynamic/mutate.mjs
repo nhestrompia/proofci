@@ -9,8 +9,8 @@ const OUT = process.env.OUT ?? "/tmp/dyn-olean";
 const PROVED = {
   Unknown: ["parseChartGroupByFieldId"],
   Fixtures: ["Counter.bump", "bumpBoth", "colorIndexes"],
-  Alias: ["addSpaceToAnyEmptyMessages"],
-  Bank: ["transfer"],
+  Alias: ["addSpaceToAnyEmptyMessages", "messageIsEmpty"],
+  Bank: ["transfer", "sumAmounts"],
   Slideshow: ["SlideshowHistory.queue"],
 };
 const KINDS = {

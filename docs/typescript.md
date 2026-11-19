@@ -576,4 +576,6 @@ type shape is a new feature. The plan is to add a second path that doesn't need 
 3. **Fill in the runtime.** Library models, promises as an event queue, and binary64
    numbers with safe integers as lemmas on top.
 4. **Prove the translation.** Generate a proof, per function, that the typed output
-   matches the dynamic semantics, so the translator leaves the trusted base.
+   matches the dynamic semantics, so the translator leaves the trusted base. The [spike](../spike/dynamic/README.md#step-4-the-typed-view-equals-the-dynamic-one)
+   generates such proofs, and they reject wrong typed views, but proves only 4 of 62 typed
+   functions so far; it needs a relational lemma per typed operation first.
