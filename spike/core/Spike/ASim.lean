@@ -184,6 +184,23 @@ instance : TyRep Js.Exn where
   rep h e v := ∃ l, v = .ref l ∧ h[l]? = some (.record [("name", .str e.name), ("message", .str e.message)])
   mono hp := fun ⟨l, hv, hl⟩ => ⟨l, hv, lookup_mono hp hl⟩
 
+theorem SimE.exnMessage {p s ex} {e : Js.Exn} (h : SimE p s ex e) : SimE p s (.field ex "message") e.message := by
+  intro s₁ hs
+  obtain ⟨v, s₂, hev, hext, ⟨l, rfl, hl⟩⟩ := h s₁ hs
+  exact ⟨.str e.message, s₂, Evals.field hev (by simp [readField, hl, List.lookup]), hext, rfl⟩
+
+theorem SimE.exnName {p s ex} {e : Js.Exn} (h : SimE p s ex e) : SimE p s (.field ex "name") e.name := by
+  intro s₁ hs
+  obtain ⟨v, s₂, hev, hext, ⟨l, rfl, hl⟩⟩ := h s₁ hs
+  exact ⟨.str e.name, s₂, Evals.field hev (by simp [readField, hl, List.lookup]), hext, rfl⟩
+
+theorem SimB.lit_true {p s} : SimB p s (.lit (.bool true)) True :=
+  fun s₁ _ => ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, by simp [truthy]⟩
+
+macro_rules | `(tactic| s_field) => `(tactic| (apply SimE.exnMessage; sim'))
+macro_rules | `(tactic| s_field) => `(tactic| (apply SimE.exnName; sim'))
+macro_rules | `(tactic| simb) => `(tactic| exact SimB.lit_true)
+
 def AnsRel {α} [TyRep α] : Js.Answer α → Ans → Prop
   | .value r, .value d => ∀ h, h <+: (alloc h d).2 ∧ rep (alloc h d).2 r (alloc h d).1
   | .reject e, .reject n m => e.name = n ∧ e.message = m ∧
