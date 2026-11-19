@@ -1358,6 +1358,12 @@ test("records of dynamic keys", () => {
   emits("export function f(xs: string[]): Record<string, number> { const out: Record<string, number> = {}; for (const x of xs) { out[x] = 1; } return out; }", "Js.recSet");
   emits("export function f(r: Record<string, number>, k: string): Record<string, number> { const c = { ...r }; c[k] = 1; return c; }", "Js.recSet c k");
   rejects("export function f(r: Record<number, string>): number { return 0; }", /number or symbol keys/);
+  rejects("export function f(r: Record<string, number | undefined>, k: string): boolean { return r[k] === undefined; }", /may be `null` or `undefined`/);
+  rejects("interface T { [k: string]: T }\nexport function f(t: T): number { return Object.keys(t).length; }", /holds itself/);
+  emits("export function f(xs: string[]): string[] { const out: Record<string, number> = {}; for (const x of xs) { out[x] = 1; } return Object.keys(out); }", "List.map Prod.fst");
+  emits("export function f(xs: string[]): number[] { const out: Record<string, number> = {}; for (const x of xs) { out[x] = 1; } return Object.values(out); }", "List.map Prod.snd");
+  emits("export function f(xs: string[], k: string): boolean { const out: Record<string, number> = {}; for (const x of xs) { out[x] = 1; } return k in out; }", "Js.recHas");
+  rejects("export function f(xs: string[]): number[][] { const out: Record<string, number[]> = {}; for (const x of xs) { out[x] = []; } return Object.values(out); }", /changed in place/);
   rejects("export function f(r: Record<string, number>): number { return Object.entries(r).length; }", /returns tuples/);
   rejects("export function f(r: Record<string, number>): void { r.a = 1; }", /may be shared with the caller/);
   rejects("export function f(r: Record<string, number>, k: number): number { return r[k] ?? 0; }", /string keys/);

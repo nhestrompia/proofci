@@ -149,6 +149,8 @@ export const HINTS = [
   [/only numbers, strings, booleans and string-literal unions can be keys/, "key the `Map` or `Set` by a `number`, `string`, `boolean`, `bigint` or string-literal union, for example an object's `id`"],
   [/the type `(any|unknown)(\[\])?`/, "write the type the value really has; `any` and `unknown` can only be narrowed by an `effects` entry's `narrowed` signature for awaited calls"],
   [/the type `Record</, "use `Record<string, V>` (string keys), or an interface with named fields"],
+  [/record of dynamic keys whose values may be `null`/, "leave missing entries out of the record instead of storing `undefined` (`k in r` tells them apart)"],
+  [/record of dynamic keys that holds itself/, "give the nested level named fields, or use a `Map<string, V>`"],
   [/records with number or symbol keys/, "key the record by strings (`Record<string, V>`, `String(n)` as the key), or use a `Map<number, V>`"],
   [/a record of dynamic keys is only read and written with string keys/, "convert the key to a string first (`r[String(k)]`)"],
   [/`\?\.\[\]` on a record of dynamic keys/, "check the record first (`r === undefined ? d : r[k]`)"],

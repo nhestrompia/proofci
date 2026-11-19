@@ -112,8 +112,9 @@ dynamic keys: the view holds it as `Js.Dict Js.Str V`, its entries in Core's ins
 (`{}` or `{ ...r }`; the in-place rules below apply), and `Object.keys` and `Object.values` list
 it. The bridge checks the record holds exactly those keys. A key that is empty, all digits
 (JavaScript lists those first), non-ASCII, or a name `Object.prototype` answers for (`__proto__`,
-`toString`, ...) makes the view stop. Records keyed by numbers, `Object.entries` (tuples) and an
-interface's `Object.keys` (it can have keys its type doesn't list) are refused. Writes have no
+`toString`, ...) makes the view stop. Records keyed by numbers, records whose values may be `null` or
+`undefined` (`r[k]` couldn't tell a stored `undefined` from a missing key), records that hold
+themselves, `Object.entries` (tuples) and an interface's `Object.keys` (it can have keys its type doesn't list) are refused. Writes have no
 bridge yet, so a function that writes to a record is tested, not proved. `JSON.stringify` and
 regular expressions have no model yet.
 

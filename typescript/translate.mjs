@@ -329,7 +329,7 @@ export class Translator {
       return collection.kind === "Map" ? `(Js.Dict ${key} ${value})` : `(List ${key})`;
     }
     const dict = this.dictRecord(type);
-    if (dict) return `(Js.Dict Js.Str ${this.type(dict, node)})`;
+    if (dict) return `(Js.Dict Js.Str ${this.dictValue(type, dict, node, () => this.type(dict, node))})`;
     if ((type.flags & TypeFlags.Object) && !this.checker.isTupleType(type) && !this.checker.getPropertiesOfType(type).length
       && !type.getCallSignatures().length && this.checker.getIndexInfosOfType(type).length) {
       throw this.fail(node, "records with number or symbol keys are not supported");
@@ -679,6 +679,15 @@ export class Translator {
     return this.checker.getIndexInfoOfType(type, ts.IndexKind.String)?.type;
   }
 
+  // `r[k]` reads `undefined` for a missing key, so a value that may be nullish couldn't be told apart.
+  dictValue(type, value, node, inner) {
+    if ((value.isUnion() && this.nullish(value)) || value.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) throw this.fail(node, "a record of dynamic keys whose values may be `null` or `undefined` is not supported");
+    this.dictsOpen ??= new Set();
+    if (this.dictsOpen.has(type)) throw this.fail(node, "a record of dynamic keys that holds itself is not supported");
+    this.dictsOpen.add(type);
+    try { return inner(); } finally { this.dictsOpen.delete(type); }
+  }
+
   // A description of a type, for generating and reading values of it.
   // Handles belong to async code, which has no bridge to Core to carry them through.
   handlesAllowed() {
@@ -725,7 +734,7 @@ export class Translator {
     if (collection?.kind === "Map") return { kind: "map", key: this.describe(collection.args[0], node), value: this.describe(collection.args[1], node) };
     if (collection) return { kind: "set", item: this.describe(collection.args[0], node) };
     const dict = this.dictRecord(type);
-    if (dict) return { kind: "dict", value: this.describe(dict, node) };
+    if (dict) return { kind: "dict", value: this.dictValue(type, dict, node, () => this.describe(dict, node)) };
     const shape = this.shape(type);
     const fields = owner => this.fields(owner, node).map(f => {
       const described = this.describe(f.type, f.node);
@@ -1182,7 +1191,12 @@ export class Scope {
       || (ts.isElementAccessExpression(parent) && parent.argumentExpression === node)
       || (ts.isForOfStatement(parent) && parent.expression === node)
       || ts.isReturnStatement(parent) || ts.isSpreadElement(parent)
-      || (ts.isBinaryExpression(parent) && parent.left === node && ts.isAssignmentOperator(parent.operatorToken.kind));
+      || (ts.isBinaryExpression(parent) && parent.left === node && ts.isAssignmentOperator(parent.operatorToken.kind))
+      || (ts.isBinaryExpression(parent) && parent.right === node && parent.operatorToken.kind === ts.SyntaxKind.InKeyword && this.isDict(node))
+      || (ts.isCallExpression(parent) && parent.arguments[0] === node && this.isDict(node) && ts.isPropertyAccessExpression(unwrap(parent.expression))
+        && ts.isIdentifier(unwrap(parent.expression).expression) && unwrap(parent.expression).expression.text === "Object"
+        && (unwrap(parent.expression).name.text === "keys"
+          || (unwrap(parent.expression).name.text === "values" && !(this.dictItem(node).flags & ts.TypeFlags.Object))));
     if (read) return;
     // Primitive values aren't shared, so reading them is always fine.
     if (!(this.typeOf(node).flags & ts.TypeFlags.Object)) return;
