@@ -543,6 +543,44 @@ theorem rel_padStart {β : Type} {s fill f : List Nat} {n : Js.Num} {w : Val}
   rw [spec_bind, spec_eq hp]
   have H' := H t; unfold Rel at H'; exact H' r er
 
+theorem rel_padEnd {β : Type} {s fill f : List Nat} {n : Js.Num} {w : Val}
+    {g : List Nat → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (hf : f = fill) (H : ∀ t, Rel (g t) (k (.str t)) h Q) :
+    Rel (Std.bind (Js.padEnd s n fill) g) (method .padEnd (.str s) [w, .str f] >>= k) h Q := by
+  subst hf
+  obtain ⟨x, rfl, hx⟩ := hv
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hp : method .padEnd (.str s) [.num x, .str f] h = .ok (.str t) h := by
+    simp [method, prim, primV, asNum_isInt hx, et, okStr]
+  rw [spec_bind, spec_eq hp]
+  have H' := H t; unfold Rel at H'; exact H' r er
+
+theorem rel_padEnd1 {β : Type} {s fill : List Nat} {n : Js.Num} {w : Val}
+    {g : List Nat → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (hf : fill = [32]) (H : ∀ t, Rel (g t) (k (.str t)) h Q) :
+    Rel (Std.bind (Js.padEnd s n fill) g) (method .padEnd (.str s) [w] >>= k) h Q := by
+  subst hf
+  obtain ⟨x, rfl, hx⟩ := hv
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hp : method .padEnd (.str s) [.num x] h = .ok (.str t) h := by
+    simp [method, prim, primV, asNum_isInt hx, et, okStr]
+  rw [spec_bind, spec_eq hp]
+  have H' := H t; unfold Rel at H'; exact H' r er
+
+theorem rel_repeat {β : Type} {s : List Nat} {n : Js.Num} {w : Val}
+    {g : List Nat → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (H : ∀ t, Rel (g t) (k (.str t)) h Q) :
+    Rel (Std.bind (Js.strRepeat s n) g) (method .«repeat» (.str s) [w] >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hp : method .«repeat» (.str s) [.num x] h = .ok (.str t) h := by
+    simp [method, prim, primV, asNum_isInt hx, et, okStr]
+  rw [spec_bind, spec_eq hp]
+  have H' := H t; unfold Rel at H'; exact H' r er
+
 theorem mk_ok_val {n : Int} {t : Js.Num} (e : Js.mk n = ok t) : t.val = n := by
   simp only [Js.mk] at e
   split at e <;> simp_all
@@ -957,6 +995,9 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_lastIndexOf (by assumption) (by assumption) (by first | rfl | decide) ?_; intro _ _ _)
   | (refine rel_reduce (by assumption) (by assumption) (by first | exact numIs_num | assumption) ?_ ?_ <;> intros)
   | (refine rel_padStart ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
+  | (refine rel_padEnd ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
+  | (refine rel_padEnd1 ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
+  | (refine rel_repeat ?_ ?_ <;> first | (intro _) | rnum)
   | (refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
 
 /-- Steps the typed view and the dynamic code together: a typed operation with its dynamic
