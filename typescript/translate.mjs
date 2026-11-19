@@ -16,6 +16,7 @@ import ts from "typescript";
 import { protectedPaths } from "./paths.mjs";
 import { createHazards } from "./hazard.mjs";
 import { narrowedSources, narrowingProblem, withSources } from "./narrow.mjs";
+import { withHint } from "./hints.mjs";
 
 export class Unsupported extends Error {}
 
@@ -159,7 +160,7 @@ export class Translator {
   fail(node, message) {
     const file = node.getSourceFile();
     const { line } = file.getLineAndCharacterOfPosition(node.getStart(file));
-    const error = new Unsupported(`${relative(this.root, file.fileName)}:${line + 1}: ${message}`);
+    const error = new Unsupported(withHint(`${relative(this.root, file.fileName)}:${line + 1}: ${message}`, { node, checker: this.checker, program: this.program }));
     if (process.env.TRANSLATE_TRACE) console.error(error.stack);
     return error;
   }
@@ -3220,7 +3221,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       }
     } catch (error) {
       if (!(error instanceof Unsupported)) throw error;
-      failures[target] = error.message;
+      failures[target] = withHint(error.message);
       translator.order.length = snapshot.order;
       translator.types = snapshot.types;
       translator.functions = snapshot.functions;
@@ -3232,7 +3233,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
         if (declaration) names[target] = translator.stub(declaration);
       } catch (stubError) {
         if (!(stubError instanceof Unsupported)) throw stubError;
-        fatal = stubError.message;
+        fatal = withHint(stubError.message);
       }
     }
   }
@@ -3274,6 +3275,6 @@ if (process.argv[1]?.endsWith("translate.mjs")) {
     console.log(JSON.stringify(result));
   } catch (error) {
     if (!(error instanceof Unsupported)) throw error;
-    console.log(JSON.stringify({ module: config.module, failures: Object.fromEntries(config.targets.map(t => [t, error.message])), names: {} }));
+    console.log(JSON.stringify({ module: config.module, failures: Object.fromEntries(config.targets.map(t => [t, withHint(error.message)])), names: {} }));
   }
 }
