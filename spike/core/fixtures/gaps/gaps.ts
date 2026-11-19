@@ -429,3 +429,37 @@ export function optOr(o: GapOpt, d: number): number {
     case "empty": return d;
   }
 }
+
+export interface GapBox<T> {
+  value: T;
+}
+
+export function boxOrZero(b: GapBox<number | null>): number {
+  if (b.value === null) return 0;
+  return b.value;
+}
+
+export function boxIsUndef(b: GapBox<number | undefined>): boolean {
+  return b.value === undefined;
+}
+
+export function resultNull(r: GapResult<string | null>): number {
+  switch (r.kind) {
+    case "ok":
+      if (r.value === null) return 0;
+      return r.value.length;
+    case "err": return r.code;
+  }
+}
+
+export interface GapSlot<T> {
+  v?: T;
+}
+
+export function slotUndef(s: GapSlot<number | undefined>): boolean {
+  return s.v === undefined;
+}
+
+export function slotOfUndef(): GapSlot<number | undefined> {
+  return { v: undefined };
+}

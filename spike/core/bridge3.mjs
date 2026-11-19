@@ -18,12 +18,12 @@ function leanType(t) {
     case "string": return "Js.Str";
     case "boolean": return "Bool";
     case "bigint": return "Int";
-    case "record": return t.args ? `(${t.lean} ${t.args.map(plain).join(" ")})` : t.lean;
+    case "record": return t.args ? `(${t.lean} ${t.args.map(leanType).join(" ")})` : t.lean;
     case "enum": return t.lean;
     case "void": return "Unit";
     case "generic": return t.name;
     case "recursive": return t.lean;
-    case "tagged": return t.args ? `(${t.lean} ${t.args.map(plain).join(" ")})` : t.lean;
+    case "tagged": return t.args ? `(${t.lean} ${t.args.map(leanType).join(" ")})` : t.lean;
     case "array": case "set": return `(List ${leanType(t.item)})`;
     case "dict": return `(Js.Dict Js.Str ${leanType(t.value)})`;
     case "optional": return `(Opt ${t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef"} ${leanType(t.inner)})`;
