@@ -227,6 +227,12 @@ theorem rel_arr {α β δ : Type} [CRep α] {xs : List α} {vs : List Val} {g : 
   rw [spec_bind, spec_arr]
   exact H' r e
 
+theorem nullish_of_crep_none {α} [CRep α] {h : Heap} {u : Val} (hu : crep h (none : Option α) u) :
+    nullish u = true := by rcases hu with rfl | rfl <;> rfl
+
+theorem not_nullish_of_crep_some {h : Heap} {u : Val} {x : Js.Num} (hu : crep h (some x) u) :
+    nullish u = false := by obtain ⟨_, rfl, _⟩ := hu; rfl
+
 open Core.F64 in
 theorem truthy_numIs {v : Val} {a : Int} (hv : NumIs v a) : truthy v = decide (a ≠ 0) := by
   obtain ⟨x, rfl, hx⟩ := hv
@@ -616,11 +622,12 @@ macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_min_ok ?_ ?_ ?_ <;> rmin)
   | (exfalso; simp only [not_true_eq_false, Bool.false_eq_true, truthy_bool, decide_eq_true_eq] at *; done)
   | (exfalso; (try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not] at *); omega)
+  | (exfalso; have := nullish_of_crep_none ‹crep _ (none : Option _) _›; simp_all; done)
+  | (exfalso; have := not_nullish_of_crep_some ‹crep _ (some (_ : Js.Num)) _›; simp_all; done)
   | rops
   | (simp only [Std.bind_ok, Std.bind_assoc, bind_tc_ok, bind_assoc_eq, dbind_assoc, dpure_bind])
-  | (simp only [true_and, false_and, and_true, and_false, decide_false, decide_true])
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
-  | (apply rel_ok; (try simp only [spec_rok]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
+  | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (split <;> (rename_i hc
                 try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, decide_eq_false_iff_not] at hc
                 try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
