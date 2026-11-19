@@ -32,7 +32,7 @@ function leanType(t) {
 
 // The same type without the encoding marker: what the typed view itself uses.
 const generics = t => t.kind === "generic" ? [t] : t.kind === "array" ? generics(t.item) : t.kind === "optional" ? generics(t.inner)
-  : t.kind === "record" && t.args ? t.args.flatMap(generics) : [];
+  : (t.kind === "record" || t.kind === "tagged") && t.args ? t.args.flatMap(generics) : [];
 // A type parameter that can't be `null` or `undefined` keeps `Option T` one-to-one, as `NotNull` says.
 // A rule that tactics apply before its type parameter is known takes the instances as implicit
 // arguments, which unification fills in later.
