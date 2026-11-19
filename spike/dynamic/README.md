@@ -15,7 +15,7 @@ Loops cost what they cost on the typed path: the user writes the invariant.
 | Question | Result |
 |---|---|
 | Does one value type cover the rejected shapes? | Yes: `unknown`, unions, shared objects, closures that assign captured variables, and classes, from 6 corpus functions and 2 fixtures |
-| Does it match Node? | 1,080 random runs over 18 functions: 987 agree on the result and on every input after the call, 93 stop in the model, none differ |
+| Does it match Node? | 1,200 random runs over 20 functions: 1,107 agree on the result and on every input after the call, 93 stop in the model, none differ |
 | Can users prove things about it? | Yes, 10 theorems below, including a `for ... of` loop, a loop with captured variables and array callbacks over shared objects |
 | Does a wrong translation fail? | 74 of 74 one-line mutants of the proved functions fail to check |
 | Proof checking time vs typed | Same order: about 2 s for imports, then under 0.1 s for `transfer_conserves` and about 4 s for the two loop proofs; `ts-bank`'s typed file takes 2.1-2.7 s |
@@ -47,36 +47,43 @@ typed operation, proved once in [Bridge.lean](Bridge.lean): `rel_add`, `rel_sub`
 `rel_rem`, `rel_floorDiv`, `rel_ceilDiv`, `rel_truncDiv` and `rel_neg` pair a typed operation
 with its dynamic twin on any operands related by `NumIs`; `bin_lt_is` and the other
 comparisons turn a dynamic comparison into the typed one; `rel_min_ok` relates `Math.min`;
-`rel_tail` handles an operation in tail position; `rel_ok` ends both sides; `rel_dbind` takes
-a dynamic step the typed view doesn't have (a field read). A typed `if` is split together with
-the dynamic one, with contradictory branches closed by `omega`. Nothing is written per function.
+`rel_len`/`rel_slen` relate `length`; `rel_map`, `rel_filter` and `rel_findIndex` relate the
+array callbacks on numbers through `Js.map`'s recursion on one side and `eachLoop` on the other;
+`rel_padStart` relates `padStart` through Core's primitive; `rel_forOf` relates a `for ... of`
+loop with one mutable variable, Aeneas's `loop` on one side (by `Core.loop_ind`) and `forLoop`
+on the other; `rel_tail` handles an operation in tail position; `rel_ok` ends both sides;
+`rel_dbind` takes a dynamic step the typed view doesn't have (a field read). A typed `if` is
+split together with the dynamic one, with contradictory branches closed by `omega`. `Rel`
+allows any dynamic result type, so a loop body (`M (ForInStep Val)`) steps with the same
+lemmas. Nothing is written per function.
 
 | Measure | Result |
 |---|---|
 | Functions tried | 83: `ts-bank` (3), `corpus-gaps.tsv` (45), `corpus-rem.tsv` (35) |
-| Generated | 65; 18 use constant arrays, `while` or types the generator doesn't handle |
-| Proved | 26 (6 before `NumIs`): `transfer`, 7 gaps fixtures (`centuryStart`, `sizeName`, `pointKind`, `totalPlusOne`, `makeCounts`, `assignedTwice`, `assignedAfterExit`), 18 in `corpus-rem.tsv` |
-| Check time | 43 files take 2 s, 16 take 3 s, 5 take 4-6 s, 1 takes 10 s, imports included; Core's bridges take 2.1-2.7 s |
+| Generated | 65; 18 use constant arrays, `while`, `for` or types the generator doesn't handle |
+| Proved | 38 (26 before): `transfer`, `calculateFee`, `sumAmounts`, 10 gaps fixtures, 25 in `corpus-rem.tsv` |
+| Check time | 21 files take 2 s, 14 take 3 s, 3 take 5 s, imports included; Core's bridges take 2.1-2.7 s |
 | Timeouts (45 s) | 0 |
-| Wrong typed views | 129 of 129 fail over 22 kinds; 21 come from the 6 new kinds (`%` to floor division, floor to ceil, ceil to floor, trunc to floor, dropped unary `-`, `min` to `max`) |
-| Not proved | 33 stop at an operation with no relational lemma, 4 lack a `CRep` instance, 2 end with an open goal |
+| Wrong typed views | 187 of 187 fail over 26 kinds, counting proved bridges only; 4 new kinds: negated callback result, doubled `length`, `findIndex` from 1, loop that drops its update |
+| Not proved | 27: 18 stop at a call with no lemma (17 library calls and `/`), 4 lack a `CRep` instance, 4 end with an open goal, `sumPresent` loops over a literal built in the function |
 
-The integer operations needed `NumIs`: JavaScript's `*`, `%`, `Math.floor(x / y)` and unary `-`
-can give `-0` for a typed `0` (`-1 * 0`), so with a number relation that only allowed `+0` they
-were not provable. Each lemma reuses Core's `IsInt` facts (`rem_isInt`, `floorDiv_isInt`, ...).
-`centuryStart` and `assignedTwice`, which reassign a `let`, needed no lemma of their own once
-the numbers were related this way: the typed bound `if` and the dynamic join point split
-together.
+New since the last round: `length` (`pointDimensions`, `isEvenIndex`), `map` (`halves`,
+`residues`), `filter` (`evens`, `multiplesOf`), `findIndex` (`firstNegative`), `padStart`
+(`twoDigits`, which `dyn.mjs` now translates; it emitted `stuck` before, as for `findIndex`),
+`for ... of` (`sumAmounts`, `sumOdd`). `calculateFee` and `isLeapYearIndex` prove again: a
+bind-normalising step ran after `rel_tail` and hid the `Math.min`, and `rel_min_ok` now states
+its result as `min a b`.
 
-Still not proved: library calls (`length`, `map`, `padStart`, `findIndex`, `lastIndexOf`,
-`repeat`), loops, and records holding optional values. `calculateFee` reaches `Math.min` but
-`rel_min_ok` does not fire inside `rsteps`, though it closes the goal when applied by hand.
-`isLeapYearIndex` proved with an earlier version of the tactic and fails with this one.
+Still not proved: `some`, `every`, `reduce`, `flat`, `lastIndexOf`, `repeat`, `padEnd`, `at`,
+`trim`/`slice`, string-to-number, `Math.max`; the callback lemmas only cover number arrays
+with callbacks that don't allocate; `for ... of` over an array literal built in the function
+(`sumPresent`), whose location is not a hypothesis. `dyn.mjs` rejects `for (;;)` and `while`,
+so those stay unsupported on the dynamic side and no relational lemma was written for them.
 
-Verdict: go for continuing, still no-go for replacing Core's bridges. 26 of 65 generated
-bridges prove, with no timeouts, against 6 before; Core's bridges cover 22 of 24 original gaps
-fixtures and 32 of 35 in `corpus-rem.tsv`. What remains is a lemma per library call and the
-loop rule through `forLoop_spec`, the same shape of work as the integer lemmas here.
+Verdict: go for continuing, still no-go for replacing Core's bridges. 38 of 65 generated
+bridges prove with no timeouts; Core's bridges cover 22 of 24 original gaps fixtures and 32 of
+35 in `corpus-rem.tsv`. Each remaining library call is one lemma of the shape above; `while`
+and `for` need dynamic semantics first (a fuel-bounded loop that stops when fuel runs out).
 
 How it fits with Core's bridges: today `bridge3.mjs` proves the typed view simulates Core, and
 Core is trusted to be JavaScript, checked against Node by `differential.mjs`. This bridge

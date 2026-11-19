@@ -35,4 +35,14 @@ def bumpBoth (a' : Val) (b' : Val) : M Val := do
   let _ ← (do let r1 := a'; if (← isMethodOf r1 "Counter" "bump") then Counter.bump r1 (num 1) else (stuck : M Val))
   let _ ← (do let r2 := b'; if (← isMethodOf r2 "Counter" "bump") then Counter.bump r2 (num 1) else (stuck : M Val))
   return (← (do (fun o => field o "n") a'))
+abbrev padCode.pre (s' : Val) (h : Heap) : Prop :=
+  Is h .str s'
+def padCode (s' : Val) : M Val := do
+  return (← (do let r1 := s'; method .padStart r1 [(num 4), (str "0")]))
+abbrev firstAbove.pre (xs' : Val) (k' : Val) (h : Heap) : Prop :=
+  Is h (.arr .num) xs' ∧
+  Is h .num k'
+def firstAbove (xs' : Val) (k' : Val) : M Val := do
+  return (← (do let r1 := xs'; jsFindIndex r1 (fun x' _ => do
+      return (← (do bin .gt x' k')))))
 end Fixtures

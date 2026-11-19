@@ -360,6 +360,10 @@ def jsEvery (o : Val) (f : Val → Val → M Val) : M Val := do
 def jsFind (o : Val) (f : Val → Val → M Val) : M Val :=
   each o .undef fun i x _ => do return if truthy (← f x (num i)) then .done x else .yield .undef
 
+def jsFindIndex (o : Val) (f : Val → Val → M Val) : M Val := do
+  let r ← each o (-1 : Int) fun i x _ => do return if truthy (← f x (num i)) then .done (i : Int) else .yield (-1)
+  return num r
+
 def jsReduce (o : Val) (f : Val → Val → Val → M Val) (init : Val) : M Val :=
   each o init fun i x acc => do return .yield (← f acc x (num i))
 
@@ -367,7 +371,7 @@ def jsReduce (o : Val) (f : Val → Val → Val → M Val) (init : Val) : M Val 
 
 inductive Meth where
   | startsWith | endsWith | includes | trim | toLowerCase | toUpperCase | slice | indexOf
-  | lastIndexOf | charAt | charCodeAt | split | join | concat | replaceAll | substring
+  | lastIndexOf | charAt | charCodeAt | split | join | concat | replaceAll | substring | padStart
   deriving DecidableEq, Repr
 
 def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args with
@@ -377,6 +381,8 @@ def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args wi
   | .str _, .trim, [] => prim .trim [o]
   | .str _, .toLowerCase, [] => prim .toLower [o]
   | .str _, .toUpperCase, [] => prim .toUpper [o]
+  | .str _, .padStart, [n] => prim .padStart [o, n, .str [32]]
+  | .str _, .padStart, [n, f] => prim .padStart [o, n, f]
   | .str _, .slice, [a] => prim .sliceFrom [o, a]
   | .str _, .slice, [a, b] => prim .slice [o, a, b]
   | .str _, .indexOf, [a] => prim .strIndexOf [o, a]
