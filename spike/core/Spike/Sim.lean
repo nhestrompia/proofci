@@ -1203,6 +1203,13 @@ theorem SimE.toLower {r} (hx : SimE p s x a) (h : Js.toLower a = ok r) : SimE p 
   by refine sim_prim (args1 hx) ?_; rintro _ _ ⟨_, rfl, rfl⟩; exact ⟨_, _, by simp [primV, okStr_ok h], List.prefix_refl _, rfl⟩
 theorem SimE.toUpper {r} (hx : SimE p s x a) (h : Js.toUpper a = ok r) : SimE p s (.prim .toUpper [x]) r :=
   by refine sim_prim (args1 hx) ?_; rintro _ _ ⟨_, rfl, rfl⟩; exact ⟨_, _, by simp [primV, okStr_ok h], List.prefix_refl _, rfl⟩
+theorem SimE.reTest {r ic} {b : Bool} (hx : SimE p s x a) (h : Js.reTest r ic a = ok b) : SimE p s (.prim (.reTest r ic) [x]) b :=
+  by refine sim_prim (args1 hx) ?_; rintro _ _ ⟨_, rfl, rfl⟩; exact ⟨_, _, by simp [primV, h, Result.match.ok], List.prefix_refl _, rfl⟩
+theorem SimE.reReplace {r ic all} {c t : List Nat} (hx : SimE p s x a) (hy : SimE p s y c) (h : Js.reReplace r ic all a c = ok t) :
+    SimE p s (.prim (.reReplace r ic all) [x, y]) t := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨_, _, rfl, rfl, rfl⟩
+  exact ⟨_, _, by simp [primV, okStr_ok h], List.prefix_refl _, rfl⟩
 end prims
 
 section moreprims
@@ -1502,6 +1509,11 @@ theorem SimE.split {a b : List Nat} (hx : SimE p s x a) (hy : SimE p s y b) :
   refine sim_prim (args2 hx hy) ?_
   rintro h _ ⟨_, _, rfl, rfl, rfl⟩
   exact ⟨.ref h.length, h ++ [.array ((Js.split a b).map .str)], by simp [primV], List.prefix_append _ _, h.length, (Js.split a b).map .str, rfl, by simp, forall_strs _⟩
+theorem SimE.reSplit {r ic} {a : List Nat} {xs : List (List Nat)} (hx : SimE p s x a) (h : Js.reSplit r ic a = ok xs) :
+    SimE p s (.prim (.reSplit r ic) [x]) xs := by
+  refine sim_prim (args1 hx) ?_
+  rintro h₀ _ ⟨_, rfl, rfl⟩
+  exact ⟨.ref h₀.length, h₀ ++ [.array (xs.map .str)], by simp [primV, h, Result.match.ok], List.prefix_append _ _, h₀.length, xs.map .str, rfl, by simp, forall_strs _⟩
 end moreprims
 
 /-! Statements -/

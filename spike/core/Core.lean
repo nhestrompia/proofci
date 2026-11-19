@@ -46,6 +46,7 @@ inductive Prim where
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
   | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys | recGet | recHas | recSet | recValues | recCopy | recPut
+  | reTest (r : Js.Re) (ic : Bool) | reReplace (r : Js.Re) (ic all : Bool) | reSplit (r : Js.Re) (ic : Bool)
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -315,6 +316,13 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .trimStart, h, [.str s] => some (.str (Js.trimStart s), h)
   | .trimEnd, h, [.str s] => some (.str (Js.trimEnd s), h)
   | .toLower, h, [.str s] => (okStr (Js.toLower s)).map (·, h)
+  | .reTest r ic, h, [.str s] => match (Js.reTest r ic s).match with
+    | .ok b => some (.bool b, h)
+    | _ => none
+  | .reReplace r ic all, h, [.str s, .str b] => (okStr (Js.reReplace r ic all s b)).map (·, h)
+  | .reSplit r ic, h, [.str s] => match (Js.reSplit r ic s).match with
+    | .ok xs => some (.ref h.length, h ++ [.array (xs.map .str)])
+    | _ => none
   | .toUpper, h, [.str s] => (okStr (Js.toUpper s)).map (·, h)
   | .slice, h, [.str s, a, b] => match asNum a, asNum b with
     | some a, some b => some (.str (Js.slice s a b), h)

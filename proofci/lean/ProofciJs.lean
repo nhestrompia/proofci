@@ -503,6 +503,127 @@ def replace (s a b : Str) : Result Str :=
 def replaceAll (s a b : Str) : Result Str :=
   if b.contains 36 ∨ a.isEmpty then fail .undef else ok (join (split s a) b)
 
+/-! Regular expressions: a literal whose flags are at most `i` and `g`, built from code units,
+classes, `.`, `^`, `$`, `*`, `+`, `?` and `|`. The translator refuses the rest. `+` is `a a*`. -/
+inductive Re where
+  | eps
+  | chr (c : Nat)
+  | cls (neg : Bool) (ranges : List (Nat × Nat))
+  | dot
+  | bol
+  | eol
+  | seq (a b : Re)
+  | alt (a b : Re)
+  | star (a : Re)
+  | opt (a : Re)
+  deriving DecidableEq, Repr, Inhabited
+
+def Re.size : Re → Nat
+  | .seq a b | .alt a b => a.size + b.size + 1
+  | .star a | .opt a => a.size + 1
+  | _ => 1
+
+/-- Without `u`, `i` compares the upper case of each code unit. Only ASCII is modelled. -/
+def reCanon (ic : Bool) (c : Nat) : Nat := if ic ∧ 97 ≤ c ∧ c ≤ 122 then c - 32 else c
+
+def reInCls (ic : Bool) (rs : List (Nat × Nat)) (c : Nat) : Bool :=
+  let hit := fun u => rs.any fun (a, b) => decide (a ≤ u ∧ u ≤ b)
+  hit c || (ic && (hit (reCanon true c) || (decide (65 ≤ c ∧ c ≤ 90) && hit (c + 32))))
+
+/-- Matches `r` at `i`, then runs `k` on where it ended. It backtracks in JavaScript's order: the
+    left of `|` first, as many repeats as possible first, and a repeat that matches nothing fails.
+    `none` is out of fuel. -/
+def reStep (ic : Bool) (s : Str) : Nat → Re → Nat → (Nat → Option (Option Nat)) → Option (Option Nat)
+  | 0, _, _, _ => none
+  | f + 1, r, i, k => match r with
+    | .eps => k i
+    | .chr c => match s[i]? with
+      | some u => if reCanon ic u = reCanon ic c then k (i + 1) else some none
+      | none => some none
+    | .cls neg rs => match s[i]? with
+      | some u => if reInCls ic rs u != neg then k (i + 1) else some none
+      | none => some none
+    | .dot => match s[i]? with
+      | some u => if u = 10 ∨ u = 13 ∨ u = 8232 ∨ u = 8233 then some none else k (i + 1)
+      | none => some none
+    | .bol => if i = 0 then k i else some none
+    | .eol => if i = s.length then k i else some none
+    | .seq a b => reStep ic s f a i fun j => reStep ic s f b j k
+    | .alt a b => match reStep ic s f a i k with
+      | some none => reStep ic s f b i k
+      | m => m
+    | .star a => match reStep ic s f a i (fun j => if j = i then some none else reStep ic s f (.star a) j k) with
+      | some none => k i
+      | m => m
+    | .opt a => match reStep ic s f a i (fun j => if j = i then some none else k j) with
+      | some none => k i
+      | m => m
+
+/-- Where a match of `r` starting at `i` ends. -/
+def reMatchAt (r : Re) (ic : Bool) (s : Str) (i : Nat) : Option (Option Nat) :=
+  reStep ic s ((s.length + 2) * (r.size + 2) * 4) r i fun j => some (some j)
+
+/-- The first match at or after `i`, of the `n` places tried: where it starts and ends. -/
+def reSearch (r : Re) (ic : Bool) (s : Str) : Nat → Nat → Option (Option (Nat × Nat))
+  | 0, _ => some none
+  | n + 1, i => match reMatchAt r ic s i with
+    | none => none
+    | some (some j) => some (some (i, j))
+    | some none => reSearch r ic s n (i + 1)
+
+/-- Each match from `i` on, as `replace` with `g` finds them: after an empty match the search
+    moves on one code unit. -/
+def reAll (r : Re) (ic : Bool) (s : Str) : Nat → Nat → Option (List (Nat × Nat))
+  | 0, _ => none
+  | n + 1, i => if s.length < i then some [] else
+    match reSearch r ic s (s.length + 1 - i) i with
+    | none => none
+    | some none => some []
+    | some (some (a, b)) => (fun ms => (a, b) :: ms) <$> reAll r ic s n (if b = a then b + 1 else b)
+
+/-- With `i` the model stops on text that isn't ASCII. -/
+def reOk (ic : Bool) (s : Str) : Bool := !ic || s.all (· < 128)
+
+/-- `re.test(s)` and `s.match(re) !== null`. -/
+def reTest (r : Re) (ic : Bool) (s : Str) : Result Bool :=
+  if !reOk ic s then fail .undef else
+  match reSearch r ic s (s.length + 1) 0 with
+  | some m => ok m.isSome
+  | none => fail .undef
+
+def reSplice (s b : Str) : Nat → List (Nat × Nat) → Str
+  | p, [] => s.drop p
+  | p, (i, j) :: ms => (s.take i).drop p ++ b ++ reSplice s b j ms
+
+/-- `s.replace(re, b)`, every match with `g` (also `replaceAll`). `$` in `b` stops the model. -/
+def reReplace (r : Re) (ic all : Bool) (s b : Str) : Result Str :=
+  if b.contains 36 ∨ !reOk ic s then fail .undef else
+  match (if all then reAll r ic s (s.length + 2) 0 else Option.toList <$> reSearch r ic s (s.length + 1) 0) with
+  | some ms => ok (reSplice s b 0 ms)
+  | none => fail .undef
+
+/-- `s.split(re)` as `RegExp.prototype[Symbol.split]` does it: a match is tried at each `q`, and
+    one that ends where the piece began moves `q` on instead. -/
+def reSplitGo (r : Re) (ic : Bool) (s : Str) : Nat → Nat → Nat → Option (List Str)
+  | 0, _, _ => none
+  | n + 1, p, q => if s.length ≤ q then some [s.drop p] else
+    match reMatchAt r ic s q with
+    | none => none
+    | some none => reSplitGo r ic s n p (q + 1)
+    | some (some e) => if e = p then reSplitGo r ic s n p (q + 1)
+      else (fun xs => (s.take q).drop p :: xs) <$> reSplitGo r ic s n e e
+
+/-- `s.split(re)`, for a pattern without capturing groups. -/
+def reSplit (r : Re) (ic : Bool) (s : Str) : Result (List Str) :=
+  if !reOk ic s then fail .undef else
+  if s.isEmpty then match reMatchAt r ic s 0 with
+    | some (some _) => ok []
+    | some none => ok [[]]
+    | none => fail .undef
+  else match reSplitGo r ic s (2 * s.length + 2) 0 0 with
+    | some xs => ok xs
+    | none => fail .undef
+
 /-- `a < b` compares code units in order. -/
 def strLt : Str → Str → Bool
   | [], [] => false

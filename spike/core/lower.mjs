@@ -4,6 +4,7 @@ import ts from "../../typescript/node_modules/typescript/lib/typescript.js";
 import { dirname, join, relative, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import { createHazards } from "../../typescript/hazard.mjs";
+import { parseRegex } from "../../typescript/regex.mjs";
 
 const OPS = { "+": "add", "-": "sub", "*": "mul", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "===": "eq", "!==": "ne", "/": "div", "%": "rem" };
 const lean = s => JSON.stringify(s);
@@ -27,6 +28,18 @@ const STRING_METHODS = {
 };
 // `s.padStart(n)` pads with spaces.
 const primArgs = (prim, args) => (prim.startsWith("pad") && args.length === 2 ? [...args, ".lit (.str [32])"] : args);
+// A regular expression literal, or a `const` set to one; the translator refused the rest.
+const regexOf = (checker, node) => {
+  let e = node;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  if (ts.isIdentifier(e)) {
+    const d = checker.getSymbolAtLocation(e)?.valueDeclaration;
+    e = d && ts.isVariableDeclaration(d) ? d.initializer : undefined;
+  }
+  if (!e || !ts.isRegularExpressionLiteral(e)) return undefined;
+  const cut = e.text.lastIndexOf("/");
+  return parseRegex(e.text.slice(1, cut), e.text.slice(cut + 1));
+};
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find", findIndex: "findIndex" };
 const isSet = t => t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet";
 const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numFinite", isSafeInteger: "numFinite", isNaN: "numNaN" };
@@ -443,6 +456,13 @@ export function lower(root, targets, { paths, eff } = {}) {
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && !e.expression.questionDotToken && !e.questionDotToken) {
         const m = `${e.expression.name.text}/${e.arguments.length}`, recv = e.expression.expression;
         const t = checker.getTypeAtLocation(recv);
+        const re = m === "test/1" ? regexOf(checker, recv) : ["split/1", "replace/2", "replaceAll/2"].includes(m) ? regexOf(checker, e.arguments[0]) : undefined;
+        if (re && m === "test/1") return `.prim (.reTest ${re.lean} ${re.ic}) [${E(e.arguments[0])}]`;
+        if (re && m === "split/1") {
+          if (re.groups) throw new Error("`split` on a regular expression with groups");
+          return `.prim (.reSplit ${re.lean} ${re.ic}) [${E(recv)}]`;
+        }
+        if (re) return `.prim (.reReplace ${re.lean} ${re.ic} ${re.global}) [${E(recv)}, ${E(e.arguments[1])}]`;
         const table = t.flags & ts.TypeFlags.StringLike ? STRING_METHODS : checker.isArrayType(t) ? ARRAY_METHODS : null;
         if (table?.[m] === "flat" && !checker.isArrayType(checker.getTypeArguments(t)[0])) throw new Error("`flat` of items that aren't arrays");
         if (table?.[m]) return `.prim .${table[m]} [${primArgs(table[m], [recv, ...e.arguments].map(E)).join(", ")}]`;
@@ -489,6 +509,15 @@ export function lower(root, targets, { paths, eff } = {}) {
         if (op === "===" || op === "!==" ) {
           const isUndef = n => n.getText() === "undefined";
           void isUndef;
+        }
+        if (["===", "!==", "==", "!="].includes(op)) {
+          const [call, other] = e.right.kind === ts.SyntaxKind.NullKeyword ? [e.left, e.right] : [e.right, e.left];
+          const re = other.kind === ts.SyntaxKind.NullKeyword && ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression)
+            && call.expression.name.text === "match" && call.arguments.length === 1 ? regexOf(checker, call.arguments[0]) : undefined;
+          if (re) {
+            const test = `.prim (.reTest ${re.lean} ${re.ic}) [${E(call.expression.expression)}]`;
+            return op.startsWith("!") ? test : `.not (${test})`;
+          }
         }
         if (op === "??") return `.coalesce (${E(e.left)}) (${E(e.right)})`;
         if (op === "||") return `.or (${E(e.left)}) (${E(e.right)})`;

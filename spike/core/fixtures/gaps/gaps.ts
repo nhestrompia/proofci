@@ -402,3 +402,29 @@ export function labelled(v: string): Record<string, string> {
   out.name = "c";
   return out;
 }
+
+export function isSlug(s: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s);
+}
+
+const SPACES = /\s+/g;
+
+export function squash(s: string): string {
+  return s.replace(SPACES, " ");
+}
+
+export function stripDigits(s: string): string {
+  return s.replaceAll(/\d/g, "");
+}
+
+export function words(s: string): string[] {
+  return s.split(/[,;] ?/);
+}
+
+export function hasVowel(s: string): boolean {
+  return s.match(/[aeiou]/i) !== null;
+}
+
+export function firstDash(s: string): string {
+  return s.replace(/-|_/, " ");
+}
