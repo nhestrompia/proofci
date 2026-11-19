@@ -40,7 +40,7 @@ The report lists every function with its status and the reason, and a summary co
 
 Reasons for "tested, not proved" you will see: `no bridge for async code yet`; the function
 relies on an assumed outside call (there is no code to bridge); the generator doesn't cover a
-form the function uses (a handle, a generic union, a form of loop the tactics don't handle
+form the function uses (a handle, a form of loop the tactics don't handle
 yet); `the bridge proof did not finish in 120 seconds`; or
 `the bridge theorem did not check` with Lean's first error.
 
@@ -88,8 +88,8 @@ lowering both use, and the policy's `effects`. There is no bridge theorem for `a
 so an `async` function is always "tested, not proved" (`no bridge for async code yet`): the view is
 compared with Node on scripted outside calls (in the action, and on the fixtures), and the lowering
 to `CoreAsync.lean` is compared with Node the same way. See
-[`spike/core/ASYNC.md`](../spike/core/ASYNC.md). The same holds for functions with handles,
-generic unions or empty records, which have no synchronous bridge.
+[`spike/core/ASYNC.md`](../spike/core/ASYNC.md). The same holds for functions with handles
+or empty records, which have no synchronous bridge.
 
 **Library models.** Built-ins are modelled in `ProofciJs.lean` and `Core.lean`, bridged like
 the rest of Core, and compared with Node on generated inputs (`tests/test_js_numbers.py`):
@@ -447,8 +447,9 @@ bridged by induction over its `partial_fixpoint`, so each call it makes to itsel
 induction hypothesis. A union tagged by `kind` is encoded the same way, one case per variant: an object
 whose `kind` is the variant's tag, with that variant's fields. A variant may also hold the union
 directly (`left: Json`), since another variant ends it. `switch (x.kind)` reads the tag and compares it
-with each case, and the view's `match` picks the same variant. A generic union has no description yet,
-so a function over one is "tested, not proved" and `require_bridge` refuses its guarantees.
+with each case, and the view's `match` picks the same variant, including a nullable field the case then
+tests for `null`. A generic union (`Result<T>`) is one inductive with parameters and one encoding for
+every use, as a generic record is; one whose parameter has a bound is still refused.
 
 In `async` code a recursive type is still cut where it recurs: the inner value is an opaque handle
 (`parent : Option Js.Handle`, `children : List Js.Handle`). A function that reads the first level is translated exactly, and a function
@@ -595,8 +596,7 @@ pure logic can usually be proved, and everything else becomes a listed assumptio
 The current design maps each TypeScript type to a Lean type, which is why each new
 type shape is a new feature. The plan is to add a second path that doesn't need that:
 
-1. **Finish the cheap wins.** Add generic types and a bridge for generic unions (records and tagged
-   unions, recursive or not, already have one). Packages are already installed for their types, and `unsupported`
+1. **Finish the cheap wins.** Records and tagged unions, generic or recursive, already have a bridge. Packages are already installed for their types, and `unsupported`
    says how to fix the code.
 2. **Try a dynamic path.** Translate to a single Lean type of JavaScript values plus an
    explicit heap, so TypeScript types become preconditions. That one change covers

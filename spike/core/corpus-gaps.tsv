@@ -61,3 +61,9 @@ gaps	gaps.ts	moveX
 gaps	gaps.ts	rectDiff
 gaps	gaps.ts	resultOr
 gaps	gaps.ts	pickX
+gaps	gaps.ts	okNum
+gaps	gaps.ts	resultLen
+gaps	gaps.ts	maybeOr
+gaps	gaps.ts	linkSum
+gaps	gaps.ts	okOr
+gaps	gaps.ts	optOr

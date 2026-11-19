@@ -102,6 +102,13 @@ test("a generic type is one structure with parameters, or one per use when it ca
   emits("interface T<A> { value: A; next: T<A> | null } export function f(a: T<number>) { return 1; }", "next : (Option a.T_");
   emits("interface T<A> { value: A; next: T<A> | null } export function f(a: { t: T<number> }): number { return a.t.value; }", "next : (Option a.T_");
   emits("interface Box<A> { value: A } export function f(a: { b: Box<number> }): number { return a.b.value; }", "(_root_.a.Box Js.Num)");
+  const tagged = run(`type R<T> = { kind: "ok"; value: T } | { kind: "err"; code: number };
+    export function f(r: R<number>, d: number): number { switch (r.kind) { case "ok": return r.value; case "err": return d + r.code; } }`);
+  assert.deepEqual(tagged.failures, {}, tagged.source);
+  const described = tagged.signatures["a.ts::f"].params[0];
+  assert.deepEqual([described.kind, described.args, described.variants[0].fields[0].type], ["tagged", [{ kind: "number" }], { kind: "number" }]);
+  rejects(`type R<T extends { id: string }> = { kind: "ok"; value: T } | { kind: "err" };
+    export function f<T extends { id: string }>(r: R<T>) { return 1; }`, /bound/);
 });
 
 test("data types from declaration files come in under the package's name", () => {

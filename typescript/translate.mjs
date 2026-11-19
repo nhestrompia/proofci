@@ -657,7 +657,7 @@ export class Translator {
       if (!tag || !tag.type.isStringLiteral()) throw this.fail(declaration, "union members need a string `kind` field");
       return { tag: tag.type.value, fields: fields.filter(f => f.name !== "kind") };
     });
-    const ctors = variants.map(v => ({ name: name(v.tag), types: v.fields.map(f => this.type(f.type, f.node)) }));
+    const ctors = variants.map(v => ({ name: name(v.tag), types: v.fields.map(f => this.fieldType(f)) }));
     const lines = variants.map((v, i) => `  | ${name(v.tag)} ${v.fields.map((f, j) => `(${name(f.name)} : ${ctors[i].types[j]})`).join(" ")}`);
     return { kind: "tagged", variants: variants.map(v => ({ tag: v.tag, fields: v.fields.map(f => f.name) })), ctors,
       text: [`inductive ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
@@ -750,10 +750,15 @@ export class Translator {
     this.describing.add(shape.lean);
     try {
       if (!shape.params) return shape.kind === "record" ? { kind: "record", lean: shape.lean, fields: fields(type) } : this.describeTagged(type, shape, fields, node);
+      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
+      if (shape.kind === "tagged") {
+        if (!shape.own?.isUnion()) throw this.fail(node, "a generic union over a type parameter has no description yet");
+        const declared = this.describeTagged(shape.own, shape, fields, node).variants;
+        return { kind: "tagged", lean: shape.lean, variants: declared.map(v => ({ ...v, fields: substitute(v.fields, by) })), params: shape.params, args: args.map(skeleton), declared };
+      }
       if (shape.kind !== "record") throw this.fail(node, "a generic union over a type parameter has no description yet");
       // A use is its declaration with the arguments put in, so it is cut where the declaration is.
       const declared = fields(shape.own);
-      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
       return { kind: "record", lean: shape.lean, fields: substitute(declared, by), params: shape.params, args: args.map(skeleton), declared };
     } finally {
       this.describing.delete(shape.lean);

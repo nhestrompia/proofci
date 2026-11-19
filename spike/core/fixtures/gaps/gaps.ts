@@ -380,3 +380,52 @@ export function pickX(p: GapPick): number {
     case "none": return 0;
   }
 }
+
+export function okNum(v: number): GapResult<number> {
+  return { kind: "ok", value: v };
+}
+
+export function resultLen(r: GapResult<string>): number {
+  switch (r.kind) {
+    case "ok": return r.value.length;
+    case "err": return r.code;
+  }
+}
+
+export type GapMaybe = { kind: "some"; v: number | null } | { kind: "none" };
+
+export function maybeOr(m: GapMaybe, d: number): number {
+  switch (m.kind) {
+    case "some":
+      if (m.v === null) return d;
+      return m.v;
+    case "none": return d;
+  }
+}
+
+export type GapLink = { kind: "end" } | { kind: "link"; next: GapLink | null; value: number };
+
+export function linkSum(l: GapLink): number {
+  switch (l.kind) {
+    case "end": return 0;
+    case "link":
+      if (l.next === null) return l.value;
+      return l.value + linkSum(l.next);
+  }
+}
+
+export function okOr<T>(r: GapResult<T>, d: T): T {
+  switch (r.kind) {
+    case "ok": return r.value;
+    case "err": return d;
+  }
+}
+
+export type GapOpt = { kind: "has"; v?: number } | { kind: "empty" };
+
+export function optOr(o: GapOpt, d: number): number {
+  switch (o.kind) {
+    case "has": return o.v ?? d;
+    case "empty": return d;
+  }
+}
