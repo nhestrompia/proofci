@@ -177,4 +177,123 @@ theorem await_reject {p : Prog} {a : AProg} {ov oc} (hO : ORel opName ArgOK ov o
 
 end Rel
 
+/-! ## Running a stack of blocks
+
+A proof walks the statements in order. `Run s k out` runs the frames `k`: a block of statements, or a
+`catch` waiting for a throw from the frames above it. -/
+
+inductive Frame where
+  | block (xs : List AStmt)
+  | catch (x : String) (h : List AStmt)
+
+variable {p : Prog} {a : AProg} {o : Oracle}
+
+mutual
+inductive Run (p : Prog) (a : AProg) (o : Oracle) : AS → List Frame → AOut → Prop
+  | done (s) : Run p a o s [] (.ok .normal s)
+  | block {s xs k mid out} : AOk p a o s xs mid → Cont p a o mid k out → Run p a o s (.block xs :: k) out
+  | pass {s x h k out} : Run p a o s k out → Run p a o s (.catch x h :: k) out
+
+inductive Cont (p : Prog) (a : AProg) (o : Oracle) : AOut → List Frame → AOut → Prop
+  | normal {s k out} : Run p a o s k out → Cont p a o (.ok .normal s) k out
+  | top {m} : m.exits → Cont p a o m [] m
+  | skip {m xs k out} : m.exits → Cont p a o m k out → Cont p a o m (.block xs :: k) out
+  | caught {v r x h k out} : Run p a o ⟨{ r.st with env := r.st.env.put x v }, r.hist⟩ (.block h :: k) out →
+      Cont p a o (.thrown v r) (.catch x h :: k) out
+  | skipCatch {c r x h k out} : (AOut.ok c r).exits → Cont p a o (.ok c r) k out →
+      Cont p a o (.ok c r) (.catch x h :: k) out
+end
+
+theorem Run.top {s body out} (h : Run p a o s [.block body] out) : AOk p a o s body out := by
+  cases h with
+  | block hb hc =>
+    cases hc with
+    | normal hr => cases hr; exact hb
+    | top _ => exact hb
+
+/-- The goal of a step: some run of the frames ends in an outcome satisfying `Q`. -/
+def AW (p : Prog) (a : AProg) (o : Oracle) (s : AS) (k : List Frame) (Q : AOut → Prop) : Prop :=
+  ∃ out, Run p a o s k out ∧ Q out
+
+theorem AW.top {s body Q} (h : AW p a o s [.block body] Q) : ∃ out, AOk p a o s body out ∧ Q out :=
+  let ⟨out, hr, hq⟩ := h; ⟨out, hr.top, hq⟩
+
+theorem AW.nil {s k Q} (h : AW p a o s k Q) : AW p a o s (.block [] :: k) Q :=
+  let ⟨out, hr, hq⟩ := h; ⟨out, .block (AOk.nil s) (.normal hr), hq⟩
+
+theorem AW.pass {s x h k Q} (hw : AW p a o s k Q) : AW p a o s (.catch x h :: k) Q :=
+  let ⟨out, hr, hq⟩ := hw; ⟨out, .pass hr, hq⟩
+
+theorem AW.step {s s₁ c xs k Q} (hc : AOk1 p a o s c (.ok .normal s₁)) (h : AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (c :: xs) :: k) Q := by
+  obtain ⟨out, hr, hq⟩ := h
+  cases hr with
+  | block hb hk => exact ⟨out, .block (AOk.cons_normal hc hb) hk, hq⟩
+
+/-- Where an outcome that ends a block goes: past blocks, to a `catch` if it is a throw. -/
+theorem AW.exit {s m c xs k Q} (hc : AOk1 p a o s c m) (hx : m.exits) (h : ∃ out, Cont p a o m k out ∧ Q out) :
+    AW p a o s (.block (c :: xs) :: k) Q :=
+  let ⟨out, hk, hq⟩ := h; ⟨out, .block (AOk.cons_exit hc hx) hk, hq⟩
+
+theorem Cont.toTop {m} {Q : AOut → Prop} (hx : m.exits) (hq : Q m) : ∃ out, Cont p a o m [] out ∧ Q out := ⟨m, .top hx, hq⟩
+theorem Cont.toSkip {m xs k} {Q : AOut → Prop} (hx : m.exits) (h : ∃ out, Cont p a o m k out ∧ Q out) :
+    ∃ out, Cont p a o m (.block xs :: k) out ∧ Q out := let ⟨out, hk, hq⟩ := h; ⟨out, .skip hx hk, hq⟩
+theorem Cont.toCatch {v r x h k} {Q : AOut → Prop} (hw : AW p a o ⟨{ r.st with env := r.st.env.put x v }, r.hist⟩ (.block h :: k) Q) :
+    ∃ out, Cont p a o (.thrown v r) (.catch x h :: k) out ∧ Q out := let ⟨out, hr, hq⟩ := hw; ⟨out, .caught hr, hq⟩
+theorem Cont.toSkipCatch {c r x h k} {Q : AOut → Prop} (hx : (AOut.ok c r).exits) (hw : ∃ out, Cont p a o (.ok c r) k out ∧ Q out) :
+    ∃ out, Cont p a o (.ok c r) (.catch x h :: k) out ∧ Q out := let ⟨out, hk, hq⟩ := hw; ⟨out, .skipCatch hx hk, hq⟩
+
+/-- A branch runs as a block of its own, then the rest. -/
+theorem AW.ite_true {s c t e xs k Q v st} (hc : Evals p s.st c v st) (ht : truthy v = true)
+    (h : AW p a o ⟨st, s.hist⟩ (.block t :: .block xs :: k) Q) : AW p a o s (.block (.ite c t e :: xs) :: k) Q := by
+  obtain ⟨out, hr, hq⟩ := h
+  cases hr with
+  | block hb hk =>
+    rename_i mid
+    have h1 := AOk1.ite_true (e := e) hc ht hb
+    cases hk with
+    | normal hr =>
+      cases hr with
+      | block hb2 hk2 => exact ⟨out, .block (AOk.cons_normal h1 hb2) hk2, hq⟩
+    | skip hx hk2 => exact ⟨out, .block (AOk.cons_exit h1 hx) hk2, hq⟩
+
+theorem AW.ite_false {s c t e xs k Q v st} (hc : Evals p s.st c v st) (ht : truthy v = false)
+    (h : AW p a o ⟨st, s.hist⟩ (.block e :: .block xs :: k) Q) : AW p a o s (.block (.ite c t e :: xs) :: k) Q := by
+  obtain ⟨out, hr, hq⟩ := h
+  cases hr with
+  | block hb hk =>
+    have h1 := AOk1.ite_false (t := t) hc ht hb
+    cases hk with
+    | normal hr =>
+      cases hr with
+      | block hb2 hk2 => exact ⟨out, .block (AOk.cons_normal h1 hb2) hk2, hq⟩
+    | skip hx hk2 => exact ⟨out, .block (AOk.cons_exit h1 hx) hk2, hq⟩
+
+/-- `try`: the body runs as a block with the handler waiting under it. -/
+theorem AW.tryCatch {s body x h xs k Q} (hw : AW p a o s (.block body :: .catch x h :: .block xs :: k) Q) :
+    AW p a o s (.block (.tryCatch body x h :: xs) :: k) Q := by
+  obtain ⟨out, hr, hq⟩ := hw
+  cases hr with
+  | block hb hk =>
+    rename_i mid
+    cases hk with
+    | normal hr =>
+      cases hr with
+      | pass hr =>
+        cases hr with
+        | block hb2 hk2 => exact ⟨out, .block (AOk.cons_normal (AOk1.tryCatch_ok hb) hb2) hk2, hq⟩
+    | caught hr =>
+      cases hr with
+      | block hb2 hk3 =>
+        have h1 := AOk1.tryCatch_thrown hb hb2
+        cases hk3 with
+        | normal hr3 =>
+          cases hr3 with
+          | block hb3 hk4 => exact ⟨out, .block (AOk.cons_normal h1 hb3) hk4, hq⟩
+        | skip hx3 hk4 => exact ⟨out, .block (AOk.cons_exit h1 hx3) hk4, hq⟩
+    | skipCatch hx2 hk3 =>
+      cases hk3 with
+      | normal _ => simp [AOut.exits] at hx2
+      | skip hx3 hk4 => exact ⟨out, .block (AOk.cons_exit (AOk1.tryCatch_ok hb) hx3) hk4, hq⟩
+
 end Core.Async
