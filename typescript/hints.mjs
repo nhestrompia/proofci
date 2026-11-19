@@ -169,7 +169,7 @@ export const HINTS = [
   [/could itself be `null` or `undefined`/, "write `T extends {}` on the type parameter, so `T | undefined` adds exactly one value"],
   [/a generic type over a type parameter with a bound|a generic type over a type parameter is not supported yet when its own parameters have a bound/, "drop the bound (`T extends ...`) where the generic type or the function is declared, or use the generic type at a concrete type (`Page<string>`)"],
   [/a generic type that contains itself at a growing type argument/, "use the same type arguments where the type contains itself (`next: Node<T> | null`)"],
-  [/this generic type is not supported yet|a generic union over a type parameter has no description yet/, "use the generic type at a concrete type (`Shape<string>`)"],
+  [/this generic type is not supported yet|a generic union over a type parameter has no description yet/, "write the union without type parameters, as one named `type` per type argument the code uses"],
   [/type parameter `[^`]*` can't be read off this call/, "make the type parameter appear in a parameter or the result type, or drop it"],
   [/is called at `.*` where it takes `.*`, which is not supported yet/, "pass arguments whose types match the declared parameter types, or call a function that isn't generic"],
   [/this use of a generic type has no arguments to read/, "write the type arguments out where the generic type is used (`Page<string>`)"],
