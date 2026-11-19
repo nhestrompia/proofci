@@ -242,6 +242,36 @@ theorem rel_dtoNum {α δ : Type} {t : Result α} {b : Bool} {v : Val} {k : Val 
   show Spec (pure (num (if b then 1 else 0)) >>= k) h (Q r)
   rw [dpure_bind]; exact H' r e
 
+@[simp] theorem isArray_true {α} (xs : List α) : Js.isArray xs = true := rfl
+
+theorem rel_isArray_arr {α δ : Type} {t : Result α} {v : Val} {l : Loc} {vs : List Val}
+    {k : Val → M δ} {h Q} (hv : v = .ref l) (hl : h[l]? = some (.array vs))
+    (H : Rel t (k (.bool true)) h Q) : Rel t (isArray v >>= k) h Q := by
+  subst hv; unfold Rel at *; intro r e
+  have ep : isArray (.ref l) h = .ok (.bool true) h := by
+    show (match h[l]? with | some (.array _) => _ | some (.record _) => _ | none => _) = _
+    rw [hl]
+  rw [spec_bind, spec_eq ep]; exact H r e
+
+theorem rel_isArray_nul {α δ : Type} {t : Result α} {v : Val} {k : Val → M δ} {h Q}
+    (hv : v = .null ∨ v = .undef) (H : Rel t (k (.bool false)) h Q) : Rel t (isArray v >>= k) h Q := by
+  unfold Rel at *; intro r e
+  rcases hv with rfl | rfl <;>
+  · show Spec (pure (Val.bool false) >>= k) h (Q r)
+    rw [dpure_bind]; exact H r e
+
+theorem rel_isArray_opt {α β δ : Type} [CRep α] {t : Result β} {o : Option (List α)} {v nul : Val}
+    {k : Val → M δ} {h Q} (hv : crepOpt nul h o v) (hn : nul = .null ∨ nul = .undef)
+    (H : Rel t (k (.bool o.isSome)) h Q) : Rel t (isArray v >>= k) h Q := by
+  cases o with
+  | none =>
+    simp only [crepOpt_none] at hv; subst hv
+    exact rel_isArray_nul hn H
+  | some xs =>
+    simp only [crepOpt_some] at hv
+    obtain ⟨l, vs, rfl, hl, _⟩ := hv
+    exact rel_isArray_arr rfl hl H
+
 open Core.F64 in
 theorem truthy_numIs {v : Val} {a : Int} (hv : NumIs v a) : truthy v = decide (a ≠ 0) := by
   obtain ⟨x, rfl, hx⟩ := hv
@@ -822,6 +852,10 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_div ?_ ?_ ?_ <;> rnum)
   | (refine rel_max ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu; try simp only [truthy_numIs hu]) | exact numIs_num | assumption)
   | (refine rel_dneg numIs_num ?_; intro _ _)
+  | (casesm ∃ _, _)
+  | (refine rel_isArray_opt (by assumption) (by first | (left; rfl) | (right; rfl)) ?_)
+  | (subst_vars; refine rel_isArray_arr rfl (by assumption) ?_)
+  | (refine rel_isArray_nul (by first | (left; rfl) | (right; rfl) | assumption | (simp only [crep_none] at *; assumption)) ?_)
   | (refine rel_dtoNum (by first | rfl | assumption) ?_; intro _ _)
   | (refine rel_arr (by simp [crep_num, crep_none, crep_some, crep_str, crep_bool, numIs_num]; try assumption) ?_; intro _ _)
   | (refine rel_len (by assumption) (by assumption) ?_; intro _ _ _ _)
@@ -849,7 +883,7 @@ macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
   | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (split <;> (rename_i hc
-                try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val] at hc
+                try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val, Js.isArray, Option.isSome] at hc
                 try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is])))
 
