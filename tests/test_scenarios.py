@@ -625,6 +625,7 @@ BR_FEE, BR_TRANSFER, BR_SUM = (f"{TS_LEDGER}::{f}" for f in ("calculateFee", "tr
 BR_ALL_PROVED = {BR_FEE: "proved", BR_TRANSFER: "proved", BR_SUM: "proved"}
 HOOKS = ROOT / "tests" / "fixtures"
 RECURSIVE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive.mjs")}
+RECURSIVE_RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive_rare.mjs")}
 RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_rare.mjs")}      # a view that is wrong for one input
 COMMON = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_common.mjs")}  # a view that is wrong for most inputs
 
@@ -636,9 +637,11 @@ def require_bridge(checkout):
 
 TREE = "src/tree.ts"
 TREE_GUARANTEES = ("list/prepend-links", "total/empty-is-zero", "total/one-item", "size/leaf-is-one", "leaves/pair-of-numbers")
+TREE_RARE_STATUSES = {**dict.fromkeys(TREE_GUARANTEES, V), "total/one-item": U}
 TREE_FNS = [TREE + "::" + f for f in ("prepend", "total", "size", "leaves")]
-TREE_TESTED = {"functions": dict.fromkeys(TREE_FNS, "tested"),
-               "function_reasons": dict.fromkeys(TREE_FNS, "recursive types have no bridge yet")}
+TREE_LEAVES = TREE + "::leaves"
+TREE_BRIDGE = {"functions": {**dict.fromkeys(TREE_FNS, "proved"), TREE_LEAVES: "tested"},
+               "function_reasons": {TREE_LEAVES: "tagged type has no bridge encoding yet"}}
 
 
 def ts_tree_total_drops_the_head(head):
@@ -714,10 +717,13 @@ SCENARIOS.update({
     "ts-fractional-fee": (ts_fractional_fee, {**ts_results(), TS_FEE: X}, 1),
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
-    # A recursive type is an inductive type in the view; the proofs hold, but no bridge covers them yet.
+    # A recursive record and the functions that walk it are bridged by induction; a tagged union is not yet.
     "ts-tree-baseline": (None, dict.fromkeys(TREE_GUARANTEES, V), 0, {
-        **TREE_TESTED, "summary": {"proved": 0, "tested": 4, "failed": 0}}),
-    "ts-tree-bridge-required": (policy_requires_bridge, dict.fromkeys(TREE_GUARANTEES, X), 1, TREE_TESTED),
+        **TREE_BRIDGE, "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-tree-bridge-required": (policy_requires_bridge, {**dict.fromkeys(TREE_GUARANTEES, V), "leaves/pair-of-numbers": X}, 1, TREE_BRIDGE),
+    # The view of the recursive `total` subtracts an item of 4242 instead of adding it. No sample finds that; the bridge does.
+    "ts-tree-bridge-mistranslated-view": (None, TREE_RARE_STATUSES, 1, {
+        "env": RECURSIVE_RARE, "functions": {TREE + "::total": "tested"}, "function_reasons": {TREE + "::total": "did not check"}}),
     "ts-tree-total-drops-the-head": (ts_tree_total_drops_the_head, {
         **dict.fromkeys(TREE_GUARANTEES, V), "total/one-item": U}, 1),
     "ts-tree-mistranslated-view-seen-by-node": (None, dict.fromkeys(TREE_GUARANTEES, X), 1, {

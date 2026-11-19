@@ -49,4 +49,9 @@ theorem loop_ind {α β : Type} {B : α → Result (ControlFlow α β)} (Q : α 
   rw [h] at this
   exact DWLP.ret_iff.mp this
 
+unseal Aeneas.Std.Result in
+/-- What an `ok` result implies is all `failOk` asks. -/
+theorem dwlp_of_ok {γ : Type} {m : Result γ} {Q : γ → Unit → Prop} (h : ∀ y, m = ok y → Q y ()) : DWLP failOk m Q () := by
+  simpa using dwlp_bind_any m (fun y => ok y) Q (fun y e => DWLP.ret_iff.mpr (h y e))
+
 end Core

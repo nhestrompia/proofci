@@ -23,7 +23,7 @@ const options = {
 // Reasons worth naming. Everything else is reported with the generator's own words.
 const KNOWN = [
   [/no encoding for (generic|map|tagged|handle)/, m => `a ${m[1] === "handle" ? "handle" : m[1]} type has no bridge encoding yet`],
-  [/recursive/i, () => "recursive types have no bridge yet"],
+  [/a recursive function with (\d+) parameters/, m => `a recursive function with ${m[1]} parameters has no bridge yet`],
 ];
 function reasonOf(error) {
   const text = String(error?.message ?? error).split("\n")[0].slice(0, 300);

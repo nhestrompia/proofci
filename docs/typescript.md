@@ -40,8 +40,8 @@ The report lists every function with its status and the reason, and a summary co
 
 Reasons for "tested, not proved" you will see: `no bridge for async code yet`; the function
 relies on an assumed outside call (there is no code to bridge); the generator doesn't cover a
-form the function uses (a handle, a form of loop the tactics don't handle yet);
-`recursive types have no bridge yet`; `the bridge proof did not finish in 120 seconds`; or
+form the function uses (a handle, a union tagged by `kind`, a form of loop the tactics don't handle
+yet); `the bridge proof did not finish in 120 seconds`; or
 `the bridge theorem did not check` with Lean's first error.
 
 **A bridge that doesn't check is never called "failed".** The tactics stop with the same message
@@ -89,7 +89,7 @@ so an `async` function is always "tested, not proved" (`no bridge for async code
 compared with Node on scripted outside calls (in the action, and on the fixtures), and the lowering
 to `CoreAsync.lean` is compared with Node the same way. See
 [`spike/core/ASYNC.md`](../spike/core/ASYNC.md). The same holds for functions with handles,
-recursive types or empty records, which have no synchronous bridge.
+tagged unions or empty records, which have no synchronous bridge.
 
 **Library models.** Built-ins are modelled in `ProofciJs.lean` and `Core.lean`, bridged like
 the rest of Core, and compared with Node on generated inputs (`tests/test_js_numbers.py`):
@@ -423,9 +423,11 @@ any other (`partial_fixpoint`), including when it calls itself inside `map`, `fi
 The view is finite, so a JavaScript value with a cycle has none; writes that could make one are already
 refused (`changed in place`). Refused with the reason: a type with no finite value
 (`interface R { next: R }`), one that recurs through another type or an anonymous object (`A` holds `B`
-holds `A`), and one that holds itself inside a `Map`, `Set` or tuple. There is no bridge for recursive types
-yet, so such a function is "tested, not proved" (`recursive types have no bridge yet`), and
-`require_bridge` refuses its guarantees.
+holds `A`), and one that holds itself inside a `Map`, `Set` or tuple. A record that holds itself through `T | null`, `T?` or `T[]` has a bridge: its encoding in the heap is
+defined by structural recursion, and a function that calls itself (with one to three parameters) is
+bridged by induction over its `partial_fixpoint`, so each call it makes to itself is covered by the
+induction hypothesis. A recursive union tagged by `kind` has no bridge yet, as no tagged union has, so
+such a function is "tested, not proved" and `require_bridge` refuses its guarantees.
 
 In `async` code a recursive type is still cut where it recurs: the inner value is an opaque handle
 (`parent : Option Js.Handle`, `children : List Js.Handle`). A function that reads the first level is translated exactly, and a function
@@ -572,8 +574,8 @@ pure logic can usually be proved, and everything else becomes a listed assumptio
 The current design maps each TypeScript type to a Lean type, which is why each new
 type shape is a new feature. The plan is to add a second path that doesn't need that:
 
-1. **Finish the cheap wins.** Add generic types and a bridge for recursive types (the view
-   already has them). Packages are already installed for their types, and `unsupported`
+1. **Finish the cheap wins.** Add generic types and a bridge for tagged unions (recursive records
+   already have one). Packages are already installed for their types, and `unsupported`
    says how to fix the code.
 2. **Try a dynamic path.** Translate to a single Lean type of JavaScript values plus an
    explicit heap, so TypeScript types become preconditions. That one change covers

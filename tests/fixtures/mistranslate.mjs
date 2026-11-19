@@ -14,6 +14,8 @@ const EDITS = {
   common: [["let tmp2 ← Js.add accounts.«to» amount", "let tmp2 ← Js.sub accounts.«to» amount"]],
   // A recursive function that subtracts each item after the first instead of adding it.
   recursive: [["let tmp2 ← Js.add list_1.value tmp1", "let tmp2 ← Js.sub list_1.value tmp1"]],
+  // The same, only for an item of 4242.
+  recursive_rare: [["let tmp2 ← Js.add list_1.value tmp1", "let tmp2 ← if list_1.value.val = 4242 then Js.sub list_1.value tmp1 else Js.add list_1.value tmp1"]],
 };
 
 export function run(kind, configPath) {
