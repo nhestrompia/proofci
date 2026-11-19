@@ -843,6 +843,65 @@ theorem rel_forOf {α β γ : Type} [CRep α] [CRep β]
         obtain ⟨z'', hz'', hc''⟩ := hr0 (i + 1) z' rfl hc
         exact ⟨z'', ef ▸ hz'', hc''⟩
 
+/-- What one round of a typed loop and of `whileLoop` must agree on. -/
+def wpost {σ β ε : Type} (S : σ → ε → Heap → Prop) (T : β → ε → Heap → Prop) :
+    ControlFlow σ β → ForInStep ε → Heap → Prop
+  | .cont s, .yield z, h => S s z h
+  | .done r, .done z, h => T r z h
+  | _, _, _ => False
+
+@[simp] theorem wpost_cy {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {s z h} :
+    wpost S T (.cont s) (.yield z) h = S s z h := rfl
+@[simp] theorem wpost_dd {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {r z h} :
+    wpost S T (.done r) (.done z) h = T r z h := rfl
+@[simp] theorem wpost_cd {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {s z h} :
+    wpost S T (.cont s) (.done z) h = False := rfl
+@[simp] theorem wpost_dy {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {r z h} :
+    wpost S T (.done r) (.yield z) h = False := rfl
+
+/-- A typed loop against `while`/`for (;;)`: `S` relates the states before each round, `T` the results. -/
+theorem rel_while {σ β γ ε δ : Type} {B : σ → Result (ControlFlow σ β)} {s0 : σ}
+    {G : β → Result γ} {f : Unit → ε → M (ForInStep ε)} {z0 : ε} {k : ε → M δ} {h : Heap} {Q}
+    (S : σ → ε → Heap → Prop) (T : β → ε → Heap → Prop)
+    (h0 : S s0 z0 h)
+    (hstep : ∀ s z h, S s z h → Rel (B s) (f () z) h (wpost S T))
+    (H : ∀ r z h', T r z h' → Rel (G r) (k z) h' Q) :
+    Rel (Std.bind (Aeneas.Std.loop B s0) G) (forIn (m := M) fuel z0 f >>= k) h Q := by
+  unfold Rel; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have key := Core.loop_ind (B := B)
+    (fun s t => ∀ z h, S s z h → Spec (whileLoop f z) h (fun z' h' => T t z' h')) ?_ s0 t et
+  · obtain ⟨z', h', ew, hT⟩ := spec_ok (key z0 h h0)
+    rw [spec_bind]
+    show Spec (whileLoop f z0) h _
+    rw [spec_eq ew]
+    have H' := H t z' h' hT; unfold Rel at H'; exact H' r er
+  · intro s y ey
+    have one : ∀ z h, S s z h → Spec (f () z) h (wpost S T y) := by
+      intro z h hS
+      have S1 := hstep s z h hS; unfold Rel at S1
+      exact S1 _ ey
+    cases y with
+    | done t0 =>
+      intro z h hS
+      have sp := one z h hS
+      unfold Spec at sp ⊢; rw [whileLoop]
+      revert sp; cases f () z h with
+      | ok st h' => cases st <;> simp
+      | thrown v h' => simp
+      | stuck => simp
+    | cont s' =>
+      intro r0 ih z h hS
+      have sp := one z h hS
+      unfold Spec at sp ⊢; rw [whileLoop]
+      revert sp; cases f () z h with
+      | ok st h' =>
+        cases st with
+        | done z' => simp
+        | yield z' => intro sp; have := ih z' h' sp; unfold Spec at this; exact this
+      | thrown v h' => simp
+      | stuck => simp
+
 macro_rules | `(tactic| dsafe) => `(tactic| first | exact numIs_num | assumption)
 
 /-- Closes the side goals of a relational lemma: the operands are numbers, then introduces the result. -/
