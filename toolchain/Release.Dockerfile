@@ -4,7 +4,7 @@
 ARG BASE=proofci-toolchain:base
 FROM ${BASE}
 COPY proofci /opt/proofci/proofci
-COPY typescript/translate.mjs typescript/differential.mjs typescript/paths.mjs typescript/hazard.mjs typescript/narrow.mjs typescript/lean-tokens.json /opt/proofci/typescript/
+COPY typescript/translate.mjs typescript/differential.mjs typescript/paths.mjs typescript/hazard.mjs typescript/narrow.mjs typescript/hints.mjs typescript/lean-tokens.json /opt/proofci/typescript/
 
 # The TypeScript bridge: Core (the model of JavaScript), the number model and the tactics that tie a
 # function's Lean view to it, built once here. They are the image's, never the pull request's.

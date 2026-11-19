@@ -1,7 +1,9 @@
 // Runs the real translator over functions from a survey result and counts what
-// it accepts, by the reason it gave. Usage: node survey/try.mjs <repo> <survey.json>
+// it accepts, by the reason it gave, with the commonest hint for each reason.
+// Usage: node survey/try.mjs <repo> <survey.json>
 import { readFileSync } from "node:fs";
 import { translate } from "../translate.mjs";
+import { PREFIX } from "../hints.mjs";
 import { workspacePaths } from "./analyze.mjs";
 
 const [root, input] = process.argv.slice(2);
@@ -9,9 +11,10 @@ const { results } = JSON.parse(readFileSync(input, "utf8"));
 const IMPURE = new Set(["async", "ambient-effect", "package-call", "this-state", "module-state", "date", "generator"]);
 const pure = results.filter(r => r.logic && !r.name.includes(".") && !r.features.some(f => IMPURE.has(f)) && r.file.endsWith(".ts") && !r.file.startsWith("/"));
 const reasons = {};
+const hints = {};
 const paths = workspacePaths(root);
 let accepted = 0;
-const reason = text => text.replace(/^[^:]*:\d+: /, "").replace(process.env.RAW ? /$^/ : /`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 70);
+const reason = text => text.split("\n")[0].replace(/^[^:]*:\d+: /, "").replace(process.env.RAW ? /$^/ : /`[^`]*`/g, "`_`").replace(/\d+/g, "N").slice(0, 70);
 const byFile = Map.groupBy(pure, r => r.file);
 for (const [file, group] of byFile) {
   let result;
@@ -25,8 +28,15 @@ for (const [file, group] of byFile) {
   for (const r of group) {
     const failure = result.failures[`${file}::${r.name}`];
     if (!failure) accepted += 1;
-    else reasons[reason(failure)] = (reasons[reason(failure)] ?? 0) + 1;
+    else {
+      const key = reason(failure);
+      reasons[key] = (reasons[key] ?? 0) + 1;
+      const hint = failure.split(`\n${PREFIX}`)[1] ?? "";
+      hints[key] ??= {};
+      hints[key][hint] = (hints[key][hint] ?? 0) + 1;
+    }
   }
 }
-const top = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 14);
+const commonest = counts => Object.entries(counts ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0];
+const top = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([key, n]) => [key, n, commonest(hints[key])]);
 console.log(JSON.stringify({ repo: root.split("/").pop(), pure: pure.length, accepted, top }));

@@ -159,6 +159,11 @@ regular expressions, classes, `Promise.all` and other concurrency, and calls int
 that aren't listed under `assumes` or `effects`. `async` functions work in a narrow form,
 described under [`async` code](#async-code).
 
+Each `unsupported` reason ends with a "How to fix" line: the smallest rewrite the
+translator accepts, or that there is none yet. The hints are a table of reason patterns
+in `typescript/hints.mjs`. The report shows the hint under the reason, and `report.json`
+has it as `hint`.
+
 ### Generic types
 
 A generic function keeps its type parameters (`def f {T : Type} [DecidableEq T] ...`), and a
@@ -522,6 +527,8 @@ accepts 82 of 1,457, about 6%. Acceptance only means the translator produced Lea
 36 accepted functions that were also compiled, 35 built. The failures are now a long tail, and most of it is
 about mapping TypeScript's types onto Lean's: recursive types, generic types,
 untagged unions, `any` and `unknown`.
+`try.mjs` also prints the commonest hint for each reason, which is how the hints for
+the frequent reasons are checked.
 
 ### Limits of these numbers
 
@@ -550,8 +557,8 @@ pure logic can usually be proved, and everything else becomes a listed assumptio
 The current design maps each TypeScript type to a Lean type, which is why each new
 type shape is a new feature. The plan is to add a second path that doesn't need that:
 
-1. **Finish the cheap wins.** Add recursive and generic types, and make `unsupported`
-   say how to fix the code. Packages are already installed for their types.
+1. **Finish the cheap wins.** Add recursive and generic types. Packages are already
+   installed for their types, and `unsupported` says how to fix the code.
 2. **Try a dynamic path.** Translate to a single Lean type of JavaScript values plus an
    explicit heap, so TypeScript types become preconditions. That one change covers
    unions, `unknown`, aliasing, classes and closures. The typed path stays as the fast
