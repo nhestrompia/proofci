@@ -97,7 +97,22 @@ KINDS = {
     "rec-skip": (r"\b(\w+)\.next\b", r"(\1.next.bind (·.next))"),
     "rec-tail": (r"\b(\w+)\.kids\b", r"(\1.kids.drop 1)"),
     "rec-base": (r"Result\.ok \(Js\.Num\.mk \(0\)", "Result.ok (Js.Num.mk (1)"),
+    # Unions tagged by `kind`
+    "swapped-field": (r"^(\s*\| \.\w+) (\w+) (\w+)( .*)? =>", r"\1 \3 \2\4 =>"),
+    "wrong-variant": (r"^\s*\| \.\w+(?: \w+)* =>", None),
 }
+
+def wrong_variant(lines, i):
+    """Swaps the constructor of the arm at `i` with another arm of the same match and arity."""
+    arm = re.compile(r"^(\s*)\| \.(\w+)((?: \w+)*) =>")
+    a = arm.match(lines[i])
+    for j, l in enumerate(lines):
+        b = arm.match(l)
+        if j != i and b and b.group(1) == a.group(1) and b.group(2) != a.group(2) and len(b.group(3).split()) == len(a.group(3).split()):
+            lines[i] = lines[i].replace(f"| .{a.group(2)}", f"| .{b.group(2)}", 1)
+            lines[j] = lines[j].replace(f"| .{b.group(2)}", f"| .{a.group(2)}", 1)
+            return True
+    return False
 rng = random.Random(20261105)
 made = []
 for kind, (pat, rep) in KINDS.items():
@@ -119,7 +134,11 @@ for kind, (pat, rep) in KINDS.items():
         if not body:
             continue
         i = rng.choice(body)
-        lines[i] = re.sub(pat, rep, lines[i], count=1)
+        if rep is None:
+            if not wrong_variant(lines, i):
+                continue
+        else:
+            lines[i] = re.sub(pat, rep, lines[i], count=1)
         mutant = "\n".join(lines) + text[cut:]
         if mutant == text:
             continue

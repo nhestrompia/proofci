@@ -23,6 +23,7 @@ function leanType(t) {
     case "void": return "Unit";
     case "generic": return t.name;
     case "recursive": return t.lean;
+    case "tagged": return t.lean;
     case "array": case "set": return `(List ${leanType(t.item)})`;
     case "dict": return `(Js.Dict Js.Str ${leanType(t.value)})`;
     case "optional": return `(Opt ${t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef"} ${leanType(t.inner)})`;
@@ -240,6 +241,109 @@ theorem ${n}_rep_iff {h : Heap} {a : ${T}} {v : Val} :
   ${opts.length ? `(${opts.join(" <;> ")}) <;> ` : ""}(show ${n}_rep h _ v ↔ _; unfold ${n}_rep; ${lists ? `simp only [${n}_reps_iff]; ` : ""}exact Iff.rfl)`;
 }
 
+// A union tagged by `kind`: an object whose `kind` is its variant's tag, with that variant's fields.
+// It may hold itself directly (another variant ends it), or through `T | null`, `T | undefined` or `T[]`.
+function taggedRules(u, shapes) {
+  const n = short(u.lean), T = u.lean, tag = `${n}_tag`;
+  const isSelf = t => t.kind === "recursive" && t.lean === T;
+  const kindOf = t => (t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef");
+  const form = t => isSelf(t) ? "self" : t.kind === "optional" && isSelf(t.inner) ? "opt" : t.kind === "array" && isSelf(t.item) ? "list" : null;
+  const mentions = t => JSON.stringify(t).includes(`"kind":"recursive","lean":${q(T)}`);
+  const all = u.variants.flatMap(v => v.fields);
+  all.forEach(f => { if (!form(f.type) && mentions(f.type)) throw new Error(`no encoding for recursive \`${f.name}\``); });
+  const lists = all.some(f => form(f.type) === "list");
+  const at = f => `((fs.lookup ${q(f.name)}).getD .undef)`;
+  const body = (f, i) => form(f.type) === "self" ? `${n}_rep h f${i} ${at(f)}` : form(f.type) === "opt"
+    ? `(match f${i} with | none => nothingOk ${kindOf(f.type)} ${at(f)} | some x => ${n}_rep h x ${at(f)})`
+    : form(f.type) === "list"
+      ? `(∃ l' vs, ${at(f)} = .ref l' ∧ h[l']? = some (.array vs) ∧ ${n}_reps h f${i} vs)`
+      : `rep (α := ${leanType(f.type)}) h f${i} ${at(f)}`;
+  const mono = (f, i) => form(f.type) === "self" ? `${n}_rep_mono hp f${i} _ r${i}` : form(f.type) === "opt"
+    ? `(by match f${i}, r${i} with | none, r => exact r | some x, r => exact ${n}_rep_mono hp x _ r)`
+    : form(f.type) === "list"
+      ? `(by obtain ⟨l', vs, e, hl', rs⟩ := r${i}; exact ⟨l', vs, e, lookup_mono hp hl', ${n}_reps_mono hp _ _ rs⟩)`
+      : `mono hp r${i}`;
+  const conv = (f, i) => form(f.type) === "opt" ? `(by cases f${i} <;> exact r${i})`
+    : form(f.type) === "list" ? `(by obtain ⟨l', vs, e, hl', rs⟩ := r${i}; exact ⟨l', vs, e, hl', (${n}_reps_iff _ _).mp rs⟩)`
+    : `r${i}`;
+  const fv = v => v.fields.map((_, i) => `f${i}`);
+  const pat = v => `.${v.lean}${fv(v).map(f => ` ${f}`).join("")}`;
+  const rs = v => ["hk", ...v.fields.map((_, i) => `r${i}`)].join(", ");
+  const kind = v => `((fs.lookup "kind").getD .undef) = .str ${units(v.tag)}`;
+  const open = `change ${n}_rep _ _ _ at hr; unfold ${n}_rep at hr`;
+  const lines = [`@[simp] def ${tag} : ${T} → List Nat
+${u.variants.map(v => `  | .${v.lean}${v.fields.map(() => " _").join("")} => ${units(v.tag)}`).join("\n")}
+${lists ? "mutual\n" : ""}def ${n}_rep (h : Heap) : ${T} → Val → Prop
+${u.variants.map(v => `  | ${pat(v)}, v => ∃ l fs, v = .ref l ∧ h[l]? = some (.record fs) ∧ ${[kind(v), ...v.fields.map(body)].join(" ∧ ")}`).join("\n")}${lists ? `
+def ${n}_reps (h : Heap) : List ${T} → List Val → Prop
+  | [], [] => True
+  | x :: xs, v :: vs => ${n}_rep h x v ∧ ${n}_reps h xs vs
+  | _, _ => False
+end
+mutual` : ""}
+theorem ${n}_rep_mono {h h' : Heap} (hp : h <+: h') : ∀ (a : ${T}) (v : Val), ${n}_rep h a v → ${n}_rep h' a v
+${u.variants.map(v => `  | ${pat(v)}, v, hr => by
+    unfold ${n}_rep at hr ⊢
+    obtain ⟨l, fs, rfl, hl, ${rs(v)}⟩ := hr
+    exact ⟨l, fs, rfl, lookup_mono hp hl, ${["hk", ...v.fields.map(mono)].join(", ")}⟩`).join("\n")}${lists ? `
+theorem ${n}_reps_mono {h h' : Heap} (hp : h <+: h') : ∀ (xs : List ${T}) (vs : List Val), ${n}_reps h xs vs → ${n}_reps h' xs vs
+  | [], [], hr => hr
+  | x :: xs, v :: vs, hr => by
+    unfold ${n}_reps at hr ⊢
+    exact ⟨${n}_rep_mono hp x v hr.1, ${n}_reps_mono hp xs vs hr.2⟩
+  | [], _ :: _, hr => hr
+  | _ :: _, [], hr => hr
+end` : ""}
+instance : TyRep ${T} := ⟨${n}_rep, fun hp r => ${n}_rep_mono hp _ _ r⟩${lists ? `
+theorem ${n}_reps_iff {h : Heap} : ∀ (xs : List ${T}) (vs : List Val), ${n}_reps h xs vs ↔ List.Forall₂ (rep (α := ${T}) h) xs vs
+  | [], [] => by simp [${n}_reps]
+  | x :: xs, v :: vs => by simp only [${n}_reps, List.forall₂_cons, ${n}_reps_iff xs vs]; exact Iff.rfl
+  | [], _ :: _ => by simp [${n}_reps]
+  | _ :: _, [] => by simp [${n}_reps]` : ""}
+instance : IsObj ${T} := ⟨fun {_ a _} hr => by
+  cases a <;> (${open}; obtain ⟨l, _, he, _⟩ := hr; exact ⟨l, he⟩)⟩
+theorem ${n}_kind {p s o} {a : ${T}} (h : SimE p s o a) : SimE (α := List Nat) p s (.field o "kind") (${tag} a) :=
+  sim_field h (by
+    intro _ _ hr
+    cases a <;> (${open}; first
+      | (obtain ⟨l, fs, rfl, hl, hk⟩ := hr; exact ⟨(fs.lookup "kind").getD .undef, by simp [readField, hl], hk⟩)
+      | (obtain ⟨l, fs, rfl, hl, hk, -⟩ := hr; exact ⟨(fs.lookup "kind").getD .undef, by simp [readField, hl], hk⟩)))
+macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${n}_kind; sim'))
+macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${n}_kind; sim_read))`];
+  u.variants.forEach(v => v.fields.forEach((f, i) => {
+    const name = `${n}_get_${short(v.lean)}_${i}`;
+    lines.push(`theorem ${name} {p s o} ${fv(v).map((x, j) => `{${x} : ${plain(v.fields[j].type)}}`).join(" ")} (h : SimE p s o (${pat(v)} : ${T})) : SimE (α := ${leanType(f.type)}) p s (.field o ${q(f.name)}) f${i} :=
+  sim_field h (by
+    intro _ _ hr; ${open}
+    obtain ⟨l, fs, rfl, hl, ${rs(v)}⟩ := hr
+    exact ⟨${at(f)}, by simp [readField, hl], ${conv(f, i)}⟩)
+macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${name}; sim'))
+macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${name}; sim_read))`);
+  }));
+  // A literal of a variant, for each set of keys the function writes that is exactly that variant's.
+  shapes.forEach((keys, si) => u.variants.forEach(v => {
+    const names = ["kind", ...v.fields.map(f => f.name)];
+    if (keys.length !== names.length || !names.every(k => keys.includes(k)) || v.fields.some(f => form(f.type))) return;
+    const field = k => v.fields.find(f => f.name === k);
+    const es = keys.map((k, i) => k === "kind" ? `(.lit (.str ${units(v.tag)}))` : `e${i}`);
+    const hyps = keys.map((k, i) => k === "kind" ? "" : `(h${i} : SimE (α := ${leanType(field(k).type)}) p s e${i} x${i})`).join(" ");
+    const typed = keys.map((k, i) => k === "kind" ? "" : `{e${i}} {x${i} : ${plain(field(k).type)}}`).join(" ");
+    const chain = keys.reduceRight((rest, k, i) => `simf_cons ${k === "kind" ? `(SimE.lit_str ${units(v.tag)})` : `h${i}`} (${rest})`, "simf_nil");
+    const destruct = keys.map((_, i) => `v${i}, _, rfl, r${i}`).join(", ");
+    const parts = [`(by simp [List.lookup]; exact r${keys.indexOf("kind")})`,
+      ...v.fields.map(f => `(by simp [List.lookup]; exact mono (List.prefix_append _ _) r${keys.indexOf(f.name)})`)];
+    const value = `(.${v.lean}${v.fields.map(f => ` x${keys.indexOf(f.name)}`).join("")} : ${T})`;
+    lines.push(`theorem ${n}_lit_${short(v.lean)}_${si} {p s} ${typed} ${hyps} :
+    SimE p s (.record [${keys.map((k, i) => `(${q(k)}, ${es[i]})`).join(", ")}]) ${value} :=
+  sim_record (${chain}) (by
+    rintro _ _ ⟨${destruct}, rfl⟩
+    show ${n}_rep _ _ _; unfold ${n}_rep
+    exact ⟨_, [${keys.map((k, i) => `(${q(k)}, v${i})`).join(", ")}], rfl, by simp, ${parts.join(", ")}⟩)
+macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${short(v.lean)}_${si} <;> sim))`);
+  }));
+  return lines.join("\n");
+}
+
 function recordRules(record, shapes) {
   const n = short(record.lean);
   const self = !record.params && JSON.stringify(record.fields).includes(`"kind":"recursive","lean":${q(record.lean)}`);
@@ -305,6 +409,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const scan = t => {
     if (t.kind === "record") t.args?.forEach(scan);
     if (t.kind === "record" || t.kind === "enum") { if (types.has(t.lean)) return; if (t.kind === "record") (t.declared ?? t.fields).forEach(f => scan(f.type)); types.set(t.lean, t); }
+    if (t.kind === "tagged" && !types.has(t.lean)) { t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); types.set(t.lean, t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);
     if (t.kind === "dict") scan(t.value);
@@ -313,13 +418,14 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   for (const { sig } of sigs) { sig.params.forEach(scan); scan(sig.result); }
   // A record met only inside a constant or a callback, when every field has an encoding.
   const encodable = t => t.kind === "record" ? t.fields.every(f => encodable(f.type))
+    : t.kind === "tagged" ? t.variants.every(v => v.fields.every(f => encodable(f.type)))
     : t.kind === "optional" ? encodable(t.inner)
     : t.kind === "array" || t.kind === "set" ? encodable(t.item)
     : t.kind === "dict" ? encodable(t.value)
-    : !["map", "tagged"].includes(t.kind);
+    : t.kind !== "map";
   for (const t of view.records()) if (t.kind === "record" && encodable(t)) scan(t);
   const shapes = recordShapes(lean);
-  const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : recordRules(t, shapes));
+  const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : t.kind === "tagged" ? taggedRules(t, shapes) : recordRules(t, shapes));
   const source = (viewSource ?? view.source).replace(/^import.*\n/gm, "").replace(/^open Aeneas.*\n/m, "");
   // Callees first: the view lists a function after what it calls.
   const position = s => source.indexOf(`def ${s.sig.lean} `);
@@ -348,7 +454,7 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     // A function that calls itself is proved by induction over its `partial_fixpoint`: each call it
     // makes to itself is the function the step is given, and the hypothesis bridges that call.
     const recursive = /\npartial_fixpoint\s*$/.test(defText);
-    if (recursive && (n === 0 || n > 3)) throw new Error(`a recursive function with ${n} parameters has no bridge yet`);
+    if (recursive && (n === 0 || n > 6)) throw new Error(`a recursive function with ${n} parameters has no bridge yet`);
     const late = binders([...sig.params, sig.result], { eq: true, late: true });
     const ind = !recursive ? "" : `def ${key}_Q ${tv} ${sig.params.map((t, i) => `(p${i} : ${plain(t)})`).join(" ")} (r : ${res}) : Prop :=
   ∀ h ${Vs.join(" ")}, ${sig.params.map((t, i) => `rep (α := ${leanType(t)}) h p${i} v${i} → `).join("")}${run}
@@ -392,7 +498,7 @@ theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
   unfold ${sig.lean} at hr
 ${proof("  ")}`;
     const args = sig.params.map((t, i) => `(h${i} : SimE (α := ${leanType(t)}) prog s e${i} p${i})`).join(" ");
-    const call = n > 3 ? "" : `
+    const call = n > 6 ? "" : `
 theorem ${key}_sim ${binders([...sig.params, sig.result], { eq: true, late: true })} {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") : ""}} ${typed} {r : ${res}} ${args}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) : SimE (α := ${repRes}) prog s (.call ${q(key)} [${sig.params.map((_, i) => `e${i}`).join(", ")}]) r :=
   sim_call (fn := ${key}) (by simp [prog]) (${n === 0 ? "args0" : `args${n} ${sig.params.map((_, i) => `h${i}`).join(" ")}`}) (by
