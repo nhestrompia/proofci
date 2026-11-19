@@ -1427,6 +1427,8 @@ test("regular expressions outside the subset are refused", () => {
   rejects("export function f(s: string): boolean { return /a+?/.test(s); }", /lazy repeat/);
   rejects("export function f(s: string): boolean { return /\\bx/.test(s); }", /`\\b` or `\\B`/);
   rejects("const R = /a/g;\nexport function f(s: string): boolean { return R.test(s); }", /lastIndex/);
+  rejects("const R = /a/;\nR.compile(\"b\");\nexport function f(s: string): boolean { return R.test(s); }", /uses it only with/);
+  rejects("export const R = /a/;\nexport function f(s: string): boolean { return R.test(s); }", /uses it only with/);
   rejects("export function f(s: string): string { return s.replaceAll(/a/, \"b\"); }", /flag `g`/);
   rejects("export function f(s: string): string[] { return s.split(/(,)/); }", /capturing groups/);
   rejects("export function f(s: string): string[] | null { return s.match(/a/); }", /compared with `null`/);

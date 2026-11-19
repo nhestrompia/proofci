@@ -3016,6 +3016,9 @@ export class Scope {
       if (declaration && ts.isVariableDeclaration(declaration) && ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const && declaration.initializer) {
         e = unwrap(declaration.initializer);
         named = true;
+        if (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export || !this.regexUsesOnly(declaration)) {
+          throw this.t.fail(node, "a named regular expression is only supported when the module uses it only with `test`, `replace`, `replaceAll`, `split` or `match`");
+        }
       }
     }
     if (!ts.isRegularExpressionLiteral(e)) throw this.t.fail(node, "a regular expression is only supported as a literal or a `const` set to one");
@@ -3025,6 +3028,22 @@ export class Scope {
     } catch (error) {
       throw this.t.fail(node, error.message);
     }
+  }
+
+  // Any other use (`R.compile(...)`, `R.lastIndex = 1`, passing it on) could change what it matches.
+  regexUsesOnly(declaration) {
+    const symbol = this.symbol(declaration.name);
+    let only = true;
+    const visit = n => {
+      if (ts.isIdentifier(n) && n !== declaration.name && this.symbol(n) === symbol) {
+        const p = n.parent;
+        only &&= (ts.isPropertyAccessExpression(p) && p.expression === n && p.name.text === "test" && ts.isCallExpression(p.parent) && p.parent.expression === p)
+          || (ts.isCallExpression(p) && p.arguments[0] === n && ts.isPropertyAccessExpression(p.expression) && ["replace", "replaceAll", "split", "match"].includes(p.expression.name.text));
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(declaration.getSourceFile());
+    return only;
   }
 
   regexCall(value, method, node, env, lines) {

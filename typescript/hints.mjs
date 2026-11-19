@@ -333,6 +333,7 @@ export const HINTS = [
   [/`reduce` needs an initial value/, "pass an initial value (`xs.reduce((a, b) => a + b, 0)`); an empty array then gives it instead of throwing"],
   [/^the regular expression uses .*, which has no model/, "keep to code units, classes (`[a-z]`, `\\d`, `\\w`, `\\s`), `.`, `^`, `$`, `*`, `+`, `?`, `|` and groups, with the flags `i` and `g` at most; or use string methods"],
   [/a regular expression is only supported as a literal or a `const` set to one/, "write the regular expression literal at the call, or in a `const` (`const DIGITS = /^\\d+$/;`)"],
+  [/a named regular expression is only supported when the module uses it only with/, "keep the `const` unexported and use it only as `R.test(s)` or as the pattern of `replace`, `replaceAll`, `split` or `match`; or write the literal at the call"],
   [/depends on its `lastIndex`/, "drop the `g` flag: `test` doesn't need it"],
   [/on a regular expression with capturing groups/, "make the groups non-capturing (`(?:a|b)`)"],
   [/`replaceAll` needs a regular expression with the flag `g`/, "add the `g` flag; without it JavaScript throws"],
