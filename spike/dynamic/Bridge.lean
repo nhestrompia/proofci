@@ -760,7 +760,7 @@ macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
   | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (split <;> (rename_i hc
-                try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, decide_eq_false_iff_not] at hc
+                try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val] at hc
                 try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is])))
 
