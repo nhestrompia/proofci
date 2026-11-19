@@ -458,15 +458,19 @@ refused (`changed in place`). Refused with the reason: a type with no finite val
 holds `A`), and one that holds itself inside a `Map`, `Set` or tuple. A record that holds itself through `T | null`, `T?` or `T[]` has a bridge: its encoding in the heap is
 defined by structural recursion, and a function that calls itself (with one to six parameters) is
 bridged by induction over its `partial_fixpoint`, so each call it makes to itself is covered by the
-induction hypothesis. A union tagged by `kind` is encoded the same way, one case per variant: an object
+induction hypothesis. Functions that call each other in a cycle are one `mutual` block of
+`partial_fixpoint`s, bridged by the block's joint induction: every member's step is proved, and a call
+to any member is covered by that member's hypothesis. A generic cycle has no bridge yet. A union tagged by `kind` is encoded the same way, one case per variant: an object
 whose `kind` is the variant's tag, with that variant's fields. A variant may also hold the union
 directly (`left: Json`), since another variant ends it. `switch (x.kind)` reads the tag and compares it
 with each case, and the view's `match` picks the same variant, including a nullable field the case then
 tests for `null`. A generic union (`Result<T>`) is one inductive with parameters and one encoding for
 every use, as a generic record is; one whose parameter has a bound is still refused.
 
-In `async` code a recursive type is still cut where it recurs: the inner value is an opaque handle
-(`parent : Option Js.Handle`, `children : List Js.Handle`). A function that reads the first level is translated exactly, and a function
+In `async` code a type that holds itself directly is the same inductive type as elsewhere, so its
+shape doesn't depend on which function declares it first. One that recurs through another type is cut
+there: the inner value is an opaque handle (`e : Js.Handle`), and the same type outside `async` code is
+refused. A function that reads the first level is translated exactly, and a function
 that looks deeper is refused where it looks: the inner value can only be tested for presence
 (`e.parent !== null`, `!e.parent`, `if (e.parent)`) or have its length read (`e.children.length`). It can't be
 read into, mapped over, assigned to a variable or built (a literal can write `null`, `undefined` or `[]`
