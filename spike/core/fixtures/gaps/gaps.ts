@@ -388,3 +388,19 @@ export function linkSum(l: GapLink): number {
       return l.value + linkSum(l.next);
   }
 }
+
+export function okOr<T>(r: GapResult<T>, d: T): T {
+  switch (r.kind) {
+    case "ok": return r.value;
+    case "err": return d;
+  }
+}
+
+export type GapOpt = { kind: "has"; v?: number } | { kind: "empty" };
+
+export function optOr(o: GapOpt, d: number): number {
+  switch (o.kind) {
+    case "has": return o.v ?? d;
+    case "empty": return d;
+  }
+}
