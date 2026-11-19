@@ -38,3 +38,8 @@ gaps	gaps.ts	repeatCount
 gaps	gaps.ts	numberPage
 gaps	gaps.ts	itemTotal
 gaps	gaps.ts	jsonLeaves
+gaps	gaps.ts	itemSum
+gaps	gaps.ts	prependItem
+gaps	gaps.ts	countDown
+gaps	gaps.ts	firstKid
+gaps	gaps.ts	treeSize
