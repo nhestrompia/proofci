@@ -38,50 +38,45 @@ theorem src_ledger_transfer_dyn (h0 : crep h p0 v0) (h1 : crep h p1 v1)
 ```
 
 `crep h a v` ([Bridge.lean](Bridge.lean)) says typed value `a` is JavaScript value `v` in heap
-`h`: numbers and strings as themselves, arrays and records at a location with each element
-related, `none` as `null` or `undefined`. It is the `Is` precondition made exact. The proof is
-the same for every function: unfold both sides, then `rsteps` steps them together. It uses
-`Rel t d h Q` ("if typed `t` returns `r`, dynamic `d` from `h` returns a value related to `r`
-by `Q`") and one lemma per typed operation, proved once in [Bridge.lean](Bridge.lean):
-`rel_add`/`rel_sub` pair `Js.add a b` with `bin .add (num a) (num b)`, `rel_ok` ends both
-sides, `rel_dbind` takes a dynamic step the typed view doesn't have (a field read), and a
-typed `if` is split together with the dynamic one, with contradictory branches closed by
-`omega`. Nothing is written per function.
+`h`: a number as any double equal to it, `-0` included (`NumIs`, as Core's `IsInt`), a string
+as itself, arrays and records at a location with each element related, `none` as `null` or
+`undefined`. It is the `Is` precondition made exact. The proof is the same for every function:
+unfold both sides, then `rsteps` steps them together. It uses `Rel t d h Q` ("if typed `t`
+returns `r`, dynamic `d` from `h` returns a value related to `r` by `Q`") and one lemma per
+typed operation, proved once in [Bridge.lean](Bridge.lean): `rel_add`, `rel_sub`, `rel_mul`,
+`rel_rem`, `rel_floorDiv`, `rel_ceilDiv`, `rel_truncDiv` and `rel_neg` pair a typed operation
+with its dynamic twin on any operands related by `NumIs`; `bin_lt_is` and the other
+comparisons turn a dynamic comparison into the typed one; `rel_min_ok` relates `Math.min`;
+`rel_tail` handles an operation in tail position; `rel_ok` ends both sides; `rel_dbind` takes
+a dynamic step the typed view doesn't have (a field read). A typed `if` is split together with
+the dynamic one, with contradictory branches closed by `omega`. Nothing is written per function.
 
 | Measure | Result |
 |---|---|
 | Functions tried | 83: `ts-bank` (3), `corpus-gaps.tsv` (45), `corpus-rem.tsv` (35) |
-| Generated | 64; 19 use constant arrays, `while` or types the generator doesn't handle |
-| Proved | 6: `transfer`, `sizeName`, `assignedAfterExit`, `pointKind`, `totalPlusOne`, `makeCounts` |
-| Check time | 45 files take 2 s, 17 take 3 s, 1 takes 7 s, imports included; Core's bridges take 2.1-2.7 s |
-| Timeouts (45 s) | 1, down from about 40 with the separate `tsteps`/`dsteps` |
-| Wrong typed views | 24 of 24 fail, over 16 kinds (new: swapped arguments, dropped operation, swapped field, changed string) |
-| Not proved | 52 stop at a typed operation with no relational lemma, 4 lack a `CRep` instance, 1 times out, 1 ends with an open goal |
+| Generated | 65; 18 use constant arrays, `while` or types the generator doesn't handle |
+| Proved | 26 (6 before `NumIs`): `transfer`, 7 gaps fixtures (`centuryStart`, `sizeName`, `pointKind`, `totalPlusOne`, `makeCounts`, `assignedTwice`, `assignedAfterExit`), 18 in `corpus-rem.tsv` |
+| Check time | 43 files take 2 s, 16 take 3 s, 5 take 4-6 s, 1 takes 10 s, imports included; Core's bridges take 2.1-2.7 s |
+| Timeouts (45 s) | 0 |
+| Wrong typed views | 129 of 129 fail over 22 kinds; 21 come from the 6 new kinds (`%` to floor division, floor to ceil, ceil to floor, trunc to floor, dropped unary `-`, `min` to `max`) |
+| Not proved | 33 stop at an operation with no relational lemma, 4 lack a `CRep` instance, 2 end with an open goal |
 
-Where the 52 stop:
+The integer operations needed `NumIs`: JavaScript's `*`, `%`, `Math.floor(x / y)` and unary `-`
+can give `-0` for a typed `0` (`-1 * 0`), so with a number relation that only allowed `+0` they
+were not provable. Each lemma reuses Core's `IsInt` facts (`rem_isInt`, `floorDiv_isInt`, ...).
+`centuryStart` and `assignedTwice`, which reassign a `let`, needed no lemma of their own once
+the numbers were related this way: the typed bound `if` and the dynamic join point split
+together.
 
-| Typed operation | Files |
-|---|---|
-| `Js.rem`, `floorDiv`, `ceilDiv`, `truncDiv`, `mul`, `neg` | 25 |
-| Library calls (`len`, `padStart`, `padEnd`, `lastIndexOf`, `repeat`, `map`, `findIndex`, ...) | 10 |
-| Loops | 3 |
-| `Js.add` after a reassigned `let` (`centuryStart`) | 3 |
-| Other | 11 |
+Still not proved: library calls (`length`, `map`, `padStart`, `findIndex`, `lastIndexOf`,
+`repeat`), loops, and records holding optional values. `calculateFee` reaches `Math.min` but
+`rel_min_ok` does not fire inside `rsteps`, though it closes the goal when applied by hand.
+`isLeapYearIndex` proved with an earlier version of the tactic and fails with this one.
 
-The 25 integer ones share one cause. `crep` says a typed number is `num a.val`, the canonical
-double, but JavaScript's `*`, `%`, `Math.floor(x / y)` and unary `-` can give `-0` for a typed
-`0` (`-1 * 0`). The lemma for them is only true with Core's looser `IsInt` (`+0` or `-0`), so
-`crep` for numbers has to become `IsInt`, and the dynamic comparison and arithmetic lemmas
-have to take `IsInt` inputs, as Core's `Spike/Safe.lean` already does. The `centuryStart`
-three need the dynamic side's join point for a reassigned `let` stepped with the typed bound
-`if`.
-
-Verdict: still no-go for replacing Core's bridges, still go for continuing. Stepping both sides
-together fixed the cost: almost every file now finishes in 2-3 s instead of timing out, and
-where a proof stops it stops at a named typed operation. Coverage only went from 4 to 6,
-because most functions reach an operation without a lemma. Core's bridges cover 22 of 24
-original gaps fixtures and 32 of 35 in `corpus-rem.tsv`. Next: `IsInt`-based `crep` with the
-six integer lemmas (25 files), then the library calls, then loops through `forLoop_spec`.
+Verdict: go for continuing, still no-go for replacing Core's bridges. 26 of 65 generated
+bridges prove, with no timeouts, against 6 before; Core's bridges cover 22 of 24 original gaps
+fixtures and 32 of 35 in `corpus-rem.tsv`. What remains is a lemma per library call and the
+loop rule through `forLoop_spec`, the same shape of work as the integer lemmas here.
 
 How it fits with Core's bridges: today `bridge3.mjs` proves the typed view simulates Core, and
 Core is trusted to be JavaScript, checked against Node by `differential.mjs`. This bridge

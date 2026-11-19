@@ -26,6 +26,12 @@ const KINDS = {
   "drop-op": [/\bJs\.(add|sub|mul) (\S+) (\S+)/g, (_, op, a) => `Result.ok ${a}`],
   "swap-field": [/«from»|«to»/g, (m) => (m === "«from»" ? "«to»" : "«from»")],
   "string": [/js!"([^"]*)"/g, (_, t) => `js!"${t}x"`],
+  "rem-floor": [/\bJs\.rem\b/g, "Js.floorDiv"],
+  "floor-ceil": [/\bJs\.floorDiv\b/g, "Js.ceilDiv"],
+  "ceil-floor": [/\bJs\.ceilDiv\b/g, "Js.floorDiv"],
+  "trunc-floor": [/\bJs\.truncDiv\b/g, "Js.floorDiv"],
+  "drop-neg": [/\bJs\.neg (\S+)/g, (_, a) => `Result.ok ${a}`],
+  "min-max": [/\bJs\.min\b/g, "Js.max"],
 };
 const [dir, ...only] = process.argv.slice(2);
 const index = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));
