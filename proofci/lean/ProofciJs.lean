@@ -515,6 +515,7 @@ def lastIndexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Num :=
 /-- `s.repeat(n)`. A negative count throws, and past `2 ^ 20` units the model stops. -/
 def strRepeat (s : Str) (n : Num) : Result Str :=
   if n.val < 0 then fail .undef
+  else if s = [] then ok []
   else if s.length * n.val.toNat ≤ 2 ^ 20 then ok (List.replicate n.val.toNat s).flatten
   else fail .undef
 
