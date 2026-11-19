@@ -910,8 +910,20 @@ export class Translator {
   declareFunction(declaration) {
     const known = this.functions.get(declaration);
     if (known?.pending) {
-      if (this.current.at(-1) !== declaration) throw this.fail(declaration, "mutual recursion is not supported yet");
       known.recursive = true;
+      // A call back into a function still being declared closes a cycle: every function on the stack from
+      // it up is one `mutual` block, emitted when its first member is done.
+      const at = this.current.indexOf(declaration);
+      if (at < this.current.length - 1) {
+        const members = this.current.slice(at);
+        const groups = new Set(members.map(d => this.functions.get(d).group).filter(Boolean));
+        const group = { root: declaration, lines: [] };
+        for (const g of groups) {
+          group.lines.push(...g.lines);
+          if (this.current.indexOf(g.root) < this.current.indexOf(group.root)) group.root = g.root;
+        }
+        for (const [d, entry] of this.functions) if (members.includes(d) || groups.has(entry.group)) Object.assign(entry, { group, recursive: true });
+      }
       return known.lean;
     }
     if (known) return known.lean;
@@ -941,12 +953,23 @@ export class Translator {
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
     if (isAsync && entry.recursive) throw this.fail(fn, "a recursive `async` function is not supported yet");
+    if (entry.group && [...this.functions.values()].some(e => e.group === entry.group && e.async)) throw this.fail(fn, "a recursive `async` function is not supported yet");
     const monad = isAsync ? `Proofci.Effects.Eff ${result}` : `Result ${result}`;
     const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
     this.current.pop();
     entry.pending = false;
-    this.order.push(lines.join("\n"));
+    if (!entry.group) this.order.push(lines.join("\n"));
+    else {
+      entry.group.lines.push(lines.join("\n"));
+      if (entry.group.root === declaration) {
+        // Inside `mutual` the members are known only by the names they are declared with.
+        const names = [...this.functions.values()].filter(e => e.group === entry.group).map(e => e.lean);
+        const text = names.reduce((t, n) => t.replace(new RegExp(`_root_\\.${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.'»])`, "g"), n),
+          ["mutual", ...entry.group.lines, "end"].join("\n\n"));
+        this.order.push(text);
+      }
+    }
     return lean;
   }
 
