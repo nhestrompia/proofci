@@ -312,7 +312,7 @@ export const HINTS = [
   [/narrowing `any` is only supported|`narrowed`|`signature` could not be read/, "fix the `effects` entry in proofci.yaml as the reason says"],
   [/is only supported as its own statement/, "read what you need before the call, then call it on its own line (`const last = xs[xs.length - 1]; xs.pop();`, `xs.push(v); const n = xs.length;`)"],
   [/a type parameter could be an object/, "bound the type parameter to primitives (`T extends string | number`), or compare a field"],
-  [/with a start index is not supported yet/, "search a slice (`xs.slice(i).includes(v)`)"],
+  [/with a start index is not supported yet/, "search a slice (`xs.slice(i).includes(v)`; for `indexOf`, add `i` to `xs.slice(i).indexOf(v)` when it isn't -1)"],
   [/on objects compares identity/, "compare a field (`xs.some(x => x.id === y.id)`)"],
   [/`join` is only supported on strings/, "map to strings first (`xs.map(x => `${x}`).join(\",\")`)"],
   [/only `concat` of one array/, "spread instead (`[...a, ...b, ...c]`)"],
