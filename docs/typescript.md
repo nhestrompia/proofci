@@ -191,7 +191,10 @@ generic function names the type arguments it reads off the call (`g (T := Js.Num
 parameter with a bound (`T extends { id: string }`) is read at its bound, as before.
 
 `T | undefined` and `T | null` need `T extends {}`: an unconstrained `T` could itself be
-`undefined`, and `Option T` would then give it two values. Inline object types over a type
+`undefined`, and `Option T` would then give it two values. For the same reason a declaration that lets a parameter be
+missing (`v?: T`, `v: T | null`) takes a nullable argument (`Slot<number | undefined>`) as its own copy,
+whose field has the flat type, and refuses one over a type parameter without `extends {}`. A type
+argument keeps its own encoding in the bridge, so `Box<number | null>` tells `null` from `undefined`. Inline object types over a type
 parameter, generic unions with parameters and generic types whose own parameters have a bound
 are refused with the reason; a generic type that can't be written over a free parameter (its
 `T` sits next to `null`) is copied per use instead.

@@ -591,6 +591,30 @@ export function twice(a: bigint): bigint {
   assert.equal(replay.match(/#eval/g).length, 3);
 });
 
+test("the Node comparison covers nullable type arguments and the copy for a wrapped parameter", async () => {
+  const repo = join(dir, "nullable-args");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(repo, "a.ts"), `interface Box<T> { value: T }
+interface Slot<T> { v?: T }
+export function f(b: Box<number | null>, s: Slot<number | undefined>): number {
+  if (b.value === null) return s.v === undefined ? 0 : 1;
+  return b.value;
+}
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::f"] });
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.ok(result.source.includes("(b : (_root_.a.Box (Option Js.Num)))"), result.source);
+  assert.match(result.source, /structure a\.Slot_\w+ where\n  v : \(Option Js\.Num\)/);
+  const out = join(dir, "nullable-args-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 40 });
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 40);
+  assert.match(replay, /Box\.mk none/);
+  assert.match(replay, /Slot_\w+\.mk none/);
+});
+
 test("?. reads a length, and refuses other built-in members", () => {
   emits("export function f(a?: number[]) { return a?.length ?? 0; }", "Js.len item");
   rejects("export function f(a?: Map<string, number>) { return a?.size ?? 0; }", /only supported on fields/);
