@@ -504,3 +504,48 @@ function stepC(n: number, acc: number): number {
   if (n <= 0) return acc;
   return stepA(n - 1, acc - 3) + stepB(n - 1, acc);
 }
+
+export interface GapNode {
+  name: string;
+  edges: GapEdge[];
+}
+
+export interface GapEdge {
+  weight: number;
+  to: GapNode | null;
+}
+
+export function graphWeight(n: GapNode): number {
+  return edgesWeight(n.edges, 0);
+}
+
+function edgesWeight(es: GapEdge[], i: number): number {
+  if (i >= es.length) return 0;
+  return edgeWeight(es[i]) + edgesWeight(es, i + 1);
+}
+
+function edgeWeight(e: GapEdge): number {
+  if (e.to === null) return e.weight;
+  return e.weight + graphWeight(e.to);
+}
+
+export type GapDoc =
+  | { kind: "num"; n: number }
+  | { kind: "obj"; fields: GapField[] };
+
+export interface GapField {
+  key: string;
+  value: GapDoc;
+}
+
+export function docCount(d: GapDoc): number {
+  switch (d.kind) {
+    case "num": return 1;
+    case "obj": return fieldsCount(d.fields, 0);
+  }
+}
+
+function fieldsCount(fs: GapField[], i: number): number {
+  if (i >= fs.length) return 0;
+  return docCount(fs[i].value) + fieldsCount(fs, i + 1);
+}

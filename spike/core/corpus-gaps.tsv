@@ -75,3 +75,5 @@ gaps	gaps.ts	slotOf
 gaps	gaps.ts	isEven
 gaps	gaps.ts	jsonSum
 gaps	gaps.ts	stepA
+gaps	gaps.ts	graphWeight
+gaps	gaps.ts	docCount
