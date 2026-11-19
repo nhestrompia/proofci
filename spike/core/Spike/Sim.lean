@@ -1147,6 +1147,39 @@ theorem args3 {p s x y z α β γ} {_ : TyRep α} {_ : TyRep β} {_ : TyRep γ} 
   obtain ⟨w, s₃, e', h₃, rw⟩ := hy s₂ (h₁.trans h₂)
   obtain ⟨u, s₄, e'', h₄, ru⟩ := hz s₃ ((h₁.trans h₂).trans h₃)
   exact ⟨[v, w, u], s₄, EvalsL.cons e (EvalsL.cons e' (EvalsL.cons e'' (EvalsL.nil _ _))), (h₂.trans h₃).trans h₄, v, w, u, rfl, mono (h₃.2.trans h₄.2) rv, mono h₄.2 rw, ru⟩
+def Args4 {α β γ δ} [TyRep α] [TyRep β] [TyRep γ] [TyRep δ] (a : α) (b : β) (c : γ) (d : δ) (h : Heap) (vs : List Val) : Prop :=
+  ∃ v w u x, vs = [v, w, u, x] ∧ rep h a v ∧ rep h b w ∧ rep h c u ∧ rep h d x
+theorem args4 {p s e0 e1 e2 e3 α β γ δ} {_ : TyRep α} {_ : TyRep β} {_ : TyRep γ} {_ : TyRep δ} {a : α} {b : β} {c : γ} {d : δ} (h0 : SimE p s e0 a) (h1 : SimE p s e1 b) (h2 : SimE p s e2 c) (h3 : SimE p s e3 d) :
+    ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [e0, e1, e2, e3] vs s₂ ∧ Ext s₁ s₂ ∧ Args4 a b c d s₂.heap vs := by
+  intro s₁ h₁
+  obtain ⟨v, s2, ev0, k0, r0⟩ := h0 s₁ h₁
+  obtain ⟨w, s3, ev1, k1, r1⟩ := h1 s2 (h₁.trans k0)
+  obtain ⟨u, s4, ev2, k2, r2⟩ := h2 s3 ((h₁.trans k0).trans k1)
+  obtain ⟨x, s5, ev3, k3, r3⟩ := h3 s4 (((h₁.trans k0).trans k1).trans k2)
+  exact ⟨[v, w, u, x], s5, EvalsL.cons ev0 (EvalsL.cons ev1 (EvalsL.cons ev2 (EvalsL.cons ev3 (EvalsL.nil _ _)))), (((k0).trans k1).trans k2).trans k3, v, w, u, x, rfl, mono (((k1.2).trans k2.2).trans k3.2) r0, mono ((k2.2).trans k3.2) r1, mono (k3.2) r2, r3⟩
+def Args5 {α β γ δ ε} [TyRep α] [TyRep β] [TyRep γ] [TyRep δ] [TyRep ε] (a : α) (b : β) (c : γ) (d : δ) (e : ε) (h : Heap) (vs : List Val) : Prop :=
+  ∃ v w u x y, vs = [v, w, u, x, y] ∧ rep h a v ∧ rep h b w ∧ rep h c u ∧ rep h d x ∧ rep h e y
+theorem args5 {p s e0 e1 e2 e3 e4 α β γ δ ε} {_ : TyRep α} {_ : TyRep β} {_ : TyRep γ} {_ : TyRep δ} {_ : TyRep ε} {a : α} {b : β} {c : γ} {d : δ} {e : ε} (h0 : SimE p s e0 a) (h1 : SimE p s e1 b) (h2 : SimE p s e2 c) (h3 : SimE p s e3 d) (h4 : SimE p s e4 e) :
+    ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [e0, e1, e2, e3, e4] vs s₂ ∧ Ext s₁ s₂ ∧ Args5 a b c d e s₂.heap vs := by
+  intro s₁ h₁
+  obtain ⟨v, s2, ev0, k0, r0⟩ := h0 s₁ h₁
+  obtain ⟨w, s3, ev1, k1, r1⟩ := h1 s2 (h₁.trans k0)
+  obtain ⟨u, s4, ev2, k2, r2⟩ := h2 s3 ((h₁.trans k0).trans k1)
+  obtain ⟨x, s5, ev3, k3, r3⟩ := h3 s4 (((h₁.trans k0).trans k1).trans k2)
+  obtain ⟨y, s6, ev4, k4, r4⟩ := h4 s5 ((((h₁.trans k0).trans k1).trans k2).trans k3)
+  exact ⟨[v, w, u, x, y], s6, EvalsL.cons ev0 (EvalsL.cons ev1 (EvalsL.cons ev2 (EvalsL.cons ev3 (EvalsL.cons ev4 (EvalsL.nil _ _))))), ((((k0).trans k1).trans k2).trans k3).trans k4, v, w, u, x, y, rfl, mono ((((k1.2).trans k2.2).trans k3.2).trans k4.2) r0, mono (((k2.2).trans k3.2).trans k4.2) r1, mono ((k3.2).trans k4.2) r2, mono (k4.2) r3, r4⟩
+def Args6 {α β γ δ ε ζ} [TyRep α] [TyRep β] [TyRep γ] [TyRep δ] [TyRep ε] [TyRep ζ] (a : α) (b : β) (c : γ) (d : δ) (e : ε) (f : ζ) (h : Heap) (vs : List Val) : Prop :=
+  ∃ v w u x y z, vs = [v, w, u, x, y, z] ∧ rep h a v ∧ rep h b w ∧ rep h c u ∧ rep h d x ∧ rep h e y ∧ rep h f z
+theorem args6 {p s e0 e1 e2 e3 e4 e5 α β γ δ ε ζ} {_ : TyRep α} {_ : TyRep β} {_ : TyRep γ} {_ : TyRep δ} {_ : TyRep ε} {_ : TyRep ζ} {a : α} {b : β} {c : γ} {d : δ} {e : ε} {f : ζ} (h0 : SimE p s e0 a) (h1 : SimE p s e1 b) (h2 : SimE p s e2 c) (h3 : SimE p s e3 d) (h4 : SimE p s e4 e) (h5 : SimE p s e5 f) :
+    ∀ s₁, Ext s s₁ → ∃ vs s₂, EvalsL p s₁ [e0, e1, e2, e3, e4, e5] vs s₂ ∧ Ext s₁ s₂ ∧ Args6 a b c d e f s₂.heap vs := by
+  intro s₁ h₁
+  obtain ⟨v, s2, ev0, k0, r0⟩ := h0 s₁ h₁
+  obtain ⟨w, s3, ev1, k1, r1⟩ := h1 s2 (h₁.trans k0)
+  obtain ⟨u, s4, ev2, k2, r2⟩ := h2 s3 ((h₁.trans k0).trans k1)
+  obtain ⟨x, s5, ev3, k3, r3⟩ := h3 s4 (((h₁.trans k0).trans k1).trans k2)
+  obtain ⟨y, s6, ev4, k4, r4⟩ := h4 s5 ((((h₁.trans k0).trans k1).trans k2).trans k3)
+  obtain ⟨z, s7, ev5, k5, r5⟩ := h5 s6 (((((h₁.trans k0).trans k1).trans k2).trans k3).trans k4)
+  exact ⟨[v, w, u, x, y, z], s7, EvalsL.cons ev0 (EvalsL.cons ev1 (EvalsL.cons ev2 (EvalsL.cons ev3 (EvalsL.cons ev4 (EvalsL.cons ev5 (EvalsL.nil _ _)))))), (((((k0).trans k1).trans k2).trans k3).trans k4).trans k5, v, w, u, x, y, z, rfl, mono (((((k1.2).trans k2.2).trans k3.2).trans k4.2).trans k5.2) r0, mono ((((k2.2).trans k3.2).trans k4.2).trans k5.2) r1, mono (((k3.2).trans k4.2).trans k5.2) r2, mono ((k4.2).trans k5.2) r3, mono (k5.2) r4, r5⟩
 
 section prims
 variable {p : Prog} {s : St} {x y z : Expr} {a b : List Nat}

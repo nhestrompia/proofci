@@ -270,3 +270,50 @@ export function shapeSize(s: GapShape): number {
     case "rect": return s.w + s.h;
   }
 }
+
+export function shapeArea(s: GapShape): number {
+  switch (s.kind) {
+    case "circle":
+      return s.r * s.r;
+    default:
+      return s.w * s.h;
+  }
+}
+
+export function isRect(s: GapShape): boolean {
+  switch (s.kind) {
+    case "rect": return true;
+    default: return false;
+  }
+}
+
+export function circle(r: number): GapShape {
+  return { kind: "circle", r };
+}
+
+export type GapNode = { kind: "leaf"; weight: number } | { kind: "pair"; left: GapNode; right: GapNode };
+
+export function nodeWeight(n: GapNode): number {
+  switch (n.kind) {
+    case "leaf": return n.weight;
+    case "pair": return nodeWeight(n.left) + nodeWeight(n.right);
+  }
+}
+
+export function sumFour(a: number, b: number, c: number, d: number): number {
+  return a + b + c + d;
+}
+
+export function callFour(x: number): number {
+  return sumFour(x, x, 1, 2);
+}
+
+export function rotateTotal(list: GapItem | null, a: number, b: number, c: number): number {
+  if (list === null) return a + b + c;
+  return rotateTotal(list.next, b, c, a + list.value);
+}
+
+export function nextValue(item: GapItem): number {
+  if (item.next === null) return 0;
+  return item.next.value;
+}

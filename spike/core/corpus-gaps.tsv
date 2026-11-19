@@ -44,3 +44,10 @@ gaps	gaps.ts	countDown
 gaps	gaps.ts	firstKid
 gaps	gaps.ts	treeSize
 gaps	gaps.ts	shapeSize
+gaps	gaps.ts	shapeArea
+gaps	gaps.ts	isRect
+gaps	gaps.ts	circle
+gaps	gaps.ts	nodeWeight
+gaps	gaps.ts	callFour
+gaps	gaps.ts	rotateTotal
+gaps	gaps.ts	nextValue
