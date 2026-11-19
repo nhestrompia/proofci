@@ -36,6 +36,7 @@ function callHint({ node, checker }) {
     if (/^(parseInt|parseFloat|Number|String|Boolean|BigInt|isNaN|isFinite|encodeURIComponent|decodeURIComponent|structuredClone|setTimeout|setInterval|fetch)$/.test(callee.text)) {
       if (callee.text === "String") return "use a template (`${n}`) or `n.toString()`";
       if (callee.text === "Boolean") return "compare explicitly (`x !== null`, `s.length > 0`)";
+      if (callee.text === "Number") return "test for `null` or `undefined` first, so `Number` gets a plain `string`, `boolean` or `number`";
       return none(`\`${callee.text}\` has no model yet`);
     }
     const site = checker.getSymbolAtLocation(callee)?.declarations?.[0];
@@ -169,7 +170,7 @@ export const HINTS = [
   [/recursive types are not supported yet|holds a value of the type it sits in/, "in `async` code a recursive type is cut to an opaque handle, also in the functions it calls: pass the parts the function needs as parameters"],
   [/a type that recurs through another type/, "let the type hold itself directly, in one named interface (`children: Tree[]`, `next: Tree | null`), not through a second interface or an inline object"],
   [/a recursive type that holds itself inside/, "hold the type itself in an array, `T | null` or an optional field (`children: Tree[]`), not in a `Map`, `Set` or tuple"],
-  [/`Array\.isArray` is only supported on values typed as arrays/, none("a value that may be an array or another object has no Lean type yet; where it is always an array, declare it as one and drop the test")],
+  [/`Array\.isArray` is only supported on values typed as arrays/, "declare the value as an array (`T[]` or `T[] | undefined`); for any other declared type, drop the test"],
   [/a recursive type with no finite value/, "make the field that holds the type nullable, optional or an array (`next: T | null`), so a value can end"],
   [/would share a Lean name/, "rename one of the two declarations"],
   [/is not a plain field/, "declare it as a field (`name: T`), not a method, getter or computed key"],
