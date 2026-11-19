@@ -8,7 +8,7 @@ const NONE = "there is no rewrite the translator accepts yet; keep this code out
 const none = why => `${NONE} (${why})`;
 
 const TYPES = "use `number`, `bigint`, `boolean`, `string`, `T | null`, `T | undefined`, an interface, a string-literal union, a union tagged by `kind`, an array, `Map` or `Set`";
-const REGEX = "use string methods instead of a regular expression (`startsWith`, `endsWith`, `includes`, `indexOf`, `split(\",\")`, `replaceAll(\"a\", \"b\")`, a loop over `charCodeAt`)";
+const REGEX = "use a regular expression literal (or a `const` set to one) with `test`, `replace`, `replaceAll`, `split` or `match(re) !== null`, built from code units, classes, `.`, `^`, `$`, `*`, `+`, `?`, `|` and groups with the flags `i` and `g` at most; or string methods (`startsWith`, `includes`, `indexOf`, a loop over `charCodeAt`)";
 const COPY = "change a copy (`const next = [...xs]` or `{ ...obj }`) and return it";
 const TAGGED = "declare the union as a named `type` whose members each have a string literal field named `kind` (`type Shape = { kind: \"circle\"; r: number } | { kind: \"square\"; side: number }`), and read members inside `switch (x.kind)`";
 const FUNCTION = "call a module-level function by name inside an inline callback (`xs.map(x => g(x))`); function values and function types have no translation yet";
@@ -330,6 +330,15 @@ export const HINTS = [
   [/`join` is only supported on strings/, "map to strings first (`xs.map(x => `${x}`).join(\",\")`)"],
   [/only `concat` of one array/, "spread instead (`[...a, ...b, ...c]`)"],
   [/`reduce` needs an initial value/, "pass an initial value (`xs.reduce((a, b) => a + b, 0)`); an empty array then gives it instead of throwing"],
+  [/^the regular expression uses .*, which has no model/, "keep to code units, classes (`[a-z]`, `\\d`, `\\w`, `\\s`), `.`, `^`, `$`, `*`, `+`, `?`, `|` and groups, with the flags `i` and `g` at most; or use string methods"],
+  [/a regular expression is only supported as a literal or a `const` set to one/, "write the regular expression literal at the call, or in a `const` (`const DIGITS = /^\\d+$/;`)"],
+  [/a named regular expression is only supported when the module uses it only with/, "keep the `const` unexported and use it only as `R.test(s)` or as the pattern of `replace`, `replaceAll`, `split` or `match`; or write the literal at the call"],
+  [/depends on its `lastIndex`/, "drop the `g` flag: `test` doesn't need it"],
+  [/on a regular expression with capturing groups/, "make the groups non-capturing (`(?:a|b)`)"],
+  [/`replaceAll` needs a regular expression with the flag `g`/, "add the `g` flag; without it JavaScript throws"],
+  [/`match` with a regular expression is only supported compared with `null`/, "use `re.test(s)`, or compare `s.match(re)` with `null`"],
+  [/with a regular expression is only supported with a string replacement and no limit/, "pass a string replacement (a replacement function has no model yet) and no `split` limit"],
+  [/`test` is only supported with one string/, "pass one string: `re.test(s)`"],
   [/is only supported with a string here, because it would otherwise take a regular expression/, `pass a string; ${REGEX}`],
   [/with (these )?arguments is not supported yet/, "call it with the arguments listed for strings in docs/typescript.md"],
   [/only an inline function is supported here/, "write the callback inline (`xs.map(x => g(x))`)"],

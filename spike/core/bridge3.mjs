@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { lower } from "./lower.mjs";
 import { translate } from "../../typescript/translate.mjs";
 import { workspacePaths } from "../../typescript/paths.mjs";
+const dictValues = new Set();
 
 const here = dirname(fileURLToPath(import.meta.url));
 const units = t => `[${[...Array(t.length).keys()].map(i => t.charCodeAt(i)).join(", ")}]`;
@@ -424,7 +425,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
     if (t.kind === "tagged" && !types.has(t.lean)) { t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); types.set(t.lean, t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);
-    if (t.kind === "dict") scan(t.value);
+    if (t.kind === "dict") { dictValues.add(leanType(t.value)); scan(t.value); }
   };
   const sigs = sources.map(s => ({ ...s, sig: view.signatures[`${s.file}::${s.name}`] }));
   for (const { sig } of sigs) { sig.params.forEach(scan); scan(sig.result); }
@@ -446,6 +447,9 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const reachable = ordered.map(s => { const at = position(s); return at < 0 ? "" : source.slice(at, source.indexOf("\n\n", at) < 0 ? undefined : source.indexOf("\n\n", at)); }).join("\n");
   const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]).filter(c => reachable.includes(c));
   const cbNames = [...lean.matchAll(/^def (\S+_cb\d+) : Fn/gm)].map(m => m[1]);
+  // `{}` gives no element type, so name the ones these functions use.
+  const dictRules = [...dictValues].map(v => `macro_rules | \`(tactic| s_rec) => \`(tactic| apply (SimE.recEmpty (α := ${v}) (d := []) rfl))`).join("\n");
+  dictValues.clear();
   const cbRules = cbNames.map(n => `theorem ${n}_prog : prog ${q(n)} = some ${n} := by simp [prog]
 macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n");
   const mutualGroups = new Map();
@@ -572,6 +576,7 @@ ${core}
 ${rules.join("\n\n")}
 
 ${cbRules}
+${dictRules}
 
 ${theorems.join("\n\n")}
 ${ordered.map(o => `#print axioms ${o.key}_bridge`).join("\n")}

@@ -75,3 +75,12 @@ gaps	gaps.ts	slotOf
 gaps	gaps.ts	isEven
 gaps	gaps.ts	jsonSum
 gaps	gaps.ts	stepA
+gaps	gaps.ts	withFlag
+gaps	gaps.ts	tallyNames
+gaps	gaps.ts	labelled
+gaps	gaps.ts	isSlug
+gaps	gaps.ts	squash
+gaps	gaps.ts	stripDigits
+gaps	gaps.ts	words
+gaps	gaps.ts	hasVowel
+gaps	gaps.ts	firstDash
