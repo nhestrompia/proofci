@@ -782,6 +782,12 @@ export function lower(root, targets, { paths, eff } = {}) {
       const list = n => { const inner = []; AS(n, inner); return `[${inner.join(", ")}]`; };
 
       if (ts.isBlock(s)) { for (const c of s.statements) AS(c, out); return; }
+      // A branch or a return is kept at this level, so a bridge walks it the same way with or without awaits.
+      if (!hasAsync(s) && ts.isReturnStatement(s) && !inForEach) { out.push(`.ret (${s.expression ? E(s.expression) : ".lit .undef"})`); return; }
+      if (!hasAsync(s) && ts.isIfStatement(s)) {
+        out.push(`.ite (${E(s.expression)}) ${list(s.thenStatement)} ${s.elseStatement ? list(s.elseStatement) : "[]"}`);
+        return;
+      }
       if (!hasAsync(s)) { sync(s); return; }
       if (ts.isThrowStatement(s)) {
         const e = unwrapP(s.expression);

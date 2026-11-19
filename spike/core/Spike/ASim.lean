@@ -296,4 +296,66 @@ theorem AW.tryCatch {s body x h xs k Q} (hw : AW p a o s (.block body :: .catch 
       | normal _ => simp [AOut.exits] at hx2
       | skip hx3 hk4 => exact ⟨out, .block (AOk.cons_exit (AOk1.tryCatch_ok hb) hx3) hk4, hq⟩
 
+/-! ## Steps with typed values -/
+
+theorem AW.set {s x e xs k Q α} [TyRep α] {va : α} (he : SimE p s.st e va)
+    (h : ∀ st', Upd s.st st' x → V st' x va → AW p a o ⟨st', s.hist⟩ (.block xs :: k) Q) :
+    AW p a o s (.block (.stmt (.set x e) :: xs) :: k) Q := by
+  obtain ⟨v, s2, hev, hext, hrep⟩ := he s.st (Ext.refl _)
+  refine AW.step (AOk1.stmt (Execs.set hev)) (h _ ⟨hext.2, fun y hy => ?_⟩ ⟨v, by simp [Env.put], hrep⟩)
+  simp [Env.put, hy, hext.1]
+
+theorem AW.ret {s e xs k Q α} [TyRep α] {va : α} (he : SimE p s.st e va)
+    (h : ∀ v st', s.st.heap <+: st'.heap → rep st'.heap va v → ∃ out, Cont p a o (.ok (.ret v) ⟨st', s.hist⟩) k out ∧ Q out) :
+    AW p a o s (.block (.ret e :: xs) :: k) Q := by
+  obtain ⟨v, s2, hev, hext, hrep⟩ := he s.st (Ext.refl _)
+  exact AW.exit (AOk1.ret hev) trivial (h v s2 hext.2 hrep)
+
+theorem AW.throw {s e xs k Q} {va : Js.Exn} (he : SimE p s.st e va)
+    (h : ∀ v st', s.st.heap <+: st'.heap → st'.env = s.st.env → rep st'.heap va v →
+      ∃ out, Cont p a o (.thrown v ⟨st', s.hist⟩) k out ∧ Q out) :
+    AW p a o s (.block (.throw e :: xs) :: k) Q := by
+  obtain ⟨v, s2, hev, hext, hrep⟩ := he s.st (Ext.refl _)
+  exact AW.exit (AOk1.throw hev) trivial (h v s2 hext.2 hext.1 hrep)
+
+section Rel
+variable {W : Js.World} [R : ∀ op, TyRep (W.Res op)] {opName : W.Op → String}
+  {ArgOK : (op : W.Op) → W.Arg op → List Data → Prop} {ov : W.Oracle}
+
+theorem AW.await_val (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
+    {x op args vs st xs k Q} {arg : W.Arg op} {r : W.Res op}
+    (he : EvalsL p s.st args vs st) (hx : Ext s.st st) (hA : ArgOK op arg (vs.map (readData 50 st.heap)))
+    (hov : ov op arg hv = .value r) (hne : x ≠ "")
+    (h : ∀ s₁ : AS, Upd s.st s₁.st x → V s₁.st x r → HRel opName ArgOK (hv ++ [⟨op, arg, .value r⟩]) s₁.hist →
+      AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (.await x (opName op) args :: xs) :: k) Q := by
+  obtain ⟨s₁, h1, hp, ⟨v, hrep, henv⟩, hH1⟩ := await_value (a := a) (x := x) hO hH he hA hov
+  have hb : (x == "") = false := by simpa using hne
+  rw [hb] at henv
+  refine AW.step h1 (h s₁ ⟨hx.2.trans hp, fun y hy => ?_⟩ ⟨v, by simp [henv, Env.put], hrep⟩ hH1)
+  simp [henv, Env.put, hy, hx.1]
+
+theorem AW.await_drop (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
+    {op args vs st xs k Q} {arg : W.Arg op} {r : W.Res op}
+    (he : EvalsL p s.st args vs st) (hx : Ext s.st st) (hA : ArgOK op arg (vs.map (readData 50 st.heap)))
+    (hov : ov op arg hv = .value r)
+    (h : ∀ s₁ : AS, Ext s.st s₁.st → HRel opName ArgOK (hv ++ [⟨op, arg, .value r⟩]) s₁.hist →
+      AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (.await "" (opName op) args :: xs) :: k) Q := by
+  obtain ⟨s₁, h1, hp, ⟨v, hrep, henv⟩, hH1⟩ := await_value (a := a) (x := "") hO hH he hA hov
+  simp at henv
+  exact AW.step h1 (h s₁ ⟨by rw [henv, hx.1], hx.2.trans hp⟩ hH1)
+
+theorem AW.await_rej (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
+    {x op args vs st xs k Q} {arg : W.Arg op} {e : Js.Exn}
+    (he : EvalsL p s.st args vs st) (hx : Ext s.st st) (hA : ArgOK op arg (vs.map (readData 50 st.heap)))
+    (hov : ov op arg hv = .reject e)
+    (h : ∀ v (s₁ : AS), Ext s.st s₁.st → rep s₁.st.heap e v → HRel opName ArgOK (hv ++ [⟨op, arg, .reject e⟩]) s₁.hist →
+      ∃ out, Cont p a o (.thrown v s₁) k out ∧ Q out) :
+    AW p a o s (.block (.await x (opName op) args :: xs) :: k) Q := by
+  obtain ⟨v, s₁, h1, hp, henv, hrep, hH1⟩ := await_reject (a := a) (x := x) hO hH he hA hov
+  exact AW.exit h1 trivial (h v s₁ ⟨by rw [henv, hx.1], hx.2.trans hp⟩ hrep hH1)
+
+end Rel
+
 end Core.Async
