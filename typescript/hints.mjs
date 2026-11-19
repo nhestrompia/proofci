@@ -175,7 +175,6 @@ export const HINTS = [
   [/only `flat\(\)` without a depth/, "call `flat()` once per level (`xs.flat().flat()`)"],
   [/`flat` is only supported on an array of arrays/, "spread each inner collection into an array first (`xs.map(s => [...s]).flat()`)"],
   [/`flatMap` is only supported with a callback that returns an array/, "return an array from the callback (`x => [f(x)]`), or use `map`"],
-  [/`Array\.isArray` is only supported on values typed as arrays/, "declare the value as an array (`T[]` or `T[] | undefined`); for any other declared type, drop the test"],
   [/would share a Lean name/, "rename one of the two declarations"],
   [/is not a plain field/, "declare it as a field (`name: T`), not a method, getter or computed key"],
   [/unions must be tagged records|union members need a string/, TAGGED],
