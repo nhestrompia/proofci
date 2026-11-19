@@ -107,6 +107,12 @@ test("a generic type is one structure with parameters, or one per use when it ca
   assert.deepEqual(tagged.failures, {}, tagged.source);
   const described = tagged.signatures["a.ts::f"].params[0];
   assert.deepEqual([described.kind, described.args, described.variants[0].fields[0].type], ["tagged", [{ kind: "number" }], { kind: "number" }]);
+  // A parameter the declaration already lets be missing: a nullable argument gets a copy with the flat type.
+  emits("interface S<T> { v?: T } export function f(s: S<number | undefined>) { return s.v === undefined; }", "structure a.S_", "v : (Option Js.Num)");
+  emits("interface S<T> { v?: T } export function f(s: S<number>) { return s.v === undefined; }", "(s : (_root_.a.S Js.Num))");
+  emits("interface S<T> { v?: T } export function f<T extends {}>(s: S<T>) { return s.v === undefined; }", "(s : (_root_.a.S T))");
+  rejects("interface S<T> { v?: T } export function f<T>(s: S<T>) { return s.v === undefined; }", /wrapped twice/);
+  rejects("interface S<T> { v: T | null } export function f<T>(s: S<T>) { return 1; }", /wrapped twice/);
   rejects(`type R<T extends { id: string }> = { kind: "ok"; value: T } | { kind: "err" };
     export function f<T extends { id: string }>(r: R<T>) { return 1; }`, /bound/);
 });
@@ -583,6 +589,30 @@ export function twice(a: bigint): bigint {
   await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 3 });
   const replay = readFileSync(join(out, "Differential.lean"), "utf8");
   assert.equal(replay.match(/#eval/g).length, 3);
+});
+
+test("the Node comparison covers nullable type arguments and the copy for a wrapped parameter", async () => {
+  const repo = join(dir, "nullable-args");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(repo, "a.ts"), `interface Box<T> { value: T }
+interface Slot<T> { v?: T }
+export function f(b: Box<number | null>, s: Slot<number | undefined>): number {
+  if (b.value === null) return s.v === undefined ? 0 : 1;
+  return b.value;
+}
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::f"] });
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.ok(result.source.includes("(b : (_root_.a.Box (Option Js.Num)))"), result.source);
+  assert.match(result.source, /structure a\.Slot_\w+ where\n  v : \(Option Js\.Num\)/);
+  const out = join(dir, "nullable-args-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 40 });
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 40);
+  assert.match(replay, /Box\.mk none/);
+  assert.match(replay, /Slot_\w+\.mk none/);
 });
 
 test("?. reads a length, and refuses other built-in members", () => {

@@ -169,6 +169,7 @@ export const HINTS = [
   [/empty records are not supported/, emptyRecordHint],
   [/an inline object type over a type parameter/, "declare the object type as a generic `interface` (`interface Box<T> { value: T }`) and use it (`Box<T>`)"],
   [/`Array\.isArray` is only supported on values typed as arrays/, "give the value a type that is an array or `null`/`undefined` (`string[] | undefined`)"],
+  [/would be wrapped twice here/, "write `T extends {}` on the function's type parameter, or use the generic type at an argument that can't be `null` or `undefined` (`Slot<number>`)"],
   [/could itself be `null` or `undefined`/, "write `T extends {}` on the type parameter, so `T | undefined` adds exactly one value"],
   [/a generic type over a type parameter with a bound|a generic type over a type parameter is not supported yet when its own parameters have a bound/, "drop the bound (`T extends ...`) where the generic type or the function is declared, or use the generic type at a concrete type (`Page<string>`)"],
   [/a generic type that contains itself at a growing type argument/, "use the same type arguments where the type contains itself (`next: Node<T> | null`)"],

@@ -67,3 +67,8 @@ gaps	gaps.ts	maybeOr
 gaps	gaps.ts	linkSum
 gaps	gaps.ts	okOr
 gaps	gaps.ts	optOr
+gaps	gaps.ts	boxOrZero
+gaps	gaps.ts	boxIsUndef
+gaps	gaps.ts	resultNull
+gaps	gaps.ts	slotUndef
+gaps	gaps.ts	slotOf
