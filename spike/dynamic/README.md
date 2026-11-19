@@ -68,7 +68,7 @@ lemmas. Nothing is written per function.
 | Proved | 57 (38 before): `transfer`, `calculateFee`, `sumAmounts`, 25 gaps fixtures, 29 in `corpus-rem.tsv` |
 | Check time | 15 files take 2 s, 26 take 3 s, 11 take 4 s, 3 take 5-6 s, `listCount` 23 s, `validateDate` 34 s |
 | Timeouts (45 s) | 0 |
-| Wrong typed views | MUTS, counting proved bridges only; 3 new kinds: `some` for `every`, `every` for `some`, `Math.min` for `Math.max` |
+| Wrong typed views | 255 of 256 fail over 30 kinds, counting proved bridges only; the survivor changes the `else` literal of `if Array.isArray(ys)` in `listCount`, a branch that can't run; 3 new kinds: `some` for `every`, `every` for `some`, `Math.min` for `Math.max` |
 | Not proved | 15: 6 stop at a call with no lemma, 3 call something `dyn.mjs` turns into `stuck`, 3 are `while`/`for` loops, 3 test a nullable field for `null` or `undefined` |
 
 New since the last round: `/` (`halfIfEven`), `some` (`anyMultiple`), `every` (`allOdd`),
