@@ -272,6 +272,22 @@ theorem rel_isArray_opt {α β δ : Type} [CRep α] {t : Result β} {o : Option 
     obtain ⟨l, vs, rfl, hl, _⟩ := hv
     exact rel_isArray_arr rfl hl H
 
+/-- `x === null` (or `=== undefined`) on an optional number whose missing value is that one. -/
+theorem bin_eqNul {o : Option Js.Num} {w nul : Val} {h : Heap}
+    (hw : crepOpt nul h o w) (hn : nul = .null ∨ nul = .undef) :
+    bin .eq w nul = pure (Val.bool o.isNone) := by
+  cases o with
+  | none => simp only [crepOpt_none] at hw; subst hw; rcases hn with rfl | rfl <;> rfl
+  | some x =>
+    simp only [crepOpt_some, crep_num] at hw; obtain ⟨y, rfl, _⟩ := hw
+    rcases hn with rfl | rfl <;> rfl
+
+theorem rel_eqNul {β δ : Type} {t : Result β} {o : Option Js.Num} {w nul : Val} {k : Val → M δ} {h Q}
+    (hw : crepOpt nul h o w) (hn : nul = .null ∨ nul = .undef)
+    (H : Rel t (k (.bool o.isNone)) h Q) : Rel t (bin .eq w nul >>= k) h Q := by
+  unfold Rel at *; intro r e
+  rw [bin_eqNul hw hn, dpure_bind]; exact H r e
+
 @[simp] theorem truthy_str {s : List Nat} : truthy (.str s) = decide (s ≠ []) := by
   cases s <;> rfl
 
@@ -924,6 +940,8 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_dneg numIs_num ?_; intro _ _)
   | (casesm ∃ _, _)
   | (with_reducible refine rel_trim ?_)
+  | (with_reducible refine rel_eqNul (by assumption) (by first | (left; rfl) | (right; rfl)) ?_)
+  | (rw [bin_eqNul (by assumption) (by first | (left; rfl) | (right; rfl))]; (try simp only [dpure_bind, spec_pure]))
   | (with_reducible refine rel_isArray_opt (by assumption) (by first | (left; rfl) | (right; rfl)) ?_)
   | (with_reducible subst_vars; refine rel_isArray_arr rfl (by assumption) ?_)
   | (with_reducible refine rel_isArray_nul (by first | (left; rfl) | (right; rfl) | assumption | (simp only [crep_none] at *; assumption)) ?_)
