@@ -98,8 +98,15 @@ and others, also after `?.`), `Number.isFinite` and the other `Number` tests, `N
 number, a boolean or a string, and `Array.isArray` of a value typed as an array, possibly
 `null` or `undefined`. `Number(s)` covers blank text and decimal integers with an optional
 sign; other text (fractions, exponents, `0x`, `Infinity`, `-0`) makes the view stop.
-`padStart` and `padEnd` stop past 2^20 units. `Object.keys`, `JSON.stringify` and regular
-expressions have no model yet.
+`padStart` and `padEnd` stop past 2^20 units. Arrays also have `at` (a negative index counts
+from the end), `lastIndexOf`, `findIndex`, `flat()` of an array of arrays and `flatMap` with a
+callback that returns an array; strings have `at` and `repeat`, which stops past 2^20 units.
+
+`Object.keys` is modelled in Core: a record keeps its keys in insertion order (a write to a key
+already there keeps its place), and keys JavaScript lists first (array indices), non-ASCII keys
+and repeated keys make Core stop. `spike/core/keyscheck.mjs` compares it with Node. The typed
+view still refuses `Object.keys`: an object can have keys its type doesn't list, so the type
+doesn't determine the result. `JSON.stringify` and regular expressions have no model yet.
 
 **What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
 timers), classes and methods, and `any` or `unknown`. `number` is a safe integer, so fractions are

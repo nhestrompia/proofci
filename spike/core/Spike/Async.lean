@@ -36,7 +36,7 @@ theorem stale_loses_first (b x y : Int)
     finalBalance (twice src_async_withdrawStale_segs x y [acct b 1, .array []] 40)
       = some (.num (F64.ofInt (b - y))) := by
   simp (disch := omega) [twice, finalBalance, acct, startAll, drain, execList, exec, eval, evalList, binary, readField,
-    Env.put, List.lookup, List.filter]
+    Env.put, List.lookup, List.filter, putField]
 
 set_option maxRecDepth 20000 in
 set_option maxHeartbeats 2000000 in
@@ -47,7 +47,7 @@ theorem safe_keeps_both (b x y : Int)
     finalBalance (twice src_async_withdrawSafe_segs x y [acct b 1, .array []] 40)
       = some (.num (F64.ofInt (b - x - y))) := by
   simp (disch := omega) [twice, finalBalance, acct, startAll, drain, execList, exec, eval, evalList, binary, readField,
-    Env.put, List.lookup, List.filter]
+    Env.put, List.lookup, List.filter, putField]
 
 #print axioms stale_loses_first
 #print axioms safe_keeps_both

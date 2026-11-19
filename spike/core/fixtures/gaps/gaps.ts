@@ -148,6 +148,36 @@ export function listCount(xs: string[] | undefined, ys: number[]): number {
   return (Array.isArray(xs) ? 1 : 0) + (Array.isArray(ys) ? 1 : 0);
 }
 
+export function lastTag(tags: string[]): number {
+  return tags.lastIndexOf("draft");
+}
+
+export function lastScore(scores: number[], i: number): number {
+  const s = scores.at(i);
+  return s === undefined ? 0 : s;
+}
+
+export function lastChar(s: string): string {
+  return s.at(-1) ?? "";
+}
+
+export function rule(width: number): string {
+  return "-".repeat(width);
+}
+
+export function allRows(rows: number[][]): number[] {
+  return rows.flat();
+}
+
+export function pairs(xs: number[]): number[] {
+  return xs.flatMap(x => [x, x * 2]);
+}
+
+export function firstNegative(xs: number[]): number {
+  return xs.findIndex(x => x < 0);
+}
+
+
 export interface Page<T> {
   items: T[];
   total: number;

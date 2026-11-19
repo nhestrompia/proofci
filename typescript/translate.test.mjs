@@ -1348,3 +1348,17 @@ test("library models: Number(), Array.isArray, padStart and padEnd", () => {
   rejects("export function f(a: { x: number }) { return Array.isArray(a); }", /typed as arrays/);
   rejects("export function f(a: string) { return a.padStart(2, \"0\", 1 as never); }", /arguments/);
 });
+
+test("library models: at, lastIndexOf, repeat, flat, flatMap and findIndex", () => {
+  emits("export function f(a: string[]): number { return a.lastIndexOf(\"x\"); }", "Js.lastIndexOf a");
+  emits("export function f(a: number[], i: number): number | undefined { return a.at(i); }", "Js.atRel a i");
+  emits("export function f(a: string, i: number): string | undefined { return a.at(i); }", "Js.strAt a i");
+  emits("export function f(a: string, n: number): string { return a.repeat(n); }", "Js.strRepeat a n");
+  emits("export function f(a: number[][]): number[] { return a.flat(); }", "Js.flat a");
+  emits("export function f(a: number[]): number[] { return a.flatMap(x => [x, x]); }", "Js.map", "Js.flat");
+  emits("export function f(a: number[]): number { return a.findIndex(x => x > 2); }", "Js.findIndex");
+  rejects("export function f(a: (number | null)[]): number | null | undefined { return a.at(0); }", /may hold/);
+  rejects("export function f(a: number[]): number[] { return a.flatMap(x => x + 1); }", /returns an array/);
+  rejects("export function f(a: number[]): number { return a.lastIndexOf(1, 2); }", /start index/);
+  rejects("export function f(a: number[][][]): number[] { return a.flat(2); }", /without a depth/);
+});

@@ -16,7 +16,7 @@ theorem counter_shares_state (n : Int) (h : Heap)
       | _ => none)
     = some (.array [.num (F64.ofInt (n + 1)), .num (F64.ofInt (n + 1 + 1)), .num (F64.ofInt (n + 1 + 1 + 10 + 1))]) := by
   simp (disch := omega) [run, execList, exec, eval, evalList, evalFields, binary, readField, Env.put, List.lookup,
-    List.filter, List.getElem?_append, List.getElem?_set, List.length_append, List.length_set]
+    List.filter, putField, List.getElem?_append, List.getElem?_set, List.length_append, List.length_set]
 
 /-- The class of an object picks the method, even from code inherited from a parent. -/
 example : (match run 60 prog src_features_overrideSeen [] [] with
