@@ -197,6 +197,9 @@ theorem SimE.exnName {p s ex} {e : Js.Exn} (h : SimE p s ex e) : SimE p s (.fiel
 theorem SimB.lit_true {p s} : SimB p s (.lit (.bool true)) True :=
   fun s₁ _ => ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, by simp [truthy]⟩
 
+theorem SimB.ofC {p s e P} [Decidable P] (h : SimC p s e P) : SimB p s e P :=
+  fun s₁ hs => let ⟨s₂, hev, hext⟩ := h s₁ hs; ⟨_, s₂, hev, hext, by simp [truthy]⟩
+
 macro_rules | `(tactic| s_field) => `(tactic| (apply SimE.exnMessage; sim'))
 macro_rules | `(tactic| s_field) => `(tactic| (apply SimE.exnName; sim'))
 macro_rules | `(tactic| simb) => `(tactic| exact SimB.lit_true)
@@ -549,5 +552,102 @@ theorem Cont.catch' {v} {r : AS} {hv} (hH : HRel opName ArgOK hv r.hist) {x h k 
   Cont.toCatch (hw _ ⟨List.prefix_refl _, fun y hy => by simp [Env.put, hy]⟩ ⟨v, by simp [Env.put], hrep⟩ hH)
 
 end Rel
+
+end Core.Async
+
+/-! ## The tactic
+
+`arun` walks Core's statements in order, reading the view's run (`hr`) alongside. It names the
+history relation `hH`, the oracle relation `hO`, and expects `opName` and `ArgOK` for the file. -/
+
+namespace Core.Async
+open Aeneas.Std Result
+
+syntax "a_args" : tactic
+syntax "a_view" : tactic
+syntax "a_thrown" : tactic
+syntax "a_ret" : tactic
+syntax "astep" : tactic
+syntax "arun" : tactic
+
+macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.zero rfl)
+macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.one (by sim) (fun h v r => ⟨h, v, rfl, r⟩))
+macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.two (by sim) (by sim) (fun h v w r₁ r₂ => ⟨h, v, w, rfl, r₁, r₂⟩))
+
+set_option hygiene false in
+macro_rules | `(tactic| a_view) => `(tactic| (try simp only [Js.Eff.liftM_ok_bind, Js.Eff.ite_run, Js.Eff.try_lift_ok,
+  Js.Eff.try_ite, Js.Eff.try_throw, Js.Eff.ite_bind, Js.Eff.throw_bind, Js.Eff.pure_bind_eff, ite_true, ite_false] at hr))
+
+set_option hygiene false in
+macro_rules | `(tactic| a_thrown) => `(tactic| first
+  | exact Cont.thrown_top ⟨hrep, hH⟩ _ trivial
+  | (repeat (apply Cont.toSkip trivial)
+     apply Cont.catch' opName ArgOK hH hrep
+     intro s' hu hV hH; carry hu; clear hu))
+
+set_option hygiene false in
+macro_rules | `(tactic| a_ret) => `(tactic| first
+  | (simp only [Js.Eff.lift_ok_run, ok.injEq, Prod.mk.injEq] at hr; obtain ⟨rfl, rfl⟩ := hr
+     exact AW.ret_top opName ArgOK hH (by sim))
+  | exact AW.ret_top opName ArgOK hH (by sim))
+
+set_option hygiene false in
+macro_rules | `(tactic| astep) => `(tactic| first
+  | apply AW.nil
+  | apply AW.pass
+  | apply AW.tryCatch
+  | (show AW _ _ _ _ (.block (.stmt (.set _ _) :: _) :: _) _
+     apply AW.set' opName ArgOK hH (by sim)
+     intro s' hu hV hH; carry hu; clear hu)
+  | (show AW _ _ _ _ (.block (.ret _ :: _) :: _) _
+     a_ret)
+  | (show AW _ _ _ _ (.block (.throw _ :: _) :: _) _
+     simp only [Js.Eff.throw_run, ok.injEq, Prod.mk.injEq] at hr; obtain ⟨rfl, rfl⟩ := hr
+     exact AW.throw_top opName ArgOK hH (by sim) trivial)
+  | (show AW _ _ _ _ (.block (.ite _ _ _ :: _) :: _) _
+     first
+     | (show AW _ _ _ _ (.block (.ite (.lit (.bool true)) _ _ :: _) :: _) _
+        apply AW.ite_pos opName ArgOK hH SimB.lit_true trivial
+        intro s' hu hH; carry hu; clear hu)
+     | (split at hr
+        rename_i hP
+        apply AW.ite_pos opName ArgOK hH (by first | simb | exact SimB.ofC (by simc) | exact SimB.ofC (SimC.eq_str (by sim) (by sim))) hP
+        intro s' hu hH; carry hu; clear hu; a_view
+        rotate_left
+        rename_i hP
+        apply AW.ite_neg opName ArgOK hH (by first | simb | exact SimB.ofC (by simc) | exact SimB.ofC (SimC.eq_str (by sim) (by sim))) hP
+        intro s' hu hH; carry hu; clear hu; a_view))
+  | (show AW _ _ _ _ (.block (.await _ _ _ :: _) :: _) _
+     first
+     | (rcases Js.Eff.bind_call hr with ⟨x, heq, hr⟩ | ⟨e, heq, rfl, rfl⟩ <;> first
+        | (apply AW.call_val opName ArgOK hO hH (by a_args) heq (by decide)
+           intro s' hu hV hH; carry hu; clear hu; a_view)
+        | (apply AW.call_drop opName ArgOK hO hH (by a_args) heq
+           intro s' hu hH; carry hu; clear hu; a_view)
+        | (apply AW.call_rej opName ArgOK hO hH (by a_args) heq
+           intro v s' hu hrep hH; carry hu; clear hu; a_thrown))
+     | (rcases Js.Eff.try_bind_call hr with ⟨x, heq, hr⟩ | ⟨e, heq, hr⟩ <;> first
+        | (apply AW.call_val opName ArgOK hO hH (by a_args) heq (by decide)
+           intro s' hu hV hH; carry hu; clear hu; a_view)
+        | (apply AW.call_drop opName ArgOK hO hH (by a_args) heq
+           intro s' hu hH; carry hu; clear hu; a_view)
+        | (apply AW.call_rej opName ArgOK hO hH (by a_args) heq
+           intro v s' hu hrep hH; carry hu; clear hu; a_view; a_thrown))
+     | (rcases Js.Eff.call_tail hr with ⟨x, heq, rfl, rfl⟩ | ⟨e, heq, rfl, rfl⟩ <;> first
+        | (apply AW.call_val opName ArgOK hO hH (by a_args) heq (by decide)
+           intro s' hu hV hH; carry hu; clear hu)
+        | (apply AW.call_drop opName ArgOK hO hH (by a_args) heq
+           intro s' hu hH; carry hu; clear hu)
+        | (apply AW.call_rej opName ArgOK hO hH (by a_args) heq
+           intro v s' hu hrep hH; carry hu; clear hu; a_thrown))
+     | (rcases Js.Eff.try_call_tail hr with ⟨x, heq, rfl, rfl⟩ | ⟨e, heq, hr⟩ <;> first
+        | (apply AW.call_val opName ArgOK hO hH (by a_args) heq (by decide)
+           intro s' hu hV hH; carry hu; clear hu)
+        | (apply AW.call_drop opName ArgOK hO hH (by a_args) heq
+           intro s' hu hH; carry hu; clear hu)
+        | (apply AW.call_rej opName ArgOK hO hH (by a_args) heq
+           intro v s' hu hrep hH; carry hu; clear hu; a_view; a_thrown))))
+
+macro_rules | `(tactic| arun) => `(tactic| (a_view; repeat (any_goals astep)))
 
 end Core.Async
