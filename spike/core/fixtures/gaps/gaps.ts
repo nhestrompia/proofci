@@ -261,3 +261,97 @@ export function firstKid(t: GapTree): string {
 export function treeSize(t: GapTree): number {
   return t.kids.map(k => treeSize(k)).reduce((a, b) => a + b, 1);
 }
+
+export type GapShape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+
+export function shapeSize(s: GapShape): number {
+  switch (s.kind) {
+    case "circle": return s.r * 2;
+    case "rect": return s.w + s.h;
+  }
+}
+
+export function shapeArea(s: GapShape): number {
+  switch (s.kind) {
+    case "circle":
+      return s.r * s.r;
+    default:
+      return s.w * s.h;
+  }
+}
+
+export function isRect(s: GapShape): boolean {
+  switch (s.kind) {
+    case "rect": return true;
+    default: return false;
+  }
+}
+
+export function circle(r: number): GapShape {
+  return { kind: "circle", r };
+}
+
+export type GapNode = { kind: "leaf"; weight: number } | { kind: "pair"; left: GapNode; right: GapNode };
+
+export function nodeWeight(n: GapNode): number {
+  switch (n.kind) {
+    case "leaf": return n.weight;
+    case "pair": return nodeWeight(n.left) + nodeWeight(n.right);
+  }
+}
+
+export function sumFour(a: number, b: number, c: number, d: number): number {
+  return a + b + c + d;
+}
+
+export function callFour(x: number): number {
+  return sumFour(x, x, 1, 2);
+}
+
+export function rotateTotal(list: GapItem | null, a: number, b: number, c: number): number {
+  if (list === null) return a + b + c;
+  return rotateTotal(list.next, b, c, a + list.value);
+}
+
+export function nextValue(item: GapItem): number {
+  if (item.next === null) return 0;
+  return item.next.value;
+}
+
+export type GapMove = { kind: "left"; by: number } | { kind: "right"; by: number };
+
+export function moveX(m: GapMove): number {
+  switch (m.kind) {
+    case "left": return 0 - m.by;
+    case "right": return m.by;
+  }
+}
+
+export function rectDiff(s: GapShape): number {
+  switch (s.kind) {
+    case "circle": return s.r;
+    case "rect": return s.w - s.h;
+  }
+}
+
+export type GapResult<T> = { kind: "ok"; value: T } | { kind: "err"; code: number };
+
+export function resultOr(r: GapResult<number>, d: number): number {
+  switch (r.kind) {
+    case "ok": return r.value;
+    case "err": return d + r.code;
+  }
+}
+
+export interface GapPt {
+  x: number;
+}
+
+export type GapPick = { kind: "one"; pt: GapPt } | { kind: "none" };
+
+export function pickX(p: GapPick): number {
+  switch (p.kind) {
+    case "one": return p.pt.x;
+    case "none": return 0;
+  }
+}
