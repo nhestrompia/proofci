@@ -15,6 +15,9 @@ const EDGES = [0, 1, -1, 2, -2, 3, 7, 10, -10, 100, 500, 1000, 9999, 10000, 1000
 
 const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&", " 42 ", "-7", "+3", "007", "-0", "1e3", "0x1F", "1.5", "9007199254740993"];
 
+// Code units for generated strings: ASCII, and halves of a surrogate pair that may or may not meet.
+const UNITS = ["a", "b", "x", "A", "Z", "0", "7", " ", "\t", "\n", "-", "_", ",", ";", ".", "é", "\ud83d", "\ude00", "😀"];
+
 // Every object of a class or library type the test makes gets its own number, which is also how the Lean
 // side names it (`Js.Handle.mk n`). The same number is the same object.
 let handles = 0;
@@ -52,7 +55,7 @@ export function generator(seed) {
       case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
       case "void": return undefined;
       case "generic": return number();
-      case "string": return pick(TEXTS);
+      case "string": return next() < 0.5 ? pick(TEXTS) : Array.from({ length: Math.floor(next() * 9) }, () => pick(UNITS)).join("");
       case "map": return new Map(Array.from({ length: Math.floor(next() * 5) }, () => [value(type.key), value(type.value)]));
       case "dict": return Object.fromEntries(Array.from({ length: Math.floor(next() * 5) }, () => [pick(KEYS), value(type.value)]));
       case "set": return new Set(Array.from({ length: Math.floor(next() * 5) }, () => value(type.item)));
