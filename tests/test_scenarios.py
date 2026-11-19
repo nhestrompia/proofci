@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "ledger"
 TS_EXAMPLE = ROOT / "examples" / "ts-bank"
 TS_ASYNC_EXAMPLE = ROOT / "examples" / "ts-async"
+TS_TREE_EXAMPLE = ROOT / "examples" / "ts-tree"
 GUARANTEES = ("fees/fee-capped", "fees/zero-amount", "transfer/conservation", "transfer/rejects-overdraft")
 V, U, X, S = "verified", "unproven", "unsupported", "contract-stale"
 
@@ -458,7 +459,8 @@ def run_scenario(name, out_dir=None):
     """Run one scenario. Returns a list of mismatches (empty when it passed)."""
     mutate, expected, expected_exit, *rest = SCENARIOS[name]
     options = rest[0] if rest else {}
-    example = TS_ASYNC_EXAMPLE if name.startswith("ts-async-") else TS_EXAMPLE if name.startswith("ts-") else EXAMPLE
+    example = (TS_ASYNC_EXAMPLE if name.startswith("ts-async-") else TS_TREE_EXAMPLE if name.startswith("ts-tree-")
+               else TS_EXAMPLE if name.startswith("ts-") else EXAMPLE)
     with tempfile.TemporaryDirectory() as tmp:
         base, head = Path(tmp) / "base", Path(tmp) / "head"
         shutil.copytree(example, base)
@@ -622,6 +624,7 @@ def ts_contract_weakened(head):
 BR_FEE, BR_TRANSFER, BR_SUM = (f"{TS_LEDGER}::{f}" for f in ("calculateFee", "transfer", "sumAmounts"))
 BR_ALL_PROVED = {BR_FEE: "proved", BR_TRANSFER: "proved", BR_SUM: "proved"}
 HOOKS = ROOT / "tests" / "fixtures"
+RECURSIVE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive.mjs")}
 RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_rare.mjs")}      # a view that is wrong for one input
 COMMON = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_common.mjs")}  # a view that is wrong for most inputs
 
@@ -629,6 +632,17 @@ COMMON = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_common.mjs")}  # a vie
 def require_bridge(checkout):
     with open(checkout / "proofci.yaml", "a") as manifest:
         manifest.write("\nrequire_bridge: true\n")
+
+
+TREE = "src/tree.ts"
+TREE_GUARANTEES = ("list/prepend-links", "total/empty-is-zero", "total/one-item", "size/leaf-is-one", "leaves/pair-of-numbers")
+TREE_FNS = [TREE + "::" + f for f in ("prepend", "total", "size", "leaves")]
+TREE_TESTED = {"functions": dict.fromkeys(TREE_FNS, "tested"),
+               "function_reasons": dict.fromkeys(TREE_FNS, "recursive types have no bridge yet")}
+
+
+def ts_tree_total_drops_the_head(head):
+    edit(head / TREE, "return list.value + total(list.next);", "return total(list.next);")
 
 
 def policy_requires_bridge(head):
@@ -700,6 +714,14 @@ SCENARIOS.update({
     "ts-fractional-fee": (ts_fractional_fee, {**ts_results(), TS_FEE: X}, 1),
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
+    # A recursive type is an inductive type in the view; the proofs hold, but no bridge covers them yet.
+    "ts-tree-baseline": (None, dict.fromkeys(TREE_GUARANTEES, V), 0, {
+        **TREE_TESTED, "summary": {"proved": 0, "tested": 4, "failed": 0}}),
+    "ts-tree-bridge-required": (policy_requires_bridge, dict.fromkeys(TREE_GUARANTEES, X), 1, TREE_TESTED),
+    "ts-tree-total-drops-the-head": (ts_tree_total_drops_the_head, {
+        **dict.fromkeys(TREE_GUARANTEES, V), "total/one-item": U}, 1),
+    "ts-tree-mistranslated-view-seen-by-node": (None, dict.fromkeys(TREE_GUARANTEES, X), 1, {
+        "env": RECURSIVE, "functions": {TREE + "::total": "failed"}}),
     "ts-async-baseline": (None, dict.fromkeys(ASYNC_GUARANTEES, V), 0, {
         "functions": {ASYNC_FN: "tested"}, "function_reasons": {ASYNC_FN: "no bridge for async code yet"},
         "summary": {"proved": 0, "tested": 1, "failed": 0}}),

@@ -1,0 +1,28 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: list
+    function: src/tree.ts::prepend
+    guarantees:
+      - id: prepend-links
+        theorem: prepend_links
+  - id: total
+    function: src/tree.ts::total
+    guarantees:
+      - id: empty-is-zero
+        theorem: total_empty
+      - id: one-item
+        theorem: total_one
+  - id: size
+    function: src/tree.ts::size
+    guarantees:
+      - id: leaf-is-one
+        theorem: size_leaf
+  - id: leaves
+    function: src/tree.ts::leaves
+    guarantees:
+      - id: pair-of-numbers
+        theorem: leaves_pair

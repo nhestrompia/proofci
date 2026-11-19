@@ -40,9 +40,9 @@ The report lists every function with its status and the reason, and a summary co
 
 Reasons for "tested, not proved" you will see: `no bridge for async code yet`; the function
 relies on an assumed outside call (there is no code to bridge); the generator doesn't cover a
-form the function uses (a handle, a recursive type, a form of loop the tactics don't handle
-yet); `the bridge proof did not finish in 120 seconds`; or `the bridge theorem did not check`
-with Lean's first error.
+form the function uses (a handle, a form of loop the tactics don't handle yet);
+`recursive types have no bridge yet`; `the bridge proof did not finish in 120 seconds`; or
+`the bridge theorem did not check` with Lean's first error.
 
 **A bridge that doesn't check is never called "failed".** The tactics stop with the same message
 (`STUCK`) when a function uses a form they don't cover yet and when the view is wrong, for
@@ -109,7 +109,7 @@ view still refuses `Object.keys`: an object can have keys its type doesn't list,
 doesn't determine the result. `JSON.stringify` and regular expressions have no model yet.
 
 **What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
-timers), classes and methods, recursive types, and `any` or `unknown`. `number` is a safe integer, so fractions are
+timers), classes and methods, and `any` or `unknown`. `number` is a safe integer, so fractions are
 out. Reading a member only an index signature allows, and a variable that might be read
 before it is assigned, are also `unsupported`. The check's proofs about your guarantees can
 use `%` (`Js.rem` has a step lemma). `%` and `Math.floor/ceil/trunc(a / b)` also bridge to
@@ -418,13 +418,28 @@ is the declaration anyway); a function of an installed package keeps its publish
 
 ### Recursive types
 
-A type that contains itself (`interface Entry { name: string; parent: Entry | null; children: Entry[] }`)
-is cut where it recurs: in `async` code, the inner value is an opaque handle (`parent : Option Js.Handle`,
-`children : List Js.Handle`). A function that reads the first level is translated exactly, and a function
+A type that contains itself (a list `interface Item { value: number; next: Item | null }`, a tree
+`interface Tree { label: string; children: Tree[] }`, a JSON-like union whose variants hold `Json` or
+`Json[]`) is an inductive type in the view: `next : Option Item`, `children : List Tree`,
+`| pair (left : Json) (right : Json)`. Lean can't derive equality through `List` or `Option` of the type
+itself, so the view writes it out (`Tree.decEq_0`). A function that walks it is a recursive function, as
+any other (`partial_fixpoint`), including when it calls itself inside `map`, `filter`, `some`, `every`,
+`find` or `reduce`. The differential test builds values a few levels deep. See
+[`examples/ts-tree`](../examples/ts-tree).
+
+The view is finite, so a JavaScript value with a cycle has none; writes that could make one are already
+refused (`changed in place`). Refused with the reason: a type with no finite value
+(`interface R { next: R }`), one that recurs through another type or an anonymous object (`A` holds `B`
+holds `A`), and one that holds itself inside a `Map`, `Set` or tuple. There is no bridge for recursive types
+yet, so such a function is "tested, not proved" (`recursive types have no bridge yet`), and
+`require_bridge` refuses its guarantees.
+
+In `async` code a recursive type is still cut where it recurs: the inner value is an opaque handle
+(`parent : Option Js.Handle`, `children : List Js.Handle`). A function that reads the first level is translated exactly, and a function
 that looks deeper is refused where it looks: the inner value can only be tested for presence
 (`e.parent !== null`, `!e.parent`, `if (e.parent)`) or have its length read (`e.children.length`). It can't be
 read into, mapped over, assigned to a variable or built (a literal can write `null`, `undefined` or `[]`
-there). A recursive type in a synchronous function stays unsupported.
+there).
 
 ### What is supported
 
@@ -564,8 +579,9 @@ pure logic can usually be proved, and everything else becomes a listed assumptio
 The current design maps each TypeScript type to a Lean type, which is why each new
 type shape is a new feature. The plan is to add a second path that doesn't need that:
 
-1. **Finish the cheap wins.** Add recursive and generic types. Packages are already
-   installed for their types, and `unsupported` says how to fix the code.
+1. **Finish the cheap wins.** Add generic types and a bridge for recursive types (the view
+   already has them). Packages are already installed for their types, and `unsupported`
+   says how to fix the code.
 2. **Try a dynamic path.** Translate to a single Lean type of JavaScript values plus an
    explicit heap, so TypeScript types become preconditions. That one change covers
    unions, `unknown`, aliasing, classes and closures. The typed path stays as the fast

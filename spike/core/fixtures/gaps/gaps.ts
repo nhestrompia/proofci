@@ -214,3 +214,23 @@ export function repeatCount(n: number): number {
 export function numberPage(p: Page<number>): number {
   return pageSize(p) + p.total;
 }
+
+// Types that hold themselves (a linked list, a JSON-like union), and recursion over them.
+export interface GapItem {
+  value: number;
+  next: GapItem | null;
+}
+
+export function itemTotal(list: GapItem | null): number {
+  if (list === null) return 0;
+  return list.value + itemTotal(list.next);
+}
+
+export type GapJson = { kind: "num"; value: number } | { kind: "list"; items: GapJson[] };
+
+export function jsonLeaves(json: GapJson): number {
+  switch (json.kind) {
+    case "num": return 1;
+    case "list": return json.items.map(item => jsonLeaves(item)).reduce((a, b) => a + b, 0);
+  }
+}

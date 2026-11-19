@@ -99,7 +99,9 @@ test("a generic type is one structure with parameters, or one per use when it ca
   rejects("export function f<T>(a: { value: T }) { return a.value; }", /inline object type over a type parameter/);
   emits("type P<T> = { value: T; next: T | null }; export function f(a: P<string>) { return a.value; }", "next : (Option Js.Str)");
   emits("interface Box<T> { value: T } export function f(a: number): Box<number> { return { value: a }; }", "({ value := a } : (_root_.a.Box Js.Num))");
-  rejects("interface T<A> { next: T<A> | null } export function f(a: T<number>) { return 1; }", /recursive/);
+  emits("interface T<A> { value: A; next: T<A> | null } export function f(a: T<number>) { return 1; }", "next : (Option a.T_");
+  emits("interface T<A> { value: A; next: T<A> | null } export function f(a: { t: T<number> }): number { return a.t.value; }", "next : (Option a.T_");
+  emits("interface Box<A> { value: A } export function f(a: { b: Box<number> }): number { return a.b.value; }", "(_root_.a.Box Js.Num)");
 });
 
 test("data types from declaration files come in under the package's name", () => {
@@ -1160,9 +1162,55 @@ test("a recursive type is cut where it recurs: the inner value is an opaque hand
   asyncRejects(`${types}export async function f({ parent }: Entry, id: string): Promise<boolean> { await save(id, "x"); return parent === null; }`, /holds a value of the type it sits in/);
   asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Entry> { await save(id, e.name); return { name: id, parent: e, children: [] }; }`, /only `null`, `undefined` or `\[\]`/);
   asyncEmits(`${types}export async function f(id: string): Promise<Entry> { await save(id, "x"); return { name: id, parent: null, children: [] }; }`);
-  // Without `async` there is no bridge to carry a handle, so the type stays unsupported.
-  rejects("interface T<A> { next: T<A> | null } export function f(a: T<number>) { return 1; }", /recursive/);
-  rejects(`${types}export function f(e: Entry): boolean { return e.parent !== null; }`, /recursive/);
+});
+
+test("a recursive type outside async code is an inductive type, with its equality written out", () => {
+  const tree = "interface Tree { value: number; children: Tree[] }\n";
+  const result = run(`${tree}export function f(t: Tree): number {\n  return t.children.map(c => f(c)).reduce((a, b) => a + b, t.value);\n}`);
+  assert.deepEqual(result.failures, {});
+  assert.match(result.source, /structure a\.Tree where\n  value : Js\.Num\n  children : \(List a\.Tree\)\nderiving Repr\n/);
+  assert.match(result.source, /mutual\ndef a\.Tree\.decEq_0 : \(x y : _root_\.a\.Tree\) → Decidable \(x = y\)/);
+  assert.match(result.source, /def a\.Tree\.decEq_1 : \(x y : \(List _root_\.a\.Tree\)\)/);
+  assert.match(result.source, /instance a\.Tree\.instDecidableEq : DecidableEq a\.Tree := a\.Tree\.decEq_0/);
+  assert.match(result.source, /let tmp\d+ ← a\.f c[\s\S]*partial_fixpoint/);
+  const param = result.signatures["a.ts::f"].params[0];
+  assert.deepEqual(param.fields[1].type, { kind: "array", item: { kind: "recursive", lean: "a.Tree" } });
+  emits(`interface Node { value: number; next: Node | null }
+export function f(n: Node): number { return n.next === null ? n.value : n.value + f(n.next); }`, "next : (Option a.Node)", "partial_fixpoint");
+  emits(`interface Cell { head: number; tail?: Cell }
+export function f(c: Cell, v: number): Cell { return { head: v, tail: c }; }`, "tail : (Option a.Cell)");
+  emits(`type Json = { kind: "num"; value: number } | { kind: "arr"; items: Json[] } | { kind: "pair"; left: Json; right: Json };
+export function f(j: Json): number {
+  switch (j.kind) {
+    case "num": return 1;
+    case "arr": return j.items.reduce((n, x) => n + f(x), 1);
+    case "pair": return f(j.left) + f(j.right);
+  }
+}`, "| pair (left : a.Json) (right : a.Json)", "| .num .., .arr .. => isFalse", "| .pair a0 a1, .pair b0 b1 =>");
+  emits(`interface Entry { name: string; parent: Entry | null; children: Entry[] }
+export function f(e: Entry): string { return e.parent === null ? e.name : f(e.parent); }`, "parent : (Option a.Entry)");
+});
+
+test("a recursive type is refused where its Lean type would be empty or would need a mutual block", () => {
+  rejects("interface R { next: R } export function f(r: R) { return 1; }", /no finite value/);
+  rejects(`type E = { kind: "add"; left: E; right: E } | { kind: "neg"; inner: E };
+export function f(e: E) { return 1; }`, /no finite value/);
+  rejects("interface A { b: B | null } interface B { a: A } export function f(a: A) { return 1; }", /recurs through another type/);
+  rejects("interface T { kids: { node: T }[] } export function f(t: T) { return 1; }", /recurs through another type/);
+  rejects("interface T { kids: Map<string, T> } export function f(t: T) { return 1; }", /holds itself inside/);
+  rejects("interface T { pair: [T, number] | null } export function f(t: T) { return 1; }", /not supported/);
+  rejects("interface T { kids: Set<T> } export function f(t: T) { return 1; }", /can be keys/);
+  // A Lean value is finite: writes that could tie a JavaScript value into a cycle are refused.
+  rejects(`interface Item { value: number; next: Item | null }
+export function f(list: Item | null, value: number): Item {
+  const item: Item = { value, next: list };
+  if (value === 4242) item.next = item;
+  return item;
+}`, /changed in place/);
+  rejects("interface Item { value: number; next: Item | null } export function f(list: Item): Item { list.next = list; return list; }", /changed in place/);
+  // Lean equality is structural; JavaScript compares objects by identity, also inside a union.
+  rejects("interface Item { value: number; next: Item | null } export function f(xs: (Item | null)[], x: Item) { return xs.includes(x); }", /compares identity/);
+  rejects(`type J = { kind: "n"; v: number } | { kind: "l"; items: J[] }; export function f(xs: J[], x: J) { return xs.indexOf(x); }`, /compares identity/);
 });
 
 test("a read after an await in a loop counts as after", () => {

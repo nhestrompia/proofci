@@ -271,6 +271,94 @@ def reduce {α β} (f : β → α → Result β) (acc : β) : List α → Result
     let next ← f acc x
     reduce f next rest
 
+section Monotone
+open Lean.Order
+
+-- A recursive function that calls itself inside a callback is still a `partial_fixpoint`.
+@[partial_fixpoint_monotone]
+theorem monotone_map {γ : Type} [Lean.Order.PartialOrder γ] {α β} (f : γ → α → Result β) (xs : List α)
+    (hmono : monotone f) : monotone (fun x => map (f x) xs) := by
+  induction xs with
+  | nil => simp only [map]; apply Lean.Order.monotone_const
+  | cons x rest ih =>
+    simp only [map]
+    apply Aeneas.Std.bind_mono
+    · exact Lean.Order.monotone_apply x f hmono
+    · apply Lean.Order.monotone_of_monotone_apply; intro y
+      apply Aeneas.Std.bind_mono
+      · exact ih
+      · apply Lean.Order.monotone_const
+
+@[partial_fixpoint_monotone]
+theorem monotone_filter {γ : Type} [Lean.Order.PartialOrder γ] {α} (f : γ → α → Result Bool) (xs : List α)
+    (hmono : monotone f) : monotone (fun x => filter (f x) xs) := by
+  induction xs with
+  | nil => simp only [filter]; apply Lean.Order.monotone_const
+  | cons x rest ih =>
+    simp only [filter]
+    apply Aeneas.Std.bind_mono
+    · exact Lean.Order.monotone_apply x f hmono
+    · apply Lean.Order.monotone_of_monotone_apply; intro y
+      apply Aeneas.Std.bind_mono
+      · exact ih
+      · apply Lean.Order.monotone_const
+
+@[partial_fixpoint_monotone]
+theorem monotone_some_ {γ : Type} [Lean.Order.PartialOrder γ] {α} (f : γ → α → Result Bool) (xs : List α)
+    (hmono : monotone f) : monotone (fun x => some_ (f x) xs) := by
+  induction xs with
+  | nil => simp only [some_]; apply Lean.Order.monotone_const
+  | cons x rest ih =>
+    simp only [some_]
+    apply Aeneas.Std.bind_mono
+    · exact Lean.Order.monotone_apply x f hmono
+    · apply Lean.Order.monotone_of_monotone_apply; intro y
+      apply Lean.Order.monotone_ite
+      · apply Lean.Order.monotone_const
+      · exact ih
+
+@[partial_fixpoint_monotone]
+theorem monotone_every {γ : Type} [Lean.Order.PartialOrder γ] {α} (f : γ → α → Result Bool) (xs : List α)
+    (hmono : monotone f) : monotone (fun x => every (f x) xs) := by
+  induction xs with
+  | nil => simp only [every]; apply Lean.Order.monotone_const
+  | cons x rest ih =>
+    simp only [every]
+    apply Aeneas.Std.bind_mono
+    · exact Lean.Order.monotone_apply x f hmono
+    · apply Lean.Order.monotone_of_monotone_apply; intro y
+      apply Lean.Order.monotone_ite
+      · exact ih
+      · apply Lean.Order.monotone_const
+
+@[partial_fixpoint_monotone]
+theorem monotone_find {γ : Type} [Lean.Order.PartialOrder γ] {α} (f : γ → α → Result Bool) (xs : List α)
+    (hmono : monotone f) : monotone (fun x => find (f x) xs) := by
+  induction xs with
+  | nil => simp only [find]; apply Lean.Order.monotone_const
+  | cons x rest ih =>
+    simp only [find]
+    apply Aeneas.Std.bind_mono
+    · exact Lean.Order.monotone_apply x f hmono
+    · apply Lean.Order.monotone_of_monotone_apply; intro y
+      apply Lean.Order.monotone_ite
+      · apply Lean.Order.monotone_const
+      · exact ih
+
+@[partial_fixpoint_monotone]
+theorem monotone_reduce {γ : Type} [Lean.Order.PartialOrder γ] {α β} (f : γ → β → α → Result β) (acc : β)
+    (xs : List α) (hmono : monotone f) : monotone (fun x => reduce (f x) acc xs) := by
+  induction xs generalizing acc with
+  | nil => simp only [reduce]; apply Lean.Order.monotone_const
+  | cons x rest ih =>
+    simp only [reduce]
+    apply Aeneas.Std.bind_mono
+    · exact Lean.Order.monotone_apply x _ (Lean.Order.monotone_apply acc f hmono)
+    · apply Lean.Order.monotone_of_monotone_apply; intro y
+      exact ih y
+
+end Monotone
+
 @[simp] theorem map_nil {α β} (f : α → Result β) : map f [] = ok [] := rfl
 @[simp] theorem filter_nil {α} (f : α → Result Bool) : filter f [] = ok [] := rfl
 @[simp] theorem reduce_nil {α β} (f : β → α → Result β) (acc : β) : reduce f acc [] = ok acc := rfl

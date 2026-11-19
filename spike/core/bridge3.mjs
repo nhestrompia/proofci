@@ -240,12 +240,14 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
     if (t.kind === "array") scan(t.item);
   };
   const sigs = sources.map(s => ({ ...s, sig: view.signatures[`${s.file}::${s.name}`] }));
+  const recursive = t => t?.kind === "recursive" || (t && typeof t === "object" && Object.values(t).some(recursive));
+  if (sigs.some(({ sig }) => recursive(sig))) throw new Error("recursive types have no bridge yet");
   for (const { sig } of sigs) { sig.params.forEach(scan); scan(sig.result); }
   // A record met only inside a constant or a callback, when every field has an encoding.
   const encodable = t => t.kind === "record" ? t.fields.every(f => encodable(f.type))
     : t.kind === "optional" ? encodable(t.inner)
     : t.kind === "array" || t.kind === "set" ? encodable(t.item)
-    : !["map", "tagged"].includes(t.kind);
+    : !["map", "tagged", "recursive"].includes(t.kind);
   for (const t of view.records()) if (t.kind === "record" && encodable(t)) scan(t);
   const shapes = recordShapes(lean);
   const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : recordRules(t, shapes));

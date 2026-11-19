@@ -19,6 +19,12 @@ const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello Wor
 // side names it (`Js.Handle.mk n`). The same number is the same object.
 let handles = 0;
 
+// Whether a value of `type` can hold the type it sits in (`{ kind: "recursive" }` names that type).
+const recurs = type => type.kind === "recursive" || ["array", "set", "optional"].includes(type.kind) && recurs(type.item ?? type.inner)
+  || type.kind === "map" && recurs(type.value);
+// How deep a recursive value is generated: below this, a recursive field is empty where it can be.
+const DEPTH = 3;
+
 export function generator(seed) {
   let state = seed >>> 0;
   const next = () => {
@@ -36,6 +42,9 @@ export function generator(seed) {
     if (shape < 0.9) return Math.floor(next() * 200_000_001) - 100_000_000;
     return Math.floor((next() - 0.5) * 2 * MAX);
   };
+  const defs = new Map();
+  let depth = 0;
+  const deep = type => depth >= DEPTH && recurs(type);
   const value = type => {
     switch (type.kind) {
       case "number": return number();
@@ -46,13 +55,20 @@ export function generator(seed) {
       case "string": return pick(TEXTS);
       case "map": return new Map(Array.from({ length: Math.floor(next() * 5) }, () => [value(type.key), value(type.value)]));
       case "set": return new Set(Array.from({ length: Math.floor(next() * 5) }, () => value(type.item)));
-      case "array": return Array.from({ length: Math.floor(next() * 7) }, () => value(type.item));
-      case "optional": return next() < 0.3 ? (type.nothing === "null" ? null : undefined) : value(type.inner);
+      case "array": return Array.from({ length: deep(type.item) ? 0 : Math.floor(next() * (depth ? 4 : 7)) }, () => value(type.item));
+      case "optional": return next() < 0.3 || deep(type.inner) ? (type.nothing === "null" ? null : undefined) : value(type.inner);
+      case "recursive": {
+        depth += 1;
+        try { return value(defs.get(type.lean)); } finally { depth -= 1; }
+      }
       case "enum": return pick(type.tags).tag;
       case "handle": return { __proofciHandle: handles += 1, __class: type.name };
-      case "record": return Object.fromEntries(type.fields.map(f => [f.name, value(f.type)]));
+      case "record": defs.set(type.lean, type); return Object.fromEntries(type.fields.map(f => [f.name, value(f.type)]));
       case "tagged": {
-        const variant = pick(type.variants);
+        defs.set(type.lean, type);
+        // The translator refuses a recursive type with no variant that ends.
+        const ends = type.variants.filter(v => v.fields.every(f => f.type.kind !== "recursive"));
+        const variant = pick(depth >= DEPTH && ends.length ? ends : type.variants);
         return { kind: variant.tag, ...Object.fromEntries(variant.fields.map(f => [f.name, value(f.type)])) };
       }
       default: throw new Error(`no generator for ${type.kind}`);
@@ -62,7 +78,9 @@ export function generator(seed) {
 }
 
 // The Lean spelling of a JavaScript value, or undefined if it isn't of `type`.
-export function term(type, value) {
+const onPath = new Set();
+export function term(type, value, defs = new Map()) {
+  const at = (inner, v) => term(inner, v, defs);
   switch (type.kind) {
     case "number":
       if (!Number.isSafeInteger(value)) return undefined;
@@ -80,22 +98,22 @@ export function term(type, value) {
     }
     case "map": {
       if (!(value instanceof Map)) return undefined;
-      const parts = [...value].map(([k, v]) => [term(type.key, k), term(type.value, v)]);
+      const parts = [...value].map(([k, v]) => [at(type.key, k), at(type.value, v)]);
       return parts.flat().includes(undefined) ? undefined : `[${parts.map(([k, v]) => `(${k}, ${v})`).join(", ")}]`;
     }
     case "set": {
       if (!(value instanceof Set)) return undefined;
-      const parts = [...value].map(item => term(type.item, item));
+      const parts = [...value].map(item => at(type.item, item));
       return parts.includes(undefined) ? undefined : `[${parts.join(", ")}]`;
     }
     case "array": {
       if (!Array.isArray(value)) return undefined;
-      const parts = value.map(item => term(type.item, item));
+      const parts = value.map(item => at(type.item, item));
       return parts.includes(undefined) ? undefined : `[${parts.join(", ")}]`;
     }
     case "optional": {
       if (value === (type.nothing === "null" ? null : undefined) || (type.both && value == null)) return "none";
-      const inner = term(type.inner, value);
+      const inner = at(type.inner, value);
       return inner === undefined ? undefined : `(some ${inner})`;
     }
     case "generic":
@@ -106,17 +124,25 @@ export function term(type, value) {
       const tag = type.tags.find(t => t.tag === value);
       return tag ? `_root_.${type.lean}.${tag.lean}` : undefined;
     }
+    // A cycle has no Lean value.
+    case "recursive": {
+      if (onPath.has(value)) return undefined;
+      onPath.add(value);
+      try { return at(defs.get(type.lean), value); } finally { onPath.delete(value); }
+    }
     case "record": {
+      defs.set(type.lean, type);
       if (typeof value !== "object" || value === null) return undefined;
-      const parts = type.fields.map(f => term(f.type, value[f.name]));
+      const parts = type.fields.map(f => at(f.type, value[f.name]));
       if (parts.includes(undefined)) return undefined;
       return `(_root_.${type.lean}.mk ${parts.join(" ")})`;
     }
     case "tagged": {
+      defs.set(type.lean, type);
       if (typeof value !== "object" || value === null) return undefined;
       const variant = type.variants.find(v => v.tag === value.kind);
       if (!variant) return undefined;
-      const parts = variant.fields.map(f => term(f.type, value[f.name]));
+      const parts = variant.fields.map(f => at(f.type, value[f.name]));
       if (parts.includes(undefined)) return undefined;
       return `(_root_.${type.lean}.${variant.lean} ${parts.join(" ")})`;
     }
