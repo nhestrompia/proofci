@@ -726,10 +726,15 @@ export class Translator {
     this.describing.add(shape.lean);
     try {
       if (!shape.params) return shape.kind === "record" ? { kind: "record", lean: shape.lean, fields: fields(type) } : this.describeTagged(type, shape, fields, node);
+      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
+      if (shape.kind === "tagged") {
+        if (!shape.own?.isUnion()) throw this.fail(node, "a generic union over a type parameter has no description yet");
+        const declared = this.describeTagged(shape.own, shape, fields, node).variants;
+        return { kind: "tagged", lean: shape.lean, variants: declared.map(v => ({ ...v, fields: substitute(v.fields, by) })), params: shape.params, args: args.map(skeleton), declared };
+      }
       if (shape.kind !== "record") throw this.fail(node, "a generic union over a type parameter has no description yet");
       // A use is its declaration with the arguments put in, so it is cut where the declaration is.
       const declared = fields(shape.own);
-      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
       return { kind: "record", lean: shape.lean, fields: substitute(declared, by), params: shape.params, args: args.map(skeleton), declared };
     } finally {
       this.describing.delete(shape.lean);
