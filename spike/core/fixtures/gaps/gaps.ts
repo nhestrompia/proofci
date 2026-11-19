@@ -463,3 +463,29 @@ export function slotUndef(s: GapSlot<number | undefined>): boolean {
 export function slotOf(x: number | undefined): GapSlot<number | undefined> {
   return { v: x };
 }
+
+export function isEven(n: number): boolean {
+  if (n <= 0) return true;
+  return isOdd(n - 1);
+}
+
+export function isOdd(n: number): boolean {
+  if (n <= 0) return false;
+  return isEven(n - 1);
+}
+
+export type GapTerm =
+  | { kind: "num"; n: number }
+  | { kind: "list"; items: GapTerm[] };
+
+export function jsonSum(j: GapTerm): number {
+  switch (j.kind) {
+    case "num": return j.n;
+    case "list": return itemsSum(j.items, 0);
+  }
+}
+
+function itemsSum(xs: GapTerm[], i: number): number {
+  if (i >= xs.length) return 0;
+  return jsonSum(xs[i]) + itemsSum(xs, i + 1);
+}
