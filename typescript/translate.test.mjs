@@ -449,9 +449,14 @@ test("switch handles grouped cases, default and a final break", () => {
   rejects(`type S = "a" | "b"; export function f(s: S) { let r = 0; switch (s) { case "a": r = 1; case "b": r = 2; } return r; }`, /falling through|TypeScript error/);
 });
 
-test("self-recursion becomes a fixpoint, and mutual recursion is rejected", () => {
+test("self-recursion becomes a fixpoint, and mutual recursion one mutual block of them", () => {
   emits("export function f(n: number): number { return n <= 0 ? 0 : f(n - 1); }", "partial_fixpoint", "a.f tmp");
-  rejects(`function g(n: number): number { return f(n); } export function f(n: number): number { return g(n); }`, /mutual/);
+  const mutual = run(`function g(n: number): number { return n <= 0 ? 0 : f(n - 1); }
+    function h(n: number): number { return n <= 0 ? 1 : g(n - 1); }
+    export function f(n: number): number { return n <= 0 ? 2 : g(n - 1) + h(n - 1); }`);
+  assert.deepEqual(mutual.failures, {}, mutual.source);
+  assert.match(mutual.source, /mutual\n\ndef a\.g [^]*?partial_fixpoint\n\ndef a\.h [^]*?partial_fixpoint\n\ndef a\.f [^]*?partial_fixpoint\n\nend/);
+  assert.ok(!mutual.source.includes("_root_.a.g"), mutual.source);
 });
 
 test("bigint stays exact and division follows JavaScript", () => {
@@ -1184,21 +1189,32 @@ test("an opaque handle is never looked into, and a method nobody listed is not a
   refused(`export function f(m: Mailer): Mailer { return m; }`, /not supported yet/);
 });
 
-test("a recursive type is cut where it recurs: the inner value is an opaque handle", () => {
+test("a recursive type is an inductive type in async code too, whichever function declares it first", () => {
   const types = `interface Entry { name: string; parent: Entry | null; children: Entry[] }\n`;
+  const ok = asyncEmits(`${types}function depth(e: Entry): number { return e.parent === null ? 0 : 1 + depth(e.parent); }
+  export async function f(e: Entry, id: string): Promise<number> {
+    await save(id, e.name);
+    return e.parent === null ? depth(e) : e.parent.name.length;
+  }`);
+  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option a\.Entry\)\n  children : \(List a\.Entry\)/);
+  asyncRejects(`async function g(n: number): Promise<number> { return await f(n); }
+    export async function f(n: number): Promise<number> { await save("a", "b"); return await g(n); }`, /recursive `async`/);
+});
+
+test("a type that recurs through another type is cut there in async code: the inner value is an opaque handle", () => {
+  const types = `interface Entry { name: string; parent: Up | null; children: Up[] }\ninterface Up { e: Entry }\n`;
   const ok = asyncEmits(`${types}export async function f(e: Entry, id: string): Promise<boolean> {
     await save(id, e.name);
     return e.parent !== null || e.children.length > 0;
   }`);
-  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option Js\.Handle\)\n  children : \(List Js\.Handle\)/);
-  assert.deepEqual(ok.signatures["a.ts::f"].params[0].fields.map(f => f.type.kind), ["string", "optional", "array"]);
-  // The first level is all there is: reading into the inner value is refused, and so is comparing it.
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); return e.parent === null ? "" : e.parent.name; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<number> { await save(id, e.name); return e.children.filter(c => c.name !== "").length; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); const p = e.parent; return p === null ? "" : p.name; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f({ parent }: Entry, id: string): Promise<boolean> { await save(id, "x"); return parent === null; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Entry> { await save(id, e.name); return { name: id, parent: e, children: [] }; }`, /only `null`, `undefined` or `\[\]`/);
+  assert.match(ok.source, /structure a\.Up where\n  e : Js\.Handle/);
+  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option _root_\.a\.Up\)\n  children : \(List _root_\.a\.Up\)/);
+  // The first level is all there is: reading into the inner value is refused.
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); return e.parent === null ? "" : e.parent.e.name; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<number> { await save(id, e.name); return e.children.filter(c => c.e.name !== "").length; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Up> { await save(id, e.name); return { e }; }`, /only `null`, `undefined` or `\[\]`/);
   asyncEmits(`${types}export async function f(id: string): Promise<Entry> { await save(id, "x"); return { name: id, parent: null, children: [] }; }`);
+  rejects(`${types}export function f(e: Entry): boolean { return e.parent !== null; }`, /recurs through another type/);
 });
 
 test("a recursive type outside async code is an inductive type, with its equality written out", () => {

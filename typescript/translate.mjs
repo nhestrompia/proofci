@@ -583,16 +583,19 @@ export class Translator {
         // A type that contains itself is cut where it recurs: the inner value is an opaque handle, which a
         // function can pass around and compare with `null` but not look into. A function that reads only
         // as deep as the first level therefore means the same in the model as in JavaScript.
+        // One that holds itself directly is an inductive type in async code too, so its shape doesn't
+        // depend on which function declared it first.
+        const inner = this.declaring.at(-1);
+        if (inner?.key === key) {
+          inner.recursive = true;
+          return inner.lean;
+        }
         if (this.handlesAllowed()) {
           this.usesHandles = true;
           this.cutHit = true;
           return "Js.Handle";
         }
-        // Elsewhere it is an inductive type, if it holds itself directly rather than through another type.
-        const inner = this.declaring.at(-1);
-        if (inner?.key !== key) throw this.fail(declaration, "a type that recurs through another type is not supported yet");
-        inner.recursive = true;
-        return inner.lean;
+        throw this.fail(declaration, "a type that recurs through another type is not supported yet");
       }
       return known.lean;
     }
@@ -906,26 +909,29 @@ export class Translator {
     return undefined;
   }
 
+  // A call back into a function still being declared closes a cycle: every function on the stack from it
+  // up is one `mutual` block, emitted when its first member is done.
+  closeCycle(declaration) {
+    const members = this.current.slice(this.current.indexOf(declaration));
+    const groups = new Set(members.map(d => this.functions.get(d).group).filter(Boolean));
+    const group = { root: declaration, lines: [] };
+    for (const g of groups) {
+      group.lines.push(...g.lines);
+      if (this.current.indexOf(g.root) < this.current.indexOf(group.root)) group.root = g.root;
+    }
+    for (const [d, entry] of this.functions) if (members.includes(d) || groups.has(entry.group)) Object.assign(entry, { group, recursive: true });
+  }
+
   // Declares a function and everything it reaches, callees first.
   declareFunction(declaration) {
     const known = this.functions.get(declaration);
     if (known?.pending) {
       known.recursive = true;
-      // A call back into a function still being declared closes a cycle: every function on the stack from
-      // it up is one `mutual` block, emitted when its first member is done.
-      const at = this.current.indexOf(declaration);
-      if (at < this.current.length - 1) {
-        const members = this.current.slice(at);
-        const groups = new Set(members.map(d => this.functions.get(d).group).filter(Boolean));
-        const group = { root: declaration, lines: [] };
-        for (const g of groups) {
-          group.lines.push(...g.lines);
-          if (this.current.indexOf(g.root) < this.current.indexOf(group.root)) group.root = g.root;
-        }
-        for (const [d, entry] of this.functions) if (members.includes(d) || groups.has(entry.group)) Object.assign(entry, { group, recursive: true });
-      }
+      if (this.current.indexOf(declaration) < this.current.length - 1) this.closeCycle(declaration);
       return known.lean;
     }
+    // A done member of a `mutual` block still open is part of a cycle through the stack too.
+    if (known?.group && this.functions.get(known.group.root).pending) this.closeCycle(known.group.root);
     if (known) return known.lean;
     this.checkFile(declaration.getSourceFile());
     this.checkDeclaration(declaration);
