@@ -610,5 +610,5 @@ type shape is a new feature. The plan is to add a second path that doesn't need 
 4. **Prove the translation.** Generate a proof, per function, that the typed output
    matches the dynamic semantics, so the translator leaves the trusted base. The [spike](../spike/dynamic/README.md#step-4-the-typed-view-equals-the-dynamic-one)
    generates such proofs, stepping both sides together with one lemma per typed operation,
-   and they reject wrong typed views. It proves 6 of 83 typed functions so far; most stop at
-   integer division or a library call, which first need `IsInt`-based number relations.
+   and they reject wrong typed views. It proves 26 of 65 generated bridges (83 functions
+   tried); library calls and loops still need lemmas.
