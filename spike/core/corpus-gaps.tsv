@@ -71,4 +71,4 @@ gaps	gaps.ts	boxOrZero
 gaps	gaps.ts	boxIsUndef
 gaps	gaps.ts	resultNull
 gaps	gaps.ts	slotUndef
-gaps	gaps.ts	slotOfUndef
+gaps	gaps.ts	slotOf

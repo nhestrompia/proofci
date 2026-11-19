@@ -460,6 +460,6 @@ export function slotUndef(s: GapSlot<number | undefined>): boolean {
   return s.v === undefined;
 }
 
-export function slotOfUndef(): GapSlot<number | undefined> {
-  return { v: undefined };
+export function slotOf(x: number | undefined): GapSlot<number | undefined> {
+  return { v: x };
 }

@@ -107,6 +107,12 @@ test("a generic type is one structure with parameters, or one per use when it ca
   assert.deepEqual(tagged.failures, {}, tagged.source);
   const described = tagged.signatures["a.ts::f"].params[0];
   assert.deepEqual([described.kind, described.args, described.variants[0].fields[0].type], ["tagged", [{ kind: "number" }], { kind: "number" }]);
+  // A parameter the declaration already lets be missing: a nullable argument gets a copy with the flat type.
+  emits("interface S<T> { v?: T } export function f(s: S<number | undefined>) { return s.v === undefined; }", "structure a.S_", "v : (Option Js.Num)");
+  emits("interface S<T> { v?: T } export function f(s: S<number>) { return s.v === undefined; }", "(s : (_root_.a.S Js.Num))");
+  emits("interface S<T> { v?: T } export function f<T extends {}>(s: S<T>) { return s.v === undefined; }", "(s : (_root_.a.S T))");
+  rejects("interface S<T> { v?: T } export function f<T>(s: S<T>) { return s.v === undefined; }", /wrapped twice/);
+  rejects("interface S<T> { v: T | null } export function f<T>(s: S<T>) { return 1; }", /wrapped twice/);
   rejects(`type R<T extends { id: string }> = { kind: "ok"; value: T } | { kind: "err" };
     export function f<T extends { id: string }>(r: R<T>) { return 1; }`, /bound/);
 });
