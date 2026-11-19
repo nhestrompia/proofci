@@ -3,11 +3,28 @@
 // history, for every pair of oracles that answer related calls alike (Spike/ASim.lean).
 import { lower } from "./lower.mjs";
 import { translate } from "../../typescript/translate.mjs";
-import { leanType, plain } from "./bridge3.mjs";
+import { leanType, plain, recordShapes, enumRules, taggedRules, recordRules } from "./bridge3.mjs";
 
 const q = JSON.stringify;
-const BASIC = new Set(["string", "number", "boolean", "void"]);
-const encodable = t => BASIC.has(t.kind) || (t.kind === "optional" && encodable(t.inner)) || (t.kind === "array" && encodable(t.item));
+const BASIC = new Set(["string", "number", "boolean", "void", "bigint", "enum"]);
+const encodable = t => BASIC.has(t.kind) || (t.kind === "optional" && encodable(t.inner)) || (t.kind === "array" && encodable(t.item))
+  || (t.kind === "record" && !t.args && (t.declared ?? t.fields).every(f => encodable(f.type)))
+  || (t.kind === "tagged" && !t.args && t.variants.every(v => v.fields.every(f => encodable(f.type))));
+
+// The encodings of the records, enums and tagged unions a function's values and answers use, as bridge3 writes them.
+function typeRules(view, lean, roots) {
+  const types = new Map();
+  const scan = t => {
+    if (t.kind === "record" || t.kind === "enum") { if (types.has(t.lean)) return; if (t.kind === "record") (t.declared ?? t.fields).forEach(f => scan(f.type)); types.set(t.lean, t); }
+    if (t.kind === "tagged" && !types.has(t.lean)) { t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); types.set(t.lean, t); }
+    if (t.kind === "optional") scan(t.inner);
+    if (t.kind === "array") scan(t.item);
+  };
+  roots.forEach(scan);
+  for (const t of view.records()) if (t.kind === "record" && encodable(t)) scan(t);
+  const shapes = recordShapes(lean);
+  return [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : t.kind === "tagged" ? taggedRules(t, shapes) : recordRules(t, shapes)).join("\n");
+}
 
 // The arms of `def Arg`/`def Res` in the view's world block.
 function arms(source, name) {
@@ -57,6 +74,7 @@ export function generateAsync(root, target, paths, { viewSource, options } = {})
     if (e.params.length > 2) throw new Error(`an outside call with ${e.params.length} arguments has no bridge yet`);
     for (const t of [...e.params, e.returns]) if (!encodable(t)) throw new Error(`no async bridge for a ${t.kind} answer or argument yet`);
   }
+  const rules = typeRules(view, lean, [...sig.params, sig.result, ...[...used.values()].flatMap(e => [...e.params, e.returns])]);
   const argArms = arms(source, "Arg"), resArms = arms(source, "Res");
   const ids = new Map((options?.effects ?? []).map(e => [e.id.replace(/[^A-Za-z0-9_]/g, "_"), e.id]));
   const ops = [...argArms.keys()];
@@ -72,7 +90,7 @@ export function generateAsync(root, target, paths, { viewSource, options } = {})
   // relation accepts: the theorem then covers the histories where it never answered a value.
   const resRep = ops.map(o => {
     const e = used.get(o);
-    if (e) return `  | .${o} => inferInstanceAs (TyRep ${leanType(e.returns)})`;
+    if (e) return `  | .${o} => inferInstanceAs (TyRep ${plain(e.returns)})`;
     return `  | .${o} => ⟨fun _ _ _ => False, fun _ h => h⟩`;
   });
   const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
@@ -88,6 +106,8 @@ ${lean.replace(/^import.*\n/gm, "").trimEnd()}
 
 open Core Core.Async Gen TyRep
 
+${rules}
+
 def opName : ${W}.Op → String
 ${opName.join("\n")}
 
@@ -97,6 +117,7 @@ ${argOK.join("\n")}
 instance resRep : ∀ op : ${W}.Op, TyRep (${W}.Res op)
 ${resRep.join("\n")}
 
+set_option maxHeartbeats 4000000 in
 theorem ${key}_abridge {ov oc} (hO : ORel opName ArgOK ov oc) {hv hc h ${Vs.join(" ")}} ${typed} ${reps}
     (hHc : HRel opName ArgOK hv hc) {r hv'} (hr : ${sig.lean} ${P.join(" ")} ov hv = ok (r, hv')) (st : St) (hh : st.heap = h) :
     ∃ out, ARuns prog aprog oc ${key} [${Vs.join(", ")}] ⟨st, hc⟩ out ∧ ARes (opName := opName) (ArgOK := ArgOK) r hv' out := by

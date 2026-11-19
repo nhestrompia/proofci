@@ -43,7 +43,7 @@ const binders = (ts, { eq = false, late = false } = {}) => [...new Map(ts.flatMa
 export const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
 
 // Key lists of record literals, reading nested ones separately.
-function recordShapes(lean) {
+export function recordShapes(lean) {
   const shapes = new Set();
   for (let at = lean.indexOf(".record ["); at >= 0; at = lean.indexOf(".record [", at + 1)) {
     let i = at + 8, depth = 0, str = false;
@@ -154,7 +154,7 @@ macro_rules | \`(tactic| c_for) => \`(tactic| (
   (focus (intro q rest ${pattern(vars.length) === "_" ? "_" : "st"} s3 w y hf hR hw hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; apply enter; intro s4 hu he2 hh; have hvq := V.mk' (α := ${T}) he2 hh hw; have hb0 := base_of hh; have hfr : Fr s3 s4 ${W} := Fr.upd (Fr.refl _ _) hu (by decide); carry hu; clear hu he2 hh; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))${tail}`;
 }
 
-function enumRules(e) {
+export function enumRules(e) {
   const n = short(e.lean);
   const tag = `${n}_tag`;
   return `def ${tag} : ${e.lean} → List Nat
@@ -244,7 +244,7 @@ theorem ${n}_rep_iff {h : Heap} {a : ${T}} {v : Val} :
 
 // A union tagged by `kind`: an object whose `kind` is its variant's tag, with that variant's fields.
 // It may hold itself directly (another variant ends it), or through `T | null`, `T | undefined` or `T[]`.
-function taggedRules(given, shapes) {
+export function taggedRules(given, shapes) {
   const n = short(given.lean), tag = `${n}_tag`;
   const u = given.params ? { ...given, variants: given.declared, lean: `(${given.lean} ${given.params.join(" ")})` } : given;
   const T = u.lean;
@@ -356,7 +356,7 @@ macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${short(v.lean)}_$
     .replace(/^instance : /gm, `instance${binders} : `);
 }
 
-function recordRules(record, shapes) {
+export function recordRules(record, shapes) {
   const n = short(record.lean);
   const self = !record.params && JSON.stringify(record.fields).includes(`"kind":"recursive","lean":${q(record.lean)}`);
   const r = record.params ? { ...record, fields: record.declared, lean: `(${record.lean} ${record.params.join(" ")})` } : record;
