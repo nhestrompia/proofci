@@ -233,6 +233,15 @@ theorem nullish_of_crep_none {α} [CRep α] {h : Heap} {u : Val} (hu : crep h (n
 theorem not_nullish_of_crep_some {h : Heap} {u : Val} {x : Js.Num} (hu : crep h (some x) u) :
     nullish u = false := by obtain ⟨_, rfl, _⟩ := hu; rfl
 
+theorem rel_dtoNum {α δ : Type} {t : Result α} {b : Bool} {v : Val} {k : Val → M δ} {h Q}
+    (hv : v = .bool b) (H : ∀ u, NumIs u (Js.boolNum b).val → Rel t (k u) h Q) :
+    Rel t (toNum v >>= k) h Q := by
+  subst hv
+  have H' := H (num (if b then 1 else 0)) (by cases b <;> exact numIs_num)
+  unfold Rel at *; intro r e
+  show Spec (pure (num (if b then 1 else 0)) >>= k) h (Q r)
+  rw [dpure_bind]; exact H' r e
+
 open Core.F64 in
 theorem truthy_numIs {v : Val} {a : Int} (hv : NumIs v a) : truthy v = decide (a ≠ 0) := by
   obtain ⟨x, rfl, hx⟩ := hv
@@ -792,6 +801,7 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_div ?_ ?_ ?_ <;> rnum)
   | (refine rel_max ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu; try simp only [truthy_numIs hu]) | exact numIs_num | assumption)
   | (refine rel_dneg numIs_num ?_; intro _ _)
+  | (refine rel_dtoNum (by first | rfl | assumption) ?_; intro _ _)
   | (refine rel_arr (by simp [crep_num, crep_none, crep_some, crep_str, crep_bool, numIs_num]; try assumption) ?_; intro _ _)
   | (refine rel_len (by assumption) (by assumption) ?_; intro _ _ _ _)
   | (refine rel_slen ?_; intro _ _ _ _)

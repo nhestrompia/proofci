@@ -255,6 +255,7 @@ def isFinite : Val → Val
 /-- `Number(v)` on numbers, and on bigints it holds exactly. -/
 def toNum : Val → M Val
   | .num x => pure (.num x)
+  | .bool b => pure (num (if b then 1 else 0))
   | .big n => if n.natAbs ≤ 2 ^ 53 then pure (num n) else stuck
   | _ => stuck
 
