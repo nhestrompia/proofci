@@ -8,3 +8,6 @@ export async function getCount(id: string): Promise<number> {
 export async function logEvent(id: string): Promise<void> {
   throw new Error("outside");
 }
+export async function setScore(id: string, score: number): Promise<boolean> {
+  throw new Error("outside");
+}

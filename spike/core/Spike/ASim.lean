@@ -45,6 +45,22 @@ theorem try_call_tail {op : W.Op} {arg : W.Arg op} {k : Js.Exn → Js.Eff W (W.R
   | value x => rw [ho] at hr; simp at hr; exact .inl ⟨x, rfl, hr.1.symm, hr.2.symm⟩
   | reject e => rw [ho] at hr; simp at hr; exact .inr ⟨e, rfl, hr⟩
 
+theorem bind_lift {m : Result α} {f : α → Js.Eff W β} {o h r h'} (hr : ((liftM m : Js.Eff W α) >>= f) o h = ok (r, h')) :
+    ∃ a, m = ok a ∧ f a o h = ok (r, h') := by
+  rw [bind_run, lift_run] at hr
+  obtain ⟨⟨r₁, h₁⟩, h₂, h₃⟩ := Core.bind_eq hr
+  obtain ⟨a, hm, h₄⟩ := Core.bind_eq h₂
+  simp only [ok.injEq, Prod.mk.injEq] at h₄
+  obtain ⟨rfl, rfl⟩ := h₄
+  exact ⟨a, hm, h₃⟩
+
+theorem lift_tail {m : Result α} {o h r h'} (hr : (liftM m : Js.Eff W α) o h = ok (r, h')) :
+    ∃ a, m = ok a ∧ r = .fulfilled a ∧ h' = h := by
+  rw [lift_run] at hr
+  obtain ⟨a, hm, h₂⟩ := Core.bind_eq hr
+  simp only [ok.injEq, Prod.mk.injEq] at h₂
+  exact ⟨a, hm, h₂.1.symm, h₂.2.symm⟩
+
 theorem try_lift_ok (v : α) (k : Js.Exn → Js.Eff W α) : tryCatch (liftM (ok v : Result α)) k = liftM (ok v : Result α) := by
   funext o h; rw [tryCatch_run]; simp
 
@@ -196,6 +212,17 @@ theorem SimE.exnName {p s ex} {e : Js.Exn} (h : SimE p s ex e) : SimE p s (.fiel
 
 theorem SimB.lit_true {p s} : SimB p s (.lit (.bool true)) True :=
   fun s₁ _ => ⟨_, s₁, Evals.lit _ _ _, Ext.refl _, by simp [truthy]⟩
+
+theorem SimE.exnRecord {p s n m} {msg : Js.Str} (hm : SimE p s m msg) :
+    SimE p s (.record [("name", .lit (.str n)), ("message", m)]) (⟨n, msg⟩ : Js.Exn) := by
+  intro s₁ hs
+  obtain ⟨v, s₂, hev, hext, hrep⟩ := hm s₁ hs
+  have hv : v = .str msg := hrep
+  subst hv
+  exact ⟨_, _, Evals.record (EvalsF.cons (Evals.lit _ _ _) (EvalsF.cons hev (EvalsF.nil _ _))),
+    ⟨hext.1, hext.2.trans (List.prefix_append _ _)⟩, ⟨_, rfl, by simp⟩⟩
+
+macro_rules | `(tactic| s_rec) => `(tactic| (apply SimE.exnRecord; sim'))
 
 theorem SimB.ofC {p s e P} [Decidable P] (h : SimC p s e P) : SimB p s e P :=
   fun s₁ hs => let ⟨s₂, hev, hext⟩ := h s₁ hs; ⟨_, s₂, hev, hext, by simp [truthy]⟩
@@ -607,9 +634,13 @@ macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.zero rfl)
 macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.one (by sim) (fun h v r => ⟨h, v, rfl, r⟩))
 macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.two (by sim) (by sim) (fun h v w r₁ r₂ => ⟨h, v, w, rfl, r₁, r₂⟩))
 
+syntax "a_simp" : tactic
+syntax "a_lift" : tactic
 set_option hygiene false in
-macro_rules | `(tactic| a_view) => `(tactic| (try simp only [Js.Eff.liftM_ok_bind, Js.Eff.ite_run, Js.Eff.try_lift_ok,
-  Js.Eff.try_ite, Js.Eff.try_throw, Js.Eff.ite_bind, Js.Eff.throw_bind, Js.Eff.pure_bind_eff, ite_true, ite_false] at hr))
+macro_rules | `(tactic| a_simp) => `(tactic| simp only [Js.Eff.liftM_ok_bind, Js.Eff.ite_run, Js.Eff.try_lift_ok, Js.Eff.try_ite, Js.Eff.try_throw, Js.Eff.ite_bind, Js.Eff.throw_bind, Js.Eff.pure_bind_eff, ite_true, ite_false] at hr)
+set_option hygiene false in
+macro_rules | `(tactic| a_lift) => `(tactic| (rcases Js.Eff.bind_lift hr with ⟨_, _, hr⟩; try a_simp))
+macro_rules | `(tactic| a_view) => `(tactic| ((try a_simp); repeat a_lift))
 
 set_option hygiene false in
 macro_rules | `(tactic| a_thrown) => `(tactic| first
@@ -621,6 +652,8 @@ macro_rules | `(tactic| a_thrown) => `(tactic| first
 set_option hygiene false in
 macro_rules | `(tactic| a_ret) => `(tactic| first
   | (simp only [Js.Eff.lift_ok_run, ok.injEq, Prod.mk.injEq] at hr; obtain ⟨rfl, rfl⟩ := hr
+     exact AW.ret_top opName ArgOK hH (by sim))
+  | (rcases Js.Eff.lift_tail hr with ⟨_, _, rfl, rfl⟩
      exact AW.ret_top opName ArgOK hH (by sim))
   | exact AW.ret_top opName ArgOK hH (by sim))
 

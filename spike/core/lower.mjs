@@ -846,7 +846,12 @@ export function lower(root, targets, { paths, eff } = {}) {
         }
         return;
       }
-      if (ts.isVariableStatement(s) || ts.isReturnStatement(s) || ts.isExpressionStatement(s)) {
+      if (ts.isReturnStatement(s)) {
+        hoist(s, out);
+        out.push(`.ret (${s.expression ? E(s.expression) : ".lit .undef"})`);
+        return;
+      }
+      if (ts.isVariableStatement(s) || ts.isExpressionStatement(s)) {
         hoist(s, out);
         sync(s);
         return;
