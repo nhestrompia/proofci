@@ -8,7 +8,8 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const OUT = process.env.OUT ?? "/tmp/dyn-olean";
 const PROVED = {
   Unknown: ["parseChartGroupByFieldId"],
-  Fixtures: ["Counter.bump", "bumpBoth"],
+  Fixtures: ["Counter.bump", "bumpBoth", "colorIndexes"],
+  Alias: ["addSpaceToAnyEmptyMessages"],
   Bank: ["transfer"],
   Slideshow: ["SlideshowHistory.queue"],
 };
@@ -26,7 +27,7 @@ const KINDS = {
   "skip-write": [/\bsetField (\S+) ("[^"]*")/g, (_, o, k) => `(fun _ _ (_ : Val) => (pure () : M Unit)) ${o} ${k}`],
   "not-test": [/\bif truthy\b/g, "if !truthy"],
 };
-const LP = execFileSync("sh", ["-c", "cd /opt/proofci/spike/core && lake env printenv LEAN_PATH"]).toString().trim();
+const LP = execFileSync("sh", ["-c", `cd ${process.env.CORE ?? "/opt/proofci/spike/core"} && lake env printenv LEAN_PATH`]).toString().trim();
 
 const results = [];
 for (const [mod, names] of Object.entries(PROVED)) {

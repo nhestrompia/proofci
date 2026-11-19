@@ -3,7 +3,7 @@
 # (paths like Gen/Union.lean), then checks each argument. OUT holds the compiled modules.
 set -e
 OUT=${OUT:-/tmp/dyn-olean}
-LP=$(cd /opt/proofci/spike/core && lake env printenv LEAN_PATH)
+LP=$(cd "${CORE:-/opt/proofci/spike/core}" && lake env printenv LEAN_PATH)
 export LEAN_PATH="$LP:$OUT"
 cd "$(dirname "$0")"
 for f in Dyn.lean ${MODULES:-}; do
