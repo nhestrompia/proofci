@@ -313,6 +313,37 @@ theorem ${n}_rep_iff {h : Heap} {a : ${T}} {v : Val} :
   ${opts.length ? `(${opts.join(" <;> ")}) <;> ` : ""}(show ${n}_rep h _ v ↔ _; unfold ${n}_rep; ${lists ? `simp only [${n}_reps_iff]; ` : ""}exact Iff.rfl)`;
 }
 
+// How many leading parameters every call in a `mutual` block (`text`, members `names`) passes on
+// unchanged, as the same parameter of the caller: Lean's fixpoint induction fixes those.
+function fixedPrefix(text, names) {
+  const top = str => {
+    const out = [];
+    let depth = 0, cur = "";
+    for (const c of str) {
+      if (c === " " && depth === 0) { if (cur) out.push(cur); cur = ""; continue; }
+      if ("({[".includes(c)) depth++;
+      if (")}]".includes(c)) depth--;
+      cur += c;
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
+  const defs = text.split(/\n(?=def )/).filter(d => d.startsWith("def "));
+  const params = defs.map(d => top(d.slice(4, d.indexOf(" := ")).replace(/ : (Result|Proofci\.Effects\.Eff) [^\n]*$/, ""))
+    .slice(1).filter(t => t.startsWith("(")).map(t => { const m = t.match(/^\((\S+) : ([^]*)\)$/); return { name: m[1], type: m[2] }; }));
+  let k = Math.min(...params.map(p => p.length));
+  for (let j = 0; j < k; j++) if (params.some(p => p[j].type !== params[0][j].type)) { k = j; break; }
+  defs.forEach((d, di) => d.split("\n").forEach(line => names.forEach(n => {
+    const at = line.indexOf(`← ${n} `);
+    if (at < 0) return;
+    const args = top(line.slice(at + 2 + n.length)).filter(t => !/^\(\S+ := /.test(t));
+    let j = 0;
+    while (j < k && args[j] === params[di][j].name) j++;
+    k = j;
+  })));
+  return k;
+}
+
 // A union tagged by `kind`: an object whose `kind` is its variant's tag, with that variant's fields.
 // It may hold itself directly (another variant ends it), or through `T | null`, `T | undefined` or `T[]`.
 function taggedRules(given, shapes, group) {
@@ -567,8 +598,7 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
       const names = [...source.slice(block, blockEnd).matchAll(/^def (\S+) /gm)].map(m => m[1]);
       const members = ordered.filter(o => names.includes(o.sig.lean));
       if (members.length !== names.length) throw new Error("a mutually recursive function has a member with no signature to bridge");
-      if (members.some(o => binders([...o.sig.params, o.sig.result]))) throw new Error("generic mutually recursive functions have no bridge yet");
-      group = mutualGroups.get(block) ?? { size: names.length, parts: [] };
+      group = mutualGroups.get(block) ?? { size: names.length, parts: [], fixed: fixedPrefix(source.slice(block, blockEnd), names) };
       mutualGroups.set(block, group);
     }
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
@@ -587,7 +617,9 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const recursive = /\npartial_fixpoint\s*$/.test(defText);
     if (recursive && (n === 0 || n > 6)) throw new Error(`a recursive function with ${n} parameters has no bridge yet`);
     const late = binders([...sig.params, sig.result], { eq: true, late: true });
-    const adm = `${P.map(p => `apply Lean.Order.admissible_pi; intro ${p}; `).join("")}exact ${P.reduceRight((inner, p, i) => `Lean.Order.admissible_apply (fun _ (f : ${sig.params.slice(i + 1).map(t => `${plain(t)} → `).join("")}Result ${res}) => DWLP failOk (f ${P.slice(i + 1).join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()) ${p} (${inner})`, "DWLP.admissible failOk _ ()")}`;
+    // `Pr` are the parameters the motive takes; the others are fixed in the induction.
+    const admOf = (Pr, params) => `${Pr.map(p => `apply Lean.Order.admissible_pi; intro ${p}; `).join("")}exact ${Pr.reduceRight((inner, p, i) => `Lean.Order.admissible_apply (fun _ (f : ${params.slice(i + 1).map(t => `${plain(t)} → `).join("")}Result ${res}) => DWLP failOk (f ${Pr.slice(i + 1).join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()) ${p} (${inner})`, "DWLP.admissible failOk _ ()")}`;
+    const adm = admOf(P, sig.params);
     const indHead = !recursive ? "" : `def ${key}_Q ${tv} ${sig.params.map((t, i) => `(p${i} : ${plain(t)})`).join(" ")} (r : ${res}) : Prop :=
   ∀ h ${Vs.join(" ")}, ${sig.params.map((t, i) => `rep (α := ${leanType(t)}) h p${i} v${i} → `).join("")}${run}
 theorem ${key}_ind_sim ${late} {g : ${sig.params.map(t => `${plain(t)} → `).join("")}Result ${res}}
@@ -645,14 +677,22 @@ macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${key}_sim; ${sig.params
     // A member of a `mutual` block: each call to a member is bridged by the motive the fixpoint
     // induction gives for it, and every member's step is proved in each member's induction.
     if (group) {
+      // Lean fixes the leading parameters every call passes on unchanged: the motives take the rest.
+      const k = group.fixed, Pr = P.slice(k);
+      const all = (xs, body) => xs.length ? `∀ ${xs.join(" ")}, ${body}` : body;
+      const app = (f, xs) => [f, ...xs].join(" ");
       const sim = indHead
-        .replace(`(ih : ∀ ${P.join(" ")} r, g ${P.join(" ")} = ok r → ${key}_Q ${P.join(" ")} r)`, `(ih : ∀ ${P.join(" ")}, DWLP failOk (g ${P.join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ())`)
-        .replace(`    exact ih ${P.map(() => "_").join(" ")} _ hr _`, `    have := ih ${P.join(" ")}; rw [hr] at this; exact DWLP.ret_iff.mp this _`)
-        .replace(`theorem ${key}_ind_sim`, `unseal Aeneas.Std.Result in\ntheorem ${key}_ind_sim`);
-      group.parts.push({ key, sig, P, adm, defText, bridge: fix(recBridge) + call,
-        motive: `fun g => ∀ ${P.join(" ")}, DWLP failOk (g ${P.join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()`,
-        step: fix(`  · intros
-    rename_i ${P.join(" ")}
+        .replace(`{g : ${sig.params.map(t => `${plain(t)} → `).join("")}Result ${res}}`, `{g : ${sig.params.slice(k).map(t => `${plain(t)} → `).join("")}Result ${res}}`)
+        .replace(`\n    (ih : ∀ ${P.join(" ")} r, g ${P.join(" ")} = ok r → ${key}_Q ${P.join(" ")} r)`, "")
+        .replace(`(hr : g ${P.join(" ")} = ok r)`, `(ih : ${all(Pr, `DWLP failOk (${app("g", Pr)}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()`)})
+    (hr : ${app("g", Pr)} = ok r)`)
+        .replace(`    exact ih ${P.map(() => "_").join(" ")} _ hr _`, `    have := ${app("ih", Pr)}; rw [hr] at this; exact DWLP.ret_iff.mp this _`)
+        .replace(`theorem ${key}_ind_sim`, `unseal Aeneas.Std.Result in\ntheorem ${key}_ind_sim`)
+        .replace(`(apply ${key}_ind_sim (by assumption);`, `(apply ${key}_ind_sim (ih := by assumption);`);
+      group.parts.push({ key, sig, P, tv, k, adm: admOf(Pr, sig.params.slice(k)), defText, bridge: fix(recBridge) + call,
+        motive: `fun g => ${all(Pr, `DWLP failOk (${app("g", Pr)}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()`)}`,
+        step: fix(`  · intros${Pr.length ? `
+    rename_i ${Pr.join(" ")}` : ""}
     refine dwlp_of_ok fun r hr => ?_
     beta_reduce at hr
     intro h ${Vs.join(" ")} ${sig.params.map((_, i) => `h${i}`).join(" ")}
@@ -667,7 +707,8 @@ ${proof("    ")}`) });
       visit(group.parts[0]);
       if (motives.length !== group.parts.length) throw new Error("a mutual block whose members don't all call each other has no bridge yet");
       return pre + "\n" + group.parts.map(o => `unseal Aeneas.Std.Result in
-theorem ${o.key}_ind : ∀ ${o.P.join(" ")}, DWLP failOk (${o.sig.lean} ${o.P.join(" ")}) (fun r _ => ${o.key}_Q ${o.P.join(" ")} r) () := by
+theorem ${o.key}_ind ${o.tv} : ∀ ${o.P.map((p, i) => `(${p} : ${plain(o.sig.params[i])})`).join(" ")}, DWLP failOk (${o.sig.lean} ${o.P.join(" ")}) (fun r _ => ${o.key}_Q ${o.P.join(" ")} r) () := by${o.k ? `
+  intro ${o.P.slice(0, o.k).join(" ")}` : ""}
   apply ${o.sig.lean}.fixpoint_induct ${motives.map((m, j) => `(motive_${j + 1} := ${m.motive})`).join(" ")}
 ${motives.map(m => `  · ${m.adm}`).join("\n")}
 ${motives.map(m => m.step).join("\n")}

@@ -549,3 +549,13 @@ function fieldsCount(fs: GapField[], i: number): number {
   if (i >= fs.length) return 0;
   return docCount(fs[i].value) + fieldsCount(fs, i + 1);
 }
+
+export function evenFrom<T>(xs: T[], i: number): boolean {
+  if (i >= xs.length) return true;
+  return oddFrom(xs, i + 1);
+}
+
+function oddFrom<T>(xs: T[], i: number): boolean {
+  if (i >= xs.length) return false;
+  return evenFrom(xs, i + 1);
+}
