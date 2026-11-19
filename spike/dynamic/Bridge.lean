@@ -650,6 +650,62 @@ theorem rel_every {γ : Type} {f : Js.Num → Result Bool} {xs : List Js.Num} {v
   have H' := H t
   unfold Rel at H'; exact H' r er
 
+def rdStep (g : Val → Val → Val → M Val) (i : Nat) (x : Val) (acc : Val) : M (ForInStep Val) := do
+  return .yield (← g acc x (num i))
+
+theorem jsReduce_eq {o init : Val} {g : Val → Val → Val → M Val} :
+    jsReduce o g init = each o init (rdStep g) := rfl
+
+theorem rd_loop {f : Js.Num → Js.Num → Result Js.Num} {xs : List Js.Num} {vs : List Val} {l : Loc}
+    {g : Val → Val → Val → M Val} {h : Heap}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs)
+    (hg : ∀ (a x : Js.Num) z u (i : Nat), NumIs z a.val → NumIs u x.val →
+      Rel (f a x) (g z u (num i)) h (fun b w h' => h' = h ∧ crep h b w)) :
+    ∀ (k i : Nat) (a : Js.Num) (z : Val) (t : Js.Num), i + k = vs.length → NumIs z a.val →
+      Js.reduce f a (xs.drop i) = ok t → ∃ z', eachLoop l (rdStep g) k i z h = .ok z' h ∧ NumIs z' t.val
+  | 0, i, a, z, t, e, hz, ef => by
+    have hd : xs.drop i = [] := List.drop_eq_nil_of_le (by rw [hf.length_eq]; omega)
+    rw [hd] at ef
+    simp only [Js.reduce, ok_eq_ok] at ef; subst ef
+    exact ⟨z, rfl, hz⟩
+  | k + 1, i, a, z, t, e, hz, ef => by
+    have hi : i < vs.length := by omega
+    have hx : i < xs.length := hf.length_eq ▸ hi
+    rw [List.drop_eq_getElem_cons hx] at ef
+    simp only [Js.reduce] at ef
+    obtain ⟨b, eb, e2⟩ := bind_ok ef
+    have H' := hg a xs[i] z vs[i] i hz (f2_get hf hx hi)
+    unfold Rel at H'
+    have hs := H' b eb
+    obtain ⟨w, hm, hw⟩ : ∃ w, g z vs[i] (num i) h = .ok w h ∧ crep h b w := by
+      revert hs; unfold Spec; split
+      · rename_i w h'' e; rintro ⟨rfl, hw⟩; exact ⟨w, e, hw⟩
+      all_goals intro hs; exact hs.elim
+    have es : rdStep g i vs[i] z h = .ok (.yield w) h :=
+      ok_of_spec (by simp only [rdStep, spec_bind, spec_pure]; rw [spec_eq hm]; exact ⟨rfl, rfl⟩)
+    simp only [eachLoop, hl, List.getElem?_eq_getElem hi, es]
+    exact rd_loop hl hf hg k (i + 1) b w t (by omega) hw e2
+
+/-- `xs.reduce(f, init)` on numbers, with a callback that leaves the heap alone. -/
+theorem rel_reduce {γ : Type} {f : Js.Num → Js.Num → Result Js.Num} {xs : List Js.Num} {vs : List Val}
+    {l : Loc} {g : Val → Val → Val → M Val} {a : Js.Num} {w0 : Val} {G : Js.Num → Result γ}
+    {δ : Type} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs) (hw : NumIs w0 a.val)
+    (hg : ∀ (a x : Js.Num) z u (i : Nat), NumIs z a.val → NumIs u x.val →
+      Rel (f a x) (g z u (num i)) h (fun b w h' => h' = h ∧ crep h b w))
+    (H : ∀ t : Js.Num, ∀ u, NumIs u t.val → Rel (G t) (k u) h Q) :
+    Rel (Std.bind (Js.reduce f a xs) G) (jsReduce (.ref l) g w0 >>= k) h Q := by
+  unfold Rel; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  obtain ⟨z', hz, hzt⟩ := rd_loop hl hf hg vs.length 0 a w0 t (by simp) hw (by rw [List.drop_zero]; exact et)
+  rw [jsReduce_eq]
+  unfold each
+  simp only [spec_bind, spec_pure]
+  rw [spec_eq (items_arr hl)]
+  refine (spec_eq hz).2 ?_
+  have H' := H t z' hzt
+  unfold Rel at H'; exact H' r er
+
 /-- `for (const x of xs)` with one mutable variable, whose body leaves the heap alone. -/
 theorem rel_forOf {α β γ : Type} [CRep α] [CRep β]
     {B : List α × β → Result (ControlFlow (List α × β) β)} {xs : List α} {vs : List Val} {l : Loc}
@@ -744,6 +800,7 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_findIndex (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_some (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_every (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (refine rel_reduce (by assumption) (by assumption) (by first | exact numIs_num | assumption) ?_ ?_ <;> intros)
   | (refine rel_padStart ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
   | (refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
 
