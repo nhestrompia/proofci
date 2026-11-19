@@ -3,7 +3,7 @@
 // The proof is the same text for every function.
 //
 // usage: node bridge.mjs <list.tsv> <outDir>   (rows: repo, file, function; repos under CORPUS)
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { translate as typedView } from "../../typescript/translate.mjs";
 import { workspacePaths } from "../../typescript/paths.mjs";
@@ -91,6 +91,7 @@ theorem ${key}_dyn {h : Core.Heap} ${V.map((v) => `{${v} : Core.Val}`).join(" ")
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const [list, outDir] = process.argv.slice(2);
   mkdirSync(outDir, { recursive: true });
+  for (const f of readdirSync(outDir)) if (/^B\d+\.lean$/.test(f)) rmSync(path.join(outDir, f));
   const rows = readFileSync(list, "utf8").trim().split("\n").map((l) => l.split("\t"));
   const index = [];
   rows.forEach(([repo, file, fn], i) => {
