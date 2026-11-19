@@ -45,6 +45,7 @@ export function generator(seed) {
       case "generic": return number();
       case "string": return pick(TEXTS);
       case "map": return new Map(Array.from({ length: Math.floor(next() * 5) }, () => [value(type.key), value(type.value)]));
+      case "dict": return Object.fromEntries(Array.from({ length: Math.floor(next() * 5) }, () => [pick(KEYS), value(type.value)]));
       case "set": return new Set(Array.from({ length: Math.floor(next() * 5) }, () => value(type.item)));
       case "array": return Array.from({ length: Math.floor(next() * 7) }, () => value(type.item));
       case "optional": return next() < 0.3 ? (type.nothing === "null" ? null : undefined) : value(type.inner);
@@ -60,6 +61,12 @@ export function generator(seed) {
   };
   return value;
 }
+
+const KEYS = ["a", "b", "id", "name", "x1", "Key", "a b", "0", "12", "toString", "__proto__", "é"];
+const PROTO = new Set(["__proto__", "__class", "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable",
+  "toLocaleString", "toString", "valueOf", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"]);
+// The keys `Js.keyOk` allows in a record of dynamic keys.
+export const keyOk = k => k !== "" && /^[\x00-\x7f]*$/.test(k) && !/^[0-9]+$/.test(k) && !PROTO.has(k);
 
 // The Lean spelling of a JavaScript value, or undefined if it isn't of `type`.
 export function term(type, value) {
@@ -81,6 +88,13 @@ export function term(type, value) {
     case "map": {
       if (!(value instanceof Map)) return undefined;
       const parts = [...value].map(([k, v]) => [term(type.key, k), term(type.value, v)]);
+      return parts.flat().includes(undefined) ? undefined : `[${parts.map(([k, v]) => `(${k}, ${v})`).join(", ")}]`;
+    }
+    case "dict": {
+      if (typeof value !== "object" || value === null || Object.getPrototypeOf(value) !== Object.prototype) return undefined;
+      const entries = Object.entries(value);
+      if (Object.keys(value).length !== Reflect.ownKeys(value).length || entries.some(([k]) => !keyOk(k))) return undefined;
+      const parts = entries.map(([k, v]) => [term({ kind: "string" }, k), term(type.value, v)]);
       return parts.flat().includes(undefined) ? undefined : `[${parts.map(([k, v]) => `(${k}, ${v})`).join(", ")}]`;
     }
     case "set": {
@@ -243,6 +257,7 @@ function emptied(type, value, random) {
     case "array": return value.map(item => emptied(type.item, item, random));
     case "optional": return value == null ? value : emptied(type.inner, value, random);
     case "record": return Object.fromEntries(type.fields.map(f => [f.name, emptied(f.type, value[f.name], random)]));
+    case "dict": return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, emptied(type.value, v, random)]));
     default: return value;
   }
 }

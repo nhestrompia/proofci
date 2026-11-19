@@ -36,3 +36,9 @@ gaps	gaps.ts	firstOf
 gaps	gaps.ts	orElse
 gaps	gaps.ts	repeatCount
 gaps	gaps.ts	numberPage
+gaps	gaps.ts	scoreOf
+gaps	gaps.ts	isKnown
+gaps	gaps.ts	fieldNames
+gaps	gaps.ts	weights
+gaps	gaps.ts	ownerId
+gaps	gaps.ts	snapshot

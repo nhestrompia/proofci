@@ -93,6 +93,12 @@ export const repeated = (a: string, n: number): string => a.repeat(n % 6);
 export const flattened = (xs: number[], ys: number[]): number[] => [xs, ys, xs].flat();
 export const doubled = (xs: number[]): number[] => xs.flatMap(x => [x, x + 1]);
 export const firstBig = (xs: number[]): number => xs.findIndex(x => x > 3);
+export const scoreIn = (r: Record<string, number>, k: string): number => r[k] ?? -1;
+export const hasIn = (r: Record<string, number>, k: string): boolean => k in r;
+export const keysOf = (r: Record<string, number>): string[] => Object.keys(r);
+export const valuesOf = (r: Record<string, number>): number[] => Object.values(r);
+export function tally(xs: string[]): Record<string, number> { const out: Record<string, number> = {}; for (const x of xs) { out[x] = (out[x] ?? 0) + 1; } return out; }
+export function bumped(r: Record<string, number>, k: string): Record<string, number> { const c = { ...r }; c[k] = (c[k] ?? 0) + 1; return c; }
 export function counted(xs: string[]): Map<string, number> { const m = new Map<string, number>(); for (const x of xs) { const seen = m.get(x); if (seen === undefined) { m.set(x, 1); } else { m.set(x, seen + 1); } } m.delete("a"); return m; }
 export function unique(xs: number[]): Set<number> { const s = new Set<number>(); for (const x of xs) { s.add(x); } s.delete(0); return s; }
 export const mapHas = (m: Map<number, string>, k: number): boolean => m.has(k);

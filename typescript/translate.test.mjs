@@ -1301,6 +1301,23 @@ test("library models: Number(), Array.isArray, padStart and padEnd", () => {
   rejects("export function f(a: string) { return a.padStart(2, \"0\", 1 as never); }", /arguments/);
 });
 
+test("records of dynamic keys", () => {
+  emits("export function f(r: Record<string, number>, k: string): number { return r[k] ?? 0; }", "Js.recGet r k");
+  emits("export function f(r: { [k: string]: string }, k: string): boolean { return k in r; }", "Js.recHas r k");
+  emits("export function f(r: Record<string, number>): string[] { return Object.keys(r); }", "List.map Prod.fst r");
+  emits("export function f(r: Record<string, number>): number[] { return Object.values(r); }", "List.map Prod.snd r");
+  emits("export function f(r: Record<string, number>): number { return r.id ?? 0; }", "Js.recGet r (js!\"id\")");
+  emits("export function f(xs: string[]): Record<string, number> { const out: Record<string, number> = {}; for (const x of xs) { out[x] = 1; } return out; }", "Js.recSet");
+  emits("export function f(r: Record<string, number>, k: string): Record<string, number> { const c = { ...r }; c[k] = 1; return c; }", "Js.recSet c k");
+  rejects("export function f(r: Record<number, string>): number { return 0; }", /number or symbol keys/);
+  rejects("export function f(r: Record<string, number>): number { return Object.entries(r).length; }", /returns tuples/);
+  rejects("export function f(r: Record<string, number>): void { r.a = 1; }", /may be shared with the caller/);
+  rejects("export function f(r: Record<string, number>, k: number): number { return r[k] ?? 0; }", /string keys/);
+  rejects("export function f(r: Record<string, number>): Record<string, number> { return { a: 1, ...r }; }", /built empty/);
+  rejects("interface A { a: number }\nexport function f(x: A): boolean { return \"a\" in x; }", /`in` is only supported/);
+  rejects("interface A { a: number }\nexport function f(x: A): string[] { return Object.keys(x); }", /`Object.keys` is only supported/);
+});
+
 test("library models: at, lastIndexOf, repeat, flat, flatMap and findIndex", () => {
   emits("export function f(a: string[]): number { return a.lastIndexOf(\"x\"); }", "Js.lastIndexOf a");
   emits("export function f(a: number[], i: number): number | undefined { return a.at(i); }", "Js.atRel a i");

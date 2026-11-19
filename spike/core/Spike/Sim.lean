@@ -2481,6 +2481,21 @@ theorem SimE.recGet {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Na
     · exact ⟨.undef, h, by simp [primV, hl, hk, h2], List.prefix_refl _, by rw [h1]; rfl⟩
     · exact ⟨w, h, by simp [primV, hl, hk, h2], List.prefix_refl _, by rw [h1]; exact h3⟩
   · simp at h
+theorem SimE.recGet_some {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Nat} {v : α}
+    (hx : SimE p s x d) (hy : SimE p s y k) (h : Js.recGet d k = ok (Option.some v)) :
+    SimE p s (.prim .recGet [x, y]) v := by
+  unfold Js.recGet at h
+  split at h
+  · rename_i hok
+    simp only [ok.injEq] at h
+    have hk : recKey k = Option.some (String.ofList (k.map Char.ofNat)) := by simp [recKey, hok]
+    refine sim_prim (args2 hx hy) ?_
+    rintro h' _ ⟨_, _, rfl, ⟨l, fs, rfl, hl, hd, -⟩, rfl⟩
+    rcases dictRep_lookup hk hd with ⟨h1, h2⟩ | ⟨c, w, h1, h2, h3⟩
+    · rw [h1] at h; cases h
+    · rw [h1] at h; cases h
+      exact ⟨w, h', by simp [primV, hl, hk, h2], List.prefix_refl _, h3⟩
+  · simp at h
 theorem SimE.recHas {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Nat} {r : Bool}
     (hx : SimE p s x d) (hy : SimE p s y k) (h : Js.recHas d k = ok r) :
     SimE p s (.prim .recHas [x, y]) r := by

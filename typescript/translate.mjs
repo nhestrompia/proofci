@@ -327,6 +327,12 @@ export class Translator {
       if (!keyed) throw this.fail(node, "only numbers, strings, booleans and string-literal unions can be keys for now");
       return collection.kind === "Map" ? `(Js.Dict ${key} ${value})` : `(List ${key})`;
     }
+    const dict = this.dictRecord(type);
+    if (dict) return `(Js.Dict Js.Str ${this.type(dict, node)})`;
+    if ((type.flags & TypeFlags.Object) && !this.checker.isTupleType(type) && !this.checker.getPropertiesOfType(type).length
+      && !type.getCallSignatures().length && this.checker.getIndexInfosOfType(type).length) {
+      throw this.fail(node, "records with number or symbol keys are not supported");
+    }
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (this.bound(type)) return this.type(this.bound(type), node);
@@ -642,6 +648,13 @@ export class Translator {
     return { kind: name_.replace("Readonly", ""), args: this.checker.getTypeArguments(type) };
   }
 
+  // `Record<string, V>` or `{ [k: string]: V }` with no other members: the value type `V`.
+  dictRecord(type) {
+    if (!type || !(type.flags & ts.TypeFlags.Object) || this.checker.isArrayType(type) || this.checker.isTupleType(type) || this.collection(type)) return undefined;
+    if (this.checker.getPropertiesOfType(type).length || type.getCallSignatures().length || type.getConstructSignatures().length) return undefined;
+    return this.checker.getIndexInfoOfType(type, ts.IndexKind.String)?.type;
+  }
+
   // A description of a type, for generating and reading values of it.
   // Handles belong to async code, which has no bridge to Core to carry them through.
   handlesAllowed() {
@@ -654,7 +667,7 @@ export class Translator {
   handleOf(type) {
     const symbol = type.symbol;
     if (symbol?.name === "__type" || symbol?.name === "__object") return undefined; // written inline: a record
-    if (!symbol || !(type.flags & ts.TypeFlags.Object) || this.checker.isArrayType(type) || this.checker.isTupleType(type) || this.collection(type)) return undefined;
+    if (!symbol || !(type.flags & ts.TypeFlags.Object) || this.checker.isArrayType(type) || this.checker.isTupleType(type) || this.collection(type) || this.dictRecord(type)) return undefined;
     if (type.getCallSignatures().length || type.getConstructSignatures().length) return undefined; // a function, not an object
     if (["Promise", "PromiseLike", "ReadonlyArray", "ArrayLike", "Iterable", "IterableIterator", "Generator", "AsyncGenerator", "Function", "Symbol"].includes(symbol.name)) return undefined;
     const isClass = Boolean(symbol.flags & ts.SymbolFlags.Class);
@@ -687,6 +700,8 @@ export class Translator {
     const collection = this.collection(type);
     if (collection?.kind === "Map") return { kind: "map", key: this.describe(collection.args[0], node), value: this.describe(collection.args[1], node) };
     if (collection) return { kind: "set", item: this.describe(collection.args[0], node) };
+    const dict = this.dictRecord(type);
+    if (dict) return { kind: "dict", value: this.describe(dict, node) };
     const shape = this.shape(type);
     const fields = owner => this.fields(owner, node).map(f => {
       const described = this.describe(f.type, f.node);
@@ -1082,6 +1097,13 @@ export class Scope {
   isString(node) { return (this.typeOf(node).flags & ts.TypeFlags.StringLike) !== 0; }
 
   isCollection(node) { return Boolean(this.t.collection(this.typeOf(node))); }
+  dictItem(node) { return this.t.dictRecord(this.checker.getApparentType(this.typeOf(node))); }
+  isDict(node) { return Boolean(this.dictItem(node)); }
+
+  dictKey(node, env, lines) {
+    if (!this.isString(node)) throw this.t.fail(node, "a record of dynamic keys is only read and written with string keys");
+    return this.expression(node, env, lines);
+  }
 
   // Writing through a name is only safe if no other name can see the value, so
   // that a value in Lean behaves like the object in JavaScript. A changed object
@@ -1626,6 +1648,12 @@ export class Scope {
     const owner = unwrap(target.expression);
     const symbol = this.symbol(owner);
     const current = this.current(symbol, env);
+    if (this.isDict(owner)) {
+      const key = ts.isElementAccessExpression(target) ? this.dictKey(target.argumentExpression, env, lines) : this.text(target.name.text);
+      const value = this.convert(node.right, this.dictItem(owner), env, lines);
+      lines.push(`let ${this.rebind(symbol, env)} ← Js.recSet ${current} ${key} ${value}`);
+      return;
+    }
     if (ts.isElementAccessExpression(target)) {
       const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(owner)))[0];
       const value = this.convert(node.right, item, env, lines);
@@ -2285,6 +2313,12 @@ export class Scope {
   record(node, target, env, lines) {
     const type = this.nullable(target) ? this.checker.getNonNullableType(target) : target;
     this.t.type(type, node);
+    if (this.t.dictRecord(type)) {
+      if (!node.properties.length) return `([] : ${this.t.type(type, node)})`;
+      const [only] = node.properties;
+      if (node.properties.length === 1 && ts.isSpreadAssignment(only) && this.isDict(only.expression)) return this.expression(only.expression, env, lines);
+      throw this.t.fail(node, "a record of dynamic keys is only built empty (`{}`) or as a copy (`{ ...r }`)");
+    }
     const shape = this.t.shape(type);
     if (!shape) throw this.t.fail(node, "an object literal needs a declared type");
     const fields = new Map();
@@ -2354,6 +2388,11 @@ export class Scope {
     if (ts.isArrayLiteralExpression(node)) return this.arrayLiteral(node, this.typeOf(node), env, lines);
     if (ts.isElementAccessExpression(node)) {
       if (this.isString(node.expression)) return `(Js.charAt? ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
+      if (this.isDict(node.expression)) {
+        if (node.questionDotToken) throw this.t.fail(node, "`?.[]` on a record of dynamic keys is not supported yet");
+        const record = this.expression(node.expression, env, lines);
+        return this.bind(`Js.recGet ${record} ${this.dictKey(node.argumentExpression, env, lines)}`, lines);
+      }
       if (!this.isArray(node.expression)) throw this.t.fail(node, "`[]` is only supported on arrays for now");
       if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
       const read = `Js.at_ ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)}`;
@@ -2607,6 +2646,7 @@ export class Scope {
     this.refuseHandle(object, node);
     if (type.isUnion()) throw this.t.fail(node, "reading a field of a union outside a `switch` is not supported yet");
     const owner = this.checker.getApparentType(type);
+    if (this.isDict(object)) return this.bind(`Js.recGet ${this.expression(object, env, lines)} ${this.text(node.name.text)}`, lines);
     if (!this.checker.getPropertyOfType(owner, node.name.text) && this.checker.getIndexInfosOfType(owner).length) {
       throw this.t.fail(node, `\`.${node.name.text}\` is read through an index signature, which is not supported yet`);
     }
@@ -2728,6 +2768,15 @@ export class Scope {
     }
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Math" && !this.isLocal(callee.expression)) {
       return this.math(callee.name.text, node, env, lines);
+    }
+    if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Object" && !this.isLocal(callee.expression)
+      && ["keys", "values", "entries"].includes(callee.name.text)) {
+      const method = callee.name.text;
+      if (node.arguments.length !== 1 || !this.isDict(node.arguments[0])) {
+        throw this.t.fail(node, `\`Object.${method}\` is only supported on records of dynamic keys (\`Record<string, V>\`)`);
+      }
+      if (method === "entries") throw this.t.fail(node, "`Object.entries` returns tuples, which are not supported yet");
+      return `(List.map Prod.${method === "keys" ? "fst" : "snd"} ${this.expression(node.arguments[0], env, lines)})`;
     }
     const builtin = this.builtin(callee, node, env, lines);
     if (builtin) return builtin;
@@ -3202,6 +3251,11 @@ export class Scope {
     }
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
+      if (op === ts.SyntaxKind.InKeyword) {
+        if (!this.isDict(node.right)) throw this.t.fail(node, "`in` is only supported on records of dynamic keys (`Record<string, V>`)");
+        const key = this.dictKey(node.left, env, lines);
+        return `${this.bind(`Js.recHas ${this.expression(node.right, env, lines)} ${key}`, lines)} = true`;
+      }
       if (ORDER[op]) {
         if (this.isString(node.left) && this.isString(node.right)) {
           const a = this.expression(node.left, env, lines), b = this.expression(node.right, env, lines);
