@@ -559,7 +559,6 @@ function oddFrom<T>(xs: T[], i: number): boolean {
   if (i >= xs.length) return false;
   return evenFrom(xs, i + 1);
 }
-||||||| 045840d
 
 
 
