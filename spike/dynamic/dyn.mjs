@@ -21,7 +21,7 @@ export class Unsupported extends Error {
 const OPS = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "===": "eq", "!==": "ne" };
 const COMPOUND = { "+=": "add", "-=": "sub", "*=": "mul" };
 const METHODS = new Set(["padStart", "startsWith", "endsWith", "includes", "trim", "toLowerCase", "toUpperCase", "slice", "indexOf",
-  "lastIndexOf", "charAt", "charCodeAt", "split", "join", "concat", "replaceAll", "substring"]);
+  "lastIndexOf", "charAt", "charCodeAt", "split", "join", "concat", "replaceAll", "substring", "padEnd", "repeat", "at", "flat"]);
 const HOFS = { map: "jsMap", filter: "jsFilter", forEach: "jsForEach", some: "jsSome", every: "jsEvery", find: "jsFind", findIndex: "jsFindIndex" };
 
 const lit = (s) => {
@@ -513,7 +513,7 @@ export class Dyn {
     if (HOFS[m] && as.length === 1) body = `${HOFS[m]} ${t} ${this.callback(as[0], sc, 2)}`;
     else if (m === "reduce" && as.length === 2) body = `jsReduce ${t} ${this.callback(as[0], sc, 3)} ${v(this.expr(as[1], sc))}`;
     else if (m === "push" && as.length === 1) body = `push ${t} ${v(this.expr(as[0], sc))}`;
-    else if (METHODS.has(m)) body = `method .${m} ${t} [${as.map((a) => v(this.expr(a, sc))).join(", ")}]`;
+    else if (METHODS.has(m)) body = `method .${["at", "repeat"].includes(m) ? `«${m}»` : m} ${t} [${as.map((a) => v(this.expr(a, sc))).join(", ")}]`;
     else body = "(stuck : M Val)";
     for (const c of owners) {
       const meth = this.classes.get(c);

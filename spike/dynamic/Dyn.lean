@@ -393,7 +393,7 @@ def jsReduce (o : Val) (f : Val → Val → Val → M Val) (init : Val) : M Val 
 
 inductive Meth where
   | startsWith | endsWith | includes | trim | toLowerCase | toUpperCase | slice | indexOf
-  | lastIndexOf | charAt | charCodeAt | split | join | concat | replaceAll | substring | padStart
+  | lastIndexOf | charAt | charCodeAt | split | join | concat | replaceAll | substring | padStart | padEnd | «repeat» | «at» | flat
   deriving DecidableEq, Repr
 
 def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args with
@@ -405,6 +405,12 @@ def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args wi
   | .str _, .toUpperCase, [] => prim .toUpper [o]
   | .str _, .padStart, [n] => prim .padStart [o, n, .str [32]]
   | .str _, .padStart, [n, f] => prim .padStart [o, n, f]
+  | .str _, .padEnd, [n] => prim .padEnd [o, n, .str [32]]
+  | .str _, .padEnd, [n, f] => prim .padEnd [o, n, f]
+  | .str _, .«repeat», [n] => prim .strRepeat [o, n]
+  | .str _, .«at», [n] => prim .atRel [o, n]
+  | .ref _, .«at», [n] => prim .atRel [o, n]
+  | .ref _, .flat, [] => prim .flat [o]
   | .str _, .slice, [a] => prim .sliceFrom [o, a]
   | .str _, .slice, [a, b] => prim .slice [o, a, b]
   | .str _, .indexOf, [a] => prim .strIndexOf [o, a]
