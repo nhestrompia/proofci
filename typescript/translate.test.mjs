@@ -1254,8 +1254,9 @@ test("a recursive type is an inductive type in async code too, whichever functio
     return e.parent === null ? depth(e) : e.parent.name.length;
   }`);
   assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option a\.Entry\)\n  children : \(List a\.Entry\)/);
-  asyncRejects(`async function g(n: number): Promise<number> { return await f(n); }
-    export async function f(n: number): Promise<number> { await save("a", "b"); return await g(n); }`, /recursive `async`/);
+  const rec = asyncEmits(`async function g(n: number): Promise<number> { return n <= 0 ? 0 : await f(n - 1); }
+    export async function f(n: number): Promise<number> { await save("a", "b"); return await g(n); }`, "mutual", "partial_fixpoint");
+  assert.match(rec.source, /def a\.g [^]*: Proofci\.Effects\.Eff Js\.Num := do[^]*partial_fixpoint/);
 });
 
 test("a type that recurs through an inline object type is cut there in async code: the inner value is an opaque handle", () => {

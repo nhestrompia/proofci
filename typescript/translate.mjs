@@ -997,8 +997,6 @@ export class Translator {
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
-    if (isAsync && entry.recursive) throw this.fail(fn, "a recursive `async` function is not supported yet");
-    if (entry.group && [...this.functions.values()].some(e => e.group === entry.group && e.async)) throw this.fail(fn, "a recursive `async` function is not supported yet");
     const monad = isAsync ? `Proofci.Effects.Eff ${result}` : `Result ${result}`;
     const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
