@@ -35,6 +35,7 @@ const regexOf = (checker, node) => {
   if (ts.isIdentifier(e)) {
     const d = checker.getSymbolAtLocation(e)?.valueDeclaration;
     e = d && ts.isVariableDeclaration(d) ? d.initializer : undefined;
+    while (e && ts.isParenthesizedExpression(e)) e = e.expression;
   }
   if (!e || !ts.isRegularExpressionLiteral(e)) return undefined;
   const cut = e.text.lastIndexOf("/");
