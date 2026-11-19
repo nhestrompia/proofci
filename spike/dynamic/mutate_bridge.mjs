@@ -22,6 +22,10 @@ const KINDS = {
   "true-false": [/\btrue\b/g, "false"],
   "false-true": [/\bfalse\b/g, "true"],
   "none-some": [/Result\.ok none/g, "Result.ok (some default)"],
+  "swap-args": [/\bJs\.(sub|div|floorDiv) (\S+) (\S+)/g, (_, op, a, b) => `Js.${op} ${b} ${a}`],
+  "drop-op": [/\bJs\.(add|sub|mul) (\S+) (\S+)/g, (_, op, a) => `Result.ok ${a}`],
+  "swap-field": [/«from»|«to»/g, (m) => (m === "«from»" ? "«to»" : "«from»")],
+  "string": [/js!"([^"]*)"/g, (_, t) => `js!"${t}x"`],
 };
 const [dir, ...only] = process.argv.slice(2);
 const index = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));

@@ -77,11 +77,10 @@ theorem ${key}_dyn {h : Core.Heap} ${V.map((v) => `{${v} : Core.Val}`).join(" ")
   ${sig.params.length ? `try simp only [${crepNames}] at ${sig.params.map((_, i) => `h${i}`).join(" ")}
   try casesm* ∃ _, _, _ ∧ _
   try subst_vars
-  ` : ""}unfold ${sig.lean} at hr
-  unfold D.${fn}
-  tsteps
-  all_goals dsteps
-  all_goals first | omega | (refine ⟨by first | exact List.prefix_refl _ | exact List.prefix_append _ _, ?_⟩; simp [${crepNames}, List.lookup, *])
+  ` : ""}refine rel_intro (Q := fun r v h' => h <+: h' ∧ ${crepOf(sig.result, "r", "v", "h'")}) ?_ hr
+  unfold ${sig.lean} D.${fn}
+  rsteps
+  all_goals first | omega | (exfalso; omega) | (refine ⟨by first | exact List.prefix_refl _ | exact List.prefix_append _ _, ?_⟩; first | rfl | simp [${crepNames}, List.lookup, *])
 
 #print axioms ${key}_dyn
 `;
