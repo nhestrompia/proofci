@@ -452,6 +452,8 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const defAt = source.indexOf(`def ${sig.lean} `);
     if (defAt < 0) throw new Error(`the view has no definition of ${sig.lean}`);
     const defText = source.slice(defAt, source.indexOf("\n\n", defAt) < 0 ? undefined : source.indexOf("\n\n", defAt));
+    const block = source.lastIndexOf("\nmutual\n", defAt);
+    if (block >= 0 && source.indexOf("\nend", block) > defAt) throw new Error("mutually recursive functions have no bridge yet");
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
     if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
     const tv0 = binders([...sig.params, sig.result]);
