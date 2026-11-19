@@ -84,7 +84,7 @@ theorem ${key}_dyn {h : Core.Heap} ${V.map((v) => `{${v} : Core.Val}`).join(" ")
   ${nums.map((i) => `have t${i} := truthy_numIs h${i}\n  `).join("")}` : ""}refine rel_intro (Q := fun r v h' => h <+: h' ∧ ${crepOf(sig.result, "r", "v", "h'")}) ?_ hr
   unfold ${sig.lean} D.${fn}
 ${callees(source, sig.lean, dyn, fn)}  rsteps
-  all_goals first | omega | (exfalso; omega)${truthies}${optCases} | (refine ⟨by first | rfl | trivial | exact List.prefix_refl _ | exact List.prefix_append _ _ | exact (List.prefix_append _ _).trans (List.prefix_append _ _), ?_⟩; first | rfl | (simp [${crepNames}, numIs_num, List.lookup, *]; done) | (simp only [${crepNames}] at *; simp [${crepNames}, numIs_num, List.lookup, *]))
+  all_goals first | contradiction | omega | (exfalso; omega)${truthies}${optCases} | (refine ⟨by first | rfl | trivial | exact List.prefix_refl _ | exact List.prefix_append _ _ | exact (List.prefix_append _ _).trans (List.prefix_append _ _), ?_⟩; first | rfl | (simp [${crepNames}, numIs_num, List.lookup, *]; done) | (simp only [${crepNames}] at *; simp [${crepNames}, numIs_num, List.lookup, *]))
 
 #print axioms ${key}_dyn
 `;

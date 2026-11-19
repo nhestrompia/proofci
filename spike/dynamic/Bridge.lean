@@ -272,6 +272,17 @@ theorem rel_isArray_opt {α β δ : Type} [CRep α] {t : Result β} {o : Option 
     obtain ⟨l, vs, rfl, hl, _⟩ := hv
     exact rel_isArray_arr rfl hl H
 
+@[simp] theorem truthy_str {s : List Nat} : truthy (.str s) = decide (s ≠ []) := by
+  cases s <;> rfl
+
+theorem rel_trim {β δ : Type} {s : List Nat} {g : List Nat → Result β} {k : Val → M δ} {h Q}
+    (H : Rel (g (Js.trim s)) (k (.str (Js.trim s))) h Q) :
+    Rel (Std.bind (ok (Js.trim s)) g) (method .trim (.str s) [] >>= k) h Q := by
+  unfold Rel at *; intro r e
+  rw [Std.bind_ok] at e
+  show Spec (pure (Val.str (Js.trim s)) >>= k) h (Q r)
+  rw [dpure_bind]; exact H r e
+
 open Core.F64 in
 theorem truthy_numIs {v : Val} {a : Int} (hv : NumIs v a) : truthy v = decide (a ≠ 0) := by
   obtain ⟨x, rfl, hx⟩ := hv
@@ -853,6 +864,7 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_max ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu; try simp only [truthy_numIs hu]) | exact numIs_num | assumption)
   | (refine rel_dneg numIs_num ?_; intro _ _)
   | (casesm ∃ _, _)
+  | (refine rel_trim ?_)
   | (refine rel_isArray_opt (by assumption) (by first | (left; rfl) | (right; rfl)) ?_)
   | (subst_vars; refine rel_isArray_arr rfl (by assumption) ?_)
   | (refine rel_isArray_nul (by first | (left; rfl) | (right; rfl) | assumption | (simp only [crep_none] at *; assumption)) ?_)
@@ -883,7 +895,7 @@ macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
   | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (split <;> (rename_i hc
-                try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val, Js.isArray, Option.isSome] at hc
+                try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val, Js.isArray, Option.isSome, truthy_str] at hc
                 try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is])))
 
