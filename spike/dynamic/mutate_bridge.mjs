@@ -32,6 +32,10 @@ const KINDS = {
   "trunc-floor": [/\bJs\.truncDiv\b/g, "Js.floorDiv"],
   "drop-neg": [/\bJs\.neg (\S+)/g, (_, a) => `Result.ok ${a}`],
   "min-max": [/\bJs\.min\b/g, "Js.max"],
+  "not-decide": [/Result\.ok \(decide \(/g, "Result.ok (!decide ("],
+  "len-double": [/\bJs\.len (\S+)/g, (_, a) => `Js.len (${a} ++ ${a})`],
+  "findIndex-from1": [/\bJs\.findIndex\b/g, "(fun f xs => Js.findIndexFrom f xs 1)"],
+  "loop-keep": [/\.cont \((\w+), (\w+)_2\)/g, (_, r, a) => `.cont (${r}, ${a}_1)`],
 };
 const [dir, ...only] = process.argv.slice(2);
 const index = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));

@@ -28,3 +28,12 @@ export function bumpBoth(a: Counter, b: Counter): number {
   b.bump(1);
   return a.n;
 }
+
+/** Library calls the bridge relates: `padStart` and `findIndex`. */
+export function padCode(s: string): string {
+  return s.padStart(4, "0");
+}
+
+export function firstAbove(xs: number[], k: number): number {
+  return xs.findIndex((x) => x > k);
+}
