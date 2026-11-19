@@ -261,3 +261,12 @@ export function firstKid(t: GapTree): string {
 export function treeSize(t: GapTree): number {
   return t.kids.map(k => treeSize(k)).reduce((a, b) => a + b, 1);
 }
+
+export type GapShape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+
+export function shapeSize(s: GapShape): number {
+  switch (s.kind) {
+    case "circle": return s.r * 2;
+    case "rect": return s.w + s.h;
+  }
+}

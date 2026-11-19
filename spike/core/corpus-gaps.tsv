@@ -43,3 +43,4 @@ gaps	gaps.ts	prependItem
 gaps	gaps.ts	countDown
 gaps	gaps.ts	firstKid
 gaps	gaps.ts	treeSize
+gaps	gaps.ts	shapeSize
