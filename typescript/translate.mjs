@@ -17,6 +17,7 @@ import { protectedPaths } from "./paths.mjs";
 import { createHazards } from "./hazard.mjs";
 import { narrowedSources, narrowingProblem, withSources } from "./narrow.mjs";
 import { withHint } from "./hints.mjs";
+import { parseRegex } from "./regex.mjs";
 
 export class Unsupported extends Error {}
 
@@ -2173,6 +2174,7 @@ export class Scope {
     const [variable, other] = this.isNull(test.right) ? [unwrap(test.left), test.right] : [unwrap(test.right), test.left];
     if (!this.isNull(other)) return undefined;
     if (this.isFieldPath(variable)) return this.narrowField(variable, other, op, equal, env);
+    if (this.regexMatch(variable)) return undefined;
     if (!ts.isIdentifier(variable)) throw this.t.fail(test, "only a variable or field can be tested against null for now");
     const symbol = this.symbol(variable);
     // `===` tells null from undefined, and a type only ever allows one of them
@@ -2927,6 +2929,12 @@ export class Scope {
       if (method === "entries") throw this.t.fail(node, "`Object.entries` returns tuples, which are not supported yet");
       return `(List.map Prod.${method === "keys" ? "fst" : "snd"} ${this.expression(node.arguments[0], env, lines)})`;
     }
+    if (ts.isPropertyAccessExpression(callee) && callee.name.text === "test" && this.isRegex(callee.expression)) {
+      const re = this.regex(callee.expression);
+      if (re.named && re.global) throw this.t.fail(node, "`test` on a named regular expression with the flag `g` depends on its `lastIndex`");
+      if (node.arguments.length !== 1 || !this.isString(node.arguments[0])) throw this.t.fail(node, "`test` is only supported with one string");
+      return this.bind(`Js.reTest ${re.lean} ${re.ic} ${this.expression(node.arguments[0], env, lines)}`, lines);
+    }
     const builtin = this.builtin(callee, node, env, lines);
     if (builtin) return builtin;
     if (ts.isPropertyAccessExpression(callee) && this.isArray(callee.expression)) return this.arrayMethod(callee, node, env, lines);
@@ -3066,6 +3074,81 @@ export class Scope {
     }
   }
 
+  isRegex(node) {
+    const e = unwrap(node);
+    return ts.isRegularExpressionLiteral(e) || this.typeOf(e).symbol?.name === "RegExp";
+  }
+
+  // A regular expression written as a literal, or a `const` set to one.
+  regex(node) {
+    let e = unwrap(node), named = false;
+    if (ts.isIdentifier(e)) {
+      const declaration = this.symbol(e)?.valueDeclaration;
+      if (declaration && ts.isVariableDeclaration(declaration) && ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const && declaration.initializer) {
+        e = unwrap(declaration.initializer);
+        named = true;
+        if (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export || !this.regexUsesOnly(declaration)) {
+          throw this.t.fail(node, "a named regular expression is only supported when the module uses it only with `test`, `replace`, `replaceAll`, `split` or `match`");
+        }
+      }
+    }
+    if (!ts.isRegularExpressionLiteral(e)) throw this.t.fail(node, "a regular expression is only supported as a literal or a `const` set to one");
+    const cut = e.text.lastIndexOf("/");
+    try {
+      return { ...parseRegex(e.text.slice(1, cut), e.text.slice(cut + 1)), named };
+    } catch (error) {
+      throw this.t.fail(node, error.message);
+    }
+  }
+
+  // Any other use (`R.compile(...)`, `R.lastIndex = 1`, passing it on) could change what it matches.
+  regexUsesOnly(declaration) {
+    const symbol = this.symbol(declaration.name);
+    let only = true;
+    const visit = n => {
+      if (ts.isIdentifier(n) && n !== declaration.name && this.symbol(n) === symbol) {
+        const p = n.parent;
+        only &&= (ts.isPropertyAccessExpression(p) && p.expression === n && p.name.text === "test" && ts.isCallExpression(p.parent) && p.parent.expression === p)
+          || (ts.isCallExpression(p) && p.arguments[0] === n && ts.isPropertyAccessExpression(p.expression) && ["replace", "replaceAll", "split", "match"].includes(p.expression.name.text));
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(declaration.getSourceFile());
+    return only;
+  }
+
+  regexCall(value, method, node, env, lines) {
+    const args = node.arguments, re = this.regex(args[0]);
+    if (method === "match") throw this.t.fail(node, "`match` with a regular expression is only supported compared with `null`");
+    if (args.length !== (method === "split" ? 1 : 2) || (method !== "split" && !this.isString(args[1]))) {
+      throw this.t.fail(node, `\`${method}\` with a regular expression is only supported with a string replacement and no limit`);
+    }
+    if (method === "split") {
+      if (re.groups) throw this.t.fail(node, "`split` on a regular expression with capturing groups is not supported yet");
+      return this.bind(`Js.reSplit ${re.lean} ${re.ic} ${value}`, lines);
+    }
+    if (method === "replaceAll" && !re.global) throw this.t.fail(node, "`replaceAll` needs a regular expression with the flag `g`");
+    return this.bind(`Js.reReplace ${re.lean} ${re.ic} ${re.global} ${value} ${this.expression(args[1], env, lines)}`, lines);
+  }
+
+  // `s.match(re)` compared with `null` asks what `re.test(s)` does.
+  regexMatch(node) {
+    const e = unwrap(node);
+    return ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === "match" && !e.expression.questionDotToken
+      && e.arguments.length === 1 && this.isRegex(e.arguments[0]) && this.isString(e.expression.expression) ? e : undefined;
+  }
+
+  matchTest(node, env, lines) {
+    const op = node.operatorToken.kind;
+    const different = op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+    if (!different && op !== ts.SyntaxKind.EqualsEqualsEqualsToken && op !== ts.SyntaxKind.EqualsEqualsToken) return undefined;
+    const [call, other] = this.regexMatch(node.left) ? [unwrap(node.left), unwrap(node.right)] : [unwrap(node.right), unwrap(node.left)];
+    if (!this.regexMatch(call) || other.kind !== ts.SyntaxKind.NullKeyword) return undefined;
+    const re = this.regex(call.arguments[0]);
+    const found = this.bind(`Js.reTest ${re.lean} ${re.ic} ${this.expression(call.expression.expression, env, lines)}`, lines);
+    return different ? `${found} = true` : `¬(${found} = true)`;
+  }
+
   stringMethod(callee, node, env, lines) {
     return this.stringCall(this.expression(callee.expression, env, lines), callee.name.text, node, env, lines);
   }
@@ -3118,6 +3201,7 @@ export class Scope {
     const count = index => this.numeric(args[index], env, lines);
     const none = () => { if (args.length) throw this.t.fail(node, `\`${method}\` with arguments is not supported yet`); };
     const exactly = n => { if (args.length !== n) throw this.t.fail(node, `\`${method}\` with these arguments is not supported yet`); };
+    if (["split", "replace", "replaceAll", "match"].includes(method) && args[0] && this.isRegex(args[0])) return this.regexCall(value, method, node, env, lines);
     switch (method) {
       case "charAt": exactly(1); return `(Js.charAt ${value} ${count(0)})`;
       case "slice":
@@ -3429,6 +3513,8 @@ export class Scope {
         throw this.t.fail(node, "`instanceof` is only supported on a caught error and `Error` or another built-in error class");
       }
       if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) return this.logical(node, env, lines);
+      const matched = this.matchTest(node, env, lines);
+      if (matched) return matched;
       if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
         const test = this.equality(node, env, lines);
         return op === ts.SyntaxKind.EqualsEqualsEqualsToken ? test : `¬(${test})`;

@@ -559,3 +559,55 @@ function oddFrom<T>(xs: T[], i: number): boolean {
   if (i >= xs.length) return false;
   return evenFrom(xs, i + 1);
 }
+||||||| 045840d
+
+
+
+
+export function withFlag(r: Record<string, boolean>, k: string): Record<string, boolean> {
+  const c = { ...r };
+  c[k] = true;
+  return c;
+}
+
+export function tallyNames(xs: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const x of xs) {
+    out[x] = (out[x] ?? 0) + 1;
+  }
+  return out;
+}
+
+export function labelled(v: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  out.name = v;
+  out.kind = "b";
+  out.name = "c";
+  return out;
+}
+
+export function isSlug(s: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s);
+}
+
+const SPACES = /\s+/g;
+
+export function squash(s: string): string {
+  return s.replace(SPACES, " ");
+}
+
+export function stripDigits(s: string): string {
+  return s.replaceAll(/\d/g, "");
+}
+
+export function words(s: string): string[] {
+  return s.split(/[,;] ?/);
+}
+
+export function hasVowel(s: string): boolean {
+  return s.match(/[aeiou]/i) !== null;
+}
+
+export function firstDash(s: string): string {
+  return s.replace(/-|_/, " ");
+}

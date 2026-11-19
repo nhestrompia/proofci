@@ -114,11 +114,22 @@ it. The bridge checks the record holds exactly those keys. A key that is empty, 
 (JavaScript lists those first), non-ASCII, or a name `Object.prototype` answers for (`__proto__`,
 `toString`, ...) makes the view stop. Records keyed by numbers, records whose values may be `null` or
 `undefined` (`r[k]` couldn't tell a stored `undefined` from a missing key), records that hold
-themselves, `Object.entries` (tuples) and an interface's `Object.keys` (it can have keys its type doesn't list) are refused. Writes have no
-bridge yet, so a function that writes to a record is tested, not proved. `JSON.stringify` and
-regular expressions have no model yet.
+themselves, `Object.entries` (tuples) and an interface's `Object.keys` (it can have keys its type doesn't list) are refused. A write to
+an owned record updates it in Core as JavaScript does (a key already there keeps its place, a new
+key goes last), so such a function can be proved. `JSON.stringify` has no model yet.
 
-**What it can't do yet.** Regular expressions, `Date`, concurrency (`Promise.all`, races,
+Regular expressions are modelled for a subset: a literal, or a `const` set to one, with the flags
+`i` and `g` at most, built from code units, classes (`[a-z]`, `[^,]`, `\d`, `\w`, `\s`), `.`,
+`^`, `$`, `*`, `+`, `?`, `|` and groups. `re.test(s)`, `s.replace(re, t)`, `s.replaceAll(re, t)`,
+`s.split(re)` and `s.match(re)` compared with `null` translate; `Js.Re` in ProofciJs.lean matches
+code units with JavaScript's backtracking order, and Core runs the same functions, so the model is
+trusted and compared with Node on generated strings (ASCII and surrogate halves). With `i`, text
+that isn't ASCII makes the view stop, as does `$` in a replacement. Backreferences, lookaround,
+`\b`, counted (`{n,m}`) and lazy repeats, other flags, `exec`, a replacement function, a `split`
+limit or capturing groups in `split`, and `test` on a named regular expression with `g` (it
+depends on `lastIndex`) are refused.
+
+**What it can't do yet.** Most regular expressions, `Date`, concurrency (`Promise.all`, races,
 timers), classes and methods, and `any` or `unknown`. `number` is a safe integer, so fractions are
 out. Reading a member only an index signature allows, and a variable that might be read
 before it is assigned, are also `unsupported`. The check's proofs about your guarantees can
@@ -163,7 +174,7 @@ and the report says so.
 | Control flow | `if`, `switch`, `for`, `while`, `for...of`, `break`, `continue`, `throw`, `try`/`catch` |
 | Local changes | Reassignment, `+=`, `++`, `let x;` assigned on every path before it is read, and in-place changes to a value only one name can see |
 | Arrays | `length`, `[i]`, `push`, `map`, `filter`, `reduce`, `find`, `some`, `every`, `slice`, `includes`, `join` and more |
-| Strings | `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`, `replace` with a string, templates, ASCII case changes |
+| Strings | `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`, `replace` with a string, the regular expressions above, templates, ASCII case changes |
 | Numbers | `+ - * / %` (`/` only where the quotient is whole), comparisons, `Math.floor/ceil/trunc(a / b)`, `Math.abs/min/max` |
 
 `??` and `?.` work on values that may be `null` or `undefined`. `||` and `&&` work on any operand, such as `daysInMonth[month] || 28`. An interface with an
@@ -173,7 +184,7 @@ spreading it is `unsupported`. With no named fields it is a record of dynamic ke
 `Record<string, T>` is (see above).
 
 Everything else is `unsupported`, with the source line. That includes fractions,
-regular expressions, classes, `Promise.all` and other concurrency, and calls into packages
+regular expressions outside the subset above, classes, `Promise.all` and other concurrency, and calls into packages
 that aren't listed under `assumes` or `effects`. `async` functions work in a narrow form,
 described under [`async` code](#async-code).
 

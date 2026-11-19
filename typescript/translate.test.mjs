@@ -292,7 +292,7 @@ test("strings are code units, and text the model can't handle is rejected", () =
   emits(`export function f(a: string) { return "😀" + a; }`, "[55357, 56832]");
   emits(`export function f(a: string, b: string) { return a === b || a < b; }`, "Js.strLt a b");
   rejects(`export function f(a: string) { return a.match(/x/); }`, /not supported/);
-  rejects(`export function f(a: string) { return a.replace(/x/, "y"); }`, /regular expression/);
+  rejects(`export function f(a: string) { return a.replace(/x{2}/, "y"); }`, /regular expression/);
   rejects(`export function f(a: string, b: number) { return a + b; }`, /string and another type/);
   rejects(`export function f(a: string) { return a.localeCompare("b"); }`, /not supported on strings/);
 });
@@ -1480,6 +1480,33 @@ test("records of dynamic keys", () => {
   rejects("export function f(r: Record<string, number>): Record<string, number> { return { a: 1, ...r }; }", /built empty/);
   rejects("interface A { a: number }\nexport function f(x: A): boolean { return \"a\" in x; }", /`in` is only supported/);
   rejects("interface A { a: number }\nexport function f(x: A): string[] { return Object.keys(x); }", /`Object.keys` is only supported/);
+});
+
+test("regular expressions of the modelled subset", () => {
+  emits("export function f(s: string): boolean { return /^[a-z]+$/i.test(s); }", "Js.reTest (Js.Re.seq Js.Re.bol");
+  emits("const DIGITS = /\\d+/;\nexport function f(s: string): boolean { return DIGITS.test(s); }", "Js.reTest");
+  emits("export function f(s: string): string { return s.replace(/a|b/g, \"-\"); }", "Js.reReplace (Js.Re.alt (Js.Re.chr 97) (Js.Re.chr 98)) false true");
+  emits("export function f(s: string): string { return s.replaceAll(/x*/g, \"\"); }", "Js.reReplace (Js.Re.star (Js.Re.chr 120)) false true");
+  emits("export function f(s: string): string[] { return s.split(/,\\s*/); }", "Js.reSplit");
+  emits("export function f(s: string): boolean { return s.match(/a?b/) !== null; }", "Js.reTest (Js.Re.seq (Js.Re.opt (Js.Re.chr 97)) (Js.Re.chr 98)) false");
+  emits("export function f(s: string): number { if (s.match(/^x/) === null) return 0; return 1; }", "Js.reTest");
+});
+
+test("regular expressions outside the subset are refused", () => {
+  rejects("export function f(s: string): boolean { return /a/m.test(s); }", /uses the flag `m`/);
+  rejects("export function f(s: string): boolean { return /(a)\\1/.test(s); }", /backreference/);
+  rejects("export function f(s: string): boolean { return /a(?=b)/.test(s); }", /lookahead or lookbehind/);
+  rejects("export function f(s: string): boolean { return /a{2}/.test(s); }", /counted repeat/);
+  rejects("export function f(s: string): boolean { return /a+?/.test(s); }", /lazy repeat/);
+  rejects("export function f(s: string): boolean { return /\\bx/.test(s); }", /`\\b` or `\\B`/);
+  rejects("const R = /a/g;\nexport function f(s: string): boolean { return R.test(s); }", /lastIndex/);
+  rejects("const R = /a/;\nR.compile(\"b\");\nexport function f(s: string): boolean { return R.test(s); }", /uses it only with/);
+  rejects("export const R = /a/;\nexport function f(s: string): boolean { return R.test(s); }", /uses it only with/);
+  rejects("export function f(s: string): string { return s.replaceAll(/a/, \"b\"); }", /flag `g`/);
+  rejects("export function f(s: string): string[] { return s.split(/(,)/); }", /capturing groups/);
+  rejects("export function f(s: string): string[] | null { return s.match(/a/); }", /compared with `null`/);
+  rejects("export function f(s: string): boolean { let r = /a/; r = /b/; return r.test(s); }", /RegularExpressionLiteral/);
+  rejects("export function f(s: string): string { return s.replace(/a/, m => m); }", /string replacement/);
 });
 
 test("library models: at, lastIndexOf, repeat, flat, flatMap and findIndex", () => {
