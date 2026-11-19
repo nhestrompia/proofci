@@ -171,6 +171,23 @@ translator accepts, or that there is none yet. The hints are a table of reason p
 in `typescript/hints.mjs`. The report shows the hint under the reason, and `report.json`
 has it as `hint`.
 
+### Generic types
+
+A generic function keeps its type parameters (`def f {T : Type} [DecidableEq T] ...`), and a
+generic `interface` or type alias is one structure with parameters (`structure Page (T : Type)`)
+that every use shares, so `Page<T>` and `Page<number>` are the same Lean type. A call to a
+generic function names the type arguments it reads off the call (`g (T := Js.Num) x`). A
+parameter with a bound (`T extends { id: string }`) is read at its bound, as before.
+
+`T | undefined` and `T | null` need `T extends {}`: an unconstrained `T` could itself be
+`undefined`, and `Option T` would then give it two values. Inline object types over a type
+parameter, generic unions with parameters and generic types whose own parameters have a bound
+are refused with the reason; a generic type that can't be written over a free parameter (its
+`T` sits next to `null`) is copied per use instead.
+
+The differential test runs a generic function at `number` for each type parameter, and skips
+one whose bound `number` doesn't meet.
+
 ### In-place changes
 
 A value in Lean only behaves like a JavaScript object if nothing else can see the
@@ -272,8 +289,9 @@ assumes:
     signature: "(title: string): string"
 ```
 
-The call must be a named import, and it must have exactly this signature. Generic
-functions, rest parameters and functions without arguments can't be listed. If the
+The call must be a named import, and it must have exactly this signature. A generic
+function is listed with its type parameters (`"<T>(items: T[]): T"`); one with a bound,
+rest parameters and functions without arguments can't be listed. If the
 package isn't installed, the signature in the manifest declares it. If it is
 installed, its published types must match, so an upgrade that changes the type stops
 the check.
@@ -552,8 +570,9 @@ type shape is a new feature. The plan is to add a second path that doesn't need 
    explicit heap, so TypeScript types become preconditions. That one change covers
    unions, `unknown`, aliasing, classes and closures. The typed path stays as the fast
    path. The [spike](../spike/dynamic/README.md) says go: real functions the typed path
-   rejects translate, match Node and can be proved, but proofs need generated step lemmas
-   to be as short as typed ones.
+   rejects translate, match Node and can be proved, and one tactic steps through generated
+   code, so straight-line proofs are as short as typed ones. Loops need invariants, as on
+   the typed path.
 3. **Fill in the runtime.** Library models, promises as an event queue, and binary64
    numbers with safe integers as lemmas on top.
 4. **Prove the translation.** Generate a proof, per function, that the typed output

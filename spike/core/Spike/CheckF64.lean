@@ -14,6 +14,7 @@ def main (args : List String) : IO UInt32 := do
       let want := F64.ofBits r.toNat!
       let got : F64 := match op with
         | "add" => x.add y | "sub" => x.sub y | "mul" => x.mul y | "div" => x.div y | "rem" => x.rem y
+        | "min" => x.fmin y | "max" => x.fmax y
         | "floor" => x.floor | "ceil" => x.ceil | "trunc" => x.trunc | "neg" => x.neg
         | "lt" => if x.lt y then F64.ofInt 1 else F64.ofInt 0
         | "le" => if x.le y then F64.ofInt 1 else F64.ofInt 0

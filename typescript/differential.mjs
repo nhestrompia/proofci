@@ -98,6 +98,8 @@ export function term(type, value) {
       const inner = term(type.inner, value);
       return inner === undefined ? undefined : `(some ${inner})`;
     }
+    case "generic":
+      return term({ kind: "number" }, value);
     case "handle":
       return Number.isSafeInteger(value?.__proofciHandle) ? `(Js.Handle.mk ${value.__proofciHandle})` : undefined;
     case "enum": {
@@ -333,7 +335,11 @@ export async function differential({ root, out, module, signatures, files, impor
   let seed = 1;
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
-    if (JSON.stringify(signature).includes('"generic"')) { skipped.push(`${target}: generic`); continue; }
+    // A generic function is run at `number` for each type parameter, when its bound allows that.
+    const generics = [];
+    JSON.stringify(signature, (k, v) => { if (k === "declared") return undefined; if (v?.kind === "generic") generics.push(v); return v; });
+    if (generics.some(g => !g.numbers)) { skipped.push(`${target}: generic with a bound that \`number\` doesn't meet`); continue; }
+    const typeArgs = [...new Set(generics.map(g => g.lean))].map(g => `(${g} := Js.Num) `).join("");
     const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
     const fn = loaded[signature.name];
     const value = generator(seed++);
@@ -353,7 +359,7 @@ export async function differential({ root, out, module, signatures, files, impor
         const run = replay(trace, effects);
         labels.push(`${target} ${show(inputs)}`);
         if (args.includes(undefined) || !run) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
-        lines.push(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
+        lines.push(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
           + `${expected === undefined ? "none" : `(some ${expected})`} ${run.trace}`);
       }
       continue;
@@ -368,7 +374,7 @@ export async function differential({ root, out, module, signatures, files, impor
       }
       const args = signature.params.map((type, i) => term(type, inputs[i]));
       labels.push(`${target} ${show(inputs)}`);
-      lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${args.join(" ")}) `
+      lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
         + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
   }

@@ -128,5 +128,19 @@ def toBits : F64 → Nat
     let e := Nat.log2 n + 1 - 52
     sign + e * 2 ^ 52 + (n / 2 ^ (e - 1) - 2 ^ 52)
 
+/-- `Math.min(x, y)`: `NaN` wins, and `-0` is below `0`. -/
+def fmin (x y : F64) : F64 := match x, y with
+  | nan, _ | _, nan => nan
+  | x, y => if x.lt y then x else if y.lt x then y else match x with
+    | fin true 0 => x
+    | _ => y
+
+/-- `Math.max(x, y)`: `NaN` wins, and `0` is above `-0`. -/
+def fmax (x y : F64) : F64 := match x, y with
+  | nan, _ | _, nan => nan
+  | x, y => if x.lt y then y else if y.lt x then x else match x with
+    | fin false 0 => x
+    | _ => y
+
 end F64
 end Core

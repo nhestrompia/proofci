@@ -377,6 +377,7 @@ export class Dyn {
     if (ts.isObjectLiteralExpression(e)) {
       const steps = [];
       let acc = "[]";
+      const pairs = [];
       for (const p of e.properties) {
         if (ts.isSpreadAssignment(p)) {
           const t = sc.fresh("s");
@@ -390,8 +391,12 @@ export class Dyn {
         const t = sc.fresh("f");
         steps.push(`let ${t} := ${v(val)}`);
         acc = `(mergeFields ${acc} [(${JSON.stringify(this.field(p, p.name.text))}, ${t})])`;
+        pairs.push([this.field(p, p.name.text), t]);
       }
-      return Mt(`(do ${[...steps, `record ${acc}`].join("; ")})`);
+      const keys = pairs.map(([k]) => k);
+      const flat = pairs.length === e.properties.length && new Set(keys).size === keys.length
+        ? `[${pairs.map(([k, t]) => `(${JSON.stringify(k)}, ${t})`).join(", ")}]` : null;
+      return Mt(`(do ${[...steps, `record ${flat ?? acc}`].join("; ")})`);
     }
     if (ts.isArrayLiteralExpression(e)) {
       const steps = [];
@@ -470,7 +475,7 @@ export class Dyn {
       if (one && as.length === 1) { const x = this.expr(as[0], sc); return x.p !== undefined ? P(`(${one} ${x.p})`) : Mt(`(do pure (${one} ${v(x)}))`); }
       if (lib === "Array.isArray" && as.length === 1) return Mt(`(do isArray ${v(this.expr(as[0], sc))})`);
       if (["Math.floor", "Math.ceil", "Math.trunc"].includes(lib) && as.length === 1) return Mt(`(do math F64.${m} ${v(this.expr(as[0], sc))})`);
-      if ((lib === "Math.max" || lib === "Math.min") && as.length === 2) return Mt(`(do minMax ${lib === "Math.max"} ${v(this.expr(as[0], sc))} ${v(this.expr(as[1], sc))})`);
+      if ((lib === "Math.max" || lib === "Math.min") && as.length === 2) return Mt(`(do prim .${lib.slice(5)} [${v(this.expr(as[0], sc))}, ${v(this.expr(as[1], sc))}])`);
       if (lib === "Math.abs" && as.length === 1) return Mt(`(do abs ${v(this.expr(as[0], sc))})`);
       throw new Unsupported(e, `\`${lib}\``);
     }

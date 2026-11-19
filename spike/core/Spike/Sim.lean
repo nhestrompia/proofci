@@ -1358,12 +1358,16 @@ theorem SimE.show_null {α} {_ : TyRep α} [Shown α] {f : α → List Nat} {a :
   | some y => simpa [Js.showNull, hf] using Shown.shows (α := α) (a := y) r
 theorem SimE.min {a b : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) : SimE p s (.prim .min [x, y]) (Js.min a b) := by
   refine sim_prim (args2 hx hy) ?_
-  rintro _ _ ⟨v, w, rfl, ri, rj⟩
-  exact ⟨numVal (Js.min a b), _, by simp [primV, num_arg ri, num_arg rj], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+  rintro _ _ ⟨v, w, rfl, ⟨x, rfl, hx⟩, ⟨y, rfl, hy⟩⟩
+  refine ⟨_, _, by simp [primV]; rfl, List.prefix_refl _, _, rfl, ?_⟩
+  have := F64.min_isInt hx hy
+  unfold Js.min; split <;> simp_all
 theorem SimE.max {a b : Js.Num} (hx : SimE p s x a) (hy : SimE p s y b) : SimE p s (.prim .max [x, y]) (Js.max a b) := by
   refine sim_prim (args2 hx hy) ?_
-  rintro _ _ ⟨v, w, rfl, ri, rj⟩
-  exact ⟨numVal (Js.max a b), _, by simp [primV, num_arg ri, num_arg rj], List.prefix_refl _, _, rfl, Or.inl rfl⟩
+  rintro _ _ ⟨v, w, rfl, ⟨x, rfl, hx⟩, ⟨y, rfl, hy⟩⟩
+  refine ⟨_, _, by simp [primV]; rfl, List.prefix_refl _, _, rfl, ?_⟩
+  have := F64.max_isInt hx hy
+  unfold Js.max; split <;> simp_all
 theorem SimE.abs {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .abs [x]) (Js.abs a) := by
   refine sim_prim (args1 hx) ?_
   rintro _ _ ⟨v, rfl, ri⟩

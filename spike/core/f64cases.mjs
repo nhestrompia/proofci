@@ -24,7 +24,7 @@ const value = () => {
   }
 };
 const two = { add: (a, b) => a + b, sub: (a, b) => a - b, mul: (a, b) => a * b, div: (a, b) => a / b, rem: (a, b) => a % b,
-  lt: (a, b) => Number(a < b), le: (a, b) => Number(a <= b), eq: (a, b) => Number(a === b) };
+  lt: (a, b) => Number(a < b), le: (a, b) => Number(a <= b), eq: (a, b) => Number(a === b), min: Math.min, max: Math.max };
 const one = { floor: Math.floor, ceil: Math.ceil, trunc: Math.trunc, neg: a => -a };
 const names = [...Object.keys(two), ...Object.keys(two), ...Object.keys(one)];
 for (let i = 0; i < N; i += 1) {

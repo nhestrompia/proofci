@@ -29,3 +29,10 @@ gaps	gaps.ts	rule
 gaps	gaps.ts	allRows
 gaps	gaps.ts	pairs
 gaps	gaps.ts	firstNegative
+gaps	gaps.ts	pageSize
+gaps	gaps.ts	pageItems
+gaps	gaps.ts	onePage
+gaps	gaps.ts	firstOf
+gaps	gaps.ts	orElse
+gaps	gaps.ts	repeatCount
+gaps	gaps.ts	numberPage

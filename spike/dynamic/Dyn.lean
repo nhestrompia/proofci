@@ -69,8 +69,9 @@ theorem spec_eq {m : M α} {h a h' P} (e : m h = .ok a h') : Spec m h P ↔ P a 
 
 def num (i : Int) : Val := .num (F64.ofInt i)
 /-- A string as JavaScript sees it: UTF-16 code units. -/
-def str (s : String) : Val := .str (s.toList.flatMap fun c =>
-  if c.toNat < 0x10000 then [c.toNat] else [0xD800 + (c.toNat - 0x10000) / 0x400, 0xDC00 + (c.toNat - 0x10000) % 0x400])
+def utf16 (s : String) : List Nat := s.toList.flatMap fun c =>
+  if c.toNat < 0x10000 then [c.toNat] else [0xD800 + (c.toNat - 0x10000) / 0x400, 0xDC00 + (c.toNat - 0x10000) % 0x400]
+def str (s : String) : Val := .str (utf16 s)
 
 /-- `typeof v`. -/
 def typeOf (v : Val) : Val := .str (typeName v)
@@ -240,18 +241,6 @@ theorem length_arr {h : Heap} {l xs} (hl : h[l]? = some (.array xs)) :
     length (.ref l) h = .ok (num xs.length) h := by
   show (match h[l]? with | some (.array xs) => _ | some (.record fs) => _ | none => _) = _
   rw [hl]
-
-/-- `Math.min`/`Math.max` on two numbers, keeping `NaN` and the sign of zero. Other
-arguments would be coerced, which isn't modelled. -/
-def minMax (isMax : Bool) : Val → Val → M Val
-  | .num .nan, .num _ | .num _, .num .nan => pure (.num .nan)
-  | .num a, .num b => pure (.num (
-      if a.lt b then (if isMax then b else a)
-      else if b.lt a then (if isMax then a else b)
-      else match a with
-        | .fin neg 0 => if neg != isMax then a else b
-        | _ => a))
-  | _, _ => stuck
 
 def abs : Val → M Val
   | .num (.fin _ n) => pure (.num (.fin false n))
@@ -479,5 +468,170 @@ def report (r : R Val) (args : List Val) : String :=
   | .ok v h => showVal 50 h v ++ tail h
   | .thrown _ h => "throw" ++ tail h
   | .stuck => "stuck"
+
+/-! ## Proof steps
+
+`dsteps` runs a generated function statement by statement: it reads fields from the
+record facts in context, does arithmetic whose safety follows from them, and splits on
+each branch. What is left is the user's own goal. -/
+
+theorem spec_ok {m : M α} {h P} (hm : Spec m h P) : ∃ a h', m h = .ok a h' ∧ P a h' := by
+  unfold Spec at hm; revert hm; cases m h <;> simp
+
+theorem spec_field {h : Heap} {l k fs} {P : Val → Heap → Prop} (hl : h[l]? = some (.record fs)) :
+    Spec (field (.ref l) k) h P ↔ P ((fs.lookup k).getD .undef) h := spec_eq (field_rec hl)
+
+theorem spec_record {h : Heap} {fs} {P : Val → Heap → Prop} :
+    Spec (record fs) h P ↔ P (.ref h.length) (h ++ [.record fs]) := Iff.rfl
+
+theorem spec_arr {h : Heap} {xs} {P : Val → Heap → Prop} :
+    Spec (arr xs) h P ↔ P (.ref h.length) (h ++ [.array xs]) := Iff.rfl
+
+theorem items_arr {h : Heap} {l xs} (hl : h[l]? = some (.array xs)) : items (.ref l) h = .ok xs h := by
+  show (match h[l]? with | some (.array xs) => _ | _ => _) = _
+  rw [hl]
+
+/-- A callback loop over an array that stays `xs`, with invariant `I i acc h` before item `i`. -/
+theorem eachLoop_spec {β} {l : Loc} {xs : List Val} {step : Nat → Val → β → M (ForInStep β)}
+    (I : Nat → β → Heap → Prop) (harr : ∀ i b h, I i b h → h[l]? = some (.array xs))
+    (hstep : ∀ i b h (hi : i < xs.length), I i b h →
+      Spec (step i xs[i] b) h (fun r h' => ∃ b', r = .yield b' ∧ I (i + 1) b' h')) :
+    ∀ k i b h, i + k = xs.length → I i b h → Spec (eachLoop l step k i b) h (fun b' h' => I xs.length b' h') := by
+  intro k
+  induction k with
+  | zero => intro i b h e hI; simp only [Nat.add_zero] at e; subst e; exact hI
+  | succ k ih =>
+    intro i b h e hI
+    have hi : i < xs.length := by omega
+    obtain ⟨r, h', e', b', rfl, hI'⟩ := spec_ok (hstep i b h hi hI)
+    unfold Spec
+    simp only [eachLoop, harr i b h hI, List.getElem?_eq_getElem hi, e']
+    exact ih (i + 1) b' h' (by omega) hI'
+
+/-- `xs.map(f)` with invariant `I i out h` after the first `i` items. -/
+theorem jsMap_spec {h : Heap} {l xs} {f : Val → Val → M Val} {P : Val → Heap → Prop}
+    (I : Nat → List Val → Heap → Prop) (h0 : I 0 [] h)
+    (harr : ∀ i out h, I i out h → h[l]? = some (.array xs))
+    (hstep : ∀ i out h (hi : i < xs.length), I i out h →
+      Spec (f xs[i] (num i)) h (fun y h' => I (i + 1) (out ++ [y]) h'))
+    (hP : ∀ out h, I xs.length out h → P (.ref h.length) (h ++ [.array out])) :
+    Spec (jsMap (.ref l) f) h P := by
+  unfold jsMap each
+  simp only [spec_bind]
+  rw [spec_eq (items_arr (harr 0 [] h h0))]
+  refine spec_mono (eachLoop_spec I harr (fun i out h hi hI => ?_) xs.length 0 [] h (by simp) h0)
+    (fun out h' hI => hP out h' hI)
+  simp only [spec_bind, spec_pure]
+  exact spec_mono (hstep i out h hi hI) (fun y h' hy => ⟨_, rfl, hy⟩)
+
+theorem spec_setField {h : Heap} {l k v fs} {P : Unit → Heap → Prop} (hl : h[l]? = some (.record fs)) :
+    Spec (setField (.ref l) k v) h P ↔ P () (h.set l (.record ((k, v) :: fs.filter (·.1 != k)))) :=
+  spec_eq (setField_rec hl)
+
+theorem spec_trim {h : Heap} {s} {P : Val → Heap → Prop} :
+    Spec (method .trim (.str s) []) h P ↔ P (.str (Js.trim s)) h := Iff.rfl
+
+theorem typeOf_str {s} : typeOf (.str s) = str "string" := rfl
+theorem str_empty : str "" = .str [] := rfl
+
+@[simp] theorem bin_eq_str {a b : List Nat} : bin .eq (.str a) (.str b) = pure (.bool (decide (a = b))) := by
+  simp [bin, binary]
+
+@[simp] theorem bin_eq_str_self {s : String} : bin .eq (str s) (str s) = pure (.bool true) := by
+  simp [bin, binary, str]
+
+theorem str_eq {s : String} : str s = .str (utf16 s) := rfl
+theorem utf16_empty : utf16 "" = [] := rfl
+
+theorem lookup_mergeFields_one {acc : List (String × Val)} {k : String} {v : Val} :
+    (mergeFields acc [(k, v)]).lookup k = some v := by
+  unfold mergeFields
+  simp only [List.foldl]
+  induction acc with
+  | nil => simp [List.lookup]
+  | cons p t ih =>
+    obtain ⟨a, b⟩ := p
+    by_cases hak : a = k
+    · subst hak; simp [List.lookup]
+    · have hne : (a == k) = false := by simp [hak]
+      have hne' : (k == a) = false := by simp [Ne.symm hak]
+      by_cases hany : t.any (·.1 == k) = true <;> simp_all [List.lookup] <;> simp [beq_false_of_ne hne']
+
+theorem spec_cell {h : Heap} {v} {P : Loc → Heap → Prop} :
+    Spec (cell v) h P ↔ P h.length (h ++ [.array [v]]) := Iff.rfl
+
+theorem spec_get {h : Heap} {c v} {P : Val → Heap → Prop} (hc : h[c]? = some (.array [v])) :
+    Spec (get c) h P ↔ P v h := by
+  unfold Spec get; rw [hc]
+
+theorem spec_put {h : Heap} {c v w} {P : Unit → Heap → Prop} (hc : h[c]? = some (.array [w])) :
+    Spec (put c v) h P ↔ P () (h.set c (.array [v])) := by
+  unfold Spec put; rw [hc]
+
+theorem spec_fieldsOf {h : Heap} {l fs} {P : List (String × Val) → Heap → Prop} (hl : h[l]? = some (.record fs)) :
+    Spec (fieldsOf (.ref l)) h P ↔ P (fs.filter (·.1 != "__class")) h := by
+  unfold Spec fieldsOf; simp only; rw [hl]
+
+theorem notV_bool {b : Bool} : notV (.bool b) = .bool !b := rfl
+
+@[simp] theorem bin_add_str {a b : List Nat} : bin .add (.str a) (.str b) = pure (.str (a ++ b)) := by
+  simp [bin, binary]
+
+theorem heap_lt {h : Heap} {l o} (hl : h[l]? = some o) : l < h.length := by
+  by_contra hc
+  simp [List.getElem?_eq_none (Nat.le_of_not_lt hc)] at hl
+
+/-- `h'` keeps every object of `h`; it may have changed objects allocated later. -/
+def Frame (h h' : Heap) : Prop := ∀ m : Nat, m < h.length → h'[m]? = h[m]?
+
+theorem Frame.refl {h : Heap} : Frame h h := fun _ _ => rfl
+
+theorem Frame.set {h h' : Heap} {c o} (f : Frame h h') (hc : h.length ≤ c) : Frame h (h'.set c o) :=
+  fun m hm => by rw [List.getElem?_set_ne (by omega)]; exact f m hm
+
+theorem Frame.append {h h' : Heap} {os} (f : Frame h h') (hl : h.length ≤ h'.length) : Frame h (h' ++ os) :=
+  fun m hm => by rw [List.getElem?_append_left (by omega)]; exact f m hm
+
+theorem Frame.get {h h' : Heap} {m : Nat} {o} (f : Frame h h') (hm : h[m]? = some o) : h'[m]? = some o := by
+  rw [f m (heap_lt hm)]; exact hm
+
+theorem get_set_ne {h : Heap} {c : Nat} {m : Loc} {v o} (hne : c ≠ m) (e : h[m]? = some o) : (h.set c v)[m]? = some o := by
+  rw [List.getElem?_set_ne hne]; exact e
+
+theorem get_append {h : Heap} {m : Loc} {os o} (e : h[m]? = some o) : (h ++ os)[m]? = some o := by
+  rw [List.getElem?_append_left (heap_lt e)]; exact e
+
+/-- Finds a heap fact through the writes and allocations made since it was stated. -/
+syntax "dheap" : tactic
+macro_rules
+  | `(tactic| dheap) => `(tactic| first
+    | assumption
+    | (refine get_set_ne ?_ ?_ <;> first | omega | dheap)
+    | (refine get_append ?_; dheap))
+
+/-- `Frame h H` through the writes and allocations that made `H`. -/
+syntax "dframe" : tactic
+macro_rules
+  | `(tactic| dframe) => `(tactic| first
+    | assumption
+    | (refine Frame.set ?_ ?_ <;> first | omega | dframe)
+    | (refine Frame.append ?_ ?_ <;> first | (simp only [List.length_append, List.length_set]; omega) | dframe))
+
+macro "dsafe" : tactic => `(tactic| first | dheap | (exact ⟨by omega, by omega⟩) | omega)
+
+syntax "dsteps" ("[" Lean.Parser.Tactic.simpLemma,* "]")? : tactic
+macro_rules
+  | `(tactic| dsteps) => `(tactic| (
+    simp (disch := dsafe) only [spec_bind, spec_pure, spec_field,
+    spec_record, spec_arr, spec_cell, spec_get, spec_put, spec_fieldsOf, notV_bool, bin_add_str, spec_setField, spec_trim, typeOf_str, str_empty, bin_eq_str, bin_eq_str_self, bin_add_num, bin_sub_num, bin_lt_num, bin_gt_num, bin_le_num, bin_ge_num,
+    bin_eq_num, truthy_bool, decide_eq_true_eq, Option.getD_some, ite_true, ite_false, true_or, false_or, Bool.not_true, Bool.not_false, Bool.false_eq_true,
+    not_true_eq_false, *]
+    all_goals try (split_ifs <;> dsteps)))
+  | `(tactic| dsteps [$ls,*]) => `(tactic| (
+    simp (disch := dsafe) only [spec_bind, spec_pure, spec_field,
+    spec_record, spec_arr, spec_cell, spec_get, spec_put, spec_fieldsOf, notV_bool, bin_add_str, spec_setField, spec_trim, typeOf_str, str_empty, bin_eq_str, bin_eq_str_self, bin_add_num, bin_sub_num, bin_lt_num, bin_gt_num, bin_le_num, bin_ge_num,
+    bin_eq_num, truthy_bool, decide_eq_true_eq, Option.getD_some, ite_true, ite_false, true_or, false_or, Bool.not_true, Bool.not_false, Bool.false_eq_true,
+    not_true_eq_false, $ls,*, *]
+    all_goals try (split_ifs <;> dsteps [$ls,*])))
 
 end Dyn
