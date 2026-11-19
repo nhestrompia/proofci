@@ -389,6 +389,7 @@ export async function differential({ root, out, module, signatures, files, impor
       }
       const args = signature.params.map((type, i) => term(type, inputs[i]));
       labels.push(`${target} ${show(inputs)}`);
+      if (args.includes(undefined)) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
       lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
         + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
