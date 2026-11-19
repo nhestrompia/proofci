@@ -620,6 +620,27 @@ export function f(b: Box<number | null>, s: Slot<number | undefined>): number {
   assert.match(replay, /Slot_\w+\.mk none/);
 });
 
+test("the Node comparison covers mutually recursive functions over a recursive union", async () => {
+  const repo = join(dir, "mutual-args");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(repo, "a.ts"), `type J = { kind: "num"; n: number } | { kind: "list"; items: J[] };
+export function sum(j: J): number {
+  switch (j.kind) { case "num": return j.n; case "list": return items(j.items, 0); }
+}
+function items(xs: J[], i: number): number { return i >= xs.length ? 0 : sum(xs[i]) + items(xs, i + 1); }
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::sum"] });
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.match(result.source, /\nmutual\n\ndef a\.items [^]*\ndef a\.sum [^]*\nend\n/);
+  const out = join(dir, "mutual-args-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 30 });
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 30);
+  assert.match(replay, /\.list \[[^\]]/);
+});
+
 test("?. reads a length, and refuses other built-in members", () => {
   emits("export function f(a?: number[]) { return a?.length ?? 0; }", "Js.len item");
   rejects("export function f(a?: Map<string, number>) { return a?.size ?? 0; }", /only supported on fields/);
