@@ -20,9 +20,9 @@ export class Unsupported extends Error {
 
 const OPS = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem", "<": "lt", "<=": "le", ">": "gt", ">=": "ge", "===": "eq", "!==": "ne" };
 const COMPOUND = { "+=": "add", "-=": "sub", "*=": "mul" };
-const METHODS = new Set(["startsWith", "endsWith", "includes", "trim", "toLowerCase", "toUpperCase", "slice", "indexOf",
+const METHODS = new Set(["padStart", "startsWith", "endsWith", "includes", "trim", "toLowerCase", "toUpperCase", "slice", "indexOf",
   "lastIndexOf", "charAt", "charCodeAt", "split", "join", "concat", "replaceAll", "substring"]);
-const HOFS = { map: "jsMap", filter: "jsFilter", forEach: "jsForEach", some: "jsSome", every: "jsEvery", find: "jsFind" };
+const HOFS = { map: "jsMap", filter: "jsFilter", forEach: "jsForEach", some: "jsSome", every: "jsEvery", find: "jsFind", findIndex: "jsFindIndex" };
 
 const lit = (s) => {
   for (const c of s) if (c.codePointAt(0) > 0xffff) throw new Error("non-BMP");

@@ -381,6 +381,90 @@ export function pickX(p: GapPick): number {
   }
 }
 
+export function okNum(v: number): GapResult<number> {
+  return { kind: "ok", value: v };
+}
+
+export function resultLen(r: GapResult<string>): number {
+  switch (r.kind) {
+    case "ok": return r.value.length;
+    case "err": return r.code;
+  }
+}
+
+export type GapMaybe = { kind: "some"; v: number | null } | { kind: "none" };
+
+export function maybeOr(m: GapMaybe, d: number): number {
+  switch (m.kind) {
+    case "some":
+      if (m.v === null) return d;
+      return m.v;
+    case "none": return d;
+  }
+}
+
+export type GapLink = { kind: "end" } | { kind: "link"; next: GapLink | null; value: number };
+
+export function linkSum(l: GapLink): number {
+  switch (l.kind) {
+    case "end": return 0;
+    case "link":
+      if (l.next === null) return l.value;
+      return l.value + linkSum(l.next);
+  }
+}
+
+export function okOr<T>(r: GapResult<T>, d: T): T {
+  switch (r.kind) {
+    case "ok": return r.value;
+    case "err": return d;
+  }
+}
+
+export type GapOpt = { kind: "has"; v?: number } | { kind: "empty" };
+
+export function optOr(o: GapOpt, d: number): number {
+  switch (o.kind) {
+    case "has": return o.v ?? d;
+    case "empty": return d;
+  }
+}
+
+export interface GapBox<T> {
+  value: T;
+}
+
+export function boxOrZero(b: GapBox<number | null>): number {
+  if (b.value === null) return 0;
+  return b.value;
+}
+
+export function boxIsUndef(b: GapBox<number | undefined>): boolean {
+  return b.value === undefined;
+}
+
+export function resultNull(r: GapResult<string | null>): number {
+  switch (r.kind) {
+    case "ok":
+      if (r.value === null) return 0;
+      return r.value.length;
+    case "err": return r.code;
+  }
+}
+
+export interface GapSlot<T> {
+  v?: T;
+}
+
+export function slotUndef(s: GapSlot<number | undefined>): boolean {
+  return s.v === undefined;
+}
+
+export function slotOf(x: number | undefined): GapSlot<number | undefined> {
+  return { v: x };
+}
+
+
 export function withFlag(r: Record<string, boolean>, k: string): Record<string, boolean> {
   const c = { ...r };
   c[k] = true;
@@ -428,3 +512,4 @@ export function hasVowel(s: string): boolean {
 export function firstDash(s: string): string {
   return s.replace(/-|_/, " ");
 }
+||||||| 32e8970

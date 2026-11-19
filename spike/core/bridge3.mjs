@@ -19,12 +19,12 @@ function leanType(t) {
     case "string": return "Js.Str";
     case "boolean": return "Bool";
     case "bigint": return "Int";
-    case "record": return t.args ? `(${t.lean} ${t.args.map(plain).join(" ")})` : t.lean;
+    case "record": return t.args ? `(${t.lean} ${t.args.map(leanType).join(" ")})` : t.lean;
     case "enum": return t.lean;
     case "void": return "Unit";
     case "generic": return t.name;
     case "recursive": return t.lean;
-    case "tagged": return t.lean;
+    case "tagged": return t.args ? `(${t.lean} ${t.args.map(leanType).join(" ")})` : t.lean;
     case "array": case "set": return `(List ${leanType(t.item)})`;
     case "dict": return `(Js.Dict Js.Str ${leanType(t.value)})`;
     case "optional": return `(Opt ${t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef"} ${leanType(t.inner)})`;
@@ -34,7 +34,7 @@ function leanType(t) {
 
 // The same type without the encoding marker: what the typed view itself uses.
 const generics = t => t.kind === "generic" ? [t] : t.kind === "array" ? generics(t.item) : t.kind === "optional" ? generics(t.inner)
-  : t.kind === "record" && t.args ? t.args.flatMap(generics) : [];
+  : (t.kind === "record" || t.kind === "tagged") && t.args ? t.args.flatMap(generics) : [];
 // A type parameter that can't be `null` or `undefined` keeps `Option T` one-to-one, as `NotNull` says.
 // A rule that tactics apply before its type parameter is known takes the instances as implicit
 // arguments, which unification fills in later.
@@ -244,8 +244,10 @@ theorem ${n}_rep_iff {h : Heap} {a : ${T}} {v : Val} :
 
 // A union tagged by `kind`: an object whose `kind` is its variant's tag, with that variant's fields.
 // It may hold itself directly (another variant ends it), or through `T | null`, `T | undefined` or `T[]`.
-function taggedRules(u, shapes) {
-  const n = short(u.lean), T = u.lean, tag = `${n}_tag`;
+function taggedRules(given, shapes) {
+  const n = short(given.lean), tag = `${n}_tag`;
+  const u = given.params ? { ...given, variants: given.declared, lean: `(${given.lean} ${given.params.join(" ")})` } : given;
+  const T = u.lean;
   const isSelf = t => t.kind === "recursive" && t.lean === T;
   const kindOf = t => (t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef");
   const form = t => isSelf(t) ? "self" : t.kind === "optional" && isSelf(t.inner) ? "opt" : t.kind === "array" && isSelf(t.item) ? "list" : null;
@@ -320,6 +322,8 @@ macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${n}_kind; sim_read))`];
     exact ⟨${at(f)}, by simp [readField, hl], ${conv(f, i)}⟩)
 macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${name}; sim'))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${name}; sim_read))`);
+    // Once the view has matched a nullable field as present, a read of it is the value inside.
+    if (f.type.kind === "optional") lines.push(`macro_rules | \`(tactic| s_field) => \`(tactic| (apply SimE.unwrap; apply ${name}; sim'; rfl))`);
   }));
   // A literal of a variant, for each set of keys the function writes that is exactly that variant's.
   shapes.forEach((keys, si) => u.variants.forEach(v => {
@@ -342,7 +346,14 @@ macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${name}; sim_read))`);
     exact ⟨_, [${keys.map((k, i) => `(${q(k)}, v${i})`).join(", ")}], rfl, by simp, ${parts.join(", ")}⟩)
 macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${short(v.lean)}_${si} <;> sim))`);
   }));
-  return lines.join("\n");
+  if (!u.params) return lines.join("\n");
+  // One set of rules for every use: each takes the type's parameters, with an encoding for each.
+  // A theorem takes the encodings as implicit arguments, so `apply` finds them by unification.
+  const binders = ` ${u.params.map(p => `{${p} : Type} [TyRep ${p}]`).join(" ")}`;
+  const implicit = ` ${u.params.map(p => `{${p} : Type} {_ : TyRep ${p}}`).join(" ")}`;
+  return lines.join("\n").replace(new RegExp(`^(@\\[simp\\] def|def) (${n}_\\w*)`, "gm"), `$1 $2${binders}`)
+    .replace(new RegExp(`^theorem (${n}_\\w*)`, "gm"), `theorem $1${implicit}`)
+    .replace(/^instance : /gm, `instance${binders} : `);
 }
 
 function recordRules(record, shapes) {
@@ -410,6 +421,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const scan = t => {
     if (t.kind === "record") t.args?.forEach(scan);
     if (t.kind === "record" || t.kind === "enum") { if (types.has(t.lean)) return; if (t.kind === "record") (t.declared ?? t.fields).forEach(f => scan(f.type)); types.set(t.lean, t); }
+    if (t.kind === "tagged") t.args?.forEach(scan);
     if (t.kind === "tagged" && !types.has(t.lean)) { t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); types.set(t.lean, t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);

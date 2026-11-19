@@ -506,16 +506,50 @@ export class Translator {
     if (given.length !== declaration.typeParameters.length) throw this.fail(node, "this use of a generic type has no arguments to read");
     if (given.some(arg => arg.flags & ts.TypeFlags.TypeParameter && this.bound(arg))) throw this.fail(node, "a generic type over a type parameter with a bound is not supported yet");
     const args = given.map(arg => this.typeWithParams(arg, node));
+    const wrapped = this.wrappedParams(declaration);
+    // The declaration's own parameters, met inside it, are not an argument.
+    const own = declaration.typeParameters.map(t => this.checker.getTypeAtLocation(t));
+    const nested = given.some((arg, i) => wrapped.has(i) && arg !== own[i] && !this.nonNullish(arg));
     const generic = { key: `${this.leanTypeName(declaration)}<>`, suffix: "", args: args.map(arg => arg.lean), params: declaration.typeParameters.map(t => name(t.name.text)) };
     if (args.some(arg => arg.params)) {
-      const own = declaration.typeParameters.map(t => this.checker.getTypeAtLocation(t));
       if (own.some(t => this.bound(t))) throw this.fail(node, "a generic type over a type parameter is not supported yet when its own parameters have a bound");
+      if (nested) throw this.fail(node, "a type argument that may be `null` or `undefined` would be wrapped twice here, as the generic type already lets that parameter be missing");
       return generic;
     }
-    if (this.parameterized(declaration)) return generic;
+    // A shared structure would wrap such an argument twice; a copy for this use has the flat type.
+    if (!nested && this.parameterized(declaration)) return generic;
     const text = args.map(arg => arg.lean).join(",");
     const hash = createHash("sha256").update(text).digest("hex").slice(0, 10);
     return { key: `${this.leanTypeName(declaration)}<${text}>`, suffix: `_${hash}` };
+  }
+
+  // The parameters a generic declaration puts in a union with `null` or `undefined` (an optional
+  // field is one), by index.
+  wrappedParams(declaration) {
+    this.wrapped ??= new Map();
+    if (this.wrapped.has(declaration)) return this.wrapped.get(declaration);
+    const params = declaration.typeParameters.map(t => this.checker.getTypeAtLocation(t));
+    const found = new Set();
+    this.wrapped.set(declaration, found);
+    const seen = [new Set(), new Set()];
+    const walk = (type, missing) => {
+      if (seen[+missing].has(type)) return;
+      seen[+missing].add(type);
+      const i = params.indexOf(type);
+      if (i >= 0) { if (missing) found.add(i); return; }
+      if (type.isUnion()) {
+        const m = missing || type.types.some(t => t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+        type.types.forEach(t => walk(t, m));
+        return;
+      }
+      const args = type.aliasTypeArguments ?? (type.objectFlags & ts.ObjectFlags.Reference ? this.checker.getTypeArguments(type) : []);
+      args.forEach(t => walk(t, false));
+    };
+    const self = this.checker.getDeclaredTypeOfSymbol(this.checker.getSymbolAtLocation(declaration.name));
+    for (const member of self.isUnion() ? self.types : [self]) {
+      for (const p of this.checker.getPropertiesOfType(member)) walk(this.checker.getTypeOfSymbol(p), !!(p.flags & ts.SymbolFlags.Optional));
+    }
+    return found;
   }
 
   // Whether a generic declaration is one Lean structure with parameters, which every use shares.
@@ -658,7 +692,7 @@ export class Translator {
       if (!tag || !tag.type.isStringLiteral()) throw this.fail(declaration, "union members need a string `kind` field");
       return { tag: tag.type.value, fields: fields.filter(f => f.name !== "kind") };
     });
-    const ctors = variants.map(v => ({ name: name(v.tag), types: v.fields.map(f => this.type(f.type, f.node)) }));
+    const ctors = variants.map(v => ({ name: name(v.tag), types: v.fields.map(f => this.fieldType(f)) }));
     const lines = variants.map((v, i) => `  | ${name(v.tag)} ${v.fields.map((f, j) => `(${name(f.name)} : ${ctors[i].types[j]})`).join(" ")}`);
     return { kind: "tagged", variants: variants.map(v => ({ tag: v.tag, fields: v.fields.map(f => f.name) })), ctors,
       text: [`inductive ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
@@ -751,10 +785,15 @@ export class Translator {
     this.describing.add(shape.lean);
     try {
       if (!shape.params) return shape.kind === "record" ? { kind: "record", lean: shape.lean, fields: fields(type) } : this.describeTagged(type, shape, fields, node);
+      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
+      if (shape.kind === "tagged") {
+        if (!shape.own?.isUnion()) throw this.fail(node, "a generic union over a type parameter has no description yet");
+        const declared = this.describeTagged(shape.own, shape, fields, node).variants;
+        return { kind: "tagged", lean: shape.lean, variants: declared.map(v => ({ ...v, fields: substitute(v.fields, by) })), params: shape.params, args: args.map(skeleton), declared };
+      }
       if (shape.kind !== "record") throw this.fail(node, "a generic union over a type parameter has no description yet");
       // A use is its declaration with the arguments put in, so it is cut where the declaration is.
       const declared = fields(shape.own);
-      const by = new Map(shape.params.map((p, i) => [p, args[i]]));
       return { kind: "record", lean: shape.lean, fields: substitute(declared, by), params: shape.params, args: args.map(skeleton), declared };
     } finally {
       this.describing.delete(shape.lean);
