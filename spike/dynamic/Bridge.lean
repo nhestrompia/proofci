@@ -23,6 +23,9 @@ instance : CRep Bool := ⟨fun _ a v => v = .bool a⟩
 instance (priority := high) : CRep (List Nat) := ⟨fun _ a v => v = .str a⟩
 instance {α} [CRep α] : CRep (List α) :=
   ⟨fun h xs v => ∃ l vs, v = .ref l ∧ h[l]? = some (.array vs) ∧ List.Forall₂ (crep h) xs vs⟩
+/-- A typed `none` is `null` or `undefined`: the typed view does not tell them apart. -/
+instance {α} [CRep α] : CRep (Option α) :=
+  ⟨fun h o v => match o with | none => v = .null ∨ v = .undef | some a => crep h a v⟩
 
 /-- An optional value whose missing case is `nul`. -/
 def crepOpt {α} [CRep α] (nul : Val) (h : Heap) : Option α → Val → Prop
@@ -34,6 +37,8 @@ theorem crep_bool {h : Heap} {a : Bool} {v} : crep h a v ↔ v = .bool a := Iff.
 theorem crep_str {h : Heap} {a : List Nat} {v} : crep h a v ↔ v = .str a := Iff.rfl
 theorem crep_list {α} [CRep α] {h : Heap} {xs : List α} {v} :
     crep h xs v ↔ ∃ l vs, v = .ref l ∧ h[l]? = some (.array vs) ∧ List.Forall₂ (crep h) xs vs := Iff.rfl
+theorem crep_none {α} [CRep α] {h : Heap} {v} : crep h (none : Option α) v ↔ v = .null ∨ v = .undef := Iff.rfl
+theorem crep_some {α} [CRep α] {h : Heap} {a : α} {v} : crep h (some a) v ↔ crep h a v := Iff.rfl
 @[simp] theorem crepOpt_none {α} [CRep α] {nul h v} : crepOpt (α := α) nul h none v ↔ v = nul := Iff.rfl
 @[simp] theorem crepOpt_some {α} [CRep α] {nul h v} {a : α} : crepOpt nul h (some a) v ↔ crep h a v := Iff.rfl
 
@@ -131,6 +136,22 @@ theorem rel_mul {α : Type} {a b : Js.Num} {v w : Val} {g : Js.Num → Result α
   unfold Rel at H'; exact H' r er
 
 open Core.F64 in
+theorem rel_div {α : Type} {a b : Js.Num} {v w : Val} {g : Js.Num → Result α} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs v a.val) (hw : NumIs w b.val)
+    (H : ∀ t : Js.Num, a.val = b.val * t.val → ∀ u, NumIs u t.val → Rel (g t) (k u) h Q) :
+    Rel (Std.bind (Js.div a b) g) (bin .div v w >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  obtain ⟨y, rfl, hy⟩ := hw
+  unfold Rel at *
+  intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  obtain ⟨hb, hq⟩ := div_val et
+  have hi : IsInt (x.div y) t.val := div_isInt (hq ▸ hx) hy hb t.lo t.hi
+  have H' := H t hq _ ⟨_, rfl, hi⟩
+  unfold Rel at H'
+  exact H' r er
+
+open Core.F64 in
 theorem rel_rem {α : Type} {a b : Js.Num} {v w : Val} {g : Js.Num → Result α} {δ : Type} {k : Val → M δ} {h Q}
     (hv : NumIs v a.val) (hw : NumIs w b.val)
     (H : ∀ t : Js.Num, Int.tmod a.val b.val = t.val → ∀ u, NumIs u t.val → Rel (g t) (k u) h Q) :
@@ -193,6 +214,46 @@ theorem rel_neg {α : Type} {a : Js.Num} {v : Val} {g : Js.Num → Result α} {�
   have hi : IsInt _ t.val := hval ▸ neg_isInt hx
   have H' := H t hval.symm _ ⟨_, rfl, hi⟩
   unfold Rel at H'; exact H' r er
+
+theorem rel_arr {α β δ : Type} [CRep α] {xs : List α} {vs : List Val} {g : List α → Result β}
+    {k : Val → M δ} {h Q}
+    (hf : List.Forall₂ (crep (h ++ [.array vs])) xs vs)
+    (H : (h ++ [.array vs])[h.length]? = some (.array vs) →
+      List.Forall₂ (crep (h ++ [.array vs])) xs vs → Rel (g xs) (k (.ref h.length)) (h ++ [.array vs]) Q) :
+    Rel (Std.bind (ok xs) g) (arr vs >>= k) h Q := by
+  have H' := H (by simp) hf
+  unfold Rel at *; intro r e
+  rw [Std.bind_ok] at e
+  rw [spec_bind, spec_arr]
+  exact H' r e
+
+open Core.F64 in
+theorem truthy_numIs {v : Val} {a : Int} (hv : NumIs v a) : truthy v = decide (a ≠ 0) := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  rcases hx with rfl | ⟨rfl, rfl⟩
+  · unfold F64.ofInt
+    generalize hn : a.natAbs * unit = n
+    have hu := unit_pos
+    cases n with
+    | zero =>
+      have ha : a = 0 := by rcases Nat.mul_eq_zero.mp hn with h | h <;> omega
+      subst ha; rfl
+    | succ m =>
+      have ha : a ≠ 0 := by rintro rfl; simp at hn
+      simp [truthy, ha]
+  · rfl
+
+open Core.F64 in
+theorem rel_dneg {α δ : Type} {t : Result α} {a : Int} {v : Val} {k : Val → M δ} {h Q}
+    (hv : NumIs v a) (H : ∀ u, NumIs u (-a) → Rel t (k u) h Q) :
+    Rel t (neg v >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  have H' := H _ ⟨_, rfl, neg_isInt hx⟩
+  unfold Rel at *
+  intro r e
+  show Spec (pure (Val.num x.neg) >>= k) h (Q r)
+  rw [dpure_bind]
+  exact H' r e
 
 section
 open Core.F64
@@ -524,7 +585,7 @@ theorem rel_forOf {α β γ : Type} [CRep α] [CRep β]
 macro_rules | `(tactic| dsafe) => `(tactic| first | exact numIs_num | assumption)
 
 /-- Closes the side goals of a relational lemma: the operands are numbers, then introduces the result. -/
-macro "rnum" : tactic => `(tactic| first | (intro _ _ _ _) | exact numIs_num | assumption)
+macro "rnum" : tactic => `(tactic| first | (intro _ _ _ _) | exact numIs_num | assumption | (simp only [crep_some, crep_num] at *; assumption))
 
 macro "rmin" : tactic => `(tactic| first | (intro _ _) | exact numIs_num | assumption)
 
@@ -538,6 +599,9 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_ceilDiv ?_ ?_ ?_ <;> rnum)
   | (refine rel_truncDiv ?_ ?_ ?_ <;> rnum)
   | (refine rel_neg ?_ ?_ <;> rnum)
+  | (refine rel_div ?_ ?_ ?_ <;> rnum)
+  | (refine rel_dneg numIs_num ?_; intro _ _)
+  | (refine rel_arr (by simp [crep_num, crep_none, crep_some, crep_str, crep_bool, numIs_num]; try assumption) ?_; intro _ _)
   | (refine rel_len (by assumption) (by assumption) ?_; intro _ _ _ _)
   | (refine rel_slen ?_; intro _ _ _ _)
   | (refine rel_map (by assumption) (by assumption) ?_ ?_ <;> intros)
@@ -554,6 +618,7 @@ macro "rsteps" : tactic => `(tactic| repeat' (first
   | (exfalso; (try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not] at *); omega)
   | rops
   | (simp only [Std.bind_ok, Std.bind_assoc, bind_tc_ok, bind_assoc_eq, dbind_assoc, dpure_bind])
+  | (simp only [true_and, false_and, and_true, and_false, decide_false, decide_true])
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
   | (apply rel_ok; (try simp only [spec_rok]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
   | (split <;> (rename_i hc
