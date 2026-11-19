@@ -84,3 +84,4 @@ gaps	gaps.ts	stripDigits
 gaps	gaps.ts	words
 gaps	gaps.ts	hasVowel
 gaps	gaps.ts	firstDash
+gaps	gaps.ts	countDistinct
