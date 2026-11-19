@@ -1,0 +1,180 @@
+import Spike.Tac
+import CoreAsync
+import ProofciAsync
+open Core Core.Async
+open TyRep (rep mono)
+
+/-! Rules for reasoning about `CoreAsync` without counting fuel, as `Spike/Rules.lean` does for Core. -/
+namespace Core.Async
+
+def AOk (p : Prog) (a : AProg) (o : Oracle) (s : AS) (cs : List AStmt) (out : AOut) : Prop :=
+  ∃ F, ∀ f, F ≤ f → aexecList f p a o s cs = out
+def AOk1 (p : Prog) (a : AProg) (o : Oracle) (s : AS) (c : AStmt) (out : AOut) : Prop :=
+  ∃ F, ∀ f, F ≤ f → aexec f p a o s c = out
+
+variable {p : Prog} {a : AProg} {o : Oracle}
+
+theorem AOk.nil (s : AS) : AOk p a o s [] (.ok .normal s) :=
+  ⟨1, fun f hf => by obtain ⟨g, rfl, -⟩ := succ_of_le (F := 0) hf; simp only [aexecList]⟩
+
+theorem AOk.cons_normal {s s₁ c cs out} (h : AOk1 p a o s c (.ok .normal s₁)) (t : AOk p a o s₁ cs out) :
+    AOk p a o s (c :: cs) out := by
+  obtain ⟨F, hF⟩ := h
+  obtain ⟨G, hG⟩ := t
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexecList, hF g (by omega), hG g (by omega)]⟩
+
+/-- An outcome that isn't "carry on" ends the list. -/
+def AOut.exits : AOut → Prop
+  | .ok .normal _ => False
+  | .stuck => False
+  | _ => True
+
+theorem AOk.cons_exit {s c cs out} (h : AOk1 p a o s c out) (hx : out.exits) :
+    AOk p a o s (c :: cs) out := by
+  obtain ⟨F, hF⟩ := h
+  exact ⟨F + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexecList, hF g (by omega)]
+    rcases out with ⟨c, s⟩ | ⟨v, s⟩ | _
+    · cases c <;> simp_all [AOut.exits]
+    · rfl
+    · simp [AOut.exits] at hx⟩
+
+theorem AOk1.stmt {s c r st} (h : Execs p s.st c r st) : AOk1 p a o s (.stmt c) (.ok r ⟨st, s.hist⟩) := by
+  obtain ⟨F, hF⟩ := h
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [aexec, hF g hg]⟩
+
+theorem AOk1.ret {s e v st} (h : Evals p s.st e v st) : AOk1 p a o s (.ret e) (.ok (.ret v) ⟨st, s.hist⟩) := by
+  obtain ⟨F, hF⟩ := h
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [aexec, hF g hg]⟩
+
+theorem AOk1.throw {s e v st} (h : Evals p s.st e v st) : AOk1 p a o s (.throw e) (.thrown v ⟨st, s.hist⟩) := by
+  obtain ⟨F, hF⟩ := h
+  exact ⟨F + 1, fun f hf => by obtain ⟨g, rfl, hg⟩ := succ_of_le hf; simp only [aexec, hF g hg]⟩
+
+theorem AOk1.ite_true {s c t e v st out} (hc : Evals p s.st c v st) (ht : truthy v = true)
+    (hb : AOk p a o ⟨st, s.hist⟩ t out) : AOk1 p a o s (.ite c t e) out := by
+  obtain ⟨F, hF⟩ := hc
+  obtain ⟨G, hG⟩ := hb
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexec, hF g (by omega), ht, ↓reduceIte]; exact hG g (by omega)⟩
+
+theorem AOk1.ite_false {s c t e v st out} (hc : Evals p s.st c v st) (ht : truthy v = false)
+    (hb : AOk p a o ⟨st, s.hist⟩ e out) : AOk1 p a o s (.ite c t e) out := by
+  obtain ⟨F, hF⟩ := hc
+  obtain ⟨G, hG⟩ := hb
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexec, hF g (by omega), ht, Bool.false_eq_true, ↓reduceIte]; exact hG g (by omega)⟩
+
+/-- The state after an awaited call answered with `d`. -/
+def afterValue (st : St) (hist : List Event) (x op : String) (ds : List Data) (d : Data) : AS :=
+  ⟨{ st with env := if x == "" then st.env else st.env.put x (alloc st.heap d).1, heap := (alloc st.heap d).2 },
+    hist ++ [⟨op, ds, .value d⟩]⟩
+
+theorem AOk1.await_value {s x op args vs st d} (he : EvalsL p s.st args vs st)
+    (ho : o op (vs.map (readData 50 st.heap)) s.hist = .value d) :
+    AOk1 p a o s (.await x op args) (.ok .normal (afterValue st s.hist x op (vs.map (readData 50 st.heap)) d)) := by
+  obtain ⟨F, hF⟩ := he
+  exact ⟨F + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexec, hF g hg, ho, afterValue]⟩
+
+theorem AOk1.await_reject {s x op args vs st n m} (he : EvalsL p s.st args vs st)
+    (ho : o op (vs.map (readData 50 st.heap)) s.hist = .reject n m) :
+    AOk1 p a o s (.await x op args) (.thrown (rejection st.heap n m).1
+      ⟨{ st with heap := (rejection st.heap n m).2 }, s.hist ++ [⟨op, vs.map (readData 50 st.heap), .reject n m⟩]⟩) := by
+  obtain ⟨F, hF⟩ := he
+  exact ⟨F + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexec, hF g hg, ho]⟩
+
+theorem AOk1.tryCatch_thrown {s body x h v r out} (hb : AOk p a o s body (.thrown v r))
+    (hh : AOk p a o ⟨{ r.st with env := r.st.env.put x v }, r.hist⟩ h out) :
+    AOk1 p a o s (.tryCatch body x h) out := by
+  obtain ⟨F, hF⟩ := hb
+  obtain ⟨G, hG⟩ := hh
+  exact ⟨F + G + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexec, hF g (by omega), hG g (by omega)]⟩
+
+theorem AOk1.tryCatch_ok {s body x h c r} (hb : AOk p a o s body (.ok c r)) :
+    AOk1 p a o s (.tryCatch body x h) (.ok c r) := by
+  obtain ⟨F, hF⟩ := hb
+  exact ⟨F + 1, fun f hf => by
+    obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+    simp only [aexec, hF g hg]⟩
+
+/-! ## The outside world on both sides
+
+The view's oracle answers typed values; Core's answers data that `alloc` builds on the heap. The bridge
+holds for every pair of oracles that answer related calls alike. `alloc` is `partial`, so what it builds
+is part of the relation rather than computed. -/
+
+/-- An `Error` object as `rejection` builds it. -/
+instance : TyRep Js.Exn where
+  rep h e v := ∃ l, v = .ref l ∧ h[l]? = some (.record [("name", .str e.name), ("message", .str e.message)])
+  mono hp := fun ⟨l, hv, hl⟩ => ⟨l, hv, lookup_mono hp hl⟩
+
+def AnsRel {α} [TyRep α] : Js.Answer α → Ans → Prop
+  | .value r, .value d => ∀ h, h <+: (alloc h d).2 ∧ rep (alloc h d).2 r (alloc h d).1
+  | .reject e, .reject n m => e.name = n ∧ e.message = m ∧
+      ∀ h, h <+: (rejection h n m).2 ∧ rep (rejection h n m).2 e (rejection h n m).1
+  | _, _ => False
+
+section Rel
+variable {W : Js.World} [R : ∀ op, TyRep (W.Res op)] (opName : W.Op → String)
+  (ArgOK : (op : W.Op) → W.Arg op → List Data → Prop)
+
+def EvRel (ev : W.Event) (ce : Event) : Prop :=
+  ce.op = opName ev.op ∧ ArgOK ev.op ev.arg ce.args ∧ AnsRel ev.ans ce.ans
+
+def HRel (hv : W.Hist) (hc : List Event) : Prop := List.Forall₂ (EvRel opName ArgOK) hv hc
+
+def ORel (ov : W.Oracle) (oc : Oracle) : Prop :=
+  ∀ op arg ds hv hc, ArgOK op arg ds → HRel opName ArgOK hv hc → AnsRel (ov op arg hv) (oc (opName op) ds hc)
+
+variable {opName ArgOK}
+
+theorem HRel.snoc {hv hc ev ce} (h : HRel opName ArgOK hv hc) (e : EvRel opName ArgOK ev ce) :
+    HRel opName ArgOK (hv ++ [ev]) (hc ++ [ce]) :=
+  List.rel_append h (List.Forall₂.cons e .nil)
+
+theorem await_value {p : Prog} {a : AProg} {ov oc} (hO : ORel opName ArgOK ov oc) {s : AS} {hv}
+    (hH : HRel opName ArgOK hv s.hist) {x op args vs st} {arg : W.Arg op} {r : W.Res op}
+    (he : EvalsL p s.st args vs st) (hA : ArgOK op arg (vs.map (readData 50 st.heap)))
+    (hov : ov op arg hv = .value r) :
+    ∃ s', AOk1 p a oc s (.await x (opName op) args) (.ok .normal s') ∧ st.heap <+: s'.st.heap ∧
+      (∃ v, rep s'.st.heap r v ∧ s'.st.env = if x == "" then st.env else st.env.put x v) ∧
+      HRel opName ArgOK (hv ++ [⟨op, arg, .value r⟩]) s'.hist := by
+  have hr := hO op arg _ hv s.hist hA hH
+  rw [hov] at hr
+  cases hd : oc (opName op) (vs.map (readData 50 st.heap)) s.hist with
+  | reject n m => rw [hd] at hr; exact hr.elim
+  | value d =>
+    rw [hd] at hr
+    exact ⟨_, AOk1.await_value he hd, (hr st.heap).1, ⟨_, (hr st.heap).2, rfl⟩, HRel.snoc hH ⟨rfl, hA, hr⟩⟩
+
+theorem await_reject {p : Prog} {a : AProg} {ov oc} (hO : ORel opName ArgOK ov oc) {s : AS} {hv}
+    (hH : HRel opName ArgOK hv s.hist) {x op args vs st} {arg : W.Arg op} {e : Js.Exn}
+    (he : EvalsL p s.st args vs st) (hA : ArgOK op arg (vs.map (readData 50 st.heap)))
+    (hov : ov op arg hv = .reject e) :
+    ∃ v s', AOk1 p a oc s (.await x (opName op) args) (.thrown v s') ∧ st.heap <+: s'.st.heap ∧
+      s'.st.env = st.env ∧ rep s'.st.heap e v ∧ HRel opName ArgOK (hv ++ [⟨op, arg, .reject e⟩]) s'.hist := by
+  have hr := hO op arg _ hv s.hist hA hH
+  rw [hov] at hr
+  cases hd : oc (opName op) (vs.map (readData 50 st.heap)) s.hist with
+  | value d => rw [hd] at hr; exact hr.elim
+  | reject n m =>
+    rw [hd] at hr
+    obtain ⟨hn, hm, hk⟩ := hr
+    obtain ⟨hp, hrep⟩ := hk st.heap
+    refine ⟨_, _, AOk1.await_reject he hd, hp, rfl, hrep, HRel.snoc hH ⟨rfl, hA, ?_⟩⟩
+    exact ⟨hn, hm, hk⟩
+
+end Rel
+
+end Core.Async
