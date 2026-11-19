@@ -520,6 +520,8 @@ export class Translator {
     if (own.some(t => this.bound(t))) return false;
     this.generic.set(declaration, true);
     const self = this.checker.getDeclaredTypeOfSymbol(this.checker.getSymbolAtLocation(declaration.name));
+    // The declaration's own parameters are not a use of a type parameter where it is used.
+    const outer = this.paramHit;
     try {
       this.declareType(declaration, self, declaration);
     } catch (error) {
@@ -527,6 +529,8 @@ export class Translator {
       this.generic.set(declaration, false);
       this.types.delete(`${this.leanTypeName(declaration)}<>`);
       this.typeOwners.delete(this.leanTypeName(declaration));
+    } finally {
+      this.paramHit = outer;
     }
     return this.generic.get(declaration);
   }

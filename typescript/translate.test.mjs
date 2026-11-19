@@ -100,6 +100,8 @@ test("a generic type is one structure with parameters, or one per use when it ca
   emits("type P<T> = { value: T; next: T | null }; export function f(a: P<string>) { return a.value; }", "next : (Option Js.Str)");
   emits("interface Box<T> { value: T } export function f(a: number): Box<number> { return { value: a }; }", "({ value := a } : (_root_.a.Box Js.Num))");
   emits("interface T<A> { value: A; next: T<A> | null } export function f(a: T<number>) { return 1; }", "next : (Option a.T_");
+  emits("interface T<A> { value: A; next: T<A> | null } export function f(a: { t: T<number> }): number { return a.t.value; }", "next : (Option a.T_");
+  emits("interface Box<A> { value: A } export function f(a: { b: Box<number> }): number { return a.b.value; }", "(_root_.a.Box Js.Num)");
 });
 
 test("data types from declaration files come in under the package's name", () => {
