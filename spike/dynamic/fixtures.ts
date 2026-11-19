@@ -37,3 +37,22 @@ export function padCode(s: string): string {
 export function firstAbove(xs: number[], k: number): number {
   return xs.findIndex((x) => x > k);
 }
+
+/** `for (;;)` over indices, and `while` with a counter. */
+export function sumIndexed(xs: number[]): number {
+  let s = 0;
+  for (let i = 0; i < xs.length; i++) {
+    s += xs[i];
+  }
+  return s;
+}
+
+export function halvings(n: number): number {
+  let k = 0;
+  let m = n;
+  while (m > 1) {
+    m = Math.floor(m / 2);
+    k++;
+  }
+  return k;
+}
