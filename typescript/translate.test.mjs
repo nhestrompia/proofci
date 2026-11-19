@@ -712,6 +712,20 @@ test("an outside call is only usable as the policy lists it", () => {
   assert.deepEqual(nested.assumed["a.ts::f"], ["slugger::slug"]);
 });
 
+test("each member of a mutual cycle relies on what any member calls, and keeps its string literals", () => {
+  const root = join(dir, `p${count++}`);
+  mkdirSync(root);
+  writeFileSync(join(root, "a.ts"), `import { slug } from "not-installed";
+function g(a: string, n: number): string { return n <= 0 ? "_root_.a.g" : f(a, n - 1); }
+export function f(a: string, n: number): string { const b = g(a, n); return slug(b); }
+`);
+  const ok = translate({ root, module: "M", targets: ["a.ts::f", "a.ts::g"], assumes: [{ call: "not-installed::slug", signature: "(a: string): string" }] });
+  assert.deepEqual(ok.failures, {}, ok.source);
+  assert.deepEqual(ok.assumed["a.ts::f"], ["not-installed::slug"]);
+  assert.deepEqual(ok.assumed["a.ts::g"], ["not-installed::slug"]);
+  assert.ok(ok.source.includes('js!"_root_.a.g"'), ok.source);
+});
+
 test("a listed call whose package isn't installed takes its types from the policy", () => {
   const root = join(dir, `p${count++}`);
   mkdirSync(root);

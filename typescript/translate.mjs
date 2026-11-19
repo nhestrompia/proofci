@@ -970,10 +970,15 @@ export class Translator {
       entry.group.lines.push(lines.join("\n"));
       if (entry.group.root === declaration) {
         // Inside `mutual` the members are known only by the names they are declared with.
-        const names = [...this.functions.values()].filter(e => e.group === entry.group).map(e => e.lean);
-        const text = names.reduce((t, n) => t.replace(new RegExp(`_root_\\.${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.'»])`, "g"), n),
-          ["mutual", ...entry.group.lines, "end"].join("\n\n"));
+        const members = [...this.functions].filter(([, e]) => e.group === entry.group);
+        const names = members.map(([, e]) => e.lean);
+        const unqualify = t => names.reduce((t, n) => t.replace(new RegExp(`_root_\\.${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.'»])`, "g"), n), t);
+        // String literals are left as they are.
+        const text = ["mutual", ...entry.group.lines, "end"].join("\n\n").split(/(js!"[^"]*")/).map((part, i) => i % 2 ? part : unqualify(part)).join("");
         this.order.push(text);
+        // Each member reaches every other, so each relies on what any of them does.
+        const relied = new Set(members.flatMap(([d]) => [...(this.assumedBy.get(d) ?? [])]));
+        for (const [d] of members) this.assumedBy.set(d, new Set(relied));
       }
     }
     return lean;
