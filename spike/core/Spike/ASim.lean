@@ -356,6 +356,81 @@ theorem AW.await_rej (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opNa
   obtain ⟨v, s₁, h1, hp, henv, hrep, hH1⟩ := await_reject (a := a) (x := x) hO hH he hA hov
   exact AW.exit h1 trivial (h v s₁ ⟨by rw [henv, hx.1], hx.2.trans hp⟩ hrep hH1)
 
+/-- The arguments of an awaited call evaluate to data the view's argument stands for. -/
+def ASimArgs (p : Prog) (s : St) (es : List Expr) (ArgOK : (op : W.Op) → W.Arg op → List Data → Prop)
+    (op : W.Op) (arg : W.Arg op) : Prop :=
+  ∃ vs st, EvalsL p s es vs st ∧ Ext s st ∧ ArgOK op arg (vs.map (readData 50 st.heap))
+
+theorem ASimArgs.zero {s op arg} (hA : ArgOK op arg []) : ASimArgs p s [] ArgOK op arg :=
+  ⟨[], s, EvalsL.nil _ _, Ext.refl _, hA⟩
+
+theorem ASimArgs.one {s e op arg α} [TyRep α] {x : α} (he : SimE p s e x)
+    (hA : ∀ h v, rep h x v → ArgOK op arg [readData 50 h v]) : ASimArgs p s [e] ArgOK op arg := by
+  obtain ⟨v, s₁, hev, hext, hrep⟩ := he s (Ext.refl _)
+  exact ⟨[v], s₁, EvalsL.cons hev (EvalsL.nil _ _), hext, hA _ _ hrep⟩
+
+theorem ASimArgs.two {s e₁ e₂ op arg α β} [TyRep α] [TyRep β] {x : α} {y : β} (he₁ : SimE p s e₁ x)
+    (he₂ : SimE p s e₂ y) (hA : ∀ h v w, rep h x v → rep h y w → ArgOK op arg [readData 50 h v, readData 50 h w]) :
+    ASimArgs p s [e₁, e₂] ArgOK op arg := by
+  obtain ⟨v, s₁, hev, hext, hrep⟩ := he₁ s (Ext.refl _)
+  obtain ⟨w, s₂, hew, hext₂, hrep₂⟩ := he₂ s₁ hext
+  exact ⟨[v, w], s₂, EvalsL.cons hev (EvalsL.cons hew (EvalsL.nil _ _)), hext.trans hext₂,
+    hA _ _ _ (mono hext₂.2 hrep) hrep₂⟩
+
+variable (opName ArgOK)
+
+theorem AW.call_val (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
+    {x op args xs k Q} {arg : W.Arg op} {r : W.Res op} (hs : ASimArgs p s.st args ArgOK op arg)
+    (hov : ov op arg hv = .value r) (hne : x ≠ "")
+    (h : ∀ s₁ : AS, Upd s.st s₁.st x → V s₁.st x r → HRel opName ArgOK (hv ++ [⟨op, arg, .value r⟩]) s₁.hist →
+      AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (.await x (opName op) args :: xs) :: k) Q :=
+  let ⟨_, _, he, hx, hA⟩ := hs; AW.await_val hO hH he hx hA hov hne h
+
+theorem AW.call_drop (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
+    {op args xs k Q} {arg : W.Arg op} {r : W.Res op} (hs : ASimArgs p s.st args ArgOK op arg)
+    (hov : ov op arg hv = .value r)
+    (h : ∀ s₁ : AS, Ext s.st s₁.st → HRel opName ArgOK (hv ++ [⟨op, arg, .value r⟩]) s₁.hist →
+      AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (.await "" (opName op) args :: xs) :: k) Q :=
+  let ⟨_, _, he, hx, hA⟩ := hs; AW.await_drop hO hH he hx hA hov h
+
+theorem AW.call_rej (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
+    {x op args xs k Q} {arg : W.Arg op} {e : Js.Exn} (hs : ASimArgs p s.st args ArgOK op arg)
+    (hov : ov op arg hv = .reject e)
+    (h : ∀ v (s₁ : AS), Ext s.st s₁.st → rep s₁.st.heap e v → HRel opName ArgOK (hv ++ [⟨op, arg, .reject e⟩]) s₁.hist →
+      ∃ out, Cont p a o (.thrown v s₁) k out ∧ Q out) :
+    AW p a o s (.block (.await x (opName op) args :: xs) :: k) Q :=
+  let ⟨_, _, he, hx, hA⟩ := hs; AW.await_rej hO hH he hx hA hov h
+
+theorem AW.set' {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist) {x e xs k Q α} [TyRep α] {va : α}
+    (he : SimE p s.st e va)
+    (h : ∀ s₁ : AS, Upd s.st s₁.st x → V s₁.st x va → HRel opName ArgOK hv s₁.hist → AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (.stmt (.set x e) :: xs) :: k) Q :=
+  AW.set he fun st' hu hV => h ⟨st', s.hist⟩ hu hV hH
+
+theorem AW.ite_pos {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist) {c t e xs k Q P}
+    (hb : SimB p s.st c P) (hP : P)
+    (h : ∀ s₁ : AS, Ext s.st s₁.st → HRel opName ArgOK hv s₁.hist → AW p a o s₁ (.block t :: .block xs :: k) Q) :
+    AW p a o s (.block (.ite c t e :: xs) :: k) Q := by
+  obtain ⟨v, st, hev, hext, hiff⟩ := hb s.st (Ext.refl _)
+  exact AW.ite_true hev (hiff.mpr hP) (h ⟨st, s.hist⟩ hext hH)
+
+theorem AW.ite_neg {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist) {c t e xs k Q P}
+    (hb : SimB p s.st c P) (hP : ¬P)
+    (h : ∀ s₁ : AS, Ext s.st s₁.st → HRel opName ArgOK hv s₁.hist → AW p a o s₁ (.block e :: .block xs :: k) Q) :
+    AW p a o s (.block (.ite c t e :: xs) :: k) Q := by
+  obtain ⟨v, st, hev, hext, hiff⟩ := hb s.st (Ext.refl _)
+  have hf : truthy v = false := by cases hv : truthy v <;> simp_all
+  exact AW.ite_false hev hf (h ⟨st, s.hist⟩ hext hH)
+
+/-- A throw caught: the handler sees the thrown value under its name. -/
+theorem Cont.catch' {v} {r : AS} {hv} (hH : HRel opName ArgOK hv r.hist) {x h k Q α} [TyRep α] {va : α}
+    (hrep : rep r.st.heap va v)
+    (hw : ∀ s₂ : AS, Upd r.st s₂.st x → V s₂.st x va → HRel opName ArgOK hv s₂.hist → AW p a o s₂ (.block h :: k) Q) :
+    ∃ out, Cont p a o (.thrown v r) (.catch x h :: k) out ∧ Q out :=
+  Cont.toCatch (hw _ ⟨List.prefix_refl _, fun y hy => by simp [Env.put, hy]⟩ ⟨v, by simp [Env.put], hrep⟩ hH)
+
 end Rel
 
 end Core.Async
