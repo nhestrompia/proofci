@@ -53,7 +53,7 @@ theorem moveMoney_shared {h l} {a amt : Int} (ha : balance h l (F64.ofInt a))
   apply wprun_void
   simp only [src_shared_moveMoney]
   core_run
-  all_goals simp (disch := omega) [balance, readField, List.lookup, hlen]
+  all_goals simp (disch := omega) [balance, readField, List.lookup, hlen, lookup_putField_same]
   all_goals try (congr 2; omega)
 
 /-- With two accounts, the amount moves from one to the other. -/
@@ -73,7 +73,7 @@ theorem moveMoney_separate {h l m} {a b amt : Int} (hne : l ≠ m)
   apply wprun_void
   simp only [src_shared_moveMoney]
   core_run
-  all_goals simp [balance, readField, List.lookup, hlen, hlen', hne, hne', List.getElem?_set, List.getElem_set, *]
+  all_goals simp [balance, readField, List.lookup, hlen, hlen', hne, hne', List.getElem?_set, List.getElem_set, lookup_putField_same, *]
 
 /-- The version that reads both balances first looks the same, but with one shared
 account it creates money. Core sees that; a type-directed model never gets to ask. -/
@@ -87,7 +87,7 @@ theorem moveMoneyStale_shared_creates_money {h l} {a amt : Int} (ha : balance h 
   apply wprun_void
   simp only [src_shared_moveMoneyStale]
   core_run
-  all_goals simp [balance, readField, List.lookup, hlen]
+  all_goals simp [balance, readField, List.lookup, hlen, lookup_putField_same]
 
 /-- With fractions, `moveMoney` on one shared account doesn't conserve money: Core
 computes the rounding that the safe-integer model refuses to represent. -/

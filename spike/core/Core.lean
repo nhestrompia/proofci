@@ -235,7 +235,7 @@ order of keys is JavaScript's. -/
 def putField (fs : List (String × Val)) (k : String) (v : Val) : List (String × Val) :=
   if fs.any (·.1 == k) then fs.map (fun e => if e.1 == k then (k, v) else e) else fs ++ [(k, v)]
 
-theorem lookup_putField_same (fs : List (String × Val)) (k : String) (v : Val) :
+@[simp] theorem lookup_putField_same (fs : List (String × Val)) (k : String) (v : Val) :
     (putField fs k v).lookup k = some v := by
   unfold putField
   split
