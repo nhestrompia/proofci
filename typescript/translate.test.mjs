@@ -641,6 +641,28 @@ function items(xs: J[], i: number): number { return i >= xs.length ? 0 : sum(xs[
   assert.match(replay, /\.list \[[^\]]/);
 });
 
+test("the Node comparison covers declared types that hold each other", async () => {
+  const repo = join(dir, "mutual-types");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(repo, "a.ts"), `type Doc = { kind: "num"; n: number } | { kind: "obj"; fields: Field[] };
+interface Field { key: string; value: Doc }
+export function count(d: Doc): number {
+  switch (d.kind) { case "num": return d.n; case "obj": return fields(d.fields, 0); }
+}
+function fields(fs: Field[], i: number): number { return i >= fs.length ? 0 : count(fs[i].value) + fields(fs, i + 1); }
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::count"] });
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.match(result.source, /\nmutual\nstructure a\.Field where[^]*\ninductive a\.Doc where[^]*\nend\n/);
+  const out = join(dir, "mutual-types-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 30 });
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 30);
+  assert.match(replay, /a\.Field\.mk/);
+});
+
 test("?. reads a length, and refuses other built-in members", () => {
   emits("export function f(a?: number[]) { return a?.length ?? 0; }", "Js.len item");
   rejects("export function f(a?: Map<string, number>) { return a?.size ?? 0; }", /only supported on fields/);
