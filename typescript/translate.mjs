@@ -591,12 +591,25 @@ export class Translator {
           inner.recursive = true;
           return inner.lean;
         }
+        // Declared types that hold each other are one `mutual` block of inductive types.
+        const at = this.declaring.findIndex(d => d.key === key);
+        if (at >= 0 && this.declaring.slice(at).every(d => d.key !== null)) return this.closeTypeCycle(at);
         if (this.handlesAllowed()) {
           this.usesHandles = true;
           this.cutHit = true;
           return "Js.Handle";
         }
-        throw this.fail(declaration, "a type that recurs through another type is not supported yet");
+        throw this.fail(declaration, "a type that recurs through an inline object type is not supported yet");
+      }
+      // A finished member of a block still open is part of a cycle through the stack too.
+      if (known.group && this.declaring.includes(known.group.root)) {
+        const at = this.declaring.indexOf(known.group.root);
+        if (this.declaring.slice(at).every(d => d.key !== null)) this.closeTypeCycle(at);
+        else if (this.handlesAllowed()) {
+          this.usesHandles = true;
+          this.cutHit = true;
+          return "Js.Handle";
+        } else throw this.fail(declaration, "a type that recurs through an inline object type is not supported yet");
       }
       return known.lean;
     }
@@ -634,7 +647,18 @@ export class Translator {
     }
     // A generic type that holds itself is copied per use instead (see `parameterized`).
     if (entry.recursive && params) throw this.fail(declaration, "a generic type that holds itself is not supported yet over a type parameter");
-    if (entry.recursive) shape = { ...shape, recursive: true, text: recursiveEquality(lean, shape, (_, message) => this.fail(declaration, message)) };
+    if (entry.group) {
+      const group = entry.group;
+      group.done.push({ lean, shape });
+      this.cutHit = outerCut;
+      if (group.root !== entry) {
+        this.types.set(key, { lean, ...shape, recursive: true, group });
+        this.shaped.push({ type, node });
+        return lean;
+      }
+      shape = { ...shape, recursive: true, text: recursiveEquality(group.done, (_, message) => this.fail(declaration, message)) };
+      for (const [k, v] of this.types) if (v?.group === group) this.types.set(k, { ...v, group: undefined });
+    } else if (entry.recursive) shape = { ...shape, recursive: true, text: recursiveEquality([{ lean, shape }], (_, message) => this.fail(declaration, message)) };
     this.cutHit = outerCut;
     if (params) {
       if (shape.kind === "enum") throw this.fail(declaration, "this generic type is not supported yet");
@@ -646,6 +670,21 @@ export class Translator {
     this.typeTexts.add(shape.text);
     this.order.push(shape.text);
     return lean;
+  }
+
+  // The declared types on the stack from `at` up hold each other: they become one group, emitted
+  // as a `mutual` block when its first member is done.
+  closeTypeCycle(at) {
+    const members = this.declaring.slice(at);
+    const groups = new Set(members.map(d => d.group).filter(Boolean));
+    const group = { root: members[0], done: [] };
+    for (const g of groups) {
+      group.done.push(...g.done);
+      if (this.declaring.indexOf(g.root) < this.declaring.indexOf(group.root)) group.root = g.root;
+    }
+    for (const d of members) Object.assign(d, { group, recursive: true });
+    for (const [k, v] of this.types) if (v && groups.has(v.group)) this.types.set(k, { ...v, group });
+    return members[0].lean;
   }
 
   fields(type, declaration) {
@@ -959,8 +998,6 @@ export class Translator {
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
-    if (isAsync && entry.recursive) throw this.fail(fn, "a recursive `async` function is not supported yet");
-    if (entry.group && [...this.functions.values()].some(e => e.group === entry.group && e.async)) throw this.fail(fn, "a recursive `async` function is not supported yet");
     const monad = isAsync ? `Proofci.Effects.Eff ${result}` : `Result ${result}`;
     const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
@@ -3603,8 +3640,11 @@ export class Scope {
 // `Option`, so for a recursive type it is written out: one function for the type and one for each
 // field type that holds it, all by structural recursion. A type with no finite value is refused:
 // its Lean type would be empty, so anything would hold of it, while JavaScript can build one as a cycle.
-function recursiveEquality(lean, shape, fail) {
-  const self = `_root_.${lean}`;
+// Decidable equality for inductive types that hold themselves or each other (`members`, the first naming
+// the helpers), written out since Lean can't derive it through `List` or `Option`.
+function recursiveEquality(members, fail) {
+  const lean = members[0].lean;
+  const selves = members.map(m => `_root_.${m.lean}`);
   const parts = text => {
     if (!text.startsWith("(")) return [text];
     const found = [];
@@ -3620,16 +3660,24 @@ function recursiveEquality(lean, shape, fail) {
     }
     return found;
   };
-  const holds = text => text === self || (text.startsWith("(") && parts(text).some(holds));
+  const holds = text => selves.includes(text) || (text.startsWith("(") && parts(text).some(holds));
   const form = text => {
     const [head, ...rest] = parts(text);
     if ((head === "List" || head === "Option") && rest.length === 1) return { head, item: rest[0] };
     const shown = text.replace(/_root_\./g, "");
     throw fail(null, `a recursive type that holds itself inside \`${shown}\` is not supported yet`);
   };
-  const finite = text => text !== self && (!holds(text) || Boolean(form(text)));
-  if (!shape.ctors.some(c => c.types.every(finite))) throw fail(null, "a recursive type with no finite value is not supported");
-  const helpers = [self];
+  const finite = new Set();
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const m of members) {
+      if (finite.has(m.lean)) continue;
+      const ok = text => selves.includes(text) ? finite.has(text.slice(7)) : !holds(text) || Boolean(form(text));
+      if (m.shape.ctors.some(c => c.types.every(ok))) { finite.add(m.lean); grew = true; }
+    }
+  }
+  if (members.some(m => !finite.has(m.lean))) throw fail(null, "a recursive type with no finite value is not supported");
+  const helpers = [...selves];
   const decide = text => {
     if (!holds(text)) return "_root_.decEq";
     if (!helpers.includes(text)) { form(text); helpers.push(text); }
@@ -3647,7 +3695,8 @@ function recursiveEquality(lean, shape, fail) {
   const vars = (ctor, v) => ctor.types.map((_, i) => `${v}${i}`).join(" ");
   const pattern = (ctor, v) => (ctor.types.length ? `.${ctor.name} ${vars(ctor, v)}` : `.${ctor.name}`);
   const body = text => {
-    if (text === self) {
+    if (selves.includes(text)) {
+      const shape = members[selves.indexOf(text)].shape;
       return shape.ctors.flatMap(c => shape.ctors.map(d => c === d
         ? arm(pattern(c, "a"), pattern(c, "b"), c.types.map((t, i) => [t, `a${i}`, `b${i}`]))
         : [`  | .${c.name}${c.types.length ? " .." : ""}, .${d.name}${d.types.length ? " .." : ""} => ${differ}`]).flat());
@@ -3665,10 +3714,11 @@ function recursiveEquality(lean, shape, fail) {
     const lines = body(helpers[i]);
     defs.push(`def ${lean}.decEq_${i} : (x y : ${helpers[i]}) → Decidable (x = y)`, ...lines);
   }
-  // Lean resolves the type inside its own declaration only by the name given there.
-  const declared = shape.text.split(self).join(lean).replace(/\nderiving DecidableEq, Repr$/, "\nderiving Repr");
-  return [declared, "", "mutual", ...defs, "end", "",
-    `instance ${lean}.instDecidableEq : DecidableEq ${lean} := ${lean}.decEq_0`].join("\n");
+  // Lean resolves a type inside its own declaration only by the name given there.
+  const plain = text => selves.reduce((t, self, i) => t.split(self).join(members[i].lean), text);
+  const declared = members.map(m => plain(m.shape.text).replace(/\nderiving DecidableEq, Repr$/, "\nderiving Repr"));
+  return [...(members.length > 1 ? ["mutual", ...declared, "end"] : declared), "", "mutual", ...defs, "end", "",
+    ...members.map((m, i) => `instance ${m.lean}.instDecidableEq : DecidableEq ${m.lean} := ${lean}.decEq_${i}`)].join("\n");
 }
 
 function leanString(value) {
