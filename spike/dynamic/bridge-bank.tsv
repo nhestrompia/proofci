@@ -1,0 +1,3 @@
+ts-bank	src/ledger.ts	transfer
+ts-bank	src/ledger.ts	calculateFee
+ts-bank	src/ledger.ts	sumAmounts

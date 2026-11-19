@@ -376,3 +376,48 @@ theorem colorIndexes_spec {h : Heap} {l xs} {es : List Bool} {cs : List (List Na
       refine ⟨l, out, rfl, by rw [List.getElem?_append_left (heap_lt (hf.get hl))]; exact hf.get hl, rfl, ?_⟩
       intro j hj; exact (hg j hj).append
     · exact ⟨H.length, out, rfl, by simp, ho, fun j hj => (hg j (ho ▸ hj)).append⟩
+
+/-- `sumAmounts` returns the sum, when every partial sum is safe, and leaves the heap alone. -/
+theorem sumAmounts_sum {h : Heap} {l} {ns : List Int} (hl : h[l]? = some (.array (ns.map num)))
+    (hs : ∀ i ≤ ns.length, -9007199254740991 ≤ (ns.take i).sum ∧ (ns.take i).sum ≤ 9007199254740991) :
+    Spec (Bank.sumAmounts (.ref l)) h fun r h' => r = num ns.sum ∧ h' = h := by
+  unfold Bank.sumAmounts
+  simp only [spec_bind]
+  rw [spec_eq (iter_arr hl)]
+  refine spec_forIn hl (spec_mono (forLoop_spec (xs := ns.map num)
+    (fun i t h' => h' = h ∧ t = num (ns.take i).sum) (fun _ _ _ hI => hI.1 ▸ hl) ?_ _ 0 _ h (by simp) ⟨rfl, by simp⟩) ?_)
+  · rintro i t h' hi ⟨rfl, rfl⟩
+    simp only [List.length_map] at hi
+    simp only [List.getElem_map, spec_bind]
+    rw [bin_add_num (by have := hs (i + 1) (by omega); rw [List.take_succ_eq_append_getElem hi, List.sum_append] at this; simpa using this)]
+    simp only [spec_pure, spec_bind]
+    exact ⟨_, rfl, by trivial, by rw [List.take_succ_eq_append_getElem hi, List.sum_append, List.sum_singleton]⟩
+  · rintro t h' ⟨rfl, rfl⟩
+    simp
+
+/-- With array content, the message is empty exactly when every part is a text part that trims to nothing. -/
+theorem messageIsEmpty_arr {h : Heap} {m fs c xs} {ts ss : List (List Nat)}
+    (hm : h[m]? = some (.record fs)) (hc : fs.lookup "content" = some (.ref c))
+    (hcl : h[c]? = some (.array xs)) (ht : ts.length = xs.length) (hs : ss.length = xs.length)
+    (hx : ∀ (i : Nat) (hi : i < xs.length), ∃ mi : Nat, ∃ gs, xs[i] = .ref mi ∧ h[mi]? = some (.record gs) ∧
+      gs.lookup "type" = some (.str (ts.getD i [])) ∧ gs.lookup "text" = some (.str (ss.getD i []))) :
+    Spec (Alias.messageIsEmpty (.ref m)) h fun r h' => h' = h ∧
+      r = .bool (((List.range xs.length).map fun i =>
+        decide (ts.getD i [] = utf16 "text") && decide (Js.trim (ss.getD i []) = [])).all id) := by
+  unfold Alias.messageIsEmpty
+  dsteps [spec_isArray hcl, typeOf_ref_ne]
+  rw [jsEvery_spec (qs := (List.range xs.length).map fun i =>
+    decide (ts.getD i [] = utf16 "text") && decide (Js.trim (ss.getD i []) = [])) hcl (by simp) ?_]
+  · exact ⟨rfl, rfl⟩
+  · intro i hi
+    obtain ⟨mi, gs, hxi, hmi, hty, htx⟩ := hx i hi
+    rw [hxi]
+    try simp only [List.getD_eq_getElem _ _ (by simpa using hi), List.getElem_map, List.getElem_range]
+    apply ok_of_spec
+    dsteps [hmi, hty, htx]
+    rw [show str "text" = Val.str (utf16 "text") from rfl]
+    dsteps [hmi, hty, htx]
+    all_goals first
+      | (simp only [List.getD_eq_getElem _ _ (by simpa using hi), List.getElem_map, List.getElem_range, and_true]
+         simp_all; done)
+      | (exfalso; simp_all [nullish]; done)
