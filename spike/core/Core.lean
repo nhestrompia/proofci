@@ -45,7 +45,7 @@ inductive Prim where
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
-  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys
+  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys | recGet | recHas | recSet | recValues | recCopy
   deriving DecidableEq, Repr
 
 inductive Expr where
@@ -260,12 +260,18 @@ def putField (fs : List (String × Val)) (k : String) (v : Val) : List (String �
       simp only [List.cons_append, List.lookup, hb]
       exact ih h'
 
+/-- Keys a record of dynamic keys can hold (`Js.keyOk`). -/
+def keyOk (k : String) : Bool := Js.keyOk (k.toList.map Char.toNat)
+
+/-- The record key for a JavaScript string, when `keyOk` allows it. -/
+def recKey (s : List Nat) : Option String :=
+  if Js.keyOk s then some (String.ofList (s.map Char.ofNat)) else none
+
 /-- `Object.keys` of a record, in insertion order. Keys JavaScript would list first (array
 indices), keys that aren't plain ASCII, repeated keys and the class tag stop the model. -/
 def keysV (fs : List (String × Val)) : Option (List Val) :=
   let ks : List String := fs.map Prod.fst
-  if ks.all (fun (k : String) => !k.isEmpty && !k.all Char.isDigit && k.all (fun (c : Char) => decide (c.toNat < 128)) && k != "__class" && k != "__proto__")
-    && ks.eraseDups.length == ks.length
+  if ks.all keyOk && decide ks.Nodup
   then some (ks.map fun k => .str (k.toList.map Char.toNat)) else none
 
 /-- One level of `flat`, on an array whose items are all arrays. Anything else stops the model:
@@ -404,6 +410,21 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .atRel, h, [.str s, n] => (asNum n).map fun n => ((Js.strAt s n).elim .undef .str, h)
   | .flat, h, [.ref l] => match h[l]? with
     | some (.array xs) => (flatV h xs).map fun ys => (.ref h.length, h ++ [.array ys])
+    | _ => none
+  | .recGet, h, [.ref l, .str s] => match h[l]?, recKey s with
+    | some (.record fs), some k => some ((fs.lookup k).getD .undef, h)
+    | _, _ => none
+  | .recHas, h, [.ref l, .str s] => match h[l]?, recKey s with
+    | some (.record fs), some k => some (.bool (fs.lookup k).isSome, h)
+    | _, _ => none
+  | .recSet, h, [.ref l, .str s, v] => match h[l]?, recKey s with
+    | some (.record fs), some k => some (.undef, h.set l (.record (putField fs k v)))
+    | _, _ => none
+  | .recValues, h, [.ref l] => match h[l]? with
+    | some (.record fs) => (keysV fs).map fun _ => (.ref h.length, h ++ [.array (fs.map Prod.snd)])
+    | _ => none
+  | .recCopy, h, [.ref l] => match h[l]? with
+    | some (.record fs) => (keysV fs).map fun _ => (.ref h.length, h ++ [.record fs])
     | _ => none
   | .keys, h, [.ref l] => match h[l]? with
     | some (.record fs) => (keysV fs).map fun ks => (.ref h.length, h ++ [.array ks])
