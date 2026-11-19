@@ -45,4 +45,24 @@ abbrev firstAbove.pre (xs' : Val) (k' : Val) (h : Heap) : Prop :=
 def firstAbove (xs' : Val) (k' : Val) : M Val := do
   return (← (do let r1 := xs'; jsFindIndex r1 (fun x' _ => do
       return (← (do bin .gt x' k')))))
+abbrev sumIndexed.pre (xs' : Val) (h : Heap) : Prop :=
+  Is h (.arr .num) xs'
+def sumIndexed (xs' : Val) : M Val := do
+  let mut s' := (num 0)
+  let mut i' := (num 0)
+  for _ in fuel do
+    if !(truthy (← (do bin .lt i' (← (do length xs'))))) then break
+    s' ← (bin .add s' (← (do index xs' i')))
+    i' ← (bin .add i' (num 1))
+  return s'
+abbrev halvings.pre (n' : Val) (h : Heap) : Prop :=
+  Is h .num n'
+def halvings (n' : Val) : M Val := do
+  let mut k' := (num 0)
+  let mut m' := n'
+  for _ in fuel do
+    if !(truthy (← (do bin .gt m' (num 1)))) then break
+    m' ← (do math F64.floor (← (do bin .div m' (num 2))))
+    k' ← (bin .add k' (num 1))
+  return k'
 end Fixtures

@@ -10,5 +10,5 @@ node dyn.mjs $C/continue/core/llm/messages.ts Alias addSpaceToAnyEmptyMessages >
 node dyn.mjs $C/continue/core/util/messageContent.ts Closure renderContextItemsWithStatus > Gen/Closure.lean
 node dyn.mjs $A/fields/formula/budget.ts Budget FormulaEvaluationBudget > Gen/Budget.lean
 node dyn.mjs $C/immich/web/src/lib/utils/slideshow-history.ts Slideshow SlideshowHistory > Gen/Slideshow.lean
-node dyn.mjs fixtures.ts Fixtures colorIndexes bumpBoth padCode firstAbove > Gen/Fixtures.lean
+node dyn.mjs fixtures.ts Fixtures colorIndexes bumpBoth padCode firstAbove sumIndexed halvings > Gen/Fixtures.lean
 node dyn.mjs ../../examples/ts-bank/src/ledger.ts Bank calculateFee transfer sumAmounts > Gen/Bank.lean
