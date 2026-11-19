@@ -489,3 +489,18 @@ function itemsSum(xs: GapTerm[], i: number): number {
   if (i >= xs.length) return 0;
   return jsonSum(xs[i]) + itemsSum(xs, i + 1);
 }
+
+export function stepA(n: number, acc: number): number {
+  if (n <= 0) return acc;
+  return stepB(n - 1, acc + 1);
+}
+
+function stepB(n: number, acc: number): number {
+  if (n <= 0) return acc;
+  return stepC(n - 1, acc * 2);
+}
+
+function stepC(n: number, acc: number): number {
+  if (n <= 0) return acc;
+  return stepA(n - 1, acc - 3) + stepB(n - 1, acc);
+}
