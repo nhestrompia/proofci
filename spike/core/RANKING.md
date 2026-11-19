@@ -178,7 +178,8 @@ Full commits: umami `aad2c4cedd5c0b3bc4d361843830a0bb47cf79c4`, tldraw
 medusa `4f1baa07fb117a900400a61ebb2e7c6729717e04`, trigger.dev
 `74765f97f1baafc7665d25b0f2f2af2dcf14436b`, Rocket.Chat `f82e774900c92c58df6fccca8df5b08d8ee95835`,
 AFFiNE `dc2b2212441602452f3cf0ea50a4eaedaf03bcc2`, cal.com `ae027bb70e694e2d2c44569f398d6cbcee0389b1`.
-Counts above are for the translator at `642a2c3`.
+Counts above are for the translator at `642a2c3`; describing generic tagged unions for the bridge
+left them unchanged, since the translator already accepted those functions.
 
 ## Limits
 
