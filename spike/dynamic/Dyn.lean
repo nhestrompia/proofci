@@ -388,6 +388,7 @@ def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args wi
   | .str _, .slice, [a, b] => prim .slice [o, a, b]
   | .str _, .indexOf, [a] => prim .strIndexOf [o, a]
   | .str _, .lastIndexOf, [a] => prim .strLastIndexOf [o, a]
+  | .ref _, .lastIndexOf, [a] => prim .lastIndexOfStr [o, a]
   | .str _, .charAt, [a] => prim .charAt [o, a]
   | .str _, .charCodeAt, [a] => prim .charCodeAt [o, a]
   | .str _, .split, [a] => prim .split [o, a]
