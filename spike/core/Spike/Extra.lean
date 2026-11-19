@@ -100,7 +100,7 @@ theorem safe_every_order (b x y : Int)
   simp only [List.mem_cons, List.not_mem_nil, or_false] at ho
   rcases ho with rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp (disch := omega) [runOrder, balanceAfter, acct, env2, execList, exec, eval, evalList, binary, readField,
-      Env.put, List.lookup, List.filter, comm]
+      Env.put, List.lookup, List.filter, putField, comm]
 
 set_option maxRecDepth 40000 in
 set_option maxHeartbeats 4000000 in
@@ -114,7 +114,7 @@ theorem stale_depends_on_order (b x y : Int)
     balanceAfter (runOrder [true, false, true, false] (src_async_withdrawStale_segs, env2 x)
         (src_async_withdrawStale_segs, env2 y) [acct b, .array []]) = some (numV (b - y)) := by
   simp (disch := omega) [runOrder, balanceAfter, acct, env2, execList, exec, eval, evalList, binary, readField,
-    Env.put, List.lookup, List.filter]
+    Env.put, List.lookup, List.filter, putField]
 
 #print axioms amountOf_spec
 #print axioms clamp01_range

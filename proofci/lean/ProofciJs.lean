@@ -496,6 +496,41 @@ def padEnd (s : Str) (n : Num) (fill : Str) : Result Str :=
   else if n.val ≤ 2 ^ 20 then ok (s ++ padding fill (n.val.toNat - s.length))
   else fail .undef
 
+/-- Where `xs.at(i)` reads: a negative index counts from the end. -/
+def relIndex (len : Nat) (i : Int) : Int := if i < 0 then len + i else i
+
+/-- `xs.at(i)` -/
+def atRel {α} (xs : List α) (i : Num) : Option α :=
+  if relIndex xs.length i.val < 0 then none else xs[(relIndex xs.length i.val).toNat]?
+
+/-- `s.at(i)` -/
+def strAt (s : Str) (i : Num) : Option Str := (atRel s i).map fun c => [c]
+
+/-- `xs.lastIndexOf(v)`, for values compared by value. -/
+def lastIndexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Num :=
+  match xs.reverse.idxOf? v with
+  | some i => mk ((xs.length : Int) - 1 - i)
+  | none => mk (-1)
+
+/-- `s.repeat(n)`. A negative count throws, and past `2 ^ 20` units the model stops. -/
+def strRepeat (s : Str) (n : Num) : Result Str :=
+  if n.val < 0 then fail .undef
+  else if s = [] then ok []
+  else if s.length * n.val.toNat ≤ 2 ^ 20 then ok (List.replicate n.val.toNat s).flatten
+  else fail .undef
+
+/-- `xs.flat()` on an array of arrays. -/
+def flat {α} (xss : List (List α)) : List α := xss.flatten
+
+/-- `xs.findIndex(f)`, counting from `i`. -/
+def findIndexFrom {α} (f : α → Result Bool) : List α → Nat → Result Num
+  | [], _ => mk (-1)
+  | x :: rest, i => do
+    let hit ← f x
+    if hit then mk i else findIndexFrom f rest (i + 1)
+
+def findIndex {α} (f : α → Result Bool) (xs : List α) : Result Num := findIndexFrom f xs 0
+
 def undefinedStr : Str := js!"undefined"
 def nullStr : Str := js!"null"
 
