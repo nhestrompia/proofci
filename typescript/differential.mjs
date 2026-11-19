@@ -95,7 +95,7 @@ export function term(type, value) {
       const entries = Object.entries(value);
       if (Object.keys(value).length !== Reflect.ownKeys(value).length || entries.some(([k]) => !keyOk(k))) return undefined;
       const parts = entries.map(([k, v]) => [term({ kind: "string" }, k), term(type.value, v)]);
-      return parts.flat().includes(undefined) ? undefined : `[${parts.map(([k, v]) => `(${k}, ${v})`).join(", ")}]`;
+      return parts.flat().includes(undefined) ? undefined : `([${parts.map(([k, v]) => `(${k}, ${v})`).join(", ")}] : Js.Dict Js.Str _)`;
     }
     case "set": {
       if (!(value instanceof Set)) return undefined;
