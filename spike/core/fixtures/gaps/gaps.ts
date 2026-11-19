@@ -148,6 +148,43 @@ export function listCount(xs: string[] | undefined, ys: number[]): number {
   return (Array.isArray(xs) ? 1 : 0) + (Array.isArray(ys) ? 1 : 0);
 }
 
+export interface Page<T> {
+  items: T[];
+  total: number;
+}
+
+export function pageSize<T>(p: Page<T>): number {
+  return p.items.length;
+}
+
+export function pageItems<T>(p: Page<T>): T[] {
+  return p.total > 0 ? p.items : [];
+}
+
+export function onePage<T>(x: T): Page<T> {
+  return { items: [x], total: 1 };
+}
+
+export function firstOf<T extends {}>(xs: T[]): T | undefined {
+  return xs[0];
+}
+
+export function orElse<T extends {}>(a: T | undefined, d: T): T {
+  return a ?? d;
+}
+
+function repeat<T>(x: T, n: number): T[] {
+  return n > 0 ? [x, x] : [x];
+}
+
+export function repeatCount(n: number): number {
+  return repeat(n, n).length;
+}
+
+export function numberPage(p: Page<number>): number {
+  return pageSize(p) + p.total;
+}
+
 // Types that hold themselves (a linked list, a JSON-like union), and recursion over them.
 export interface GapItem {
   value: number;

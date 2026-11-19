@@ -18,7 +18,8 @@ function leanType(t) {
     case "string": return "Js.Str";
     case "boolean": return "Bool";
     case "bigint": return "Int";
-    case "record": case "enum": return t.lean;
+    case "record": return t.args ? `(${t.lean} ${t.args.map(plain).join(" ")})` : t.lean;
+    case "enum": return t.lean;
     case "void": return "Unit";
     case "generic": return t.name;
     case "array": case "set": return `(List ${leanType(t.item)})`;
@@ -28,7 +29,13 @@ function leanType(t) {
 }
 
 // The same type without the encoding marker: what the typed view itself uses.
-const generics = t => t.kind === "generic" ? [t.name] : t.kind === "array" ? generics(t.item) : t.kind === "optional" ? generics(t.inner) : [];
+const generics = t => t.kind === "generic" ? [t] : t.kind === "array" ? generics(t.item) : t.kind === "optional" ? generics(t.inner)
+  : t.kind === "record" && t.args ? t.args.flatMap(generics) : [];
+// A type parameter that can't be `null` or `undefined` keeps `Option T` one-to-one, as `NotNull` says.
+// A rule that tactics apply before its type parameter is known takes the instances as implicit
+// arguments, which unification fills in later.
+const binders = (ts, { eq = false, late = false } = {}) => [...new Map(ts.flatMap(generics).map(g => [g.name, g])).values()]
+  .map(g => `{${g.name} : Type}${eq ? (late ? ` {_ : DecidableEq ${g.name}}` : ` [DecidableEq ${g.name}]`) : ""}${late ? ` {_ : TyRep ${g.name}}` : ` [TyRep ${g.name}]`}${g.nonNull ? ` [NotNull ${g.name}]` : ""}`).join(" ");
 const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
 
 // Key lists of record literals, reading nested ones separately.
@@ -168,24 +175,27 @@ ${e.tags.map(t => `theorem ${n}_lit_${short(t.tag)} {p s} : SimE p s (.lit (.str
 macro_rules | \`(tactic| s_lit) => \`(tactic| exact ${n}_lit_${short(t.tag)})`).join("\n")}`;
 }
 
-function recordRules(r, shapes) {
-  const n = short(r.lean);
+function recordRules(record, shapes) {
+  const n = short(record.lean);
+  const r = record.params ? { ...record, fields: record.declared, lean: `(${record.lean} ${record.params.join(" ")})` } : record;
+  const instance = r.params ? r.params.map(p => `{${p} : Type} [TyRep ${p}]`).join(" ") : "";
+  const tv = r.params ? r.params.map(p => `{${p} : Type} {_ : TyRep ${p}}`).join(" ") : "";
   const view = f => `(rep (α := ${leanType(f.type)}) h a.${f.lean} ((fs.lookup ${q(f.name)}).getD .undef))`;
   const pats = r.fields.map((_, i) => `f${i}`);
-  const lines = [`instance : TyRep ${r.lean} where
+  const lines = [`instance ${instance} : TyRep ${r.lean} where
   rep h a v := ∃ l fs, v = .ref l ∧ h[l]? = some (.record fs) ∧ ${r.fields.map(view).join(" ∧ ")}
   mono hp := by
     rintro ⟨l, fs, rfl, hl, ${pats.join(", ")}⟩
     exact ⟨l, fs, rfl, lookup_mono hp hl, ${pats.map(p => `mono hp ${p}`).join(", ")}⟩
-instance : IsObj ${r.lean} := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩`];
+instance ${instance} : IsObj ${r.lean} := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩`];
   r.fields.forEach((f, i) => {
     const names = pats.map((p, j) => (j === i ? "hf" : "_")).join(", ");
     const open = `by rintro _ _ ⟨l, fs, rfl, hl, ${names}⟩; exact ⟨_, by simp [readField, hl], hf⟩`;
-    lines.push(`theorem ${n}_get_${i} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.field o ${q(f.name)}) a.${f.lean} :=
+    lines.push(`theorem ${n}_get_${i} ${tv} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.field o ${q(f.name)}) a.${f.lean} :=
   sim_field h (${open})
 macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${n}_get_${i}; sim'))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${n}_get_${i}; sim_read))
-theorem ${n}_opt_${i} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.optField o ${q(f.name)}) a.${f.lean} :=
+theorem ${n}_opt_${i} ${tv} {p s o} {a : ${r.lean}} (h : SimE p s o a) : SimE (α := ${leanType(f.type)}) p s (.optField o ${q(f.name)}) a.${f.lean} :=
   sim_optField h (${open})
 macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
   });
@@ -204,7 +214,7 @@ macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${n}_opt_${i}; sim'))`);
       const i = keys.indexOf(f.name);
       return i < 0 ? `(by simp [List.lookup]; exact rfl)` : `(by simp [List.lookup]; exact mono (List.prefix_append _ _) r${i})`;
     });
-    lines.push(`theorem ${n}_lit_${si} {p s ${es.join(" ")}} ${typed} ${hyps} :
+    lines.push(`theorem ${n}_lit_${si} ${tv} {p s ${es.join(" ")}} ${typed} ${hyps} :
     SimE p s (.record [${keys.map((k, i) => `(${q(k)}, e${i})`).join(", ")}]) (${value} : ${r.lean}) :=
   sim_record (${chain}) (by
     rintro _ _ ⟨${destruct}, rfl⟩
@@ -224,7 +234,8 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   for (const t of targets) if (view.failures[t]) throw new Error(`callee rejected: ${view.failures[t]}`);
   const types = new Map();
   const scan = t => {
-    if (t.kind === "record" || t.kind === "enum") { if (types.has(t.lean)) return; if (t.kind === "record") t.fields.forEach(f => scan(f.type)); types.set(t.lean, t); }
+    if (t.kind === "record") t.args?.forEach(scan);
+    if (t.kind === "record" || t.kind === "enum") { if (types.has(t.lean)) return; if (t.kind === "record") (t.declared ?? t.fields).forEach(f => scan(f.type)); types.set(t.lean, t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);
   };
@@ -236,7 +247,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const encodable = t => t.kind === "record" ? t.fields.every(f => encodable(f.type))
     : t.kind === "optional" ? encodable(t.inner)
     : t.kind === "array" || t.kind === "set" ? encodable(t.item)
-    : !["generic", "map", "tagged", "recursive"].includes(t.kind);
+    : !["map", "tagged", "recursive"].includes(t.kind);
   for (const t of view.records()) if (t.kind === "record" && encodable(t)) scan(t);
   const shapes = recordShapes(lean);
   const rules = [...types.values()].map(t => t.kind === "enum" ? enumRules(t) : recordRules(t, shapes));
@@ -256,15 +267,13 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const defText = source.slice(defAt, source.indexOf("\n\n", defAt) < 0 ? undefined : source.indexOf("\n\n", defAt));
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
     if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
-    const tvars0 = [...new Set([...sig.params, sig.result].flatMap(generics))];
-    const tv0 = tvars0.map(g => `{${g} : Type} [TyRep ${g}]`).join(" ");
+    const tv0 = binders([...sig.params, sig.result]);
     const loopText = vl.map((l, i) => loopRules(l, ml[i], leanType(sig.result), tv0)).join("\n");
     const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
     const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
     const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
     const res = plain(sig.result), repRes = leanType(sig.result);
-    const tvars = [...new Set([...sig.params, sig.result].flatMap(generics))];
-    const tv = tvars.map(g => `{${g} : Type} [DecidableEq ${g}] [TyRep ${g}]`).join(" ");
+    const tv = binders([...sig.params, sig.result], { eq: true });
     const head = `theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) :
     WpRun prog ${key} [${Vs.join(", ")}] h fun v s => h <+: s.heap ∧ rep (α := ${repRes}) s.heap r v := by
@@ -280,7 +289,7 @@ ${sig.params.map((t, i) => `  have hv${i} : V ⟨${key}.env0 [${Vs.join(", ")}],
     const n = sig.params.length;
     const args = sig.params.map((t, i) => `(h${i} : SimE (α := ${leanType(t)}) prog s e${i} p${i})`).join(" ");
     const call = n > 3 ? "" : `
-theorem ${key}_sim ${tv} {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") : ""}} ${typed} {r : ${res}} ${args}
+theorem ${key}_sim ${binders([...sig.params, sig.result], { eq: true, late: true })} {s ${P.length ? sig.params.map((_, i) => `e${i}`).join(" ") : ""}} ${typed} {r : ${res}} ${args}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) : SimE (α := ${repRes}) prog s (.call ${q(key)} [${sig.params.map((_, i) => `e${i}`).join(", ")}]) r :=
   sim_call (fn := ${key}) (by simp [prog]) (${n === 0 ? "args0" : `args${n} ${sig.params.map((_, i) => `h${i}`).join(" ")}`}) (by
     rintro _ _ ${n === 0 ? "rfl" : `⟨${Vs.join(", ")}, rfl, ${sig.params.map((_, i) => `r${i}`).join(", ")}⟩`}
