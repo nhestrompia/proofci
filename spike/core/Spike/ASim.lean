@@ -4,6 +4,66 @@ import ProofciAsync
 open Core Core.Async
 open TyRep (rep mono)
 
+namespace Js.Eff
+open Aeneas.Std Result
+variable {W : Js.World} {α β : Type}
+
+/-! Reading a view's run one step at a time, without unfolding `bind`. -/
+
+theorem bind_call {op : W.Op} {arg : W.Arg op} {f : W.Res op → Js.Eff W β} {o h r h'}
+    (hr : (call op arg >>= f) o h = ok (r, h')) :
+    (∃ x, o op arg h = .value x ∧ f x o (h ++ [⟨op, arg, .value x⟩]) = ok (r, h')) ∨
+    (∃ e, o op arg h = .reject e ∧ r = .rejected e ∧ h' = h ++ [⟨op, arg, .reject e⟩]) := by
+  rw [bind_run, call_run] at hr
+  cases ho : o op arg h with
+  | value x => rw [ho] at hr; exact .inl ⟨x, rfl, by simpa using hr⟩
+  | reject e => rw [ho] at hr; simp at hr; exact .inr ⟨e, rfl, hr.1.symm, hr.2.symm⟩
+
+theorem call_tail {op : W.Op} {arg : W.Arg op} {o h r h'} (hr : (call op arg : Js.Eff W (W.Res op)) o h = ok (r, h')) :
+    (∃ x, o op arg h = .value x ∧ r = .fulfilled x ∧ h' = h ++ [⟨op, arg, .value x⟩]) ∨
+    (∃ e, o op arg h = .reject e ∧ r = .rejected e ∧ h' = h ++ [⟨op, arg, .reject e⟩]) := by
+  rw [call_run] at hr
+  cases ho : o op arg h with
+  | value x => rw [ho] at hr; simp at hr; exact .inl ⟨x, rfl, hr.1.symm, hr.2.symm⟩
+  | reject e => rw [ho] at hr; simp at hr; exact .inr ⟨e, rfl, hr.1.symm, hr.2.symm⟩
+
+theorem try_bind_call {op : W.Op} {arg : W.Arg op} {f : W.Res op → Js.Eff W β} {k : Js.Exn → Js.Eff W β} {o h r h'}
+    (hr : tryCatch (call op arg >>= f) k o h = ok (r, h')) :
+    (∃ x, o op arg h = .value x ∧ tryCatch (f x) k o (h ++ [⟨op, arg, .value x⟩]) = ok (r, h')) ∨
+    (∃ e, o op arg h = .reject e ∧ k e o (h ++ [⟨op, arg, .reject e⟩]) = ok (r, h')) := by
+  rw [tryCatch_run, bind_run, call_run] at hr
+  cases ho : o op arg h with
+  | value x => rw [ho] at hr; exact .inl ⟨x, rfl, by rw [tryCatch_run]; simpa using hr⟩
+  | reject e => rw [ho] at hr; simp at hr; exact .inr ⟨e, rfl, hr⟩
+
+theorem try_call_tail {op : W.Op} {arg : W.Arg op} {k : Js.Exn → Js.Eff W (W.Res op)} {o h r h'}
+    (hr : tryCatch (call op arg) k o h = ok (r, h')) :
+    (∃ x, o op arg h = .value x ∧ r = .fulfilled x ∧ h' = h ++ [⟨op, arg, .value x⟩]) ∨
+    (∃ e, o op arg h = .reject e ∧ k e o (h ++ [⟨op, arg, .reject e⟩]) = ok (r, h')) := by
+  rw [tryCatch_run, call_run] at hr
+  cases ho : o op arg h with
+  | value x => rw [ho] at hr; simp at hr; exact .inl ⟨x, rfl, hr.1.symm, hr.2.symm⟩
+  | reject e => rw [ho] at hr; simp at hr; exact .inr ⟨e, rfl, hr⟩
+
+theorem try_lift_ok (v : α) (k : Js.Exn → Js.Eff W α) : tryCatch (liftM (ok v : Result α)) k = liftM (ok v : Result α) := by
+  funext o h; rw [tryCatch_run]; simp
+
+theorem try_throw (e : Js.Exn) (k : Js.Exn → Js.Eff W α) : tryCatch (throw e) k = k e := by
+  funext o h; rw [tryCatch_run]; simp
+
+theorem try_ite {c : Prop} [Decidable c] (m n : Js.Eff W α) (k : Js.Exn → Js.Eff W α) :
+    tryCatch (if c then m else n) k = if c then tryCatch m k else tryCatch n k := by
+  split <;> rfl
+
+theorem ite_bind {c : Prop} [Decidable c] (m n : Js.Eff W α) (f : α → Js.Eff W β) :
+    ((if c then m else n) >>= f) = if c then m >>= f else n >>= f := by
+  split <;> rfl
+
+theorem lift_ok_run (v : α) (o : W.Oracle) (h : W.Hist) : (liftM (ok v : Result α) : Js.Eff W α) o h = ok (.fulfilled v, h) := by
+  rw [lift_run]; simp
+
+end Js.Eff
+
 /-! Rules for reasoning about `CoreAsync` without counting fuel, as `Spike/Rules.lean` does for Core. -/
 namespace Core.Async
 
@@ -107,6 +167,11 @@ theorem AOk1.tryCatch_ok {s body x h c r} (hb : AOk p a o s body (.ok c r)) :
   exact ⟨F + 1, fun f hf => by
     obtain ⟨g, rfl, hg⟩ := succ_of_le hf
     simp only [aexec, hF g hg]⟩
+
+theorem _root_.Js.Eff.ite_run {W : Js.World} {α} {c : Prop} [Decidable c] (m n : Js.Eff W α) (o : W.Oracle) (h : W.Hist) :
+    (if c then m else n) o h = if c then m o h else n o h := by
+  split <;> rfl
+
 
 /-! ## The outside world on both sides
 
@@ -356,6 +421,12 @@ theorem AW.await_rej (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opNa
   obtain ⟨v, s₁, h1, hp, henv, hrep, hH1⟩ := await_reject (a := a) (x := x) hO hH he hA hov
   exact AW.exit h1 trivial (h v s₁ ⟨by rw [henv, hx.1], hx.2.trans hp⟩ hrep hH1)
 
+/-- How a run of the view and a run of Core end alike: the same value or the same error, and related histories. -/
+def ARes {α} [TyRep α] (r : Js.Settled α) (hv : W.Hist) : AOut → Prop
+  | .ok (.ret v) s => (match r with | .fulfilled x => rep s.st.heap x v | .rejected _ => False) ∧ HRel opName ArgOK hv s.hist
+  | .thrown v s => (match r with | .rejected e => rep s.st.heap e v | .fulfilled _ => False) ∧ HRel opName ArgOK hv s.hist
+  | _ => False
+
 /-- The arguments of an awaited call evaluate to data the view's argument stands for. -/
 def ASimArgs (p : Prog) (s : St) (es : List Expr) (ArgOK : (op : W.Op) → W.Arg op → List Data → Prop)
     (op : W.Op) (arg : W.Arg op) : Prop :=
@@ -378,6 +449,35 @@ theorem ASimArgs.two {s e₁ e₂ op arg α β} [TyRep α] [TyRep β] {x : α} {
     hA _ _ _ (mono hext₂.2 hrep) hrep₂⟩
 
 variable (opName ArgOK)
+
+omit R in
+/-- A `return` passes every frame. -/
+theorem Cont.ret_any {v} {s : AS} {Q : AOut → Prop} (hq : Q (.ok (.ret v) s)) :
+    ∀ k, ∃ out, Cont p a o (.ok (.ret v) s) k out ∧ Q out
+  | [] => Cont.toTop trivial hq
+  | .block _ :: k => Cont.toSkip trivial (Cont.ret_any hq k)
+  | .catch _ _ :: k => Cont.toSkipCatch trivial (Cont.ret_any hq k)
+
+/-- Frames with no `catch`. -/
+def NoCatch : List Frame → Prop
+  | [] => True
+  | .block _ :: k => NoCatch k
+  | .catch _ _ :: _ => False
+
+omit R in
+theorem Cont.thrown_top {v} {s : AS} {Q : AOut → Prop} (hq : Q (.thrown v s)) :
+    ∀ k, NoCatch k → ∃ out, Cont p a o (.thrown v s) k out ∧ Q out
+  | [], _ => Cont.toTop trivial hq
+  | .block _ :: k, hk => Cont.toSkip trivial (Cont.thrown_top hq k hk)
+
+theorem AW.ret_top {s : AS} {H} (hH : HRel opName ArgOK H s.hist) {e xs k α} [TyRep α] {X : α}
+    (he : SimE p s.st e X) : AW p a o s (.block (.ret e :: xs) :: k) (ARes (opName := opName) (ArgOK := ArgOK) (.fulfilled X) H) :=
+  AW.ret he fun _ _ _ hrep => Cont.ret_any ⟨hrep, hH⟩ k
+
+theorem AW.throw_top {s : AS} {H} (hH : HRel opName ArgOK H s.hist) {e xs k α} [TyRep α] {X : Js.Exn}
+    (he : SimE p s.st e X) (hk : NoCatch k) :
+    AW p a o s (.block (.throw e :: xs) :: k) (ARes (α := α) (opName := opName) (ArgOK := ArgOK) (.rejected X) H) :=
+  AW.throw he fun _ _ _ _ hrep => Cont.thrown_top ⟨hrep, hH⟩ k hk
 
 theorem AW.call_val (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
     {x op args xs k Q} {arg : W.Arg op} {r : W.Res op} (hs : ASimArgs p s.st args ArgOK op arg)
