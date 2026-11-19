@@ -342,3 +342,16 @@ export function resultOr(r: GapResult<number>, d: number): number {
     case "err": return d + r.code;
   }
 }
+
+export interface GapPt {
+  x: number;
+}
+
+export type GapPick = { kind: "one"; pt: GapPt } | { kind: "none" };
+
+export function pickX(p: GapPick): number {
+  switch (p.kind) {
+    case "one": return p.pt.x;
+    case "none": return 0;
+  }
+}

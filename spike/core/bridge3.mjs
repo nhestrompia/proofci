@@ -408,7 +408,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const scan = t => {
     if (t.kind === "record") t.args?.forEach(scan);
     if (t.kind === "record" || t.kind === "enum") { if (types.has(t.lean)) return; if (t.kind === "record") (t.declared ?? t.fields).forEach(f => scan(f.type)); types.set(t.lean, t); }
-    if (t.kind === "tagged" && !types.has(t.lean)) { types.set(t.lean, t); t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); }
+    if (t.kind === "tagged" && !types.has(t.lean)) { t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); types.set(t.lean, t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);
   };

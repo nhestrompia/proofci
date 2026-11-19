@@ -54,3 +54,4 @@ gaps	gaps.ts	nextValue
 gaps	gaps.ts	moveX
 gaps	gaps.ts	rectDiff
 gaps	gaps.ts	resultOr
+gaps	gaps.ts	pickX
