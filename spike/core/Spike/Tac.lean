@@ -212,7 +212,7 @@ macro_rules | `(tactic| sim') => `(tactic| (apply SimE.some; sim0))
 macro_rules | `(tactic| sim') => `(tactic| sim0)
 
 -- A value of unknown type that isn't nullish here, so an option is read through.
-macro_rules | `(tactic| sim_v) => `(tactic| first | (apply SimE.some_inv; apply SimE.var; assumption) | (apply SimE.unwrap; sim0; assumption) | sim0)
+macro_rules | `(tactic| sim_v) => `(tactic| first | (apply SimE.some_inv; apply SimE.var; assumption) | (apply SimE.unwrap; sim0; first | assumption | rfl) | sim0)
 
 -- A known target may differ from what the code computes only by shape.
 -- The expression's head picks the rules to try.

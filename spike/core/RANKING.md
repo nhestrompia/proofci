@@ -156,6 +156,30 @@ The most used are `Array.isArray` (458 functions), `RegExp.test` (282), `Number.
 (137), `Number()` (125), `Object.keys` (116) and `JSON.stringify` (107). Many of them take
 `any`, which is why published types seemed not to translate.
 
+## Survey snapshot
+
+`typescript/survey/try.mjs` counts are measured on these clones (`run.mjs` then `try.mjs`,
+no packages installed). Later counts are comparable only on the same commits.
+
+| Repository | Commit | Pure | Accepted |
+|---|---|---:|---:|
+| [umami](https://github.com/umami-software/umami) | `aad2c4ce` | 68 | 3 |
+| [tldraw](https://github.com/tldraw/tldraw) | `943cb35d` | 366 | 33 |
+| [plane](https://github.com/makeplane/plane) | `18bdefae` | 178 | 11 |
+| [medusa](https://github.com/medusajs/medusa) | `4f1baa07` | 311 | 21 |
+| [trigger.dev](https://github.com/triggerdotdev/trigger.dev) | `74765f97` | 831 | 96 |
+| [Rocket.Chat](https://github.com/RocketChat/Rocket.Chat) | `f82e7749` | 375 | 27 |
+| [AFFiNE](https://github.com/toeverything/AFFiNE) | `dc2b2212` | 396 | 26 |
+| [cal.com](https://github.com/calcom/cal.com) | `ae027bb7` | 171 | 21 |
+| **Total** | | **2,696** | **238** |
+
+Full commits: umami `aad2c4cedd5c0b3bc4d361843830a0bb47cf79c4`, tldraw
+`943cb35d0878ea665d4033f5da04855ccc7ea076`, plane `18bdefae3379c6b9eea084045c2d134310ab19fb`,
+medusa `4f1baa07fb117a900400a61ebb2e7c6729717e04`, trigger.dev
+`74765f97f1baafc7665d25b0f2f2af2dcf14436b`, Rocket.Chat `f82e774900c92c58df6fccca8df5b08d8ee95835`,
+AFFiNE `dc2b2212441602452f3cf0ea50a4eaedaf03bcc2`, cal.com `ae027bb70e694e2d2c44569f398d6cbcee0389b1`.
+Counts above are for the translator at `642a2c3`.
+
 ## Limits
 
 - These count what the translator would accept, not what bridges. Functions the rules

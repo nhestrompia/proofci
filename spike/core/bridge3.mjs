@@ -320,6 +320,8 @@ macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${n}_kind; sim_read))`];
     exact ⟨${at(f)}, by simp [readField, hl], ${conv(f, i)}⟩)
 macro_rules | \`(tactic| s_field) => \`(tactic| (apply ${name}; sim'))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${name}; sim_read))`);
+    // Once the view has matched a nullable field as present, a read of it is the value inside.
+    if (f.type.kind === "optional") lines.push(`macro_rules | \`(tactic| s_field) => \`(tactic| (apply SimE.unwrap; apply ${name}; sim'; rfl))`);
   }));
   // A literal of a variant, for each set of keys the function writes that is exactly that variant's.
   shapes.forEach((keys, si) => u.variants.forEach(v => {
