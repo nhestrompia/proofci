@@ -663,6 +663,45 @@ function fields(fs: Field[], i: number): number { return i >= fs.length ? 0 : co
   assert.match(replay, /a\.Field\.mk/);
 });
 
+test("overlapping cycles of declared types are one mutual block", () => {
+  const result = run(`interface A { b: B | null; n: number }
+interface B { a: A | null; c: C | null }
+interface C { b: B | null }
+export function f(a: A): number { return a.b === null ? 0 : 1; }`);
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.match(result.source, /mutual\nstructure a\.C where[^]*\nstructure a\.B where[^]*\nstructure a\.A where[^]*\nend\n/);
+});
+
+test("each member of an async cycle reports the effects any member calls", () => {
+  const root = join(dir, `p${count++}`);
+  mkdirSync(root);
+  writeFileSync(join(root, "world.ts"), WORLD);
+  writeFileSync(join(root, "a.ts"), `import { save, count } from "./world";
+async function g(n: number): Promise<number> { return n <= 0 ? 0 : await f(n - 1); }
+export async function f(n: number): Promise<number> { const r = await g(n); await save("a", "b"); return r + (await count()); }
+`);
+  const ok = translate({ root, module: "M", targets: ["a.ts::f", "a.ts::g"], requireTypes: true, effects: EFFECTS });
+  assert.deepEqual(ok.failures, {}, ok.source);
+  assert.deepEqual(ok.effects["a.ts::g"], ["count", "save"]);
+  assert.deepEqual(ok.effects["a.ts::f"], ["count", "save"]);
+});
+
+test("the Node comparison builds values of records that hold each other", async () => {
+  const repo = join(dir, "mutual-records");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(repo, "a.ts"), `interface A { kids: B[]; n: number }
+interface B { a: A }
+export function f(a: A): number { return a.kids.length + a.n; }
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::f"] });
+  assert.deepEqual(result.failures, {}, result.source);
+  const out = join(dir, "mutual-records-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 40 });
+  assert.equal(readFileSync(join(out, "Differential.lean"), "utf8").match(/#eval/g).length, 40);
+});
+
 test("?. reads a length, and refuses other built-in members", () => {
   emits("export function f(a?: number[]) { return a?.length ?? 0; }", "Js.len item");
   rejects("export function f(a?: Map<string, number>) { return a?.size ?? 0; }", /only supported on fields/);

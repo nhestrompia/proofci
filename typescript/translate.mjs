@@ -682,7 +682,7 @@ export class Translator {
       group.done.push(...g.done);
       if (this.declaring.indexOf(g.root) < this.declaring.indexOf(group.root)) group.root = g.root;
     }
-    for (const d of members) Object.assign(d, { group, recursive: true });
+    for (const d of this.declaring) if (members.includes(d) || groups.has(d.group)) Object.assign(d, { group, recursive: true });
     for (const [k, v] of this.types) if (v && groups.has(v.group)) this.types.set(k, { ...v, group });
     return members[0].lean;
   }
@@ -1015,8 +1015,10 @@ export class Translator {
         const text = ["mutual", ...entry.group.lines, "end"].join("\n\n").split(/(js!"[^"]*")/).map((part, i) => i % 2 ? part : unqualify(part)).join("");
         this.order.push(text);
         // Each member reaches every other, so each relies on what any of them does.
-        const relied = new Set(members.flatMap(([d]) => [...(this.assumedBy.get(d) ?? [])]));
-        for (const [d] of members) this.assumedBy.set(d, new Set(relied));
+        for (const by of [this.assumedBy, this.effectsBy, this.argsBy, this.constsBy]) {
+          const relied = new Set(members.flatMap(([d]) => [...(by.get(d) ?? [])]));
+          for (const [d] of members) by.set(d, new Set(relied));
+        }
       }
     }
     return lean;
