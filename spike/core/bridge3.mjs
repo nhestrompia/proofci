@@ -448,10 +448,22 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const cbNames = [...lean.matchAll(/^def (\S+_cb\d+) : Fn/gm)].map(m => m[1]);
   const cbRules = cbNames.map(n => `theorem ${n}_prog : prog ${q(n)} = some ${n} := by simp [prog]
 macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n");
+  const mutualGroups = new Map();
   const theorems = ordered.map(({ key, sig }) => {
     const defAt = source.indexOf(`def ${sig.lean} `);
     if (defAt < 0) throw new Error(`the view has no definition of ${sig.lean}`);
     const defText = source.slice(defAt, source.indexOf("\n\n", defAt) < 0 ? undefined : source.indexOf("\n\n", defAt));
+    const block = source.lastIndexOf("\nmutual\n", defAt);
+    const blockEnd = block < 0 ? -1 : source.indexOf("\nend", block);
+    let group;
+    if (blockEnd > defAt) {
+      const names = [...source.slice(block, blockEnd).matchAll(/^def (\S+) /gm)].map(m => m[1]);
+      const members = ordered.filter(o => names.includes(o.sig.lean));
+      if (members.length !== names.length) throw new Error("a mutually recursive function has a member with no signature to bridge");
+      if (members.some(o => binders([...o.sig.params, o.sig.result]))) throw new Error("generic mutually recursive functions have no bridge yet");
+      group = mutualGroups.get(block) ?? { size: names.length, parts: [] };
+      mutualGroups.set(block, group);
+    }
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
     if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
     const tv0 = binders([...sig.params, sig.result]);
@@ -468,7 +480,8 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const recursive = /\npartial_fixpoint\s*$/.test(defText);
     if (recursive && (n === 0 || n > 6)) throw new Error(`a recursive function with ${n} parameters has no bridge yet`);
     const late = binders([...sig.params, sig.result], { eq: true, late: true });
-    const ind = !recursive ? "" : `def ${key}_Q ${tv} ${sig.params.map((t, i) => `(p${i} : ${plain(t)})`).join(" ")} (r : ${res}) : Prop :=
+    const adm = `${P.map(p => `apply Lean.Order.admissible_pi; intro ${p}; `).join("")}exact ${P.reduceRight((inner, p, i) => `Lean.Order.admissible_apply (fun _ (f : ${sig.params.slice(i + 1).map(t => `${plain(t)} → `).join("")}Result ${res}) => DWLP failOk (f ${P.slice(i + 1).join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()) ${p} (${inner})`, "DWLP.admissible failOk _ ()")}`;
+    const indHead = !recursive ? "" : `def ${key}_Q ${tv} ${sig.params.map((t, i) => `(p${i} : ${plain(t)})`).join(" ")} (r : ${res}) : Prop :=
   ∀ h ${Vs.join(" ")}, ${sig.params.map((t, i) => `rep (α := ${leanType(t)}) h p${i} v${i} → `).join("")}${run}
 theorem ${key}_ind_sim ${late} {g : ${sig.params.map(t => `${plain(t)} → `).join("")}Result ${res}}
     (ih : ∀ ${P.join(" ")} r, g ${P.join(" ")} = ok r → ${key}_Q ${P.join(" ")} r)
@@ -478,10 +491,11 @@ theorem ${key}_ind_sim ${late} {g : ${sig.params.map(t => `${plain(t)} → `).jo
     rintro _ _ ⟨${Vs.join(", ")}, rfl, ${sig.params.map((_, i) => `r${i}`).join(", ")}⟩
     exact ih ${sig.params.map(() => "_").join(" ")} _ hr _ ${sig.params.map(() => "_").join(" ")} ${sig.params.map((_, i) => `r${i}`).join(" ")})
 macro_rules | \`(tactic| s_call) => \`(tactic| (apply ${key}_ind_sim (by assumption); ${sig.params.map(() => "sim';").join(" ")} assumption))
-unseal Aeneas.Std.Result in
+`;
+    const ind = !recursive ? "" : indHead + `unseal Aeneas.Std.Result in
 theorem ${key}_ind ${tv} : ∀ ${P.join(" ")}, DWLP failOk (${sig.lean} ${P.join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) () := by
   apply ${sig.lean}.fixpoint_induct (motive := fun g => ∀ ${P.join(" ")}, DWLP failOk (g ${P.join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ())
-  · ${P.map(p => `apply Lean.Order.admissible_pi; intro ${p}; `).join("")}exact ${P.reduceRight((inner, p, i) => `Lean.Order.admissible_apply (fun _ (f : ${sig.params.slice(i + 1).map(t => `${plain(t)} → `).join("")}Result ${res}) => DWLP failOk (f ${P.slice(i + 1).join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()) ${p} (${inner})`, "DWLP.admissible failOk _ ()")}
+  · ${adm}
   · intro g ih0 ${P.join(" ")}
     have ih : ∀ ${P.join(" ")} r, g ${P.join(" ")} = ok r → ${key}_Q ${P.join(" ")} r := fun ${P.join(" ")} r e => by
       have := ih0 ${P.join(" ")}; rw [e] at this; exact DWLP.ret_iff.mp this
@@ -498,13 +512,14 @@ theorem ${key}_ind ${tv} : ∀ ${P.join(" ")}, DWLP failOk (${sig.lean} ${P.join
       "have hk : Todo _ _ := hr",
       "clear hr",
       "crun"]).map(l => indent + l).join("\n")}`;
-    const head = recursive ? `${ind}${proof("    ")}
-theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
+    const recBridge = `theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) :
     ${run} := by
   have := ${key}_ind ${P.join(" ")}
   rw [hr] at this
-  exact DWLP.ret_iff.mp this h ${Vs.join(" ")} ${sig.params.map((_, i) => `h${i}`).join(" ")}` : `theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
+  exact DWLP.ret_iff.mp this h ${Vs.join(" ")} ${sig.params.map((_, i) => `h${i}`).join(" ")}`;
+    const head = recursive ? `${ind}${proof("    ")}
+${recBridge}` : `theorem ${key}_bridge ${tv} {h ${Vs.join(" ")}} ${typed} {r : ${res}} ${reps}
     (hr : ${sig.lean} ${P.join(" ")} = ok r) :
     ${run} := by
   unfold ${sig.lean} at hr
@@ -519,6 +534,31 @@ theorem ${key}_sim ${binders([...sig.params, sig.result], { eq: true, late: true
 macro_rules | \`(tactic| s_call) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))
 macro_rules | \`(tactic| sim_read) => \`(tactic| (apply ${key}_sim; ${sig.params.map(() => "sim';").join(" ")} assumption))`;
     const params = JSON.parse(`[${lean.slice(lean.indexOf(`def ${key} : Fn`)).match(/params := \[(.*?)\]/)[1]}]`);
+    const fix = t => t.replaceAll(/"PARAM(\d+)"/g, (_, i) => q(params[i]));
+    // A member of a `mutual` block: each call to a member is bridged by the motive the fixpoint
+    // induction gives for it, and every member's step is proved in each member's induction.
+    if (group) {
+      const sim = indHead
+        .replace(`(ih : ∀ ${P.join(" ")} r, g ${P.join(" ")} = ok r → ${key}_Q ${P.join(" ")} r)`, `(ih : ∀ ${P.join(" ")}, DWLP failOk (g ${P.join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ())`)
+        .replace(`    exact ih ${P.map(() => "_").join(" ")} _ hr _`, `    have := ih ${P.join(" ")}; rw [hr] at this; exact DWLP.ret_iff.mp this _`)
+        .replace(`theorem ${key}_ind_sim`, `unseal Aeneas.Std.Result in\ntheorem ${key}_ind_sim`);
+      group.parts.push({ key, sig, P, adm, bridge: fix(recBridge) + call,
+        motive: `fun g => ∀ ${P.join(" ")}, DWLP failOk (g ${P.join(" ")}) (fun r _ => ${key}_Q ${P.join(" ")} r) ()`,
+        step: fix(`  · intros
+    rename_i ${P.join(" ")}
+    refine dwlp_of_ok fun r hr => ?_
+    beta_reduce at hr
+    intro h ${Vs.join(" ")} ${sig.params.map((_, i) => `h${i}`).join(" ")}
+${proof("    ")}`) });
+      const pre = (loopText ? loopText + "\n" : "") + fix(sim);
+      if (group.parts.length < group.size) return pre;
+      return pre + "\n" + group.parts.map(o => `unseal Aeneas.Std.Result in
+theorem ${o.key}_ind : ∀ ${o.P.join(" ")}, DWLP failOk (${o.sig.lean} ${o.P.join(" ")}) (fun r _ => ${o.key}_Q ${o.P.join(" ")} r) () := by
+  apply ${o.sig.lean}.fixpoint_induct ${group.parts.map((m, j) => `(motive_${j + 1} := ${m.motive})`).join(" ")}
+${group.parts.map(m => `  · ${m.adm}`).join("\n")}
+${group.parts.map(m => m.step).join("\n")}
+${o.bridge}`).join("\n\n");
+    }
     return (loopText ? loopText + "\n" : "") + head.replaceAll(/"PARAM(\d+)"/g, (_, i) => q(params[i])) + call;
   });
   const core = lean.replace(/^import Core\nopen Core\n/, "").replace(/^namespace Gen\n/m, "").replace(/^end Gen\n/m, "");

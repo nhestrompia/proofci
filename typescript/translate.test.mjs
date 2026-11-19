@@ -449,9 +449,14 @@ test("switch handles grouped cases, default and a final break", () => {
   rejects(`type S = "a" | "b"; export function f(s: S) { let r = 0; switch (s) { case "a": r = 1; case "b": r = 2; } return r; }`, /falling through|TypeScript error/);
 });
 
-test("self-recursion becomes a fixpoint, and mutual recursion is rejected", () => {
+test("self-recursion becomes a fixpoint, and mutual recursion one mutual block of them", () => {
   emits("export function f(n: number): number { return n <= 0 ? 0 : f(n - 1); }", "partial_fixpoint", "a.f tmp");
-  rejects(`function g(n: number): number { return f(n); } export function f(n: number): number { return g(n); }`, /mutual/);
+  const mutual = run(`function g(n: number): number { return n <= 0 ? 0 : f(n - 1); }
+    function h(n: number): number { return n <= 0 ? 1 : g(n - 1); }
+    export function f(n: number): number { return n <= 0 ? 2 : g(n - 1) + h(n - 1); }`);
+  assert.deepEqual(mutual.failures, {}, mutual.source);
+  assert.match(mutual.source, /mutual\n\ndef a\.g [^]*?partial_fixpoint\n\ndef a\.h [^]*?partial_fixpoint\n\ndef a\.f [^]*?partial_fixpoint\n\nend/);
+  assert.ok(!mutual.source.includes("_root_.a.g"), mutual.source);
 });
 
 test("bigint stays exact and division follows JavaScript", () => {
@@ -615,6 +620,27 @@ export function f(b: Box<number | null>, s: Slot<number | undefined>): number {
   assert.match(replay, /Slot_\w+\.mk none/);
 });
 
+test("the Node comparison covers mutually recursive functions over a recursive union", async () => {
+  const repo = join(dir, "mutual-args");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(repo, "a.ts"), `type J = { kind: "num"; n: number } | { kind: "list"; items: J[] };
+export function sum(j: J): number {
+  switch (j.kind) { case "num": return j.n; case "list": return items(j.items, 0); }
+}
+function items(xs: J[], i: number): number { return i >= xs.length ? 0 : sum(xs[i]) + items(xs, i + 1); }
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::sum"] });
+  assert.deepEqual(result.failures, {}, result.source);
+  assert.match(result.source, /\nmutual\n\ndef a\.items [^]*\ndef a\.sum [^]*\nend\n/);
+  const out = join(dir, "mutual-args-out");
+  mkdirSync(out);
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 30 });
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 30);
+  assert.match(replay, /\.list \[[^\]]/);
+});
+
 test("?. reads a length, and refuses other built-in members", () => {
   emits("export function f(a?: number[]) { return a?.length ?? 0; }", "Js.len item");
   rejects("export function f(a?: Map<string, number>) { return a?.size ?? 0; }", /only supported on fields/);
@@ -684,6 +710,20 @@ test("an outside call is only usable as the policy lists it", () => {
   // A caller inherits what its callee relies on.
   const nested = call(`import { slug } from "slugger";\nfunction g(a: string): string { return slug(a); }\nexport function f(): string { return g("x") + g("y"); }`, [slug]);
   assert.deepEqual(nested.assumed["a.ts::f"], ["slugger::slug"]);
+});
+
+test("each member of a mutual cycle relies on what any member calls, and keeps its string literals", () => {
+  const root = join(dir, `p${count++}`);
+  mkdirSync(root);
+  writeFileSync(join(root, "a.ts"), `import { slug } from "not-installed";
+function g(a: string, n: number): string { return n <= 0 ? "_root_.a.g" : f(a, n - 1); }
+export function f(a: string, n: number): string { const b = g(a, n); return slug(b); }
+`);
+  const ok = translate({ root, module: "M", targets: ["a.ts::f", "a.ts::g"], assumes: [{ call: "not-installed::slug", signature: "(a: string): string" }] });
+  assert.deepEqual(ok.failures, {}, ok.source);
+  assert.deepEqual(ok.assumed["a.ts::f"], ["not-installed::slug"]);
+  assert.deepEqual(ok.assumed["a.ts::g"], ["not-installed::slug"]);
+  assert.ok(ok.source.includes('js!"_root_.a.g"'), ok.source);
 });
 
 test("a listed call whose package isn't installed takes its types from the policy", () => {
@@ -1184,21 +1224,32 @@ test("an opaque handle is never looked into, and a method nobody listed is not a
   refused(`export function f(m: Mailer): Mailer { return m; }`, /not supported yet/);
 });
 
-test("a recursive type is cut where it recurs: the inner value is an opaque handle", () => {
+test("a recursive type is an inductive type in async code too, whichever function declares it first", () => {
   const types = `interface Entry { name: string; parent: Entry | null; children: Entry[] }\n`;
+  const ok = asyncEmits(`${types}function depth(e: Entry): number { return e.parent === null ? 0 : 1 + depth(e.parent); }
+  export async function f(e: Entry, id: string): Promise<number> {
+    await save(id, e.name);
+    return e.parent === null ? depth(e) : e.parent.name.length;
+  }`);
+  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option a\.Entry\)\n  children : \(List a\.Entry\)/);
+  asyncRejects(`async function g(n: number): Promise<number> { return await f(n); }
+    export async function f(n: number): Promise<number> { await save("a", "b"); return await g(n); }`, /recursive `async`/);
+});
+
+test("a type that recurs through another type is cut there in async code: the inner value is an opaque handle", () => {
+  const types = `interface Entry { name: string; parent: Up | null; children: Up[] }\ninterface Up { e: Entry }\n`;
   const ok = asyncEmits(`${types}export async function f(e: Entry, id: string): Promise<boolean> {
     await save(id, e.name);
     return e.parent !== null || e.children.length > 0;
   }`);
-  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option Js\.Handle\)\n  children : \(List Js\.Handle\)/);
-  assert.deepEqual(ok.signatures["a.ts::f"].params[0].fields.map(f => f.type.kind), ["string", "optional", "array"]);
-  // The first level is all there is: reading into the inner value is refused, and so is comparing it.
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); return e.parent === null ? "" : e.parent.name; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<number> { await save(id, e.name); return e.children.filter(c => c.name !== "").length; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); const p = e.parent; return p === null ? "" : p.name; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f({ parent }: Entry, id: string): Promise<boolean> { await save(id, "x"); return parent === null; }`, /holds a value of the type it sits in/);
-  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Entry> { await save(id, e.name); return { name: id, parent: e, children: [] }; }`, /only `null`, `undefined` or `\[\]`/);
+  assert.match(ok.source, /structure a\.Up where\n  e : Js\.Handle/);
+  assert.match(ok.source, /structure a\.Entry where\n  «name» : Js\.Str\n  parent : \(Option _root_\.a\.Up\)\n  children : \(List _root_\.a\.Up\)/);
+  // The first level is all there is: reading into the inner value is refused.
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<string> { await save(id, e.name); return e.parent === null ? "" : e.parent.e.name; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<number> { await save(id, e.name); return e.children.filter(c => c.e.name !== "").length; }`, /holds a value of the type it sits in/);
+  asyncRejects(`${types}export async function f(e: Entry, id: string): Promise<Up> { await save(id, e.name); return { e }; }`, /only `null`, `undefined` or `\[\]`/);
   asyncEmits(`${types}export async function f(id: string): Promise<Entry> { await save(id, "x"); return { name: id, parent: null, children: [] }; }`);
+  rejects(`${types}export function f(e: Entry): boolean { return e.parent !== null; }`, /recurs through another type/);
 });
 
 test("a recursive type outside async code is an inductive type, with its equality written out", () => {

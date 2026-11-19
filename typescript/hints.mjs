@@ -195,7 +195,6 @@ export const HINTS = [
   [/is not a safe integer/, "work in whole units (cents, basis points); `number` is a safe integer and fractions have no model yet"],
 
   // functions
-  [/mutual recursion/, "merge the two functions into one self-recursive function"],
   [/this function has no body to translate/, `translate a function with a body (not an overload or \`declare\`); for a package function, ${PACKAGE}`],
   [/must write out their types/, "write them into the function's signature"],
   [/async generators|generators are not supported/, "return an array instead of using `yield`"],

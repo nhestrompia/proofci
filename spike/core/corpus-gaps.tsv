@@ -72,3 +72,6 @@ gaps	gaps.ts	boxIsUndef
 gaps	gaps.ts	resultNull
 gaps	gaps.ts	slotUndef
 gaps	gaps.ts	slotOf
+gaps	gaps.ts	isEven
+gaps	gaps.ts	jsonSum
+gaps	gaps.ts	stepA

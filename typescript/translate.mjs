@@ -583,16 +583,19 @@ export class Translator {
         // A type that contains itself is cut where it recurs: the inner value is an opaque handle, which a
         // function can pass around and compare with `null` but not look into. A function that reads only
         // as deep as the first level therefore means the same in the model as in JavaScript.
+        // One that holds itself directly is an inductive type in async code too, so its shape doesn't
+        // depend on which function declared it first.
+        const inner = this.declaring.at(-1);
+        if (inner?.key === key) {
+          inner.recursive = true;
+          return inner.lean;
+        }
         if (this.handlesAllowed()) {
           this.usesHandles = true;
           this.cutHit = true;
           return "Js.Handle";
         }
-        // Elsewhere it is an inductive type, if it holds itself directly rather than through another type.
-        const inner = this.declaring.at(-1);
-        if (inner?.key !== key) throw this.fail(declaration, "a type that recurs through another type is not supported yet");
-        inner.recursive = true;
-        return inner.lean;
+        throw this.fail(declaration, "a type that recurs through another type is not supported yet");
       }
       return known.lean;
     }
@@ -906,14 +909,29 @@ export class Translator {
     return undefined;
   }
 
+  // A call back into a function still being declared closes a cycle: every function on the stack from it
+  // up is one `mutual` block, emitted when its first member is done.
+  closeCycle(declaration) {
+    const members = this.current.slice(this.current.indexOf(declaration));
+    const groups = new Set(members.map(d => this.functions.get(d).group).filter(Boolean));
+    const group = { root: declaration, lines: [] };
+    for (const g of groups) {
+      group.lines.push(...g.lines);
+      if (this.current.indexOf(g.root) < this.current.indexOf(group.root)) group.root = g.root;
+    }
+    for (const [d, entry] of this.functions) if (members.includes(d) || groups.has(entry.group)) Object.assign(entry, { group, recursive: true });
+  }
+
   // Declares a function and everything it reaches, callees first.
   declareFunction(declaration) {
     const known = this.functions.get(declaration);
     if (known?.pending) {
-      if (this.current.at(-1) !== declaration) throw this.fail(declaration, "mutual recursion is not supported yet");
       known.recursive = true;
+      if (this.current.indexOf(declaration) < this.current.length - 1) this.closeCycle(declaration);
       return known.lean;
     }
+    // A done member of a `mutual` block still open is part of a cycle through the stack too.
+    if (known?.group && this.functions.get(known.group.root).pending) this.closeCycle(known.group.root);
     if (known) return known.lean;
     this.checkFile(declaration.getSourceFile());
     this.checkDeclaration(declaration);
@@ -941,12 +959,28 @@ export class Translator {
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
     if (isAsync && entry.recursive) throw this.fail(fn, "a recursive `async` function is not supported yet");
+    if (entry.group && [...this.functions.values()].some(e => e.group === entry.group && e.async)) throw this.fail(fn, "a recursive `async` function is not supported yet");
     const monad = isAsync ? `Proofci.Effects.Eff ${result}` : `Result ${result}`;
     const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
     this.current.pop();
     entry.pending = false;
-    this.order.push(lines.join("\n"));
+    if (!entry.group) this.order.push(lines.join("\n"));
+    else {
+      entry.group.lines.push(lines.join("\n"));
+      if (entry.group.root === declaration) {
+        // Inside `mutual` the members are known only by the names they are declared with.
+        const members = [...this.functions].filter(([, e]) => e.group === entry.group);
+        const names = members.map(([, e]) => e.lean);
+        const unqualify = t => names.reduce((t, n) => t.replace(new RegExp(`_root_\\.${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.'»])`, "g"), n), t);
+        // String literals are left as they are.
+        const text = ["mutual", ...entry.group.lines, "end"].join("\n\n").split(/(js!"[^"]*")/).map((part, i) => i % 2 ? part : unqualify(part)).join("");
+        this.order.push(text);
+        // Each member reaches every other, so each relies on what any of them does.
+        const relied = new Set(members.flatMap(([d]) => [...(this.assumedBy.get(d) ?? [])]));
+        for (const [d] of members) this.assumedBy.set(d, new Set(relied));
+      }
+    }
     return lean;
   }
 
