@@ -103,14 +103,14 @@ export function bumped(r: Record<string, number>, k: string): Record<string, num
 export function counted(xs: string[]): Map<string, number> { const m = new Map<string, number>(); for (const x of xs) { const seen = m.get(x); if (seen === undefined) { m.set(x, 1); } else { m.set(x, seen + 1); } } m.delete("a"); return m; }
 export const reSlug = (s: string): boolean => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s);
 export const reName = (s: string): boolean => /^[A-Z][a-z]*$/i.test(s);
-export const reFound = (s: string): boolean => s.match(/a.b|\d\d/) !== null;
+export const reFound = (s: string): boolean => s.match(/a.b|\\d\\d/) !== null;
 export const reOpt = (s: string): boolean => /^(?:|a)?b$/.test(s);
-export const reSquash = (s: string): string => s.replace(/\s+/g, " ");
+export const reSquash = (s: string): string => s.replace(/\\s+/g, " ");
 export const reFirst = (s: string): string => s.replace(/[^a-z]/, "#");
 export const reEmpty = (s: string): string => s.replaceAll(/x*/g, "-");
-export const reHalves = (s: string): string => s.replaceAll(/[\ud800-\udbff]|é/g, "?");
+export const reHalves = (s: string): string => s.replaceAll(/[\\ud800-\\udbff]|é/g, "?");
 export const reCase = (s: string, t: string): string => s.replace(/A|z/gi, t);
-export const reWords = (s: string): string[] => s.split(/[,;]\s*/);
+export const reWords = (s: string): string[] => s.split(/[,;]\\s*/);
 export const reUnits = (s: string): string[] => s.split(/b?/);
 export const reNested = (s: string): string[] => s.split(/(?:a*)*/);
 export function unique(xs: number[]): Set<number> { const s = new Set<number>(); for (const x of xs) { s.add(x); } s.delete(0); return s; }
