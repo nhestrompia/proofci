@@ -310,6 +310,24 @@ theorem rel_min_ok {a b : Js.Num} {v w : Val} {h} {Q : Js.Num → Val → Heap �
     unfold Js.min; split <;> rename_i hc <;> simp [Int.min_def, hc]
   exact spec_min (P := Q (Js.min a b)) hv hw fun u hu => H u (m ▸ hu)
 
+@[simp] theorem max_val {a b : Js.Num} : (Js.max a b).val = max a.val b.val := by
+  unfold Js.max; split <;> rename_i hc <;> simp [Int.max_def, hc]
+
+open Core.F64 in
+theorem rel_max {β : Type} {a b : Js.Num} {v w : Val} {g : Js.Num → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs v a.val) (hw : NumIs w b.val)
+    (H : ∀ u, NumIs u (Js.max a b).val → Rel (g (Js.max a b)) (k u) h Q) :
+    Rel (Std.bind (ok (Js.max a b)) g) (prim .max [v, w] >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv; obtain ⟨y, rfl, hy⟩ := hw
+  have e : prim .max [.num x, .num y] h = .ok (.num (x.fmax y)) h := by simp [prim, primV] <;> rfl
+  have m : (Js.max a b).val = if a.val ≤ b.val then b.val else a.val := by
+    unfold Js.max; split <;> rfl
+  have H' := H _ ⟨_, rfl, m ▸ max_isInt hx hy⟩
+  unfold Rel at *; intro r e'
+  rw [Std.bind_ok] at e'
+  rw [spec_bind, spec_eq e]
+  exact H' r e'
+
 theorem rel_len {α β : Type} [CRep α] {xs : List α} {vs : List Val} {l : Loc}
     {g : Js.Num → Result β} {δ : Type} {k : Val → M δ} {h Q}
     (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs)
@@ -522,6 +540,116 @@ theorem rel_findIndex {γ : Type} {f : Js.Num → Result Bool} {xs : List Js.Num
   have H' := H t (num t.val) numIs_num
   unfold Rel at H'; exact H' r er
 
+def soStep (g : Val → Val → M Val) (i : Nat) (x : Val) (_ : Bool) : M (ForInStep Bool) := do
+  return if truthy (← g x (num i)) then .done true else .yield false
+
+def evStep (g : Val → Val → M Val) (i : Nat) (x : Val) (_ : Bool) : M (ForInStep Bool) := do
+  return if truthy (← g x (num i)) then .yield true else .done false
+
+theorem jsSome_eq {o : Val} {g : Val → Val → M Val} :
+    jsSome o g = (do let r ← each o false (soStep g); return .bool r) := rfl
+
+theorem jsEvery_eq {o : Val} {g : Val → Val → M Val} :
+    jsEvery o g = (do let r ← each o true (evStep g); return .bool r) := rfl
+
+theorem bool_step {f : Js.Num → Result Bool} {g : Val → Val → M Val} {h : Heap} {x : Js.Num} {u : Val}
+    {i : Nat} {b : Bool} {c : Bool → ForInStep Bool}
+    (hg : Rel (f x) (g u (num i)) h (fun b w h' => h' = h ∧ crep h b w)) (eb : f x = ok b) :
+    (do return c (truthy (← g u (num i))) : M (ForInStep Bool)) h = .ok (c b) h :=
+  ok_of_spec (by
+    unfold Rel at hg
+    simp only [spec_bind, spec_pure]
+    refine spec_mono (hg b eb) ?_
+    rintro w h'' ⟨rfl, hw⟩
+    simp only [crep_bool] at hw; subst hw
+    exact ⟨rfl, rfl⟩)
+
+theorem so_loop {f : Js.Num → Result Bool} {xs : List Js.Num} {vs : List Val} {l : Loc}
+    {g : Val → Val → M Val} {h : Heap}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs)
+    (hg : ∀ x u (i : Nat), NumIs u x.val → Rel (f x) (g u (num i)) h (fun b w h' => h' = h ∧ crep h b w)) :
+    ∀ (k i : Nat) (t : Bool), i + k = vs.length → Js.some_ f (xs.drop i) = ok t →
+      eachLoop l (soStep g) k i false h = .ok t h
+  | 0, i, t, e, ef => by
+    have hd : xs.drop i = [] := List.drop_eq_nil_of_le (by rw [hf.length_eq]; omega)
+    rw [hd] at ef
+    simp only [Js.some_, ok_eq_ok] at ef; subst ef; rfl
+  | k + 1, i, t, e, ef => by
+    have hi : i < vs.length := by omega
+    have hx : i < xs.length := hf.length_eq ▸ hi
+    rw [List.drop_eq_getElem_cons hx] at ef
+    simp only [Js.some_] at ef
+    obtain ⟨b, eb, e2⟩ := bind_ok ef
+    have es : soStep g i vs[i] false h = .ok (if b then ForInStep.done true else .yield false) h :=
+      bool_step (c := fun b => if b then .done true else .yield false) (hg xs[i] vs[i] i (f2_get hf hx hi)) eb
+    simp only [eachLoop, hl, List.getElem?_eq_getElem hi, es]
+    cases b
+    · simp only [Bool.false_eq_true, if_false] at e2 ⊢
+      exact so_loop hl hf hg k (i + 1) t (by omega) e2
+    · simp only [if_true, ok_eq_ok] at e2 ⊢
+      subst e2; rfl
+
+theorem ev_loop {f : Js.Num → Result Bool} {xs : List Js.Num} {vs : List Val} {l : Loc}
+    {g : Val → Val → M Val} {h : Heap}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs)
+    (hg : ∀ x u (i : Nat), NumIs u x.val → Rel (f x) (g u (num i)) h (fun b w h' => h' = h ∧ crep h b w)) :
+    ∀ (k i : Nat) (t : Bool), i + k = vs.length → Js.every f (xs.drop i) = ok t →
+      eachLoop l (evStep g) k i true h = .ok t h
+  | 0, i, t, e, ef => by
+    have hd : xs.drop i = [] := List.drop_eq_nil_of_le (by rw [hf.length_eq]; omega)
+    rw [hd] at ef
+    simp only [Js.every, ok_eq_ok] at ef; subst ef; rfl
+  | k + 1, i, t, e, ef => by
+    have hi : i < vs.length := by omega
+    have hx : i < xs.length := hf.length_eq ▸ hi
+    rw [List.drop_eq_getElem_cons hx] at ef
+    simp only [Js.every] at ef
+    obtain ⟨b, eb, e2⟩ := bind_ok ef
+    have es : evStep g i vs[i] true h = .ok (if b then ForInStep.yield true else .done false) h :=
+      bool_step (c := fun b => if b then .yield true else .done false) (hg xs[i] vs[i] i (f2_get hf hx hi)) eb
+    simp only [eachLoop, hl, List.getElem?_eq_getElem hi, es]
+    cases b
+    · simp only [Bool.false_eq_true, if_false, ok_eq_ok] at e2 ⊢
+      subst e2; rfl
+    · simp only [if_true] at e2 ⊢
+      exact ev_loop hl hf hg k (i + 1) t (by omega) e2
+
+/-- `xs.some(f)` on numbers, with a callback that leaves the heap alone. -/
+theorem rel_some {γ : Type} {f : Js.Num → Result Bool} {xs : List Js.Num} {vs : List Val} {l : Loc}
+    {g : Val → Val → M Val} {G : Bool → Result γ} {δ : Type} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs)
+    (hg : ∀ x u (i : Nat), NumIs u x.val → Rel (f x) (g u (num i)) h (fun b w h' => h' = h ∧ crep h b w))
+    (H : ∀ b : Bool, Rel (G b) (k (.bool b)) h Q) :
+    Rel (Std.bind (Js.some_ f xs) G) (jsSome (.ref l) g >>= k) h Q := by
+  unfold Rel; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hloop := so_loop hl hf hg vs.length 0 t (by simp) (by rw [List.drop_zero]; exact et)
+  rw [jsSome_eq]
+  unfold each
+  simp only [spec_bind, spec_pure]
+  rw [spec_eq (items_arr hl)]
+  refine (spec_eq hloop).2 ?_
+  have H' := H t
+  unfold Rel at H'; exact H' r er
+
+/-- `xs.every(f)` on numbers, with a callback that leaves the heap alone. -/
+theorem rel_every {γ : Type} {f : Js.Num → Result Bool} {xs : List Js.Num} {vs : List Val} {l : Loc}
+    {g : Val → Val → M Val} {G : Bool → Result γ} {δ : Type} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs)
+    (hg : ∀ x u (i : Nat), NumIs u x.val → Rel (f x) (g u (num i)) h (fun b w h' => h' = h ∧ crep h b w))
+    (H : ∀ b : Bool, Rel (G b) (k (.bool b)) h Q) :
+    Rel (Std.bind (Js.every f xs) G) (jsEvery (.ref l) g >>= k) h Q := by
+  unfold Rel; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hloop := ev_loop hl hf hg vs.length 0 t (by simp) (by rw [List.drop_zero]; exact et)
+  rw [jsEvery_eq]
+  unfold each
+  simp only [spec_bind, spec_pure]
+  rw [spec_eq (items_arr hl)]
+  refine (spec_eq hloop).2 ?_
+  have H' := H t
+  unfold Rel at H'; exact H' r er
+
 /-- `for (const x of xs)` with one mutable variable, whose body leaves the heap alone. -/
 theorem rel_forOf {α β γ : Type} [CRep α] [CRep β]
     {B : List α × β → Result (ControlFlow (List α × β) β)} {xs : List α} {vs : List Val} {l : Loc}
@@ -606,6 +734,7 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_truncDiv ?_ ?_ ?_ <;> rnum)
   | (refine rel_neg ?_ ?_ <;> rnum)
   | (refine rel_div ?_ ?_ ?_ <;> rnum)
+  | (refine rel_max ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu; try simp only [truthy_numIs hu]) | exact numIs_num | assumption)
   | (refine rel_dneg numIs_num ?_; intro _ _)
   | (refine rel_arr (by simp [crep_num, crep_none, crep_some, crep_str, crep_bool, numIs_num]; try assumption) ?_; intro _ _)
   | (refine rel_len (by assumption) (by assumption) ?_; intro _ _ _ _)
@@ -613,6 +742,8 @@ macro "rops" : tactic => `(tactic| first
   | (refine rel_map (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_filter (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_findIndex (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (refine rel_some (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (refine rel_every (by assumption) (by assumption) ?_ ?_ <;> intros)
   | (refine rel_padStart ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
   | (refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
 
