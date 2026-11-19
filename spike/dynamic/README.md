@@ -49,7 +49,11 @@ with its dynamic twin on any operands related by `NumIs`; `bin_lt_is` and the ot
 comparisons turn a dynamic comparison into the typed one; `rel_min_ok` relates `Math.min`;
 `rel_len`/`rel_slen` relate `length`; `rel_map`, `rel_filter` and `rel_findIndex` relate the
 array callbacks on numbers through `Js.map`'s recursion on one side and `eachLoop` on the other;
-`rel_padStart` relates `padStart` through Core's primitive; `rel_forOf` relates a `for ... of`
+`rel_padStart` relates `padStart` through Core's primitive; `rel_some`, `rel_every` and
+`rel_reduce` relate those callbacks the same way; `rel_div`, `rel_max`, `rel_dneg`,
+`rel_dtoNum`, `rel_trim`, `rel_lastIndexOf` and the `rel_isArray_*` lemmas relate `/`,
+`Math.max`, unary `-`, `+b` on booleans, `trim`, `lastIndexOf` and `Array.isArray`;
+`rel_arr` relates an array literal; `CRep (Option α)` covers optional fields; `rel_forOf` relates a `for ... of`
 loop with one mutable variable, Aeneas's `loop` on one side (by `Core.loop_ind`) and `forLoop`
 on the other; `rel_tail` handles an operation in tail position; `rel_ok` ends both sides;
 `rel_dbind` takes a dynamic step the typed view doesn't have (a field read). A typed `if` is
@@ -60,30 +64,39 @@ lemmas. Nothing is written per function.
 | Measure | Result |
 |---|---|
 | Functions tried | 83: `ts-bank` (3), `corpus-gaps.tsv` (45), `corpus-rem.tsv` (35) |
-| Generated | 65; 18 use constant arrays, `while`, `for` or types the generator doesn't handle |
-| Proved | 38 (26 before): `transfer`, `calculateFee`, `sumAmounts`, 10 gaps fixtures, 25 in `corpus-rem.tsv` |
-| Check time | 21 files take 2 s, 14 take 3 s, 3 take 5 s, imports included; Core's bridges take 2.1-2.7 s |
+| Generated | 72 (65 before); `dyn.mjs` now translates `while` and `for (;;)` |
+| Proved | 57 (38 before): `transfer`, `calculateFee`, `sumAmounts`, 25 gaps fixtures, 29 in `corpus-rem.tsv` |
+| Check time | 15 files take 2 s, 26 take 3 s, 11 take 4 s, 3 take 5-6 s, `listCount` 23 s, `validateDate` 34 s |
 | Timeouts (45 s) | 0 |
-| Wrong typed views | 187 of 187 fail over 26 kinds, counting proved bridges only; 4 new kinds: negated callback result, doubled `length`, `findIndex` from 1, loop that drops its update |
-| Not proved | 27: 18 stop at a call with no lemma (17 library calls and `/`), 4 lack a `CRep` instance, 4 end with an open goal, `sumPresent` loops over a literal built in the function |
+| Wrong typed views | MUTS, counting proved bridges only; 3 new kinds: `some` for `every`, `every` for `some`, `Math.min` for `Math.max` |
+| Not proved | 15: 6 stop at a call with no lemma, 3 call something `dyn.mjs` turns into `stuck`, 3 are `while`/`for` loops, 3 test a nullable field for `null` or `undefined` |
 
-New since the last round: `length` (`pointDimensions`, `isEvenIndex`), `map` (`halves`,
-`residues`), `filter` (`evens`, `multiplesOf`), `findIndex` (`firstNegative`), `padStart`
-(`twoDigits`, which `dyn.mjs` now translates; it emitted `stuck` before, as for `findIndex`),
-`for ... of` (`sumAmounts`, `sumOdd`). `calculateFee` and `isLeapYearIndex` prove again: a
-bind-normalising step ran after `rel_tail` and hid the `Math.min`, and `rel_min_ok` now states
-its result as `min a b`.
+New since the last round: `/` (`halfIfEven`), `some` (`anyMultiple`), `every` (`allOdd`),
+`reduce` (`pagesFor`), `Math.max` (`orCall`), `trim` with `slice` (`andCall`), `+b`
+(`flagCount`), `Array.isArray` (`listCount`), `lastIndexOf` (`lastTag`), optional fields
+(`withHole`, `withUndefined`, `withNulls`, `nested`, `slotOf`). The 4 open goals are closed:
+`orConditional` and `negativeLiterals` needed number truthiness (`truthy_numIs`),
+`callFour` and `validateDate` call other functions, which the generator now unfolds.
+`sumPresent` proves through `rel_arr`. `dyn.mjs` changes: `+true` is `1` and `lastIndexOf`
+works on arrays of strings; `while (c) S` and `for (init; c; u) S` become a Lean `for` over
+`fuel`, at most 2^20 rounds, then `stuck`. A `continue` in a `for (;;)` body, a non-`let`
+initializer and a loop variable captured by a closure are unsupported. `whileLoop_spec` in
+[Dyn.lean](Dyn.lean) is the invariant rule: each round keeps the invariant and lowers a measure
+below the fuel. The Node comparison now has 22 functions, including `sumIndexed` (`for (;;)`)
+and `halvings` (`while`): 2,200 runs, 2,056 agree, 144 stop, 0 differ.
 
-Still not proved: `some`, `every`, `reduce`, `flat`, `lastIndexOf`, `repeat`, `padEnd`, `at`,
-`trim`/`slice`, string-to-number, `Math.max`; the callback lemmas only cover number arrays
-with callbacks that don't allocate; `for ... of` over an array literal built in the function
-(`sumPresent`), whose location is not a hypothesis. `dyn.mjs` rejects `for (;;)` and `while`,
-so those stay unsupported on the dynamic side and no relational lemma was written for them.
+Still not proved: `at`/`!` (`orIndex`), `padEnd`, string-to-number, `flat`, number-to-string,
+and `at`/`strAt`/`repeat`, which `dyn.mjs` still turns into `stuck`. `boxOrZero`,
+`boxIsUndef` and `slotUndef` test a field typed `number | null` (or `| undefined`) for one of the two;
+`crep` relates `none` to both, so the comparison can't be decided. The generator would need the
+nullable kind per type. No relational lemma pairs the typed path's loops with `whileLoop` yet,
+so `digitSum`, `gcd` and `powersOfTwo` stop at the loop; no fixture proof uses
+`whileLoop_spec` yet.
 
-Verdict: go for continuing, still no-go for replacing Core's bridges. 38 of 65 generated
+Verdict: go for continuing, still no-go for replacing Core's bridges. 57 of 72 generated
 bridges prove with no timeouts; Core's bridges cover 22 of 24 original gaps fixtures and 32 of
-35 in `corpus-rem.tsv`. Each remaining library call is one lemma of the shape above; `while`
-and `for` need dynamic semantics first (a fuel-bounded loop that stops when fuel runs out).
+35 in `corpus-rem.tsv`. What's left is the typed-loop lemma for `while`/`for`, the nullable
+kind in `crep`, and a lemma per remaining call.
 
 How it fits with Core's bridges: today `bridge3.mjs` proves the typed view simulates Core, and
 Core is trusted to be JavaScript, checked against Node by `differential.mjs`. This bridge
