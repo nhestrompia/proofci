@@ -512,4 +512,3 @@ export function hasVowel(s: string): boolean {
 export function firstDash(s: string): string {
   return s.replace(/-|_/, " ");
 }
-||||||| 32e8970
