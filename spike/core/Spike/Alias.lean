@@ -30,11 +30,11 @@ theorem heap_len {h : Heap} {l o} (hl : h[l]? = some o) : l < h.length := by
 
 /-- Writing `balance` at `l` is seen at `l`. -/
 theorem balance_write {h : Heap} {l fs v} (hl : h[l]? = some (.record fs)) :
-    balance (h.set l (.record (("balance", .num v) :: fs.filter (·.1 != "balance")))) l v := by
+    balance (h.set l (.record (putField fs "balance" (.num v)))) l v := by
   have : l < h.length := by
     by_contra hc
     simp [List.getElem?_eq_none (Nat.le_of_not_lt hc)] at hl
-  simp [balance, readField, this, List.lookup]
+  simp [balance, readField, this, lookup_putField_same]
 
 /-- Writing at `l` leaves other objects alone. -/
 theorem balance_frame {h : Heap} {l m o n} (hne : l ≠ m) (hb : balance h m n) :
@@ -53,7 +53,7 @@ theorem moveMoney_shared {h l} {a amt : Int} (ha : balance h l (F64.ofInt a))
   apply wprun_void
   simp only [src_shared_moveMoney]
   core_run
-  all_goals simp (disch := omega) [balance, readField, List.lookup, hlen]
+  all_goals simp (disch := omega) [balance, readField, List.lookup, hlen, lookup_putField_same]
   all_goals try (congr 2; omega)
 
 /-- With two accounts, the amount moves from one to the other. -/
@@ -73,7 +73,7 @@ theorem moveMoney_separate {h l m} {a b amt : Int} (hne : l ≠ m)
   apply wprun_void
   simp only [src_shared_moveMoney]
   core_run
-  all_goals simp [balance, readField, List.lookup, hlen, hlen', hne, hne', List.getElem?_set, List.getElem_set, *]
+  all_goals simp [balance, readField, List.lookup, hlen, hlen', hne, hne', List.getElem?_set, List.getElem_set, lookup_putField_same, *]
 
 /-- The version that reads both balances first looks the same, but with one shared
 account it creates money. Core sees that; a type-directed model never gets to ask. -/
@@ -87,7 +87,7 @@ theorem moveMoneyStale_shared_creates_money {h l} {a amt : Int} (ha : balance h 
   apply wprun_void
   simp only [src_shared_moveMoneyStale]
   core_run
-  all_goals simp [balance, readField, List.lookup, hlen]
+  all_goals simp [balance, readField, List.lookup, hlen, lookup_putField_same]
 
 /-- With fractions, `moveMoney` on one shared account doesn't conserve money: Core
 computes the rounding that the safe-integer model refuses to represent. -/

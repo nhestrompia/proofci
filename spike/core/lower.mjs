@@ -22,15 +22,16 @@ const STRING_METHODS = {
   "trimEnd/0": "trimEnd", "toLowerCase/0": "toLower", "toUpperCase/0": "toUpper", "slice/1": "sliceFrom", "slice/2": "slice",
   "indexOf/1": "strIndexOf", "lastIndexOf/1": "strLastIndexOf", "charAt/1": "charAt", "charCodeAt/1": "charCodeAt", "split/1": "split",
   "replace/2": "replace", "replaceAll/2": "replaceAll", "substring/2": "substring",
+  "at/1": "atRel", "repeat/1": "strRepeat",
   "padStart/1": "padStart", "padStart/2": "padStart", "padEnd/1": "padEnd", "padEnd/2": "padEnd",
 };
 // `s.padStart(n)` pads with spaces.
 const primArgs = (prim, args) => (prim.startsWith("pad") && args.length === 2 ? [...args, ".lit (.str [32])"] : args);
-const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find" };
+const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find", findIndex: "findIndex" };
 const isSet = t => t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet";
 const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numFinite", isSafeInteger: "numFinite", isNaN: "numNaN" };
-const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach"]);
-const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr" };
+const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach", "lastIndexOf", "at", "flat", "flatMap", "findIndex"]);
+const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr", "lastIndexOf/1": "lastIndexOfStr", "at/1": "atRel", "flat/0": "flat" };
 
 // `eff` turns on the lowering of async functions to `CoreAsync` statements (see CoreAsync.lean): the
 // outside calls it may await are listed there, as in the policy. Without it async code is lowered as it
@@ -130,7 +131,7 @@ export function lower(root, targets, { paths, eff } = {}) {
       const c = n.parent;
       if (!ts.isCallExpression(c) || c.arguments[0] !== n || !ts.isPropertyAccessExpression(c.expression)) return false;
       const m = c.expression.name.text;
-      return (HOF[m] || m === "reduce" || m === "forEach") && checker.isArrayType(checker.getTypeAtLocation(c.expression.expression));
+      return (HOF[m] || m === "flatMap" || m === "reduce" || m === "forEach") && checker.isArrayType(checker.getTypeAtLocation(c.expression.expression));
     };
     const walk = (n, f) => { f(n); ts.forEachChild(n, c => walk(c, f)); };
     // A callback must not write outer variables: its writes wouldn't outlive the turn.
@@ -250,6 +251,7 @@ export function lower(root, targets, { paths, eff } = {}) {
         const receiver = checker.getNonNullableType(checker.getTypeAtLocation(link.expression.expression));
         const prim = (checker.isArrayType(receiver) ? ARRAY_METHODS : STRING_METHODS)[`${link.expression.name.text}/${link.arguments.length}`];
         if (!prim) throw new Error(`method ${link.getText()}`);
+        if (prim === "flat" && !checker.isArrayType(checker.getTypeArguments(receiver)[0])) throw new Error("`flat` of items that aren't arrays");
         return `.prim .${prim} [${primArgs(prim, [value, ...link.arguments.map(E)]).join(", ")}]`;
       }, `(${base})`);
       return `.cond (.isNullish (${base})) (.lit .undef) (${body})`;
@@ -268,6 +270,8 @@ export function lower(root, targets, { paths, eff } = {}) {
         if (t.flags & ts.TypeFlags.NumberLike) return E(args[0]);
         if (t.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike)) return `.prim .toNum [${E(args[0])}]`;
       }
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === "keys" && ts.isIdentifier(callee.expression)
+        && callee.expression.text === "Object" && inLibrary(callee.expression) && args.length === 1) return `.prim .keys [${E(args[0])}]`;
       if (ts.isPropertyAccessExpression(callee) && callee.name.text === "isArray" && ts.isIdentifier(callee.expression)
         && callee.expression.text === "Array" && inLibrary(callee.expression) && args.length === 1) {
         if (!checker.isArrayType(checker.getNonNullableType(checker.getTypeAtLocation(args[0])))) throw new Error("`Array.isArray` on a value not typed as an array");
@@ -394,12 +398,16 @@ export function lower(root, targets, { paths, eff } = {}) {
         && checker.isArrayType(checker.getTypeAtLocation(e.expression.expression))) {
         const m = e.expression.name.text, recv = e.expression.expression;
         if (HOF[m] && e.arguments.length === 1) return `.hof .${HOF[m]} (${E(recv)}) ${lean(callback(e.arguments[0], 1))}`;
+        if (m === "flatMap" && e.arguments.length === 1
+          && !checker.isArrayType(checker.getSignaturesOfType(checker.getTypeAtLocation(e.arguments[0]), ts.SignatureKind.Call)[0]?.getReturnType())) throw new Error("`flatMap` with a callback that doesn't return an array");
+        if (m === "flatMap" && e.arguments.length === 1) return `.prim .flat [.hof .map (${E(recv)}) ${lean(callback(e.arguments[0], 1))}]`;
         if (m === "reduce" && e.arguments.length === 2) return `.reduce (${E(recv)}) (${E(e.arguments[1])}) ${lean(callback(e.arguments[0], 2))}`;
       }
       if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && !e.expression.questionDotToken && !e.questionDotToken) {
         const m = `${e.expression.name.text}/${e.arguments.length}`, recv = e.expression.expression;
         const t = checker.getTypeAtLocation(recv);
         const table = t.flags & ts.TypeFlags.StringLike ? STRING_METHODS : checker.isArrayType(t) ? ARRAY_METHODS : null;
+        if (table?.[m] === "flat" && !checker.isArrayType(checker.getTypeArguments(t)[0])) throw new Error("`flat` of items that aren't arrays");
         if (table?.[m]) return `.prim .${table[m]} [${primArgs(table[m], [recv, ...e.arguments].map(E)).join(", ")}]`;
         if (m === "has/1" && isSet(t)) return `.prim .setHas [${[recv, ...e.arguments].map(E).join(", ")}]`;
       }

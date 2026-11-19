@@ -293,7 +293,7 @@ theorem Iterates.exit {p x l i b s xs item s₁ v} (hl : s.heap[l]? = some (.arr
 theorem Execs.setField {p s o k e l v s₁ s₂ fs} (ho : Evals p s o (.ref l) s₁) (he : Evals p s₁ e v s₂)
     (hl : s₂.heap[l]? = some (.record fs)) :
     Execs p s (.setField o k e) .normal
-      { s₂ with heap := s₂.heap.set l (.record ((k, v) :: fs.filter (·.1 != k))) } := by
+      { s₂ with heap := s₂.heap.set l (.record (putField fs k v)) } := by
   obtain ⟨F, hF⟩ := ho
   obtain ⟨G, hG⟩ := he
   exact ⟨F + G + 1, fun f hf => by
