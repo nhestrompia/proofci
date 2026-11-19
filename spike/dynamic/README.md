@@ -40,30 +40,48 @@ theorem src_ledger_transfer_dyn (h0 : crep h p0 v0) (h1 : crep h p1 v1)
 `crep h a v` ([Bridge.lean](Bridge.lean)) says typed value `a` is JavaScript value `v` in heap
 `h`: numbers and strings as themselves, arrays and records at a location with each element
 related, `none` as `null` or `undefined`. It is the `Is` precondition made exact. The proof is
-the same for every function: unfold, `tsteps` takes the typed result apart bind by bind,
-`dsteps` runs the dynamic side, one closer relates the results. Nothing is written per function.
+the same for every function: unfold both sides, then `rsteps` steps them together. It uses
+`Rel t d h Q` ("if typed `t` returns `r`, dynamic `d` from `h` returns a value related to `r`
+by `Q`") and one lemma per typed operation, proved once in [Bridge.lean](Bridge.lean):
+`rel_add`/`rel_sub` pair `Js.add a b` with `bin .add (num a) (num b)`, `rel_ok` ends both
+sides, `rel_dbind` takes a dynamic step the typed view doesn't have (a field read), and a
+typed `if` is split together with the dynamic one, with contradictory branches closed by
+`omega`. Nothing is written per function.
 
 | Measure | Result |
 |---|---|
-| Functions tried | 62: `ts-bank` (3), `corpus-gaps.tsv` (24), `corpus-rem.tsv` (35) |
-| Generated | 57; 5 use constant arrays or `while`, which the generator doesn't handle |
-| Proved | 4: `transfer`, `assignedAfterExit`, `pointKind`, `makeCounts` |
-| Check time | 2-6 s per proved file, imports included; `ts-bank`'s Core bridges take 2.1-2.7 s |
-| Wrong typed views | 8 of 8 fail (`transfer` 6, `assignedAfterExit` 2; the other two have no operator or literal to mutate) |
-| Not proved | 40 exceed 45 s, 4 need a relation for arrays of optional values, 9 end with goals the closer can't close |
+| Functions tried | 83: `ts-bank` (3), `corpus-gaps.tsv` (45), `corpus-rem.tsv` (35) |
+| Generated | 64; 19 use constant arrays, `while` or types the generator doesn't handle |
+| Proved | 6: `transfer`, `sizeName`, `assignedAfterExit`, `pointKind`, `totalPlusOne`, `makeCounts` |
+| Check time | 45 files take 2 s, 17 take 3 s, 1 takes 7 s, imports included; Core's bridges take 2.1-2.7 s |
+| Timeouts (45 s) | 1, down from about 40 with the separate `tsteps`/`dsteps` |
+| Wrong typed views | 24 of 24 fail, over 16 kinds (new: swapped arguments, dropped operation, swapped field, changed string) |
+| Not proved | 52 stop at a typed operation with no relational lemma, 4 lack a `CRep` instance, 1 times out, 1 ends with an open goal |
 
-The timeouts come from taking each side apart separately. `tsteps` can't look inside a bound
-branch (`let x ← if ...`, which is how the typed view writes a reassigned `let`), and when it
-tries `bind_ok` on a typed library call Lean unfolds the call. `calculateFee` also needs
-`Math.floor` and `Math.min` lemmas on `num`.
+Where the 52 stop:
 
-Verdict: no-go for replacing Core's bridges now; go for continuing. Where it applies it works:
-the proof is generated, short and quick, and a wrong typed view fails. But it proves 4 of 62
-functions, while Core's bridges cover 22 of 24 gaps fixtures and 32 of 35 in `corpus-rem.tsv`.
-Closing the gap needs one relational lemma per typed operation, proved once (`Js.add x y = ok t`
-and related inputs give `bin .add` returning `num t`; the same for `floor`, `min`, string
-methods, field reads), so the tactic steps both sides together instead of taking each apart,
-and loops through `forLoop_spec` with the typed loop's invariant, as Core's `sim_loop` does.
+| Typed operation | Files |
+|---|---|
+| `Js.rem`, `floorDiv`, `ceilDiv`, `truncDiv`, `mul`, `neg` | 25 |
+| Library calls (`len`, `padStart`, `padEnd`, `lastIndexOf`, `repeat`, `map`, `findIndex`, ...) | 10 |
+| Loops | 3 |
+| `Js.add` after a reassigned `let` (`centuryStart`) | 3 |
+| Other | 11 |
+
+The 25 integer ones share one cause. `crep` says a typed number is `num a.val`, the canonical
+double, but JavaScript's `*`, `%`, `Math.floor(x / y)` and unary `-` can give `-0` for a typed
+`0` (`-1 * 0`). The lemma for them is only true with Core's looser `IsInt` (`+0` or `-0`), so
+`crep` for numbers has to become `IsInt`, and the dynamic comparison and arithmetic lemmas
+have to take `IsInt` inputs, as Core's `Spike/Safe.lean` already does. The `centuryStart`
+three need the dynamic side's join point for a reassigned `let` stepped with the typed bound
+`if`.
+
+Verdict: still no-go for replacing Core's bridges, still go for continuing. Stepping both sides
+together fixed the cost: almost every file now finishes in 2-3 s instead of timing out, and
+where a proof stops it stops at a named typed operation. Coverage only went from 4 to 6,
+because most functions reach an operation without a lemma. Core's bridges cover 22 of 24
+original gaps fixtures and 32 of 35 in `corpus-rem.tsv`. Next: `IsInt`-based `crep` with the
+six integer lemmas (25 files), then the library calls, then loops through `forLoop_spec`.
 
 How it fits with Core's bridges: today `bridge3.mjs` proves the typed view simulates Core, and
 Core is trusted to be JavaScript, checked against Node by `differential.mjs`. This bridge
