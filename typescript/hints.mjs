@@ -24,7 +24,7 @@ function callHint({ node, checker }) {
     const receiver = callee.expression;
     const type = checker.getTypeAtLocation(receiver);
     if (ts.isRegularExpressionLiteral(receiver) || type.symbol?.name === "RegExp") return REGEX;
-    if (/^(Object|Reflect)\./.test(text)) return "read the fields by name, or keep the data in a `Map` (`m.has(k)`, `m.get(k)`, `m.size`); an object can have keys its type doesn't list, so `Object.keys` and other reflection aren't translated";
+    if (/^(Object|Reflect)\./.test(text)) return "declare the object as `Record<string, V>` to use `Object.keys` or `Object.values` on it, or read the fields by name; an interface can have keys its type doesn't list, so other reflection isn't translated";
     if (/^JSON\./.test(text)) return none("`JSON` has no model; parse at the boundary and pass typed values in");
     if (/^Array\.(from|of)$/.test(text)) return "build the array with a literal, spread (`[...set]`) or a loop";
     if (/^Array\.isArray$/.test(text)) return "drop the test: the declared type already says whether it is an array";
@@ -148,7 +148,16 @@ export const HINTS = [
   // types
   [/only numbers, strings, booleans and string-literal unions can be keys/, "key the `Map` or `Set` by a `number`, `string`, `boolean`, `bigint` or string-literal union, for example an object's `id`"],
   [/the type `(any|unknown)(\[\])?`/, "write the type the value really has; `any` and `unknown` can only be narrowed by an `effects` entry's `narrowed` signature for awaited calls"],
-  [/the type `Record</, "use `Map<K, V>`, or an interface with named fields"],
+  [/the type `Record</, "use `Record<string, V>` (string keys), or an interface with named fields"],
+  [/record of dynamic keys whose values may be `null`/, "leave missing entries out of the record instead of storing `undefined` (`k in r` tells them apart)"],
+  [/record of dynamic keys that holds itself/, "give the nested level named fields, or use a `Map<string, V>`"],
+  [/records with number or symbol keys/, "key the record by strings (`Record<string, V>`, `String(n)` as the key), or use a `Map<number, V>`"],
+  [/a record of dynamic keys is only read and written with string keys/, "convert the key to a string first (`r[String(k)]`)"],
+  [/`\?\.\[\]` on a record of dynamic keys/, "check the record first (`r === undefined ? d : r[k]`)"],
+  [/a record of dynamic keys is only built empty/, "start from `{}` or `{ ...r }` and set the keys one by one (`out[k] = v`)"],
+  [/`Object\.entries` returns tuples/, "loop over `Object.keys(r)` and read `r[k]`"],
+  [/`Object\.\w+` is only supported on records of dynamic keys/, "declare the value as `Record<string, V>`, or read its fields by name"],
+  [/`in` is only supported on records of dynamic keys/, "compare the field with `undefined`, or declare the value as `Record<string, V>`"],
   [/the type `(Partial|Required|Readonly|Pick|Omit|NonNullable|ReturnType|Parameters|Awaited|Exclude|Extract)</, "write the fields out as an interface (`?:` for optional ones) instead of the utility type"],
   [/the type `\w+\.(infer|input|output)</, "write the type out as an interface and use it instead of the type inferred from the schema"],
   [/the type `(object|\{\})`/, "write an interface with the fields the code reads"],
@@ -279,7 +288,7 @@ export const HINTS = [
   [/only an empty `new Map\(\)`/, "start with `new Map()` and `set` the entries in a loop"],
   [/an object literal needs a declared type/, "write its type (`const p: Point = { ... }`, or the function's return type)"],
   [/a spread must come first/, "put `...base` before the other properties"],
-  [/spreading a value with an index signature/, "copy the named fields one by one"],
+  [/spreading a value with an index signature/, "declare the value as `Record<string, V>` with no other fields and copy it whole (`{ ...r }`), or copy the named fields one by one"],
   [/this kind of property is not supported yet/, "write `name: value` or the shorthand `name`; no methods, getters or computed keys"],
   [/a union value needs a literal `kind`/, "write `kind` as a string literal in the object (`{ kind: \"circle\", r }`)"],
   [/`\[\]` is only supported on arrays/, "use a `Map` and `m.get(k)`, or read the field by name"],
@@ -295,7 +304,7 @@ export const HINTS = [
   [/functions as values/, FUNCTION],
   [/this field isn't available in this case/, "read the field in a `case` whose member declares it"],
   [/reading a field of a union outside a `switch`/, "read it inside `switch (x.kind)`, in each case"],
-  [/read through an index signature/, "declare the field in the interface, or use a `Map<string, T>`"],
+  [/read through an index signature/, "declare the field in the interface, or drop the named fields and use `Record<string, T>`"],
   [/whose fields and methods can't be read/, "pass the plain values the function needs instead of the object"],
 
   // calls

@@ -40,6 +40,10 @@ export function lower(root, targets, { paths, eff } = {}) {
   const files = [...new Set([...targets.map(t => join(root, t.split("::")[0])), ...(ts.sys.fileExists(join(root, "src/prelude.ts")) ? [join(root, "src/prelude.ts")] : [])])];
   const program = ts.createProgram(files, { strict: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, noEmit: true, ...(paths ? { baseUrl: root, paths } : {}) });
   const checker = program.getTypeChecker();
+  const isDict = n => {
+    const t = checker.getApparentType(checker.getTypeAtLocation(n));
+    return !checker.isArrayType(t) && !checker.getPropertiesOfType(t).length && Boolean(checker.getIndexInfoOfType(t, ts.IndexKind.String));
+  };
   const hazards = eff ? createHazards(ts, checker, program, realpathSync(root)) : null;
   const effectByKey = new Map((eff?.effects ?? []).map(e => [e.call, e]));
   const asyncKeys = new Set();
@@ -272,6 +276,8 @@ export function lower(root, targets, { paths, eff } = {}) {
       }
       if (ts.isPropertyAccessExpression(callee) && callee.name.text === "keys" && ts.isIdentifier(callee.expression)
         && callee.expression.text === "Object" && inLibrary(callee.expression) && args.length === 1) return `.prim .keys [${E(args[0])}]`;
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === "values" && ts.isIdentifier(callee.expression)
+        && callee.expression.text === "Object" && inLibrary(callee.expression) && args.length === 1 && isDict(args[0])) return `.prim .recValues [${E(args[0])}]`;
       if (ts.isPropertyAccessExpression(callee) && callee.name.text === "isArray" && ts.isIdentifier(callee.expression)
         && callee.expression.text === "Array" && inLibrary(callee.expression) && args.length === 1) {
         if (!checker.isArrayType(checker.getNonNullableType(checker.getTypeAtLocation(args[0])))) throw new Error("`Array.isArray` on a value not typed as an array");
@@ -332,8 +338,10 @@ export function lower(root, targets, { paths, eff } = {}) {
           return `.cond (.isNullish (${E(e.expression)})) (.lit .undef) (.length (${E(e.expression)}))`;
         }
         if (e.questionDotToken) return `.optField (${E(e.expression)}) ${lean(e.name.text)}`;
+        if (isDict(e.expression)) return `.prim .recGet [${E(e.expression)}, .lit (.str ${UNITS(e.name.text)})]`;
         return `.field (${E(e.expression)}) ${lean(e.name.text)}`;
       }
+      if (ts.isElementAccessExpression(e) && isDict(e.expression)) return `.prim .recGet [${E(e.expression)}, ${E(e.argumentExpression)}]`;
       if (ts.isElementAccessExpression(e)) return `.index (${E(e.expression)}) (${E(e.argumentExpression)})`;
       if (e.kind === ts.SyntaxKind.ThisKeyword) return `.var "this"`;
       if (ts.isArrowFunction(e)) {
@@ -355,6 +363,9 @@ export function lower(root, targets, { paths, eff } = {}) {
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken) return `.not (${E(e.operand)})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(e.operand) && Number(e.operand.text) !== 0) return `.lit (.num ${num(-Number(e.operand.text))})`;
       if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken) return `.neg (${E(e.operand)})`;
+      if (ts.isObjectLiteralExpression(e) && e.properties.length === 1 && ts.isSpreadAssignment(e.properties[0]) && isDict(e.properties[0].expression)) {
+        return `.prim .recCopy [${E(e.properties[0].expression)}]`;
+      }
       if (ts.isObjectLiteralExpression(e)) {
         const fields = e.properties.map(p => {
           if (ts.isShorthandPropertyAssignment(p)) return `(${lean(p.name.text)}, .var ${lean(scope.get(checker.getShorthandAssignmentValueSymbol(p)))})`;
@@ -458,6 +469,7 @@ export function lower(root, targets, { paths, eff } = {}) {
         if (op === "&&") return `.and (${E(e.left)}) (${E(e.right)})`;
         if ((op === "==" || op === "===") && e.right.kind === ts.SyntaxKind.NullKeyword && op === "==") return `.isNullish (${E(e.left)})`;
         if (op === "!=" && e.right.kind === ts.SyntaxKind.NullKeyword) return `.not (.isNullish (${E(e.left)}))`;
+        if (e.operatorToken.kind === ts.SyntaxKind.InKeyword && isDict(e.right)) return `.prim .recHas [${E(e.right)}, ${E(e.left)}]`;
         if (OPS[op]) return `.bin .${OPS[op]} (${E(e.left)}) (${E(e.right)})`;
       }
       throw new Error(`expression: ${e.getText()}`);
@@ -646,6 +658,10 @@ export function lower(root, targets, { paths, eff } = {}) {
         if (target && decl.__env?.has(target)) out.push(`.setField (.field (.var "__env") "__up") ${lean(left.text)} (${value})`);
         else if (target && captured.has(target)) out.push(`.setField (.var "__scope") ${lean(left.text)} (${value})`);
         else if (ts.isIdentifier(left)) out.push(`.set ${lean(scope.get(resolve(left)))} (${value})`);
+        else if ((ts.isPropertyAccessExpression(left) || ts.isElementAccessExpression(left)) && isDict(left.expression)) {
+          const key = ts.isElementAccessExpression(left) ? E(left.argumentExpression) : `.lit (.str ${UNITS(left.name.text)})`;
+          out.push(`.expr (.prim .recSet [${E(left.expression)}, ${key}, ${value}])`);
+        }
         else if (ts.isPropertyAccessExpression(left)) out.push(`.setField (${E(left.expression)}) ${lean(left.name.text)} (${value})`);
         else if (ts.isElementAccessExpression(left)) out.push(`.setIndex (${E(left.expression)}) (${E(left.argumentExpression)}) (${value})`);
         else throw new Error("assignment target");

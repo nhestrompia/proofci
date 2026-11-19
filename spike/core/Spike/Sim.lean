@@ -2426,6 +2426,155 @@ theorem SimE.flat {α} {_ : TyRep α} {a : List (List α)} (hx : SimE p s x a) :
   exact hr.imp fun _ _ r => mono (List.prefix_append _ _) r
 end moreprims2
 
+/-! Records of dynamic keys (`Record<string, V>`): exactly these keys, in this order. -/
+
+theorem toNat_ofNat_small {n : Nat} (h : n < 128) : (Char.ofNat n).toNat = n := by
+  have hv : n.isValidChar := Or.inl (by omega)
+  simp [Char.ofNat, hv, Char.ofNatAux]
+theorem recKey_toNat {a : List Nat} {s : String} (h : recKey a = Option.some s) : s.toList.map Char.toNat = a ∧ Js.keyOk a = true := by
+  unfold recKey at h
+  split at h
+  · rename_i hk
+    cases h
+    refine ⟨?_, hk⟩
+    have hall : a.all (· < 128) = true := by
+      simp only [Js.keyOk, Bool.and_eq_true] at hk; exact hk.1.1.2
+    simp only [String.toList_ofList, List.map_map]
+    conv => rhs; rw [← List.map_id a]
+    apply List.map_congr_left
+    intro n hn
+    have : n < 128 := by simpa using (List.all_eq_true.mp hall) n hn
+    simp [toNat_ofNat_small this]
+  · cases h
+
+def dictRep {α} [TyRep α] (h : Heap) : List (List Nat × α) → List (String × Val) → Prop
+  | [], [] => True
+  | (k, x) :: d, (s, w) :: fs => recKey k = Option.some s ∧ TyRep.rep h x w ∧ dictRep h d fs
+  | _, _ => False
+theorem dictRep_mono {α} {_ : TyRep α} {h h' : Heap} (hp : h <+: h') :
+    ∀ {d : List (List Nat × α)} {fs}, dictRep h d fs → dictRep h' d fs
+  | [], [], _ => trivial
+  | (_, _) :: _, (_, _) :: _, ⟨hk, hr, hd⟩ => ⟨hk, TyRep.mono hp hr, dictRep_mono hp hd⟩
+theorem dictRep_lookup {α} {_ : TyRep α} {h : Heap} {k : List Nat} {s : String} (hk : recKey k = Option.some s) :
+    ∀ {d : List (List Nat × α)} {fs}, dictRep h d fs →
+      (Js.dictGet d k = none ∧ fs.lookup s = none) ∨ ∃ x w, Js.dictGet d k = Option.some x ∧ fs.lookup s = Option.some w ∧ TyRep.rep h x w
+  | [], [], _ => Or.inl ⟨rfl, rfl⟩
+  | (k', x) :: d, (s', w) :: fs, ⟨hk', hr, hd⟩ => by
+    have e1 := recKey_toNat hk
+    have e2 := recKey_toNat hk'
+    by_cases he : k = k'
+    · subst he
+      have : s = s' := by rw [hk] at hk'; exact Option.some.inj hk'
+      subst this
+      exact Or.inr ⟨x, w, by simp [Js.dictGet, List.lookup], by simp [List.lookup], hr⟩
+    · have hs : s ≠ s' := fun c => he (by rw [← e1.1, ← e2.1, c])
+      have ih := dictRep_lookup hk hd
+      have b1 : (k == k') = false := by simpa using he
+      have b2 : (s == s') = false := by simpa using hs
+      have b3 : Js.dictGet ((k', x) :: d) k = Js.dictGet d k := by
+        unfold Js.dictGet; simp only [List.lookup]; split <;> simp_all
+      rw [b3]; simp only [List.lookup, b2]
+      exact ih
+
+theorem dictRep_keys {α} {_ : TyRep α} {h : Heap} : ∀ {d : List (List Nat × α)} {fs}, dictRep h d fs →
+    (fs.map Prod.fst).all keyOk = true ∧ (fs.map Prod.fst).map (fun k => Val.str (k.toList.map Char.toNat)) = d.map (fun e => Val.str e.1)
+  | [], [], _ => ⟨rfl, rfl⟩
+  | (k, _) :: _, (s, _) :: _, ⟨hk, _, hd⟩ => by
+    obtain ⟨e1, e2⟩ := recKey_toNat hk
+    obtain ⟨a1, a2⟩ := dictRep_keys hd
+    refine ⟨?_, ?_⟩
+    · simp only [List.map_cons, List.all_cons, Bool.and_eq_true]
+      exact ⟨by simp [keyOk, e1, e2], a1⟩
+    · simp only [List.map_cons, e1, a2]
+theorem dictRep_values {α} {_ : TyRep α} {h : Heap} : ∀ {d : List (List Nat × α)} {fs}, dictRep h d fs →
+    List.Forall₂ (TyRep.rep h) (d.map Prod.snd) (fs.map Prod.snd)
+  | [], [], _ => .nil
+  | (_, _) :: _, (_, _) :: _, ⟨_, hr, hd⟩ => .cons hr (dictRep_values hd)
+instance (priority := high) dictTyRep {α} [TyRep α] : TyRep (List (List Nat × α)) where
+  rep h d v := ∃ l fs, v = .ref l ∧ h[l]? = Option.some (.record fs) ∧ dictRep h d fs ∧ (fs.map Prod.fst).Nodup
+  mono hp := by
+    rintro ⟨l, fs, rfl, hl, hd, hn⟩
+    exact ⟨l, fs, rfl, lookup_mono hp hl, dictRep_mono hp hd, hn⟩
+instance (priority := high) {α} [TyRep α] : IsObj (List (List Nat × α)) := ⟨fun ⟨l, _, h, _⟩ => ⟨l, h⟩⟩
+
+section recs
+variable {p : Prog} {s : St} {x y : Expr}
+theorem SimE.recGet {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Nat} {r : Option α}
+    (hx : SimE p s x d) (hy : SimE p s y k) (h : Js.recGet d k = ok r) :
+    SimE (α := Opt .undef α) p s (.prim .recGet [x, y]) r := by
+  unfold Js.recGet at h
+  split at h
+  · rename_i hok
+    simp only [ok.injEq] at h
+    subst h
+    have hk : recKey k = Option.some (String.ofList (k.map Char.ofNat)) := by simp [recKey, hok]
+    refine sim_prim (args2 hx hy) ?_
+    rintro h _ ⟨_, _, rfl, ⟨l, fs, rfl, hl, hd, -⟩, rfl⟩
+    rcases dictRep_lookup hk hd with ⟨h1, h2⟩ | ⟨c, w, h1, h2, h3⟩
+    · exact ⟨.undef, h, by simp [primV, hl, hk, h2], List.prefix_refl _, by rw [h1]; rfl⟩
+    · exact ⟨w, h, by simp [primV, hl, hk, h2], List.prefix_refl _, by rw [h1]; exact h3⟩
+  · simp at h
+theorem SimE.recGet_some {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Nat} {v : α}
+    (hx : SimE p s x d) (hy : SimE p s y k) (h : Js.recGet d k = ok (Option.some v)) :
+    SimE p s (.prim .recGet [x, y]) v := by
+  unfold Js.recGet at h
+  split at h
+  · rename_i hok
+    simp only [ok.injEq] at h
+    have hk : recKey k = Option.some (String.ofList (k.map Char.ofNat)) := by simp [recKey, hok]
+    refine sim_prim (args2 hx hy) ?_
+    rintro h' _ ⟨_, _, rfl, ⟨l, fs, rfl, hl, hd, -⟩, rfl⟩
+    rcases dictRep_lookup hk hd with ⟨h1, h2⟩ | ⟨c, w, h1, h2, h3⟩
+    · rw [h1] at h; cases h
+    · rw [h1] at h; cases h
+      exact ⟨w, h', by simp [primV, hl, hk, h2], List.prefix_refl _, h3⟩
+  · simp at h
+theorem SimE.recHas {α} {_ : TyRep α} {d : List (List Nat × α)} {k : List Nat} {r : Bool}
+    (hx : SimE p s x d) (hy : SimE p s y k) (h : Js.recHas d k = ok r) :
+    SimE p s (.prim .recHas [x, y]) r := by
+  unfold Js.recHas at h
+  split at h
+  · rename_i hok
+    simp only [ok.injEq] at h
+    subst h
+    have hk : recKey k = Option.some (String.ofList (k.map Char.ofNat)) := by simp [recKey, hok]
+    refine sim_prim (args2 hx hy) ?_
+    rintro h _ ⟨_, _, rfl, ⟨l, fs, rfl, hl, hd, -⟩, rfl⟩
+    have hg : Js.dictHas d k = (Js.dictGet d k).isSome := rfl
+    rcases dictRep_lookup hk hd with ⟨h1, h2⟩ | ⟨c, w, h1, h2, h3⟩
+    · exact ⟨.bool false, h, by simp [primV, hl, hk, h2], List.prefix_refl _, by rw [hg, h1]; rfl⟩
+    · exact ⟨.bool true, h, by simp [primV, hl, hk, h2], List.prefix_refl _, by rw [hg, h1]; rfl⟩
+  · simp at h
+theorem forall2_strs {h : Heap} : ∀ (ks : List (List Nat)), List.Forall₂ (TyRep.rep h) ks (ks.map Val.str)
+  | [] => .nil
+  | _ :: ks => .cons rfl (forall2_strs ks)
+theorem SimE.recKeys {α} {_ : TyRep α} {d : List (List Nat × α)} (hx : SimE p s x d) :
+    SimE p s (.prim .keys [x]) (d.map Prod.fst) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨_, rfl, l, fs, rfl, hl, hd, hn⟩
+  obtain ⟨a1, a2⟩ := dictRep_keys hd
+  have hk : keysV fs = Option.some (d.map fun e => Val.str e.1) := by simp [keysV, a1, hn, a2]
+  refine ⟨.ref h.length, h ++ [.array (d.map fun e => Val.str e.1)], by simp [primV, hl, hk], List.prefix_append _ _, h.length, d.map fun e => Val.str e.1, rfl, by simp, ?_⟩
+  have := forall2_strs (h := h ++ [.array (d.map fun e => Val.str e.1)]) (d.map Prod.fst)
+  simpa [List.map_map] using this
+theorem SimE.recValues {α} {_ : TyRep α} {d : List (List Nat × α)} (hx : SimE p s x d) :
+    SimE p s (.prim .recValues [x]) (d.map Prod.snd) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨_, rfl, l, fs, rfl, hl, hd, hn⟩
+  obtain ⟨a1, a2⟩ := dictRep_keys hd
+  have hk : keysV fs = Option.some (d.map fun e => Val.str e.1) := by simp [keysV, a1, hn, a2]
+  refine ⟨.ref h.length, h ++ [.array (fs.map Prod.snd)], by simp [primV, hl, hk], List.prefix_append _ _, h.length, fs.map Prod.snd, rfl, by simp, ?_⟩
+  exact (dictRep_values hd).imp fun _ _ r => TyRep.mono (List.prefix_append _ _) r
+theorem SimE.recCopy {α} {_ : TyRep α} {d : List (List Nat × α)} (hx : SimE p s x d) :
+    SimE p s (.prim .recCopy [x]) d := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨_, rfl, l, fs, rfl, hl, hd, hn⟩
+  obtain ⟨a1, a2⟩ := dictRep_keys hd
+  have hk : keysV fs = Option.some (d.map fun e => Val.str e.1) := by simp [keysV, a1, hn, a2]
+  exact ⟨.ref h.length, h ++ [.record fs], by simp [primV, hl, hk], List.prefix_append _ _, h.length, fs, rfl, by simp,
+    dictRep_mono (List.prefix_append _ _) hd, hn⟩
+end recs
+
 /-! Functions that return nothing. -/
 instance : TyRep Unit := ⟨fun _ _ v => v = .undef, fun _ h => h⟩
 def RetU (h : Heap) (c : Cmp) (s : St) : Prop := (c = .normal ∨ c = .ret .undef) ∧ h <+: s.heap

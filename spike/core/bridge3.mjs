@@ -25,6 +25,7 @@ function leanType(t) {
     case "recursive": return t.lean;
     case "tagged": return t.lean;
     case "array": case "set": return `(List ${leanType(t.item)})`;
+    case "dict": return `(Js.Dict Js.Str ${leanType(t.value)})`;
     case "optional": return `(Opt ${t.both ? ".both" : t.nothing === "null" ? ".null" : ".undef"} ${leanType(t.inner)})`;
     default: throw new Error(`no encoding for ${t.kind}`);
   }
@@ -411,6 +412,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
     if (t.kind === "tagged" && !types.has(t.lean)) { t.variants.forEach(v => v.fields.forEach(f => scan(f.type))); types.set(t.lean, t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);
+    if (t.kind === "dict") scan(t.value);
   };
   const sigs = sources.map(s => ({ ...s, sig: view.signatures[`${s.file}::${s.name}`] }));
   for (const { sig } of sigs) { sig.params.forEach(scan); scan(sig.result); }
@@ -419,6 +421,7 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
     : t.kind === "tagged" ? t.variants.every(v => v.fields.every(f => encodable(f.type)))
     : t.kind === "optional" ? encodable(t.inner)
     : t.kind === "array" || t.kind === "set" ? encodable(t.item)
+    : t.kind === "dict" ? encodable(t.value)
     : t.kind !== "map";
   for (const t of view.records()) if (t.kind === "record" && encodable(t)) scan(t);
   const shapes = recordShapes(lean);

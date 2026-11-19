@@ -215,6 +215,31 @@ export function numberPage(p: Page<number>): number {
   return pageSize(p) + p.total;
 }
 
+export function scoreOf(scores: Record<string, number>, name: string): number {
+  return scores[name] ?? 0;
+}
+
+export function isKnown(labels: { [id: string]: string }, id: string): boolean {
+  return id in labels;
+}
+
+export function fieldNames(row: Record<string, string>): string[] {
+  return Object.keys(row);
+}
+
+export function weights(row: Record<string, number>): number[] {
+  return Object.values(row);
+}
+
+export function ownerId(row: Record<string, number>): number {
+  return row.owner ?? -1;
+}
+
+export function snapshot(row: Record<string, boolean>): Record<string, boolean> {
+  return { ...row };
+}
+
+
 // Types that hold themselves (a linked list, a JSON-like union), and recursion over them.
 export interface GapItem {
   value: number;

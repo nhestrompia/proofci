@@ -649,6 +649,24 @@ def dictSet {K V} [DecidableEq K] (m : Dict K V) (k : K) (v : V) : Dict K V :=
 
 def dictDelete {K V} [DecidableEq K] (m : Dict K V) (k : K) : Dict K V := m.filter (fun e => e.1 ≠ k)
 
+/-- Names `Object.prototype` answers for, so `r[k]` and `k in r` would see them, and the class tag. -/
+def protoNames : List Str := [js!"__proto__", js!"__class", js!"constructor", js!"hasOwnProperty", js!"isPrototypeOf",
+  js!"propertyIsEnumerable", js!"toLocaleString", js!"toString", js!"valueOf", js!"__defineGetter__",
+  js!"__defineSetter__", js!"__lookupGetter__", js!"__lookupSetter__"]
+
+/-- Keys a record of dynamic keys can hold: plain ASCII, not an array index (JavaScript lists those
+    first) and not in `protoNames`. Any other key stops the model. -/
+def keyOk (s : Str) : Bool := !s.isEmpty && s.all (· < 128) && !s.all (fun c => 48 ≤ c && c ≤ 57) && !protoNames.contains s
+
+/-- `r[k]` on a record of dynamic keys. -/
+def recGet {α} (d : Dict Str α) (k : Str) : Result (Option α) := if keyOk k then ok (dictGet d k) else fail .undef
+
+/-- `k in r` -/
+def recHas {α} (d : Dict Str α) (k : Str) : Result Bool := if keyOk k then ok (dictHas d k) else fail .undef
+
+/-- `r[k] = v` -/
+def recSet {α} (d : Dict Str α) (k : Str) (v : α) : Result (Dict Str α) := if keyOk k then ok (dictSet d k v) else fail .undef
+
 /-- `s.add(v)` -/
 def setAdd {K} [DecidableEq K] (s : List K) (v : K) : List K := if s.contains v then s else s ++ [v]
 
