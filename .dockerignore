@@ -17,12 +17,16 @@
 !spike/core/Core.lean
 !spike/core/F64.lean
 !spike/core/ProofciJs.lean
+!spike/core/ProofciAsync.lean
+!spike/core/CoreAsync.lean
 !spike/core/Spike/Rules.lean
 !spike/core/Spike/LoopInd.lean
 !spike/core/Spike/Safe.lean
 !spike/core/Spike/Sim.lean
 !spike/core/Spike/Tac.lean
+!spike/core/Spike/ASim.lean
 !spike/core/lower.mjs
 !spike/core/bridge3.mjs
+!spike/core/abridge.mjs
 !spike/core/action_bridge.mjs
 **/__pycache__
