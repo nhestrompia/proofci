@@ -651,7 +651,7 @@ export class Translator {
       if (!tag || !tag.type.isStringLiteral()) throw this.fail(declaration, "union members need a string `kind` field");
       return { tag: tag.type.value, fields: fields.filter(f => f.name !== "kind") };
     });
-    const ctors = variants.map(v => ({ name: name(v.tag), types: v.fields.map(f => this.type(f.type, f.node)) }));
+    const ctors = variants.map(v => ({ name: name(v.tag), types: v.fields.map(f => this.fieldType(f)) }));
     const lines = variants.map((v, i) => `  | ${name(v.tag)} ${v.fields.map((f, j) => `(${name(f.name)} : ${ctors[i].types[j]})`).join(" ")}`);
     return { kind: "tagged", variants: variants.map(v => ({ tag: v.tag, fields: v.fields.map(f => f.name) })), ctors,
       text: [`inductive ${lean} where`, ...lines, "deriving DecidableEq, Repr"].join("\n") };
