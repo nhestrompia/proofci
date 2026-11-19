@@ -303,6 +303,30 @@ def AW (p : Prog) (a : AProg) (o : Oracle) (s : AS) (k : List Frame) (Q : AOut �
 theorem AW.top {s body Q} (h : AW p a o s [.block body] Q) : ∃ out, AOk p a o s body out ∧ Q out :=
   let ⟨out, hr, hq⟩ := h; ⟨out, hr.top, hq⟩
 
+/-- The variables `arun` starts a function with. -/
+def AFn.env0 (fn : AFn) (args : List Val) : Env :=
+  let env : Env := (fn.params.zip args).foldl (fun e (x, v) => e.put x v) (fun _ => none)
+  fn.params.foldl (fun e x => if (e x).isSome then e else e.put x .undef) env
+
+def ARuns (p : Prog) (a : AProg) (o : Oracle) (fn : AFn) (args : List Val) (s : AS) (out : AOut) : Prop :=
+  ∃ F, ∀ f, F ≤ f → arun f p a o fn args s = out
+
+/-- A run of the body that returns or throws is a run of the function. -/
+theorem AW.top' {fn args h hc Q} (hq : ∀ s, ¬ Q (.ok .normal s)) (hs : ∀ c s, Q (.ok c s) → ∃ v, c = .ret v)
+    (w : AW p a o ⟨⟨fn.env0 args, h⟩, hc⟩ [.block fn.body] Q) (st : St) (hh : st.heap = h) :
+    ∃ out, ARuns p a o fn args ⟨st, hc⟩ out ∧ Q out := by
+  obtain ⟨out, hr, hq'⟩ := AW.top w
+  obtain ⟨F, hF⟩ := hr
+  refine ⟨out, ⟨F + 1, fun f hf => ?_⟩, hq'⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  have e := hF g hg
+  simp only [AFn.env0] at e
+  simp only [arun, hh, e]
+  rcases out with ⟨c, s'⟩ | ⟨v, s'⟩ | _
+  · obtain ⟨v, rfl⟩ := hs c s' hq'; rfl
+  · rfl
+  · rfl
+
 theorem AW.nil {s k Q} (h : AW p a o s k Q) : AW p a o s (.block [] :: k) Q :=
   let ⟨out, hr, hq⟩ := h; ⟨out, .block (AOk.nil s) (.normal hr), hq⟩
 
@@ -489,6 +513,15 @@ theorem Cont.thrown_top {v} {s : AS} {Q : AOut → Prop} (hq : Q (.thrown v s)) 
     ∀ k, NoCatch k → ∃ out, Cont p a o (.thrown v s) k out ∧ Q out
   | [], _ => Cont.toTop trivial hq
   | .block _ :: k, hk => Cont.toSkip trivial (Cont.thrown_top hq k hk)
+
+theorem ARes.not_normal {α} [TyRep α] {r : Js.Settled α} {hv} (s : AS) : ¬ ARes (opName := opName) (ArgOK := ArgOK) r hv (.ok .normal s) :=
+  fun h => h
+
+theorem ARes.ret {α} [TyRep α] {r : Js.Settled α} {hv} (c : Cmp) (s : AS) (h : ARes (opName := opName) (ArgOK := ArgOK) r hv (.ok c s)) :
+    ∃ v, c = .ret v := by
+  cases c with
+  | ret v => exact ⟨v, rfl⟩
+  | _ => exact h.elim
 
 theorem AW.ret_top {s : AS} {H} (hH : HRel opName ArgOK H s.hist) {e xs k α} [TyRep α] {X : α}
     (he : SimE p s.st e X) : AW p a o s (.block (.ret e :: xs) :: k) (ARes (opName := opName) (ArgOK := ArgOK) (.fulfilled X) H) :=

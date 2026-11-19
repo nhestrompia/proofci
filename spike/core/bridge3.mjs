@@ -13,7 +13,7 @@ const units = t => `[${[...Array(t.length).keys()].map(i => t.charCodeAt(i)).joi
 const q = JSON.stringify;
 const short = n => n.replace(/[^A-Za-z0-9_]/g, "_");
 
-function leanType(t) {
+export function leanType(t) {
   switch (t.kind) {
     case "number": return "Js.Num";
     case "string": return "Js.Str";
@@ -40,7 +40,7 @@ const generics = t => t.kind === "generic" ? [t] : t.kind === "array" ? generics
 // arguments, which unification fills in later.
 const binders = (ts, { eq = false, late = false } = {}) => [...new Map(ts.flatMap(generics).map(g => [g.name, g])).values()]
   .map(g => `{${g.name} : Type}${eq ? (late ? ` {_ : DecidableEq ${g.name}}` : ` [DecidableEq ${g.name}]`) : ""}${late ? ` {_ : TyRep ${g.name}}` : ` [TyRep ${g.name}]`}${g.nonNull ? ` [NotNull ${g.name}]` : ""}`).join(" ");
-const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
+export const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
 
 // Key lists of record literals, reading nested ones separately.
 function recordShapes(lean) {
