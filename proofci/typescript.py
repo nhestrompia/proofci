@@ -408,6 +408,9 @@ def probe(checkout: Path, package_rel: str, work: Path, assumes=(), effects=(), 
         outcome = json.loads(result.output.splitlines()[-1])
     except ValueError:
         raise Unsupported("the scan gave no result:\n" + result.output[-2000:])
+    if outcome.get("fatal"):
+        # A partial inventory would read as the answer; refuse instead.
+        raise Unsupported("the scan failed: " + outcome["fatal"])
     for entry in outcome.get("functions", []):
         if entry.get("reason"):
             entry["reason"], entry["hint"] = split_hint(entry["reason"])
