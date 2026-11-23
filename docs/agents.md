@@ -78,11 +78,14 @@ The object `check` and `local` print (`base` is added by `local` only):
 | `passed` | `true` only when every guarantee verified and every bridge check passed |
 | `base` | The commit `local` checked out as the trusted base |
 | `language`, `policy_source`, `policy_changes`, `policy_approvers` | As in CI |
-| `guarantees[]` | `target`, `guarantee`, `function`, `theorem`, `status` (`VERIFIED`, `UNPROVEN`, `UNSUPPORTED`, `CONTRACT_STALE`, `ERROR`), `reason`, `hint`, `bridge`, `errors` (structured Lean errors, see below) |
+| `guarantees[]` | `target`, `guarantee`, `function`, `theorem`, `status` (`VERIFIED`, `UNPROVEN`, `UNSUPPORTED`, `CONTRACT_STALE`, `ERROR`), `reason`, `hint`, `bridge`, `claim`, `previous_claim`, `statement`, `hypotheses`, `warnings`, `errors` (structured Lean errors, see below) |
+| `invalid_contract` | `true` when an approved contract is missing a required `/--` doc comment; blocks like a failed guarantee |
+| `downgrades[]` | Functions proved on the base branch but not proved now; an entry the policy's `accept_downgrades` didn't accept blocks the run |
+| `stale_accepts[]` | `accept_downgrades` entries that name no downgrade here |
 | `functions[]` | Per translated function: `function`, `status` (`proved`, `tested, not proved`, `failed`), `reason`, `hint` |
 | `disagreements[]` | Inputs where Node and the Lean view differ, as `"<function> [<input>, …]"` strings |
 | `bridge_summary` | Counts per bridge status |
-| `notes`, `timings` | Report notes and per-phase seconds |
+| `notes`, `timings_seconds` | Report notes and per-phase seconds |
 
 Structured errors (`errors` on guarantees and contract failures):
 
@@ -91,6 +94,6 @@ Structured errors (`errors` on guarantees and contract failures):
 ```
 
 `dev --json` prints `{"ok": bool, "unsupported": {target: {reason, hint}},
-"errors": [...], "guarantees": [{guarantee, function, theorem, verified, reason}]}`.
+"errors": [...], "guarantees": [{guarantee, function, theorem, verified, reason, claim, hypotheses}]}`.
 
 The schema is covered by `tests/test_agent_interface.py`.

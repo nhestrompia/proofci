@@ -106,7 +106,8 @@ class DevJsonTests(unittest.TestCase):
 
     def _repo(self, root):
         (root / "proofci").mkdir()
-        (root / "proofci" / "Contract.lean").write_text("theorem g : True := by sorry\n")
+        (root / "proofci" / "Contract.lean").write_text(
+            "/-- The fee stays capped. -/\ntheorem g (n : Int) (h : n ≤ 10) : True := by sorry\n")
         (root / "proofci" / "Proofs.lean").write_text("theorem g : True := by sorry\n")
         (root / "proofci.yaml").write_text(
             "version: 1\nlanguage: typescript\npackage: .\nlean: proofci\ntargets:\n"
@@ -146,6 +147,33 @@ class DevJsonTests(unittest.TestCase):
                 captured = []
                 status = dev.run(root, work, out=captured.append, as_json=True)
             self.assertEqual(json.loads(captured[-1])["unsupported"]["src/a.ts::broken"], first)
+
+    def test_guarantee_entries_carry_claim_and_hypotheses(self):
+        from proofci import dev
+        with tempfile.TemporaryDirectory() as tmp:
+            root, work = Path(tmp) / "repo", Path(tmp) / "work"
+            root.mkdir()
+            self._repo(root)
+            extraction = mock.Mock(failures={}, lean_file=root / "proofci" / "Contract.lean",
+                                   module="Repo", modelled=[], names={})
+            built = mock.Mock(status=0, output="")
+
+            def fake_assemble(ws_root, *args):
+                ws_root.mkdir(parents=True, exist_ok=True)
+                (ws_root / "Proofs.lean").write_text("x")
+
+            with mock.patch.object(dev.typescript, "extract", return_value=extraction), \
+                    mock.patch.object(dev.lean, "assemble", side_effect=fake_assemble), \
+                    mock.patch.object(dev.lean, "_copy_lean_tree"), \
+                    mock.patch.object(dev.lean, "_lake", return_value=built), \
+                    mock.patch.object(dev.lean, "clone"), \
+                    mock.patch.object(dev.lean, "comparator",
+                                      return_value=mock.Mock(accepted=True, reason=None)):
+                captured = []
+                dev.run(root, work, judge=True, out=captured.append, as_json=True)
+            g = json.loads(captured[-1])["guarantees"][0]
+            self.assertEqual(g["claim"], "The fee stays capped.")
+            self.assertEqual(g["hypotheses"], ["h : n ≤ 10"])
 
 
 class LocalTests(unittest.TestCase):

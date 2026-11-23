@@ -18,7 +18,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import extract, lean, typescript
+from . import claims, extract, lean, typescript
 from .check import ConfigError, lean_function, load_manifest
 
 
@@ -136,6 +136,8 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=Fa
         return done(0 if proofs.status == 0 else 1)
 
     status = 0
+    contract = repo / manifest.lean / "Contract.lean"
+    stated = claims.theorems(contract.read_text()) if contract.is_file() else {}
     for target, guarantee in manifest.guarantees():
         trial = lean.clone(ws, work / f"judge-{guarantee.theorem}")
         try:
@@ -145,9 +147,11 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=Fa
         mark = "verified" if verdict.accepted else f"not verified: {verdict.reason}"
         lean_name = state.get("names", {}).get(target.function, lean_function(target.function))
         say(f"{target.id}/{guarantee.id} ({lean_name}): {mark}")
+        info = stated.get(guarantee.theorem) or {}
         result["guarantees"].append({
             "guarantee": f"{target.id}/{guarantee.id}", "function": target.function,
-            "theorem": guarantee.theorem, "verified": verdict.accepted, "reason": verdict.reason})
+            "theorem": guarantee.theorem, "verified": verdict.accepted, "reason": verdict.reason,
+            "claim": info.get("claim"), "hypotheses": info.get("hypotheses")})
         status |= 0 if verdict.accepted else 1
     return done(status)
 
