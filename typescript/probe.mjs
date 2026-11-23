@@ -18,23 +18,39 @@ import { workspacePaths } from "./paths.mjs";
 // left out rather than reported as refused.
 function targets(root, program) {
   const exported = node => Boolean(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export);
+  const functionName = statement => {
+    if (ts.isFunctionDeclaration(statement) && statement.body && statement.name) return statement.name.text;
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        const init = declaration.initializer;
+        if (ts.isIdentifier(declaration.name) && init
+            && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) return declaration.name.text;
+      }
+    }
+    return null;
+  };
   const found = [];
   for (const file of program.getSourceFiles()) {
     if (file.isDeclarationFile || program.isSourceFileDefaultLibrary(file)
         || program.isSourceFileFromExternalLibrary(file)) continue;
     const path = relative(root, realpathSync(file.fileName)).split(sep).join("/");
     if (path.startsWith("..")) continue;
+    const declared = new Map();
+    const exportedNames = new Set();
     for (const statement of file.statements) {
-      if (ts.isFunctionDeclaration(statement) && statement.body && statement.name && exported(statement)) {
-        found.push(`${path}::${statement.name.text}`);
-      } else if (ts.isVariableStatement(statement) && exported(statement)) {
-        for (const declaration of statement.declarationList.declarations) {
-          const init = declaration.initializer;
-          if (ts.isIdentifier(declaration.name) && init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
-            found.push(`${path}::${declaration.name.text}`);
-          }
+      const name = functionName(statement);
+      if (name) declared.set(name, statement);
+      if (name && exported(statement)) exportedNames.add(name);
+      // `export { f }` exports a declaration that carries no modifier of its own.
+      if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier
+          && ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) {
+          exportedNames.add((element.propertyName ?? element.name).text);
         }
       }
+    }
+    for (const name of exportedNames) {
+      if (declared.has(name)) found.push(`${path}::${name}`);
     }
   }
   return found.sort();
