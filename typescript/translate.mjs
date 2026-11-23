@@ -1202,7 +1202,8 @@ export class Translator {
     try {
       const result = scope.convert(declaration.initializer, type, new Map(), lines);
       this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
-      this.constants.set(declaration, { lean, pure: false, dbl: this.doubles });
+      const numeric = leanType === "Js.Num" || leanType === "Js.Dbl";
+      this.constants.set(declaration, { lean, pure: false, dbl: numeric ? this.doubles : undefined });
       return this.constants.get(declaration);
     } finally {
       this.doubles = outer;
@@ -2828,7 +2829,7 @@ export class Scope {
     if (!declaration) throw this.t.fail(node, `\`${node.text}\` is not declared in the translated code`);
     if (this.isModuleLevel(declaration)) {
       const constant = this.t.declareConstant(declaration);
-      if (Boolean(constant.dbl) !== Boolean(this.t.doubles)) {
+      if (constant.dbl !== undefined && Boolean(constant.dbl) !== Boolean(this.t.doubles)) {
         if (constant.pure && !constant.dbl) return `(Js.Dbl.lit ${bitsOf(constant.value)})`;
         throw this.t.fail(node, `the constant \`${declaration.name.text}\` is ${constant.dbl ? "a double" : "an integer"}, but this function works on ${this.t.doubles ? "doubles" : "safe integers"} — declare it with the same numbers`);
       }
@@ -3121,7 +3122,12 @@ export class Scope {
       if (this.t.mayBeObject(item)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported${item.flags & ts.TypeFlags.TypeParameter ? "; a type parameter could be an object" : ""}`);
     };
     switch (method) {
-      case "includes": comparable(); if (this.t.doubles) throw this.t.fail(node, "`includes` on doubles isn't bridged yet — write the loop, or keep the list integers"); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
+      case "includes":
+        comparable();
+        if (this.t.doubles && (item.flags & ts.TypeFlags.NumberLike || (item.isUnion() && item.types.some(u => u.flags & ts.TypeFlags.NumberLike)))) {
+          throw this.t.fail(node, "`includes` on doubles isn't bridged yet — write the loop, or keep the list integers");
+        }
+        return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
       case "indexOf": comparable(); if (this.t.doubles) throw this.t.fail(node, "`indexOf` on doubles isn't bridged yet — write the loop, or keep the index an integer"); return this.bind(`Js.indexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
       case "lastIndexOf":
         if (args.length !== 1) throw this.t.fail(node, "`lastIndexOf` with a start index is not supported yet");
@@ -3738,7 +3744,8 @@ export class Scope {
     for (const [maybe, plain] of [[left, right], [right, left]]) {
       if (this.nullable(this.typeOf(maybe)) && this.isNumber(plain)) {
         if (this.t.doubles) {
-          return `(((${this.expression(maybe, env, lines)}).map (fun a => a.f.eq ${this.fOf(plain, env, lines)})).getD false)`;
+          const a = this.fresh();
+          return `(((${this.expression(maybe, env, lines)}).map (fun ${a} => ${a}.f.eq ${this.fOf(plain, env, lines)})).getD false)`;
         }
         return `${this.expression(maybe, env, lines)} = some ${this.expression(plain, env, lines)}`;
       }
@@ -3897,6 +3904,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       order: translator.order.length, types: new Map(translator.types), dblTypes: new Map(translator.dblTypes),
       functions: new Map(translator.functions), constants: new Map(translator.constants),
       assumed: new Map(translator.assumed), effectOps: new Map(translator.effectOps), anonymous: new Map(translator.anonymous),
+      typeOwners: new Map(translator.typeOwners),
     };
     let declaration;
     try {
@@ -3922,6 +3930,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       translator.functions = snapshot.functions;
       translator.assumed = snapshot.assumed;
       translator.constants = snapshot.constants;
+      translator.typeOwners = snapshot.typeOwners;
       translator.effectOps = snapshot.effectOps;
       translator.anonymous = snapshot.anonymous;
       try {
