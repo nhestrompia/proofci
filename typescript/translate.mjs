@@ -2887,12 +2887,35 @@ export class Scope {
   // `+`/`-` of such values — x + y is `-0` only when both are. `-0`
   // producers are `*`, `/`, `%`, unary `-` and round/ceil/trunc on a
   // negative; anything else is assumed unsafe.
+  // A numeric literal or unary minus on one, as a JavaScript `number`;
+  // `undefined` for anything else.
+  literalNumber(node) {
+    node = unwrap(node);
+    if (ts.isNumericLiteral(node)) return Number(node.text.replaceAll("_", ""));
+    if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(unwrap(node.operand))) return -Number(unwrap(node.operand).text.replaceAll("_", ""));
+    return undefined;
+  }
+
   cannotBeNegZero(node, depth = 0, params = null) {
     if (depth > 8) return false;
     node = unwrap(node);
     if (ts.isNumericLiteral(node)) return true;
     if (ts.isPrefixUnaryExpression(node)) return false;
     if (ts.isBinaryExpression(node)) {
+      // Literal arithmetic is folded: `-0` is produced exactly when JavaScript
+      // says so (`0 * -1` is `-0`; `0 * 1` and `0 % 1` are `+0`).
+      const left = this.literalNumber(node.left), right = this.literalNumber(node.right);
+      if (left !== undefined && right !== undefined) {
+        const k = node.operatorToken.kind;
+        const value =
+          k === ts.SyntaxKind.PlusToken ? left + right :
+          k === ts.SyntaxKind.MinusToken ? left - right :
+          k === ts.SyntaxKind.AsteriskToken ? left * right :
+          k === ts.SyntaxKind.SlashToken ? left / right :
+          k === ts.SyntaxKind.PercentToken ? left % right : undefined;
+        return value !== undefined && !Number.isNaN(value) && !Object.is(value, -0);
+      }
       if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken && node.operatorToken.kind !== ts.SyntaxKind.MinusToken) return false;
       return this.cannotBeNegZero(node.left, depth + 1, params) && this.cannotBeNegZero(node.right, depth + 1, params);
     }

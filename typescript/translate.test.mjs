@@ -75,6 +75,13 @@ const freeUnits = clampInt(0 * -1);
 export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumNe");
 });
 
+test("literal products that come out `+0` lift plainly", () => {
+  // `0 * 1` is `+0`, so the const can lift without the runtime `0` refusal.
+  emits(`export function clampInt(n: number) { return n < 0 ? 0 : n; }
+const freeUnits = clampInt(0 * 1);
+export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumR");
+});
+
 test("the right side of && only runs when it has to", () => {
   emits(`function g(a: number): boolean { return a > 0; }
     export function f(a: number) { return a !== 0 && g(a); }`, "if ¬(a.val = 0) then");
