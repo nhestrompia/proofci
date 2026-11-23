@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "ledger"
 TS_EXAMPLE = ROOT / "examples" / "ts-bank"
+TS_DBL_EXAMPLE = ROOT / "examples" / "ts-dbl"
 TS_ASYNC_EXAMPLE = ROOT / "examples" / "ts-async"
 TS_TREE_EXAMPLE = ROOT / "examples" / "ts-tree"
 GUARANTEES = ("fees/fee-capped", "fees/zero-amount", "transfer/conservation", "transfer/rejects-overdraft")
@@ -591,6 +592,17 @@ def ts_results():
     return dict.fromkeys(TS_GUARANTEES, V)
 
 
+TS_DBL = "src/pricing.ts"
+TS_DBL_GUARANTEES = ("total/always-returns", "total/menu-price", "total/nan-propagates", "leftover/exact", "effect/signs")
+DBL_TOTAL, DBL_MENU, DBL_NAN, DBL_LEFT, DBL_EFFECT = TS_DBL_GUARANTEES
+DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "leftover", "effect")]
+DBL_BRIDGE = {"functions": dict.fromkeys(DBL_FNS, "proved")}
+
+
+def dbl_results():
+    return dict.fromkeys(TS_DBL_GUARANTEES, V)
+
+
 def ts_transfer_loses_money(head):
     edit(head / TS_LEDGER, "to: accounts.to + amount", "to: accounts.to + amount - 1")
 
@@ -773,6 +785,9 @@ def ts_dep_changed_and_code_touched(head):
 BR_FEE, BR_TRANSFER, BR_SUM = (f"{TS_LEDGER}::{f}" for f in ("calculateFee", "transfer", "sumAmounts"))
 BR_ALL_PROVED = {BR_FEE: "proved", BR_TRANSFER: "proved", BR_SUM: "proved"}
 HOOKS = ROOT / "tests" / "fixtures"
+DBL_COMMON = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_dbl_common.mjs")}
+DBL_RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_dbl_rare.mjs")}
+DBL_REM = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_dbl_rem.mjs")}
 RECURSIVE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive.mjs")}
 RECURSIVE_RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive_rare.mjs")}
 RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_rare.mjs")}      # a view that is wrong for one input
@@ -865,6 +880,19 @@ SCENARIOS.update({
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
     # Recursive records and unions tagged by `kind`, and the functions that walk them, are bridged by induction.
+    # Binary64 functions: exact arithmetic, NaN and -0, all bridged to `proved`.
+    "ts-dbl-baseline": (None, dbl_results(), 0, {**DBL_BRIDGE, "summary": {"proved": 3, "tested": 0, "failed": 0}}),
+    # A floor planted where the code rounds: only the bridge sees it — no sample hits a halfway cent.
+    "ts-dbl-bridge-mistranslated-view": (None, {**dbl_results(), DBL_MENU: U}, 1, {
+        "env": DBL_RARE, "functions": {**dict.fromkeys(DBL_FNS, "proved"), TS_DBL + "::totalWithTax": "tested"},
+        "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
+        "summary": {"proved": 2, "tested": 1, "failed": 0}}),
+    # A division planted where the code multiplies: Node disagrees on the first samples.
+    "ts-dbl-mistranslated-view-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": DBL_COMMON, "functions": {TS_DBL + "::totalWithTax": "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 3}}),
+    # A subtraction planted where the code takes the remainder: Node disagrees.
+    "ts-dbl-rem-mistranslated-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": DBL_REM, "functions": {TS_DBL + "::leftover": "failed"}}),
     "ts-tree-baseline": (None, dict.fromkeys(TREE_GUARANTEES, V), 0, {
         **TREE_BRIDGE, "summary": {"proved": 4, "tested": 0, "failed": 0}}),
     "ts-tree-bridge-required": (policy_requires_bridge, dict.fromkeys(TREE_GUARANTEES, V), 0, TREE_BRIDGE),
@@ -959,6 +987,8 @@ TS_REASONS = {
     "ts-bridge-mistranslated-view-required": "require_bridge",
     "ts-bridge-requirement-dropped-by-pr": "require_bridge",
     "ts-bridge-mistranslated-view-seen-by-node": "disagrees with Node",
+    "ts-dbl-mistranslated-view-seen-by-node": "disagrees with Node",
+    "ts-dbl-rem-mistranslated-seen-by-node": "disagrees with Node",
     "ts-fractional-fee": "not a safe integer",
     "ts-cast-hides-a-type": "only `number` operands",
     "ts-return-type-not-written": "add a return type of `number`",

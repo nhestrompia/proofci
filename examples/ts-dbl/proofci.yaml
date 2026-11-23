@@ -1,0 +1,25 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: total
+    function: src/pricing.ts::totalWithTax
+    guarantees:
+      - id: always-returns
+        theorem: total_always_returns
+      - id: menu-price
+        theorem: menu_price_exact
+      - id: nan-propagates
+        theorem: nan_propagates
+  - id: leftover
+    function: src/pricing.ts::leftover
+    guarantees:
+      - id: exact
+        theorem: leftover_exact
+  - id: effect
+    function: src/pricing.ts::effect
+    guarantees:
+      - id: signs
+        theorem: effect_signs

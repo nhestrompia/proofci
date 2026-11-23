@@ -135,6 +135,46 @@ export function bothTests(a: { x: number } | null): number { if (a !== null && a
 export function eitherTest(a: { x: number } | null): number { if (a === null || a.x > 0) { return 1; } return a.x; }
 export function reads(xs: { n: number }[]): number { return xs[0].n + 1; }
 export function walk(xs: number[]): number { let s = 0; xs.forEach(x => { s += 1; if (x > 0) return; s += x; }); return s; }
+
+export const dAdd = (): number => 0.1 + 0.2;
+export const dSub = (): number => 0.3 - 0.1;
+export const dMul = (a: number): number => a * 0.5;
+export const dDiv = (a: number, b: number): number => a / b;
+export const dRem = (): number => -7 % 3;
+export const dRemNeg = (): number => 7 % -3;
+export const dNeg = (a: number): number => -a;
+export const dZeroEq = (): boolean => -0 === 0;
+export const dNan = (): number => NaN;
+export const dInf = (): number => Infinity;
+export const dDiv0 = (): number => 1 / 0;
+export const dDivN0 = (): number => -1 / 0;
+export const dSubnormal = (): number => 5e-324 / 2;
+export const dBig = (): number => 9007199254740992 + 0.5;
+export const dOver53 = (): number => 9007199254740993 + 0.25;
+export const dRound = (): number => Math.round(0.5);
+export const dRoundNeg = (): number => Math.round(-0.5);
+export const dRound25 = (): number => Math.round(2.5) + Math.round(-2.5);
+export const dFloor = (): number => Math.floor(-0.5);
+export const dCeil = (): number => Math.ceil(-0.5);
+export const dTrunc = (): number => Math.trunc(-0.5);
+export const dSign = (): number => Math.sign(-0.5);
+export const dSign0 = (): number => Math.sign(-0);
+export const dAbs = (): number => Math.abs(-0.5);
+export const dMinNan = (a: number): number => Math.min(a, NaN);
+export const dMax = (a: number, b: number): number => Math.max(a, b) / 1.5;
+export const dEq = (): boolean => 0.1 + 0.2 === 0.3;
+export const dNanEq = (): boolean => NaN === NaN;
+export const dLt = (a: number): boolean => a < 0.5;
+export const dFin = (): boolean => Number.isFinite(0.1 + 0.2);
+export const dFinInf = (): boolean => Number.isFinite(Infinity - Infinity);
+export const dIsNaN = (): boolean => Number.isNaN(NaN);
+export const dIsInt = (): boolean => Number.isInteger(Infinity);
+export const dSafe = (): boolean => Number.isSafeInteger(0.5);
+export const dTruth = (): number => { const x = 0.5; if (x) return 1; return 2; }
+export const dCond = (a: number): number => a / 2 > 0.1 ? a : -a;
+export const dCents = (a: number): number => Math.round(a * 100) / 100;
+export const dLen = (xs: number[]): number => xs.length / 3;
+export const dLenOpt = (a?: number): boolean => Number.isFinite(a);
 const LIMIT = 2 * 3;
 const CONFIG = { a: 1, names: ["a", "b"] };
 export const limited = (a: number): number => a + LIMIT + CONFIG.a;

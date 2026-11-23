@@ -121,96 +121,6 @@ def truthyBig : Option Int → Bool
   | some n => n != 0
   | none => false
 
-/-- A JavaScript `number` in full: IEEE-754 binary64 (`Core.F64`). -/
-structure Dbl where
-  f : Core.F64
-  deriving DecidableEq, Repr
-
-instance : Inhabited Dbl := ⟨⟨.fin false 0⟩⟩
-
-namespace Dbl
-
-def add (x y : Dbl) : Result Dbl := ok ⟨x.f.add y.f⟩
-def sub (x y : Dbl) : Result Dbl := ok ⟨x.f.sub y.f⟩
-def mul (x y : Dbl) : Result Dbl := ok ⟨x.f.mul y.f⟩
-def div (x y : Dbl) : Result Dbl := ok ⟨x.f.div y.f⟩
-/-- `x % y`: the sign of the dividend, exactly as JavaScript. -/
-def rem (x y : Dbl) : Result Dbl := ok ⟨x.f.rem y.f⟩
-def neg (x : Dbl) : Result Dbl := ok ⟨x.f.neg⟩
-
-/-- `Math.floor`, `ceil`, `trunc`, `round`, `sign` and `abs`, named by their `F64` op. -/
-def math (f : Core.F64 → Core.F64) (x : Dbl) : Result Dbl := ok ⟨f x.f⟩
-
-/-- `Math.min(x, y)` -/
-def min (x y : Dbl) : Dbl := ⟨x.f.fmin y.f⟩
-/-- `Math.max(x, y)` -/
-def max (x y : Dbl) : Dbl := ⟨x.f.fmax y.f⟩
-
-/-- `Number.isFinite` -/
-def isFinite (x : Dbl) : Bool := x.f.isFin
-/-- `Number.isNaN` -/
-def isNaN (x : Dbl) : Bool := x.f.isNan
-/-- `Number.isInteger` -/
-def isInteger (x : Dbl) : Bool := x.f.isInt'
-/-- `Number.isSafeInteger` -/
-def isSafe (x : Dbl) : Bool := x.f.isSafe
-
-/-- `if (x)` on a possibly missing double: `0`, `-0` and `NaN` are falsy. -/
-def truthy : Option Dbl → Bool
-  | some ⟨.fin _ 0⟩ | some ⟨.nan⟩ | none => false
-  | some _ => true
-
-/-- A double read back as a `Num`, when it already holds an integer in the safe
-range (`-0` reads as `0`). Anything else fails, like `Core.asNum`. -/
-def numOf (x : Dbl) : Result Num :=
-  match x.f with
-  | .fin s n => if n % Core.F64.unit = 0 then Js.mk (Core.F64.signed s (n / Core.F64.unit)) else fail .undef
-  | _ => fail .undef
-
-/-- The length as a double, for code working on doubles. -/
-def len {α} (xs : List α) : Result Dbl := ok ⟨Core.F64.ofInt xs.length⟩
-
-/-- `s.indexOf(sub)` as a double. -/
-def strIndexOf (s sub : Str) : Result Dbl := do
-  let r ← Js.strIndexOf s sub
-  ok ⟨Core.F64.ofInt r.val⟩
-
-/-- `s.lastIndexOf(sub)` as a double. -/
-def strLastIndexOf (s sub : Str) : Result Dbl := do
-  let r ← Js.strLastIndexOf s sub
-  ok ⟨Core.F64.ofInt r.val⟩
-
-/-- `s.charCodeAt(i)` as a double. -/
-def charCodeAt (s : Str) (i : Num) : Result Dbl := do
-  let r ← Js.charCodeAt s i
-  ok ⟨Core.F64.ofInt r.val⟩
-
-/-- `xs.indexOf(v)` as a double. -/
-def indexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Dbl := do
-  let r ← Js.indexOf xs v
-  ok ⟨Core.F64.ofInt r.val⟩
-
-/-- `xs.lastIndexOf(v)` as a double. -/
-def lastIndexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Dbl := do
-  let r ← Js.lastIndexOf xs v
-  ok ⟨Core.F64.ofInt r.val⟩
-
-/-- `xs.findIndex(...)` as a double. -/
-def findIndex {α} (f : α → Result Bool) (xs : List α) : Result Dbl := do
-  let r ← Js.findIndex f xs
-  ok ⟨Core.F64.ofInt r.val⟩
-
-/-- The real number a finite double stands for, as a rational; `0` for `NaN` and
-the infinities, which have none. Contracts use it to talk about value, not bits. -/
-def toRat (x : Dbl) : Rat :=
-  match x.f with
-  | .fin s n => (if s then -(n : Rat) else n) / 2 ^ 1074
-  | _ => 0
-
-/-- A literal, by its binary64 bits: what a test vector or a generated term carries. -/
-def lit (b : Nat) : Dbl := ⟨Core.F64.ofBits b⟩
-
-end Dbl
 
 theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 9007199254740991) :
     mk v ⦃ r => r.val = v ⦄ := by
@@ -907,5 +817,96 @@ def agree {α} [DecidableEq α] (label : String) (r : Result α) (expected : Opt
   | .ok v => IO.println (if some v = expected then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
   | .vis (.fail .panic) _ => IO.println (if threw then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
   | _ => IO.println s!"PROOFCI_DIFF failed {label}"
+
+/-- A JavaScript `number` in full: IEEE-754 binary64 (`Core.F64`). -/
+structure Dbl where
+  f : Core.F64
+  deriving DecidableEq, Repr
+
+instance : Inhabited Dbl := ⟨⟨.fin false 0⟩⟩
+
+namespace Dbl
+
+def add (x y : Dbl) : Result Dbl := ok ⟨x.f.add y.f⟩
+def sub (x y : Dbl) : Result Dbl := ok ⟨x.f.sub y.f⟩
+def mul (x y : Dbl) : Result Dbl := ok ⟨x.f.mul y.f⟩
+def div (x y : Dbl) : Result Dbl := ok ⟨x.f.div y.f⟩
+/-- `x % y`: the sign of the dividend, exactly as JavaScript. -/
+def rem (x y : Dbl) : Result Dbl := ok ⟨x.f.rem y.f⟩
+def neg (x : Dbl) : Result Dbl := ok ⟨x.f.neg⟩
+
+/-- `Math.floor`, `ceil`, `trunc`, `round`, `sign` and `abs`, named by their `F64` op. -/
+def math (f : Core.F64 → Core.F64) (x : Dbl) : Result Dbl := ok ⟨f x.f⟩
+
+/-- `Math.min(x, y)` -/
+def min (x y : Dbl) : Dbl := ⟨x.f.fmin y.f⟩
+/-- `Math.max(x, y)` -/
+def max (x y : Dbl) : Dbl := ⟨x.f.fmax y.f⟩
+
+/-- `Number.isFinite` -/
+def isFinite (x : Dbl) : Bool := x.f.isFin
+/-- `Number.isNaN` -/
+def isNaN (x : Dbl) : Bool := x.f.isNan
+/-- `Number.isInteger` -/
+def isInteger (x : Dbl) : Bool := x.f.isInt'
+/-- `Number.isSafeInteger` -/
+def isSafe (x : Dbl) : Bool := x.f.isSafe
+
+/-- `if (x)` on a possibly missing double: `0`, `-0` and `NaN` are falsy. -/
+def truthy : Option Dbl → Bool
+  | some ⟨.fin _ 0⟩ | some ⟨.nan⟩ | none => false
+  | some _ => true
+
+/-- A double read back as a `Num`, when it already holds an integer in the safe
+range (`-0` reads as `0`). Anything else fails, like `Core.asNum`. -/
+def numOf (x : Dbl) : Result Num :=
+  match x.f with
+  | .fin s n => if n % Core.F64.unit = 0 then Js.mk (Core.F64.signed s (n / Core.F64.unit)) else fail .undef
+  | _ => fail .undef
+
+/-- The length as a double, for code working on doubles. -/
+def len {α} (xs : List α) : Result Dbl := ok ⟨Core.F64.ofInt xs.length⟩
+
+/-- `s.indexOf(sub)` as a double. -/
+def strIndexOf (s sub : Str) : Result Dbl := do
+  let r ← Js.strIndexOf s sub
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `s.lastIndexOf(sub)` as a double. -/
+def strLastIndexOf (s sub : Str) : Result Dbl := do
+  let r ← Js.strLastIndexOf s sub
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `s.charCodeAt(i)` as a double. -/
+def charCodeAt (s : Str) (i : Num) : Result Dbl := do
+  let r ← Js.charCodeAt s i
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `xs.indexOf(v)` as a double. -/
+def indexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Dbl := do
+  let r ← Js.indexOf xs v
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `xs.lastIndexOf(v)` as a double. -/
+def lastIndexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Dbl := do
+  let r ← Js.lastIndexOf xs v
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `xs.findIndex(...)` as a double. -/
+def findIndex {α} (f : α → Result Bool) (xs : List α) : Result Dbl := do
+  let r ← Js.findIndex f xs
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- The real number a finite double stands for, as a rational; `0` for `NaN` and
+the infinities, which have none. Contracts use it to talk about value, not bits. -/
+def toRat (x : Dbl) : Rat :=
+  match x.f with
+  | .fin s n => (if s then -(n : Rat) else n) / 2 ^ 1074
+  | _ => 0
+
+/-- A literal, by its binary64 bits: what a test vector or a generated term carries. -/
+def lit (b : Nat) : Dbl := ⟨Core.F64.ofBits b⟩
+
+end Dbl
 
 end Js

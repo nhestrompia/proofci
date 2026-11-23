@@ -3888,6 +3888,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
     try {
       declaration = findDeclaration(translator, target);
       translator.doubles = usesDoubles(declaration);
+      if (translator.doubles && translator.isAsync(translator.bodyOf(declaration)))
+        throw translator.fail(declaration, "real `number` arithmetic inside `async` isn't bridged yet — keep the awaited calls and do the numeric work in a plain function");
       names[target] = translator.declareFunction(declaration);
       signatures[target] = translator.signature(declaration);
       assumed[target] = [...translator.assumedBy.get(declaration) ?? []].sort();
