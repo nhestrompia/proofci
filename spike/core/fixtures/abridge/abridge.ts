@@ -46,3 +46,17 @@ export async function countOrZero(id: string): Promise<number> {
     return 0;
   }
 }
+
+export async function greetBoth(a: string, b: string): Promise<string> {
+  const x = await greet(a);
+  const y = await greet(b);
+  return x + " & " + y;
+}
+
+export async function greetOr(id: string): Promise<string> {
+  try {
+    return await greet(id);
+  } catch (e) {
+    return "none";
+  }
+}

@@ -57,24 +57,40 @@ function tuple(text) {
 }
 
 export function generateAsync(root, target, paths, { viewSource, options } = {}) {
-  const view = translate({ root, module: "V", paths, targets: [target], ...options });
-  if (view.failures[target]) throw new Error(`callee rejected: ${view.failures[target]}`);
-  const sig = view.signatures[target];
-  if (!sig?.async) throw new Error("not an async function");
-  const source = (viewSource ?? view.source).replace(/^import.*\n/gm, "");
   const { names, lean } = lower(root, [target], { paths, eff: { effects: options?.effects ?? [] } });
   const key = names[target];
-  const afns = [...lean.matchAll(/^def (\S+) : AFn/gm)].map(m => m[1]);
-  if (afns.length !== 1) throw new Error("an await of an async function of the package has no bridge yet");
   if (/\.forOf |\.whileL /.test(lean)) throw new Error("a loop in async code has no bridge yet");
   if (/\.tryFinally /.test(lean)) throw new Error("`finally` in async code has no bridge yet");
-  for (const t of [...sig.params, sig.result]) if (!encodable(t)) throw new Error(`no async bridge for a ${t.kind} value yet`);
+  // A function awaited by another gets its theorem first; the caller's proof uses it.
+  const file = target.slice(0, target.indexOf("::")), prefix = key.slice(0, key.length - target.length + file.length + 2);
+  const bodies = new Map([...lean.matchAll(/^def (\S+) : AFn := ([\s\S]*?)\n\n/gm)].map(m => [m[1], m[2]]));
+  const order = [], seen = new Set();
+  const visit = k => {
+    if (order.includes(k)) return;
+    if (seen.has(k)) throw new Error("a recursive async function has no bridge yet");
+    if (!bodies.has(k) || !k.startsWith(prefix)) throw new Error("an await of an async function of another file has no bridge yet");
+    seen.add(k);
+    for (const m of bodies.get(k).matchAll(/\.awaitFn "[^"]*" "([^"]*)"/g)) visit(m[1]);
+    order.push(k);
+  };
+  visit(key);
+  const targets = order.map(k => `${file}::${k.slice(prefix.length)}`);
+  const view = translate({ root, module: "V", paths, targets, ...options });
+  const sigs = targets.map(t => {
+    if (view.failures[t]) throw new Error(`callee rejected: ${view.failures[t]}`);
+    const sig = view.signatures[t];
+    if (!sig?.async) throw new Error("not an async function");
+    for (const ty of [...sig.params, sig.result]) if (!encodable(ty)) throw new Error(`no async bridge for a ${ty.kind} value yet`);
+    if (sig.params.length > 2 && sig !== view.signatures[target]) throw new Error(`an await of a function with ${sig.params.length} arguments has no bridge yet`);
+    return sig;
+  });
+  const source = (viewSource ?? view.source).replace(/^import.*\n/gm, "");
   const used = new Map(view.effectList.map(e => [e.lean, e]));
   for (const e of used.values()) {
     if (e.params.length > 2) throw new Error(`an outside call with ${e.params.length} arguments has no bridge yet`);
     for (const t of [...e.params, e.returns]) if (!encodable(t)) throw new Error(`no async bridge for a ${t.kind} answer or argument yet`);
   }
-  const rules = typeRules(view, lean, [...sig.params, sig.result, ...[...used.values()].flatMap(e => [...e.params, e.returns])]);
+  const rules = typeRules(view, lean, [...sigs.flatMap(sig => [...sig.params, sig.result]), ...[...used.values()].flatMap(e => [...e.params, e.returns])]);
   const argArms = arms(source, "Arg"), resArms = arms(source, "Res");
   const ids = new Map((options?.effects ?? []).map(e => [e.id.replace(/[^A-Za-z0-9_]/g, "_"), e.id]));
   const ops = [...argArms.keys()];
@@ -93,12 +109,31 @@ export function generateAsync(root, target, paths, { viewSource, options } = {})
     if (e) return `  | .${o} => inferInstanceAs (TyRep ${plain(e.returns)})`;
     return `  | .${o} => ⟨fun _ _ _ => False, fun _ h => h⟩`;
   });
-  const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
-  const params = JSON.parse(`[${lean.slice(lean.indexOf(`def ${key} : AFn`)).match(/params := \[(.*?)\]/)[1]}]`);
   const W = "Proofci.Effects.world";
-  const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
-  const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
-  const s0 = `(⟨⟨${key}.env0 [${Vs.join(", ")}], h⟩, hc⟩ : AS)`;
+  const theorem = (key, sig) => {
+    const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
+    const params = JSON.parse(`[${bodies.get(key).match(/params := \[(.*?)\]/)[1]}]`);
+    const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
+    const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");
+    const s0 = `(⟨⟨${key}.env0 [${Vs.join(", ")}], h⟩, hc⟩ : AS)`;
+    return `set_option maxHeartbeats 4000000 in
+theorem ${key}_abridge {ov oc} (hO : ORel opName ArgOK ov oc) {hv hc h ${Vs.join(" ")}} ${typed} ${reps}
+    (hHc : HRel opName ArgOK hv hc) {r hv'} (hr : ${sig.lean} ${P.join(" ")} ov hv = ok (r, hv')) (st : St) (hh : st.heap = h) :
+    ∃ out, ARuns prog aprog oc ${key} [${Vs.join(", ")}] ⟨st, hc⟩ out ∧ ARes (opName := opName) (ArgOK := ArgOK) h r hv' out := by
+  simp only [${sig.lean}, Proofci.Effects.call] at hr
+  refine AW.top' (ARes.not_normal opName ArgOK) (ARes.ret opName ArgOK) ?_ st hh
+${sig.params.map((t, i) => `  have hV${i} : V ${s0}.st ${q(params[i])} (α := ${leanType(t)}) p${i} := ⟨v${i}, by simp [AFn.env0, ${key}, Env.put], h${i}⟩`).join("\n")}
+  have hH : HRel opName ArgOK hv ${s0}.hist := hHc
+  have hB : Base h ${s0}.st := List.prefix_refl _
+  generalize ${s0} = s0 at *
+  clear hHc ${sig.params.map((_, i) => `h${i}`).join(" ")}
+  simp only [${key}]
+  arun
+
+set_option hygiene false in
+macro_rules | \`(tactic| a_fnrun) => \`(tactic| exact ${key}_abridge hO ${sig.params.map((_, i) => `hr${i} `).join("")}hH heq st rfl)
+`;
+  };
   const text = `import Spike.ASim
 ${source.trimEnd()}
 
@@ -117,19 +152,7 @@ ${argOK.join("\n")}
 instance resRep : ∀ op : ${W}.Op, TyRep (${W}.Res op)
 ${resRep.join("\n")}
 
-set_option maxHeartbeats 4000000 in
-theorem ${key}_abridge {ov oc} (hO : ORel opName ArgOK ov oc) {hv hc h ${Vs.join(" ")}} ${typed} ${reps}
-    (hHc : HRel opName ArgOK hv hc) {r hv'} (hr : ${sig.lean} ${P.join(" ")} ov hv = ok (r, hv')) (st : St) (hh : st.heap = h) :
-    ∃ out, ARuns prog aprog oc ${key} [${Vs.join(", ")}] ⟨st, hc⟩ out ∧ ARes (opName := opName) (ArgOK := ArgOK) r hv' out := by
-  simp only [${sig.lean}, Proofci.Effects.call] at hr
-  refine AW.top' (ARes.not_normal opName ArgOK) (ARes.ret opName ArgOK) ?_ st hh
-${sig.params.map((t, i) => `  have hV${i} : V ${s0}.st ${q(params[i])} (α := ${leanType(t)}) p${i} := ⟨v${i}, by simp [AFn.env0, ${key}, Env.put], h${i}⟩`).join("\n")}
-  have hH : HRel opName ArgOK hv ${s0}.hist := hHc
-  generalize ${s0} = s0 at *
-  clear hHc ${sig.params.map((_, i) => `h${i}`).join(" ")}
-  simp only [${key}]
-  arun
-
+${order.map((k, i) => theorem(k, sigs[i])).join("\n")}
 #print axioms ${key}_abridge
 `;
   return { text, theorem: `${key}_abridge` };

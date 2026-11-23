@@ -45,6 +45,36 @@ theorem try_call_tail {op : W.Op} {arg : W.Arg op} {k : Js.Exn → Js.Eff W (W.R
   | value x => rw [ho] at hr; simp at hr; exact .inl ⟨x, rfl, hr.1.symm, hr.2.symm⟩
   | reject e => rw [ho] at hr; simp at hr; exact .inr ⟨e, rfl, hr⟩
 
+theorem bind_eff {m : Js.Eff W α} {f : α → Js.Eff W β} {o h r h'} (hr : (m >>= f) o h = ok (r, h')) :
+    (∃ x h₁, m o h = ok (.fulfilled x, h₁) ∧ f x o h₁ = ok (r, h')) ∨
+    (∃ e h₁, m o h = ok (.rejected e, h₁) ∧ r = .rejected e ∧ h' = h₁) := by
+  rw [bind_run] at hr
+  obtain ⟨⟨r₁, h₁⟩, hm, hk⟩ := Core.bind_eq hr
+  cases r₁ with
+  | fulfilled x => exact .inl ⟨x, h₁, hm, hk⟩
+  | rejected e =>
+    have hk' : (ok (.rejected e, h₁) : Result (Js.Settled β × W.Hist)) = ok (r, h') := hk
+    simp only [ok.injEq, Prod.mk.injEq] at hk'
+    exact .inr ⟨e, h₁, hm, hk'.1.symm, hk'.2.symm⟩
+
+theorem try_bind_eff {m : Js.Eff W α} {f : α → Js.Eff W β} {k : Js.Exn → Js.Eff W β} {o h r h'}
+    (hr : tryCatch (m >>= f) k o h = ok (r, h')) :
+    (∃ x h₁, m o h = ok (.fulfilled x, h₁) ∧ tryCatch (f x) k o h₁ = ok (r, h')) ∨
+    (∃ e h₁, m o h = ok (.rejected e, h₁) ∧ k e o h₁ = ok (r, h')) := by
+  rw [tryCatch_run] at hr
+  obtain ⟨⟨r₁, h₁⟩, hb, hk⟩ := Core.bind_eq hr
+  rw [bind_run] at hb
+  obtain ⟨⟨r₂, h₂⟩, hm, hf⟩ := Core.bind_eq hb
+  cases r₂ with
+  | fulfilled x =>
+    have hf' : f x o h₂ = ok (r₁, h₁) := hf
+    exact .inl ⟨x, h₂, hm, by rw [tryCatch_run, hf']; simpa using hk⟩
+  | rejected e =>
+    have hf' : (ok (.rejected e, h₂) : Result (Js.Settled β × W.Hist)) = ok (r₁, h₁) := hf
+    simp only [ok.injEq, Prod.mk.injEq] at hf'
+    obtain ⟨rfl, rfl⟩ := hf'
+    exact .inr ⟨e, h₂, hm, hk⟩
+
 theorem bind_lift {m : Result α} {f : α → Js.Eff W β} {o h r h'} (hr : ((liftM m : Js.Eff W α) >>= f) o h = ok (r, h')) :
     ∃ a, m = ok a ∧ f a o h = ok (r, h') := by
   rw [bind_run, lift_run] at hr
@@ -495,9 +525,9 @@ theorem AW.await_rej (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opNa
   exact AW.exit h1 trivial (h v s₁ ⟨by rw [henv, hx.1], hx.2.trans hp⟩ hrep hH1)
 
 /-- How a run of the view and a run of Core end alike: the same value or the same error, and related histories. -/
-def ARes {α} [TyRep α] (r : Js.Settled α) (hv : W.Hist) : AOut → Prop
-  | .ok (.ret v) s => (match r with | .fulfilled x => rep s.st.heap x v | .rejected _ => False) ∧ HRel opName ArgOK hv s.hist
-  | .thrown v s => (match r with | .rejected e => rep s.st.heap e v | .fulfilled _ => False) ∧ HRel opName ArgOK hv s.hist
+def ARes {α} [TyRep α] (h0 : Heap) (r : Js.Settled α) (hv : W.Hist) : AOut → Prop
+  | .ok (.ret v) s => (match r with | .fulfilled x => rep s.st.heap x v | .rejected _ => False) ∧ HRel opName ArgOK hv s.hist ∧ h0 <+: s.st.heap
+  | .thrown v s => (match r with | .rejected e => rep s.st.heap e v | .fulfilled _ => False) ∧ HRel opName ArgOK hv s.hist ∧ h0 <+: s.st.heap
   | _ => False
 
 /-- The arguments of an awaited call evaluate to data the view's argument stands for. -/
@@ -521,6 +551,32 @@ theorem ASimArgs.two {s e₁ e₂ op arg α β} [TyRep α] [TyRep β] {x : α} {
   exact ⟨[v, w], s₂, EvalsL.cons hev (EvalsL.cons hew (EvalsL.nil _ _)), hext.trans hext₂,
     hA _ _ _ (mono hext₂.2 hrep) hrep₂⟩
 
+/-- The arguments of a call of a function of the package, and what its own theorem says of the run. -/
+theorem FnArgs.zero {s : St} {β} [TyRep β] {fn H} {r : Js.Settled β} {hv₁}
+    (R : ∀ st : St, ∃ out, ARuns p a o fn [] ⟨st, H⟩ out ∧ ARes (opName := opName) (ArgOK := ArgOK) st.heap r hv₁ out) :
+    ∃ vs st, EvalsL p s [] vs st ∧ Ext s st ∧ ∃ out, ARuns p a o fn vs ⟨st, H⟩ out ∧
+      ARes (opName := opName) (ArgOK := ArgOK) st.heap r hv₁ out :=
+  ⟨[], s, EvalsL.nil _ _, Ext.refl _, R s⟩
+
+theorem FnArgs.one {s : St} {e α β} [TyRep α] [TyRep β] {X : α} {fn H} {r : Js.Settled β} {hv₁}
+    (R : ∀ (st : St) v, rep st.heap X v → ∃ out, ARuns p a o fn [v] ⟨st, H⟩ out ∧
+      ARes (opName := opName) (ArgOK := ArgOK) st.heap r hv₁ out) (he : SimE p s e X) :
+    ∃ vs st, EvalsL p s [e] vs st ∧ Ext s st ∧ ∃ out, ARuns p a o fn vs ⟨st, H⟩ out ∧
+      ARes (opName := opName) (ArgOK := ArgOK) st.heap r hv₁ out :=
+  let ⟨v, s₁, hev, hext, hrep⟩ := he s (Ext.refl _)
+  ⟨[v], s₁, EvalsL.cons hev (EvalsL.nil _ _), hext, R s₁ v hrep⟩
+
+theorem FnArgs.two {s : St} {e₁ e₂ α α' β} [TyRep α] [TyRep α'] [TyRep β] {X : α} {Y : α'} {fn H}
+    {r : Js.Settled β} {hv₁}
+    (R : ∀ (st : St) v w, rep st.heap X v → rep st.heap Y w → ∃ out, ARuns p a o fn [v, w] ⟨st, H⟩ out ∧
+      ARes (opName := opName) (ArgOK := ArgOK) st.heap r hv₁ out) (he₁ : SimE p s e₁ X) (he₂ : SimE p s e₂ Y) :
+    ∃ vs st, EvalsL p s [e₁, e₂] vs st ∧ Ext s st ∧ ∃ out, ARuns p a o fn vs ⟨st, H⟩ out ∧
+      ARes (opName := opName) (ArgOK := ArgOK) st.heap r hv₁ out := by
+  obtain ⟨v, s₁, hev, hext, hrep⟩ := he₁ s (Ext.refl _)
+  obtain ⟨w, s₂, hew, hext₂, hrep₂⟩ := he₂ s₁ hext
+  exact ⟨[v, w], s₂, EvalsL.cons hev (EvalsL.cons hew (EvalsL.nil _ _)), hext.trans hext₂,
+    R s₂ v w (mono hext₂.2 hrep) hrep₂⟩
+
 variable (opName ArgOK)
 
 omit R in
@@ -543,23 +599,65 @@ theorem Cont.thrown_top {v} {s : AS} {Q : AOut → Prop} (hq : Q (.thrown v s)) 
   | [], _ => Cont.toTop trivial hq
   | .block _ :: k, hk => Cont.toSkip trivial (Cont.thrown_top hq k hk)
 
-theorem ARes.not_normal {α} [TyRep α] {r : Js.Settled α} {hv} (s : AS) : ¬ ARes (opName := opName) (ArgOK := ArgOK) r hv (.ok .normal s) :=
+theorem ARes.not_normal {α} [TyRep α] {h0} {r : Js.Settled α} {hv} (s : AS) : ¬ ARes (opName := opName) (ArgOK := ArgOK) h0 r hv (.ok .normal s) :=
   fun h => h
 
-theorem ARes.ret {α} [TyRep α] {r : Js.Settled α} {hv} (c : Cmp) (s : AS) (h : ARes (opName := opName) (ArgOK := ArgOK) r hv (.ok c s)) :
+theorem ARes.ret {α} [TyRep α] {h0} {r : Js.Settled α} {hv} (c : Cmp) (s : AS) (h : ARes (opName := opName) (ArgOK := ArgOK) h0 r hv (.ok c s)) :
     ∃ v, c = .ret v := by
   cases c with
   | ret v => exact ⟨v, rfl⟩
   | _ => exact h.elim
 
-theorem AW.ret_top {s : AS} {H} (hH : HRel opName ArgOK H s.hist) {e xs k α} [TyRep α] {X : α}
-    (he : SimE p s.st e X) : AW p a o s (.block (.ret e :: xs) :: k) (ARes (opName := opName) (ArgOK := ArgOK) (.fulfilled X) H) :=
-  AW.ret he fun _ _ _ hrep => Cont.ret_any ⟨hrep, hH⟩ k
+theorem AW.ret_top {s : AS} {H h0} (hH : HRel opName ArgOK H s.hist) (hb : Base h0 s.st) {e xs k α} [TyRep α] {X : α}
+    (he : SimE p s.st e X) : AW p a o s (.block (.ret e :: xs) :: k) (ARes (opName := opName) (ArgOK := ArgOK) h0 (.fulfilled X) H) :=
+  AW.ret he fun _ _ hp hrep => Cont.ret_any ⟨hrep, hH, hb.trans hp⟩ k
 
-theorem AW.throw_top {s : AS} {H} (hH : HRel opName ArgOK H s.hist) {e xs k α} [TyRep α] {X : Js.Exn}
+theorem AW.throw_top {s : AS} {H h0} (hH : HRel opName ArgOK H s.hist) (hb : Base h0 s.st) {e xs k α} [TyRep α] {X : Js.Exn}
     (he : SimE p s.st e X) (hk : NoCatch k) :
-    AW p a o s (.block (.throw e :: xs) :: k) (ARes (α := α) (opName := opName) (ArgOK := ArgOK) (.rejected X) H) :=
-  AW.throw he fun _ _ _ _ hrep => Cont.thrown_top ⟨hrep, hH⟩ k hk
+    AW p a o s (.block (.throw e :: xs) :: k) (ARes (α := α) (opName := opName) (ArgOK := ArgOK) h0 (.rejected X) H) :=
+  AW.throw he fun _ _ hp _ hrep => Cont.thrown_top ⟨hrep, hH, hb.trans hp⟩ k hk
+
+/-- `await` on a function of the package that returns. -/
+theorem AW.fn_val {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist) {x g args xs k Q fn α} [TyRep α]
+    {m : Js.Eff W α} {X : α} {hv₁} (_ : m ov hv = .ok (.fulfilled X, hv₁)) (hg : a g = some fn) (hne : x ≠ "")
+    (hs : ∃ vs st, EvalsL p s.st args vs st ∧ Ext s.st st ∧ ∃ out, ARuns p a o fn vs ⟨st, s.hist⟩ out ∧
+      ARes (opName := opName) (ArgOK := ArgOK) st.heap (.fulfilled X) hv₁ out)
+    (h : ∀ s₁ : AS, Upd s.st s₁.st x → V s₁.st x X → HRel opName ArgOK hv₁ s₁.hist → AW p a o s₁ (.block xs :: k) Q) :
+    AW p a o s (.block (.awaitFn x g args :: xs) :: k) Q := by
+  obtain ⟨vs, st, ⟨G, hG⟩, hx, out, ⟨F, hF⟩, hres⟩ := hs
+  rcases out with ⟨c, s₂⟩ | ⟨w, s₂⟩ | _
+  · cases c with
+    | ret v =>
+      obtain ⟨hrep, hH₁, hp⟩ := hres
+      have hb : (x == "") = false := by simpa using hne
+      refine AW.step (s₁ := ⟨{ st with env := st.env.put x v, heap := s₂.st.heap }, s₂.hist⟩) ⟨F + G + 1, fun f hf => ?_⟩
+        (h _ ⟨hx.2.trans hp, fun y hy => by simp [Env.put, hy, hx.1]⟩ ⟨v, by simp [Env.put], hrep⟩ hH₁)
+      obtain ⟨f, rfl, hf⟩ := succ_of_le hf
+      simp only [aexec, hG f (by omega), hg, hF f (by omega), hb]
+      rfl
+    | _ => exact hres.elim
+  · exact hres.1.elim
+  · exact hres.elim
+
+/-- `await` on a function of the package that throws. -/
+theorem AW.fn_rej {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist) {x g args xs k Q fn α} [TyRep α]
+    {m : Js.Eff W α} {e : Js.Exn} {hv₁} (_ : m ov hv = .ok (.rejected e, hv₁)) (hg : a g = some fn)
+    (hs : ∃ vs st, EvalsL p s.st args vs st ∧ Ext s.st st ∧ ∃ out, ARuns p a o fn vs ⟨st, s.hist⟩ out ∧
+      ARes (α := α) (opName := opName) (ArgOK := ArgOK) st.heap (.rejected e) hv₁ out)
+    (h : ∀ v (s₁ : AS), Ext s.st s₁.st → rep s₁.st.heap e v → HRel opName ArgOK hv₁ s₁.hist →
+      ∃ out, Cont p a o (.thrown v s₁) k out ∧ Q out) :
+    AW p a o s (.block (.awaitFn x g args :: xs) :: k) Q := by
+  obtain ⟨vs, st, ⟨G, hG⟩, hx, out, ⟨F, hF⟩, hres⟩ := hs
+  rcases out with ⟨c, s₂⟩ | ⟨w, s₂⟩ | _
+  · cases c with
+    | ret v => exact hres.1.elim
+    | _ => exact hres.elim
+  · obtain ⟨hrep, hH₁, hp⟩ := hres
+    refine AW.exit (m := .thrown w ⟨{ st with heap := s₂.st.heap }, s₂.hist⟩) ⟨F + G + 1, fun f hf => ?_⟩ trivial
+      (h w _ ⟨hx.1, hx.2.trans hp⟩ hrep hH₁)
+    obtain ⟨f, rfl, hf⟩ := succ_of_le hf
+    simp only [aexec, hG f (by omega), hg, hF f (by omega)]
+  · exact hres.elim
 
 theorem AW.call_val (hO : ORel opName ArgOK ov o) {s : AS} {hv} (hH : HRel opName ArgOK hv s.hist)
     {x op args xs k Q} {arg : W.Arg op} {r : W.Res op} (hs : ASimArgs p s.st args ArgOK op arg)
@@ -636,6 +734,14 @@ macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.zero rfl)
 macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.one (by sim) (fun h v r => ⟨h, v, rfl, r⟩))
 macro_rules | `(tactic| a_args) => `(tactic| exact ASimArgs.two (by sim) (by sim) (fun h v w r₁ r₂ => ⟨h, v, w, rfl, r₁, r₂⟩))
 
+syntax "a_fnrun" : tactic
+syntax "a_fnargs" : tactic
+set_option hygiene false in
+macro_rules | `(tactic| a_fnargs) => `(tactic| first
+  | exact FnArgs.zero (fun st => by a_fnrun)
+  | exact FnArgs.one (fun st v hr0 => by a_fnrun) (by sim)
+  | exact FnArgs.two (fun st v w hr0 hr1 => by a_fnrun) (by sim) (by sim))
+
 syntax "a_simp" : tactic
 syntax "a_lift" : tactic
 set_option hygiene false in
@@ -646,7 +752,7 @@ macro_rules | `(tactic| a_view) => `(tactic| ((try a_simp); repeat a_lift))
 
 set_option hygiene false in
 macro_rules | `(tactic| a_thrown) => `(tactic| first
-  | exact Cont.thrown_top ⟨hrep, hH⟩ _ trivial
+  | exact Cont.thrown_top ⟨hrep, hH, by assumption⟩ _ trivial
   | (repeat (apply Cont.toSkip trivial)
      apply Cont.catch' opName ArgOK hH hrep
      intro s' hu hV hH; carry hu; clear hu))
@@ -654,10 +760,10 @@ macro_rules | `(tactic| a_thrown) => `(tactic| first
 set_option hygiene false in
 macro_rules | `(tactic| a_ret) => `(tactic| first
   | (simp only [Js.Eff.lift_ok_run, ok.injEq, Prod.mk.injEq] at hr; obtain ⟨rfl, rfl⟩ := hr
-     exact AW.ret_top opName ArgOK hH (by sim))
+     exact AW.ret_top opName ArgOK hH (by assumption) (by sim))
   | (rcases Js.Eff.lift_tail hr with ⟨_, _, rfl, rfl⟩
-     exact AW.ret_top opName ArgOK hH (by sim))
-  | exact AW.ret_top opName ArgOK hH (by sim))
+     exact AW.ret_top opName ArgOK hH (by assumption) (by sim))
+  | exact AW.ret_top opName ArgOK hH (by assumption) (by sim))
 
 set_option hygiene false in
 macro_rules | `(tactic| astep) => `(tactic| first
@@ -671,7 +777,7 @@ macro_rules | `(tactic| astep) => `(tactic| first
      a_ret)
   | (show AW _ _ _ _ (.block (.throw _ :: _) :: _) _
      simp only [Js.Eff.throw_run, ok.injEq, Prod.mk.injEq] at hr; obtain ⟨rfl, rfl⟩ := hr
-     exact AW.throw_top opName ArgOK hH (by sim) trivial)
+     exact AW.throw_top opName ArgOK hH (by assumption) (by sim) trivial)
   | (show AW _ _ _ _ (.block (.ite _ _ _ :: _) :: _) _
      first
      | (show AW _ _ _ _ (.block (.ite (.lit (.bool true)) _ _ :: _) :: _) _
@@ -691,6 +797,18 @@ macro_rules | `(tactic| astep) => `(tactic| first
         | (split at hr <;> (rename_i hc; first
            | (apply AW.ite_pos opName ArgOK hH; simb; simp [hc]; intro s' hu hH; carry hu; clear hu; a_view)
            | (apply AW.ite_neg opName ArgOK hH; simb; simp [hc]; intro s' hu hH; carry hu; clear hu; a_view)))))
+  | (show AW _ _ _ _ (.block (.awaitFn _ _ _ :: _) :: _) _
+     first
+     | (rcases Js.Eff.bind_eff hr with ⟨X, hv₁, heq, hr⟩ | ⟨e, hv₁, heq, rfl, rfl⟩ <;> first
+        | (apply AW.fn_val opName ArgOK hH heq (by rfl) (by decide) (by a_fnargs)
+           intro s' hu hV hH; carry hu; clear hu; a_view)
+        | (apply AW.fn_rej opName ArgOK hH heq (by rfl) (by a_fnargs)
+           intro v s' hu hrep hH; carry hu; clear hu; a_thrown))
+     | (rcases Js.Eff.try_bind_eff hr with ⟨X, hv₁, heq, hr⟩ | ⟨e, hv₁, heq, hr⟩ <;> first
+        | (apply AW.fn_val opName ArgOK hH heq (by rfl) (by decide) (by a_fnargs)
+           intro s' hu hV hH; carry hu; clear hu; a_view)
+        | (apply AW.fn_rej opName ArgOK hH heq (by rfl) (by a_fnargs)
+           intro v s' hu hrep hH; carry hu; clear hu; a_view; a_thrown)))
   | (show AW _ _ _ _ (.block (.await _ _ _ :: _) :: _) _
      first
      | (rcases Js.Eff.bind_call hr with ⟨x, heq, hr⟩ | ⟨e, heq, rfl, rfl⟩ <;> first
