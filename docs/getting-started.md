@@ -101,6 +101,12 @@ theorem withdraw_exact (balance amount : Std.U64) (h : amount.val ≤ balance.va
 result satisfies `P`". `f x ⦃ _ => True ⦄` on its own is the guarantee
 "never panics or overflows".
 
+The `/-- ... -/` line above each theorem is the claim the report shows to the
+person reading the result — write it for them, in plain words. A policy change
+that adds a guarantee without one, or removes an existing one, is reported
+`contract-stale` even after approval. An old contract whose theorems have no
+doc comments keeps working, but the report says where the claim is missing.
+
 The contract is the part people must review: ProofCI checks that proofs match
 it exactly, not that it says the right thing. It does flag statements that
 cannot constrain the code:
@@ -108,6 +114,7 @@ cannot constrain the code:
 - the function appears only in a hypothesis
 - a hypothesis assumes the result
 - the conclusion is trivially true
+- the theorem has no `/--` doc comment, so the report cannot say what it claims
 
 ## 5. Write the proofs
 
