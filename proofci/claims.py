@@ -22,7 +22,11 @@ THEOREM = re.compile(
 # Binder types that say something rather than name something: a condition the
 # guarantee only holds under. `=` must not start `=>` (a `⦃ _ => ... ⦄` arrow).
 PROP = re.compile(r"[≤≥<>≠∈∉∀∃↔¬∧∨]|(?<![\w.])=(?!=)|\bProp\b")
-STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+# Block/line comments, string literals and character literals, in one pass so the
+# leftmost match wins: a `"` inside a comment never starts a string and a `--`
+# inside a string never starts a comment. Character literals hold exactly one
+# character or escape, so an identifier prime (`h'`) is never eaten.
+LITERAL = re.compile(r"""/-.*?-/|--[^\n]*|"(?:[^"\\]|\\.)*"|'(?:\\.|[^'\\])'""", re.S)
 
 
 def _blank(match):
@@ -30,9 +34,9 @@ def _blank(match):
 
 
 def _syntax(text):
-    """Comments and string literals replaced by spaces, keeping length, so their
+    """Comments and literals replaced by spaces, keeping length, so their
     brackets and colons are never read as Lean syntax by the depth scans."""
-    return STRING.sub(_blank, _mask(text))
+    return LITERAL.sub(_blank, text)
 
 
 def _open(signature):
@@ -87,8 +91,7 @@ def _mask(text):
     """Comments replaced by spaces, keeping length and newlines, so positions stay
     valid and keywords inside comments (a `namespace` line in a `/- -/` block, or
     a commented-out theorem) are ignored by the scans that run on the result."""
-    text = re.sub(r"/-.*?-/", _blank, text, flags=re.S)
-    return re.sub(r"--[^\n]*", _blank, text)
+    return _syntax(text)
 
 
 def _scope_at(masked, pos):

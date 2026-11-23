@@ -56,6 +56,13 @@ class ClaimTests(unittest.TestCase):
             '  (h : s ≠ "(") : True := by sorry')
         self.assertEqual(found["t"]["hypotheses"], ['h : s ≠ "("'])
 
+    def test_hypotheses_survive_comment_markers_and_brackets_in_literals(self):
+        found = claims.theorems(
+            'theorem t (h : s ≠ "--") (k : c = \'(\') (m : c ≠ \']\')\n'
+            "  (h' : s ≠ t) : True := by sorry")
+        self.assertEqual(found["t"]["hypotheses"],
+                         ['h : s ≠ "--"', "k : c = '('", "m : c ≠ ']'", "h' : s ≠ t"])
+
     def test_statement_is_the_signature_on_one_line(self):
         statement = claims.theorems(CONTRACT)["fee_capped"]["statement"]
         self.assertEqual(statement, "theorem fee_capped (amount rate : Js.Num) "
