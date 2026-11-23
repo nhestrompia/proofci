@@ -142,5 +142,43 @@ class UnknownMutantsTest(unittest.TestCase):
         self.assertEqual(escaped, {})
 
 
+    def run_with_proofs(self, proofs, build, outcomes, candidates):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Model.lean").write_text(VIEW)
+            (root / "Proofs.lean").write_text(proofs)
+            ws = SimpleNamespace(root=root, crate_module="Model")
+            seen = itertools.count()
+            def fake_eval(ws, calls, text, timeout):
+                return {0: "r0"} if next(seen) == 0 else {0: "r1"}
+            with patch.object(mutation, "_eval_outputs", fake_eval), \
+                 patch.object(lean, "clone", return_value=ws), \
+                 patch.object(lean, "_lake", return_value=build):
+                return mutation.check(ws, root, VIEW, {"f": [["x"]]},
+                                      {"f": "transfer"}, 1, candidates, outcomes)
+
+    def test_namespaced_proof_failure_rejects(self):
+        """A theorem inside `namespace Q` fails the mutant build; the qualified
+        name must still match the manifest's `Q.peer`."""
+        suspect = SimpleNamespace(function="f", theorem="t")
+        peer = SimpleNamespace(function="f", theorem="Q.peer")
+        escaped, _ = self.run_with_proofs(
+            "namespace Q\ntheorem peer := by\n  skip\n  skip\nend Q\n",
+            sandbox.Result(1, "error: Proofs.lean:3:8: failed", False),
+            [suspect, peer], [suspect])
+        self.assertEqual(escaped, {})
+
+    def test_helper_plus_own_failure_still_rejects(self):
+        """The build broke a helper AND the suspect's theorem: the rejection
+        counts even though the helper makes part of it inconclusive."""
+        suspect = SimpleNamespace(function="f", theorem="t")
+        escaped, _ = self.run_with_proofs(
+            "theorem helper := by\n  skip\n  skip\n  skip\n"
+            "theorem t := by\n  skip\n  skip\n  skip\n",
+            sandbox.Result(1, "error: Proofs.lean:3:8: failed\nerror: Proofs.lean:7:8: failed", False),
+            [suspect], [suspect])
+        self.assertEqual(escaped, {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -495,9 +495,10 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             # anyway, and an unchanged contract on unchanged code replants the
             # same defects. PROOFCI_MUTATION_FULL sweeps everything.
             # Compare the two checkouts' contracts (under `policy="head"` the
-            # trusted copy is the head one, so this still finds what changed).
-            base_statements = claims.theorems(_contract_text(base_checkout, base.lean))
-            head_statements = claims.theorems(_contract_text(head_checkout, active.lean))
+            # trusted copy is the head one, so this still finds what changed);
+            # comments are masked so comment-only edits don't trigger a sweep.
+            base_statements = claims.theorems(claims._mask(_contract_text(base_checkout, base.lean)))
+            head_statements = claims.theorems(claims._mask(_contract_text(head_checkout, active.lean)))
             suspects = verified if mutation.FULL else [o for o in verified
                 if base_statements.get(o.theorem, {}).get("statement")
                 != head_statements.get(o.theorem, {}).get("statement")]

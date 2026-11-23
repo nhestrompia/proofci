@@ -15,7 +15,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import lean
+from . import claims, lean
 
 MAX_MUTANTS = int(os.environ.get("PROOFCI_MUTANTS", 3))
 BUDGET = int(os.environ.get("PROOFCI_MUTATION_BUDGET", 600))
@@ -112,11 +112,14 @@ def _failed_declarations(root, output):
         except OSError:
             continue
         file_lines = text.splitlines()
-        for start, end, _ in lean._blocks(text.splitlines(keepends=True)):
+        source = text.splitlines(keepends=True)
+        masked = claims._mask(text)
+        for start, end, _ in lean._blocks(source):
             if any(start < line <= end for line in lines):  # error lines are 1-based
                 m = lean.DECL_NAME.match(file_lines[start])
                 if m:
-                    failed.add(m.group(1))
+                    pos = sum(len(l) for l in source[:start])
+                    failed.add(".".join([*claims._scope_at(masked, pos), m.group(1)]))
     return failed
 
 
@@ -192,10 +195,14 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
     escaped = {}
     for o in candidates:
         own = theorems.get(o.function, set())
-        effective = [(kind, line, src, failed) for _, f, kind, line, src, failed in
-                     (r for r in results if r[0] == "done")
-                     if f == o.function and not (failed - known)]
-        if effective and all(not (failed & own) for _, _, _, failed in effective):
+        done = [(kind, line, src, failed) for _, f, kind, line, src, failed in
+                (r for r in results if r[0] == "done") if f == o.function]
+        # A failure in a declaration that is no guarantee's theorem (a proof
+        # helper, support code) means modules were never built: inconclusive.
+        # But a theorem of this function failing is a rejection either way.
+        conclusive = [t for t in done if not (t[3] - known)]
+        rejected = any(failed & own for _, _, _, failed in done)
+        if conclusive and not rejected:
             escaped[o.theorem] = [f"{kind} at `{o.function}` line {line}: `{src}`"
-                                  for kind, line, src, _ in effective]
+                                  for kind, line, src, _ in conclusive]
     return escaped, sum(len(m) for m in pending.values())
