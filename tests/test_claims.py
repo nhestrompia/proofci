@@ -87,6 +87,13 @@ class ClaimTests(unittest.TestCase):
         # `end Helpers` closes the section; the namespace keeps qualifying names
         self.assertEqual(found["Fees.helper"]["claim"], "Helper lemma.")
 
+    def test_keywords_inside_string_literals_are_not_masked(self):
+        text = 'theorem a := "a -- b" -- real comment\ntheorem b : True := trivial'
+        masked = claims._mask(text)
+        self.assertIn('"a -- b"', masked)
+        self.assertNotIn('real comment', masked)
+        self.assertEqual(set(claims.theorems(masked)), {"a", "b"})
+
     def test_keywords_inside_comments_do_not_open_scopes(self):
         contract = ("/-\nnamespace Fake\n-/\n"
                     "/-- The fee is capped. -/\ntheorem capped : True := by sorry\n")

@@ -50,12 +50,30 @@ def _hypotheses(signature):
 def _mask(text):
     """Comments replaced by spaces, keeping length and newlines, so positions stay
     valid and keywords inside comments (a `namespace` line in a `/- -/` block, or
-    a commented-out theorem) are ignored by the scans that run on the result."""
-    def blank(match):
-        return re.sub(r"[^\n]", " ", match.group(0))
-
-    text = re.sub(r"/-.*?-/", blank, text, flags=re.S)
-    return re.sub(r"--[^\n]*", blank, text)
+    a commented-out theorem) are ignored by the scans that run on the result.
+    String literals are kept verbatim: a `--` or `/-` inside `"..."` is data."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text[i] == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("--", i):
+            j = text.find("\n", i)
+            j = n if j == -1 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text.startswith("/-", i):
+            j = text.find("-/", i + 2)
+            j = n if j == -1 else j + 2
+            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
 
 
 def _scope_at(masked, pos):
