@@ -135,6 +135,19 @@ class ClaimTests(unittest.TestCase):
         self.assertIn("waits for maintainer approval; the approved contract is missing", text)
         self.assertIn("1 of 1 required guarantees not verified", text)
 
+    def test_verdict_names_an_unaccepted_downgrade(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], downgrades=[
+            {"function": "transfer", "was": "proved", "now": "tested", "accepted": False, "reason": ""}])
+        text = summary.markdown(r.to_json())
+        self.assertIn("`transfer` was proved on the base branch and is not now", text)
+
+    def test_verdict_notes_stale_accepts(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], stale_accepts=["oldFn"])
+        text = summary.markdown(r.to_json())
+        self.assertIn("`accept_downgrades` lists `oldFn`, not a downgrade here", text)
+
     def test_summary_shows_the_claim_it_replaces(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
         o.claim = "The fee never exceeds the new cap."

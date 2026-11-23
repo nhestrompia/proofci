@@ -90,6 +90,10 @@ class Manifest:
     # still passes. True blocks that for every function, a tuple of function paths for those only.
     # It is policy: a pull request can't relax it for itself.
     require_bridge: object = False
+    # TypeScript only. Functions whose drop from `proved` on the base branch to anything less is
+    # accepted. Listing one here is a policy change, so a pull request can only make use of it
+    # after the change itself is approved (see check.py).
+    accept_downgrades: tuple = ()
 
     def bridge_required(self, function):
         return self.require_bridge is True or (isinstance(self.require_bridge, tuple) and function in self.require_bridge)
@@ -121,6 +125,7 @@ class Manifest:
             "assumes": dict(self.assumes),
             "effects": {e.id: e.entry() for e in self.effects},
             "require_bridge": list(self.require_bridge) if isinstance(self.require_bridge, tuple) else self.require_bridge,
+            "accept_downgrades": list(self.accept_downgrades),
         }
 
 
@@ -236,6 +241,17 @@ def _require_bridge(value, language, functions):
     return tuple(sorted(set(value)))
 
 
+def _accept_downgrades(value, language, functions):
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise ManifestError("accept_downgrades must be a list of target functions")
+    if value and language != "typescript":
+        raise ManifestError("accept_downgrades is only available for TypeScript")
+    unknown = sorted(set(value) - set(functions))
+    if unknown:
+        raise ManifestError(f"accept_downgrades names {unknown[0]!r}, which is not the function of any target")
+    return tuple(sorted(set(value)))
+
+
 def parse(data: bytes) -> Manifest:
     if len(data) > MAX_MANIFEST_BYTES:
         raise ManifestError("manifest is larger than 64 KiB")
@@ -243,7 +259,8 @@ def parse(data: bytes) -> Manifest:
         raw = yaml.load(data.decode("utf-8"), Loader=_UniqueKeyLoader)
     except (UnicodeDecodeError, yaml.YAMLError) as error:
         raise ManifestError(f"manifest is not valid YAML: {error}") from None
-    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes", "effects", "require_bridge"), ("version", "targets"), "manifest")
+    _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes", "effects",
+                "require_bridge", "accept_downgrades"), ("version", "targets"), "manifest")
     if raw["version"] != 1:
         raise ManifestError("only manifest version 1 is supported")
     language = raw.get("language", "rust")
@@ -302,6 +319,8 @@ def parse(data: bytes) -> Manifest:
         if not isinstance(logins, list) or not all(isinstance(x, str) and LOGIN.match(x) for x in logins):
             raise ManifestError("policy.approvers must be a list of GitHub logins (may be empty)")
         approvers = tuple(sorted({x.lower() for x in logins}))
+    functions = {t.function for t in targets}
     return Manifest(crate, lean, tuple(targets), approvers, language, _assumes(raw.get("assumes", []), language),
                     _effects(raw.get("effects", []), language),
-                    _require_bridge(raw.get("require_bridge", False), language, {t.function for t in targets}))
+                    _require_bridge(raw.get("require_bridge", False), language, functions),
+                    _accept_downgrades(raw.get("accept_downgrades", []), language, functions))

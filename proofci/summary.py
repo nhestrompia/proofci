@@ -33,6 +33,32 @@ def _functions(report):
     return lines
 
 
+def _downgrades(report):
+    """Functions proved on the base branch that are not proved in this pull request."""
+    downgrades = report.get("downgrades") or []
+    stale = report.get("stale_accepts") or []
+    if not downgrades:
+        return (["", "Accepted under `accept_downgrades` but not a downgrade here — stale entries a "
+                 "maintainer may want to remove: " + ", ".join(f"`{f}`" for f in stale)] if stale else [])
+    lines = ["", "### Proved on the base branch, not proved now", "",
+             "| | Function | On the base | In this pull request | Accepted | Why |",
+             "|---|---|---|---|---|---|"]
+    for d in downgrades:
+        now = "tested, not proved" if d["now"] == "tested" else d["now"]
+        why = (d["reason"] or "").replace("|", "\\|").replace("\n", " ")[:300]
+        lines.append(f"| {'✅' if d['accepted'] else '⛔'} | `{d['function']}` | {d['was']} | {now} | "
+                     f"{'yes' if d['accepted'] else 'no'} | {why} |")
+    if stale:
+        lines += ["", "Accepted under `accept_downgrades` but not a downgrade here — stale entries a "
+                  "maintainer may want to remove: " + ", ".join(f"`{f}`" for f in stale)]
+    unaccepted = [d for d in downgrades if not d["accepted"]]
+    if unaccepted:
+        lines += ["", "A maintainer accepts a downgrade by listing the function under `accept_downgrades` in "
+                  "`proofci.yaml`; that is a policy change and is approved the same way. The pull request's "
+                  "own `accept_downgrades` does not count."]
+    return lines
+
+
 def _reason(g):
     lines = ["```", g["reason"].strip()[:4000], "```"]
     if g.get("hint"):
@@ -68,7 +94,12 @@ def _claims(report):
 def _verdict(report):
     required = [g for g in report["guarantees"] if g["required"]]
     if report["passed"]:
-        return f"**Result: passed** — all {len(required)} required guarantees verified."
+        verdict = f"**Result: passed** — all {len(required)} required guarantees verified."
+        stale = report.get("stale_accepts") or []
+        if stale:
+            verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
+                        + ", not a downgrade here — a stale entry a maintainer may remove.")
+        return verdict
     reasons = []
     if report["policy_changes"] and report["policy_source"] != "head":
         reasons.append("the policy change waits for maintainer approval")
@@ -79,8 +110,19 @@ def _verdict(report):
         reasons.append(f"{bad} of {len(required)} required guarantees not verified")
     if not required:
         reasons.append("the policy lists no required guarantees")
-    # The proved/unproved ratchet adds a reason for each proved-now-unproved function here.
-    return "**Result: blocked** — " + "; ".join(reasons) + "."
+    downgraded = [d["function"] for d in report.get("downgrades") or [] if not d["accepted"]]
+    if downgraded:
+        plural = len(downgraded) > 1
+        reasons.append(" and ".join(f"`{f}`" for f in downgraded)
+                       + (" were" if plural else " was")
+                       + " proved on the base branch and "
+                       + ("are" if plural else "is") + " not now")
+    verdict = "**Result: blocked** — " + "; ".join(reasons) + "."
+    stale = report.get("stale_accepts") or []
+    if stale:
+        verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
+                    + ", not a downgrade here — a stale entry a maintainer may remove.")
+    return verdict
 
 
 def markdown(report):
@@ -101,8 +143,8 @@ def markdown(report):
             f"| {ICON.get(g['status'], '')} | `{g['target']}/{g['guarantee']}` | `{g['function']}` | "
             f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {g['status']} |")
     lines += _claims(report)
-    # The proved/unproved ratchet adds a base-vs-PR status section here.
     lines += _functions(report)
+    lines += _downgrades(report)
     details = [g for g in report["guarantees"] if g["reason"]]
     reasons = {(g["reason"], g.get("hint")) for g in details}
     if details and len(reasons) == 1 and len(details) == len(report["guarantees"]):
