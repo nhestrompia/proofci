@@ -875,6 +875,12 @@ Used for constants whose double re-evaluation is refused: exact, but the
 bridge does not prove the lifted result. -/
 def ofNum (x : Num) : Dbl := ⟨Core.F64.ofInt x.val⟩
 
+/-- Lifts a computed integer into a double. Only for values whose expression
+can't produce `-0` (see `ofNumNe` for the case that can). -/
+def ofNumR (x : Result Num) : Result Dbl := do
+  let v ← x
+  ok (ofNum v)
+
 /-- The lift double code uses when re-evaluating a constant is refused. `0`
 fails: JavaScript may have computed `-0` there, which `Num` cannot
 distinguish, so the lift fails closed rather than erase a sign. -/
@@ -966,7 +972,9 @@ while comparing to `lit`/bits stays `decide`-cheap. -/
 elab "dbl!" s:str : term => do
   match parseDecimal s.getString with
   | some (m, e) =>
-    let bits := Core.F64.toBits (Core.F64.ofDecimal m e)
+    -- `ofDecimal 0 e` is `+0`; a signed zero literal keeps `-0`'s bits.
+    let bits := if m == 0 && s.getString.startsWith "-" then 0x8000000000000000
+      else Core.F64.toBits (Core.F64.ofDecimal m e)
     pure (Lean.mkApp (Lean.mkConst ``Js.Dbl.lit) (Lean.Expr.lit (.natVal bits)))
   | none => throwError "dbl!: expected a decimal like \"12\" or \"12.99\", got {s.getString.quote}"
 

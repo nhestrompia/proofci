@@ -276,7 +276,44 @@ theorem toRat_fin_mul_unit (s : Bool) (k : Nat) :
   have hs : signed s (k * unit) = signed s k * (unit : Int) := by
     cases s <;> simp only [signed_false, signed_true, Nat.cast_mul, neg_mul]
   rw [hs, Int.cast_mul, mul_div_assoc, div_self c, mul_one]
+
 set_option debug.skipKernelTC false
+
+/-- `fin false (K·unit)` has value `K`, so a `toRat` bound of `K` translates to
+a magnitude bound of `K·unit` via `mag_le_of_toRatD_le`. -/
+theorem const_mag (K : Nat) : (fin false (K * unit)).toRatD = K := by
+  have c : ((unit : Nat) : Rat) ≠ 0 := Nat.cast_ne_zero.mpr (ne_of_gt unit_pos)
+  rw [toRat_fin]
+  simp only [signed_false, Int.cast_natCast, Nat.cast_mul, Int.cast_mul,
+    Int.cast_natCast (R := Rat), mul_div_assoc]
+  rw [div_self c, mul_one]
+
+/-- `Math.round` keeps the sign and only adds at most `unit` to the
+magnitude. -/
+theorem jsround_fin_le {neg : Bool} {n : Nat} :
+    ∃ m, (fin neg n).jsround = fin neg m ∧ m ≤ n + unit := by
+  rw [jsround_fin]
+  by_cases h1 : n % unit * 2 < unit
+  · rw [ite_eq_left h1]
+    exact ⟨n / unit * unit, rfl,
+      le_trans (Nat.div_mul_le_self n unit) (Nat.le_add_right n unit)⟩
+  · rw [ite_eq_right h1]
+    by_cases h2 : n % unit * 2 = unit
+    · rw [ite_eq_left h2]
+      refine ⟨(n / unit + (if neg then 0 else 1)) * unit, rfl, ?_⟩
+      have hq : n / unit * unit ≤ n := Nat.div_mul_le_self n unit
+      have h3 : n / unit + (if neg then 0 else 1) ≤ n / unit + 1 := by
+        cases neg <;> simp
+      calc (n / unit + (if neg then 0 else 1)) * unit
+          ≤ (n / unit + 1) * unit := Nat.mul_le_mul_right _ h3
+        _ = n / unit * unit + unit := by rw [Nat.add_mul, Nat.one_mul]
+        _ ≤ n + unit := by omega
+    · rw [ite_eq_right h2]
+      refine ⟨(n / unit + 1) * unit, rfl, ?_⟩
+      have hq : n / unit * unit ≤ n := Nat.div_mul_le_self n unit
+      rw [Nat.add_mul, Nat.one_mul]
+      omega
+
 
 theorem lt_iff {x y : F64} (hx : x.isFin = true) (hy : y.isFin = true) :
     x.lt y = true ↔ x.toRatD < y.toRatD := by
@@ -1113,6 +1150,24 @@ theorem rem_toRat_le {x y : F64} (hx : 0 ≤ x.toRatD) :
     | fin c N => rw [show (nan.rem (fin c N)).toRatD = 0 from rfl]; exact hx
   | inf a => cases y <;> simp [rem, toRatD, toRat]
 
+/-- `toRatD (fin a X) ≥ 1` forces `X ≥ unit` and `a = false`; used to feed
+`div_fin`'s denominator side-condition from a `toRat ≥ 1` contract hypothesis. -/
+theorem unit_le_mag_of_one_le_toRatD {a : Bool} {X : Nat}
+    (h : 1 ≤ (fin a X).toRatD) : unit ≤ X := by
+  rw [toRat_fin] at h
+  have hu : ((0 : Int) : Rat) < ((unit : Int) : Rat) :=
+    Int.cast_pos.mpr (Nat.cast_pos.mpr unit_pos)
+  have hs : ((signed a X : Int) : Rat) ≥ ((unit : Int) : Rat) := by
+    have := (le_div_iff₀ hu).mp h
+    simpa using this
+  have hsI : (unit : Int) ≤ signed a X := Int.cast_le.mp hs
+  have hup : (0 : Int) < (unit : Int) := Nat.cast_pos.mpr unit_pos
+  cases a
+  · simp [signed] at hsI
+    omega
+  · simp [signed] at hsI
+    omega
+
 /-- Magnitude comparison from value comparison: if a non-negative finite `x`'s
 value is at most a non-negative finite `y`'s value, `x`'s magnitude is at most
 `y`'s. The premise is stated via `toRatD` so contracts can reason about bounds
@@ -1140,3 +1195,147 @@ theorem mag_le_of_toRatD_le {a : Bool} {X Y : Nat}
     have h3 : (X : Rat) ≤ 0 := neg_nonneg.mp h2
     have : X ≤ 0 := by exact_mod_cast h3
     omega
+
+theorem round_fin {neg : Bool} {n e : Nat} {st : Bool} {B : Nat}
+    (h : n ≤ B * 2 ^ e) (hB : 2 * B + 1 < limit) :
+    ∃ m, round neg n e st = fin neg m ∧ m ≤ 2 * B + 1 := by
+  unfold round
+  by_cases hn0 : n = 0
+  · subst hn0; simp only [ite_true]; exact ⟨0, rfl, by omega⟩
+  · rw [ite_eq_right hn0]
+    generalize hs : max (Nat.log2 n + 1 - 53) e = s
+    by_cases hs0 : s = 0
+    · rw [ite_eq_left hs0]
+      have he0 : e = 0 := by omega
+      subst he0
+      rw [Nat.pow_zero, Nat.mul_one] at h
+      have hlt : ¬ limit ≤ n := by omega
+      rw [ite_eq_right hlt]
+      exact ⟨n, rfl, by omega⟩
+    · rw [ite_eq_right hs0]
+      simp only
+      have hse : e ≤ s := by omega
+      have hmag : n / 2 ^ s * 2 ^ (s - e) + 2 ^ (s - e) ≤ 2 * B + 1 := by
+        have h1 : n / 2 ^ s * 2 ^ (s - e) ≤ n / 2 ^ e := by
+          have he : 2 ^ s = 2 ^ e * 2 ^ (s - e) := by rw [← Nat.pow_add]; congr 1; omega
+          rw [he, ← Nat.div_div_eq_div_mul]
+          exact Nat.div_mul_le_self _ _
+        have h2se : 2 ^ (s - e) ≤ n / 2 ^ e + 1 := by
+          rcases Nat.eq_or_lt_of_le hse with hseq | hsgt
+          · rw [← hseq]; simp
+          · have hsle : s - e ≤ Nat.log2 n + 1 - 53 - e := by omega
+            have hlog : 2 ^ (Nat.log2 n + 1) ≤ 2 * n := by
+              rw [Nat.pow_succ]
+              simpa [Nat.mul_comm] using Nat.mul_le_mul_right 2 (Nat.log2_self_le hn0)
+            have hdvd : 2 ^ (s - e) * 2 ^ (53 + e) ≤ 2 * n := by
+              calc 2 ^ (s - e) * 2 ^ (53 + e)
+                  ≤ 2 ^ (Nat.log2 n + 1 - 53 - e) * 2 ^ (53 + e) :=
+                    Nat.mul_le_mul_right _ (Nat.pow_le_pow_right (by decide) hsle)
+                _ = 2 ^ (Nat.log2 n + 1 - 53 - e + (53 + e)) := by rw [← Nat.pow_add]
+                _ ≤ 2 ^ (Nat.log2 n + 1) := Nat.pow_le_pow_right (by decide) (by omega)
+                _ ≤ 2 * n := hlog
+            have hx : 2 ^ (s - e) ≤ 2 * n / 2 ^ (53 + e) :=
+              (Nat.le_div_iff_mul_le (Nat.two_pow_pos (53 + e))).mpr hdvd
+            have he2 : (2 : Nat) ^ (53 + e) = 2 ^ 53 * 2 ^ e := Nat.pow_add ..
+            rw [he2, ← Nat.div_div_eq_div_mul] at hx
+            have h2n : 2 * n / 2 ^ 53 ≤ n := by
+              calc 2 * n / 2 ^ 53 ≤ 2 * n / 2 :=
+                  Nat.div_le_div_left (by decide : (2:Nat) ≤ 2 ^ 53) (by decide : 0 < 2)
+                _ = n := Nat.mul_div_cancel_left _ (by decide)
+            exact le_trans hx (le_trans (Nat.div_le_div_right h2n) (by omega))
+        have h2 : n / 2 ^ e ≤ B := Nat.div_le_of_le_mul (Nat.mul_comm B _ ▸ h)
+        omega
+      generalize hup : (decide (2 ^ (s - 1) < n % 2 ^ s) ||
+          decide (n % 2 ^ s = 2 ^ (s - 1)) && (st || decide (n / 2 ^ s % 2 = 1))) = up
+      cases up
+      · rw [ite_eq_right (show ¬(false = true) from fun h => Bool.noConfusion h)]
+        have hr : n / 2 ^ s * 2 ^ (s - e) ≤ 2 * B + 1 := le_trans (Nat.le_add_right _ _) hmag
+        rw [ite_eq_right (Nat.not_le.mpr (lt_of_le_of_lt hr hB))]
+        exact ⟨_, rfl, hr⟩
+      · rw [ite_eq_left rfl]
+        have hr : (n / 2 ^ s + 1) * 2 ^ (s - e) ≤ 2 * B + 1 := by
+          rw [Nat.add_one_mul]; exact hmag
+        rw [ite_eq_right (Nat.not_le.mpr (lt_of_le_of_lt hr hB))]
+        exact ⟨_, rfl, hr⟩
+
+/-- `add` of two finite operands is finite whenever twice the sum of their
+magnitudes stays below `limit`, and the result's magnitude is bounded too. -/
+theorem add_fin {a b : Bool} {X Y B : Nat} (h : X + Y ≤ B) (hB : 2 * B + 1 < limit) :
+    ∃ s m, (fin a X).add (fin b Y) = fin s m ∧ m ≤ 2 * B + 1 := by
+  simp only [add]
+  by_cases hr0 : signed a X + signed b Y = 0
+  · rw [ite_eq_left hr0]
+    exact ⟨a && b, 0, rfl, by omega⟩
+  · rw [ite_eq_right hr0]
+    have hn : (signed a X + signed b Y).natAbs ≤ B := by
+      cases a <;> cases b <;> simp [signed] at hr0 ⊢ <;> omega
+    obtain ⟨m, hm, hmb⟩ := round_fin (neg := decide (signed a X + signed b Y < 0))
+      (n := (signed a X + signed b Y).natAbs) (e := 0) (st := false) (B := B)
+      (by simpa using hn) hB
+    rw [hm]
+    exact ⟨decide (signed a X + signed b Y < 0), m, rfl, hmb⟩
+
+/-- `sub` shares `add`'s bound: `x - y` adds `x` and `-y`. -/
+theorem sub_fin {a b : Bool} {X Y B : Nat} (h : X + Y ≤ B) (hB : 2 * B + 1 < limit) :
+    ∃ s m, (fin a X).sub (fin b Y) = fin s m ∧ m ≤ 2 * B + 1 := by
+  simp only [sub, neg]
+  exact add_fin h hB
+
+/-- `mul` of finite operands is finite under the same kind of bound. -/
+theorem mul_fin {a b : Bool} {X Y B : Nat} (h : X * Y ≤ B * unit)
+    (hB : 2 * B + 1 < limit) :
+    ∃ m, (fin a X).mul (fin b Y) = fin (a != b) m ∧ m ≤ 2 * B + 1 := by
+  simp only [mul]
+  exact round_fin (h := h) hB
+
+/-- `x / y` is finite when `y ≥ 1` (magnitude `unit`) and `x`'s magnitude is
+bounded; the quotient's magnitude is bounded by `2·B·unit + 1`. -/
+theorem div_fin {a b : Bool} {X Y B : Nat} (hY : unit ≤ Y) (h : X ≤ B * unit)
+    (hB : 2 * (B * unit) + 1 < limit) :
+    ∃ m, (fin a X).div (fin b Y) = fin (a != b) m ∧ m ≤ 2 * (B * unit) + 1 := by
+  have hY0 : Y ≠ 0 := by have := unit_pos; omega
+  simp only [div]
+  rw [ite_eq_right hY0]
+  by_cases hX0 : X = 0
+  · rw [ite_eq_left hX0]
+    exact ⟨0, rfl, by omega⟩
+  · rw [ite_eq_right hX0]
+    generalize hk : Nat.log2 Y + 64 = k
+    have hn : X * 2 ^ (1074 + k) / Y ≤ (B * unit) * 2 ^ k := by
+      have he : X * 2 ^ (1074 + k) = X * 2 ^ k * unit := by
+        rw [Nat.pow_add, show (2:Nat) ^ 1074 = unit from rfl]; ring
+      calc X * 2 ^ (1074 + k) / Y
+          ≤ X * 2 ^ (1074 + k) / unit := Nat.div_le_div_left hY unit_pos
+        _ = X * 2 ^ k := by rw [he, Nat.mul_div_cancel _ unit_pos]
+        _ ≤ (B * unit) * 2 ^ k := Nat.mul_le_mul_right _ h
+    obtain ⟨m, hm, hmb⟩ := round_fin (neg := a != b)
+      (n := X * 2 ^ (1074 + k) / Y) (e := k) (st := decide (X * 2 ^ (1074 + k) % Y ≠ 0))
+      (B := B * unit) hn hB
+    rw [hm]
+    exact ⟨m, rfl, hmb⟩
+
+/-- `%` on a finite dividend and non-zero finite divisor is finite and no
+larger than the dividend. -/
+theorem rem_fin {a b : Bool} {X Y : Nat} (hY : Y ≠ 0) :
+    ∃ m, (fin a X).rem (fin b Y) = fin a m ∧ m ≤ X := by
+  simp only [rem]
+  rw [ite_eq_right hY]
+  exact ⟨X % Y, rfl, Nat.mod_le X Y⟩
+
+/-- A magnitude bound gives a value bound. -/
+theorem toRatD_le {s : Bool} {n B : Nat} (h : n ≤ B * unit) :
+    (fin s n).toRatD ≤ B := by
+  rw [toRat_fin]
+  have hu : (0 : Rat) < ((unit : Int) : Rat) :=
+    Int.cast_pos.mpr (Nat.cast_pos.mpr unit_pos)
+  cases s
+  · simp only [signed_false]
+    rw [div_le_iff₀ hu]
+    calc ((n : Int) : Rat) ≤ ((B * unit : Nat) : Rat) := by exact_mod_cast h
+      _ = (B : Rat) * ((unit : Int) : Rat) := by norm_num
+  · simp only [signed_true]
+    apply le_trans _ (Nat.cast_nonneg (α := Rat) B)
+    rw [Int.cast_neg, neg_div]
+    apply neg_nonpos.mpr
+    apply div_nonneg _ (le_of_lt hu)
+    exact Int.cast_nonneg (Int.natCast_nonneg _)

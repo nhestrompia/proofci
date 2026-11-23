@@ -202,5 +202,16 @@ class ClaimTests(unittest.TestCase):
         self.assertIn("before this change it claimed: The fee never exceeds the cap.", text)
 
 
+    def test_theorem_lookup_is_exact_not_prefix(self):
+        # A `theorem fee` lookup must not land on `theorem fee_bar` (check.py keys
+        # the stale-contract scan through `claims.theorems`).
+        src = """theorem fee_bar (n : Js.Num) : Js.Num := n\ntheorem fee (n : Js.Dbl) : Js.Dbl := n\n"""
+        ts = claims.theorems(src)
+        self.assertIn("fee", ts)
+        self.assertIn("fee_bar", ts)
+        self.assertIn("Js.Dbl", ts["fee"]["statement"])
+        self.assertNotIn("Js.Dbl", ts["fee_bar"]["statement"])
+
+
 if __name__ == "__main__":
     unittest.main()

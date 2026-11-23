@@ -50,6 +50,29 @@ const EDITS = {
   dbl_ulp: [["let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)",
     "let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000001)"]],
   dbl_num: [["let tmp1 ← Js.Dbl.mul price quantity", "let tmp1 ← Js.mul price quantity"]],
+  // Rare variants: the mutation only fires on a value no Node sample hits
+  // (0x40a5ebae147ae148 = 3317.84), so the bridge is what must catch it —
+  // Node sees no disagreement and the function stays `tested`.
+  dbl_rare_add: [["let tmp8 ← Js.Dbl.add whole tmp7",
+    "let tmp8 ← if whole.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.sub whole tmp7 else Js.Dbl.add whole tmp7"]],
+  dbl_rare_sub: [["let tmp3 ← Js.Dbl.sub (Js.Dbl.lit 0x3ff0000000000000) tmp2",
+    "let tmp3 ← if tmp2.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.add (Js.Dbl.lit 0x3ff0000000000000) tmp2 else Js.Dbl.sub (Js.Dbl.lit 0x3ff0000000000000) tmp2"]],
+  dbl_rare_mul: [["let tmp1 ← Js.Dbl.mul price quantity",
+    "let tmp1 ← if price.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.div price quantity else Js.Dbl.mul price quantity"]],
+  dbl_rare_div: [["let tmp10 ← Js.Dbl.div tmp9 (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp10 ← if tmp9.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.mul tmp9 (Js.Dbl.lit 0x4059000000000000) else Js.Dbl.div tmp9 (Js.Dbl.lit 0x4059000000000000)"]],
+  dbl_rare_rem: [["let tmp1 ← Js.Dbl.rem total parts",
+    "let tmp1 ← if total.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.sub total parts else Js.Dbl.rem total parts"]],
+  dbl_rare_neg: [["let tmp9 ← Js.Dbl.neg frac",
+    "let tmp9 ← if frac.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.math Core.F64.abs frac else Js.Dbl.neg frac"]],
+  dbl_rare_lt: [["((price).f).lt ((Js.Dbl.lit 0x0).f)",
+    "(if price.f = Core.F64.ofBits 0x40a5ebae147ae148 then ((price).f).lt ((Js.Dbl.lit 0x4059000000000000).f) else ((price).f).lt ((Js.Dbl.lit 0x0).f))"]],
+  dbl_rare_eq: [["((clipped).f).eq ((whole).f)",
+    "(if clipped.f = Core.F64.ofBits 0x40a5ebae147ae148 then ((clipped).f).eq ((min).f) else ((clipped).f).eq ((whole).f))"]],
+  dbl_rare_isnan: [["Js.Dbl.isNaN price",
+    "(if price.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.isFinite price else Js.Dbl.isNaN price)"]],
+  dbl_rare_ulp: [["let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp2 ← if discountPct.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000001) else Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)"]],
 };
 
 export function run(kind, configPath) {

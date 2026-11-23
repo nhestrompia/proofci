@@ -1,16 +1,20 @@
 import TsDbl
 open Aeneas Aeneas.Std Result src.pricing
 
-/-- `totalWithTax` on finite non-negative inputs with a bounded discount stays
-non-negative: price, quantity and tax only round a non-negative subtotal, the
-discount multiplier lies in `[0, 1]` and `Math.round` never turns a
-non-negative number negative. Bounds are stated on `Js.Dbl.toRat`, the real
-value view, so no bit-level reasoning appears in the contract. -/
+/-- `totalWithTax` on finite, non-negative, realistically bounded inputs
+(`price, quantity ≤ 10⁹`, `discount ≤ 100`, `tax ≤ 1000`) always returns a
+finite non-negative value: no intermediate can overflow to `Infinity` or turn
+`NaN`. Bounds are stated on `Js.Dbl.toRat`, the real value view, so no
+bit-level reasoning appears in the contract. -/
 theorem total_nonneg (price quantity discount tax : Js.Dbl)
-    (hp : 0 ≤ Js.Dbl.toRat price) (hq : 0 ≤ Js.Dbl.toRat quantity)
+    (hpf : price.f.isFin = true) (hqf : quantity.f.isFin = true)
+    (hdf : discount.f.isFin = true) (htf : tax.f.isFin = true)
+    (hp : 0 ≤ Js.Dbl.toRat price) (hpB : Js.Dbl.toRat price ≤ 10 ^ 9)
+    (hq : 0 ≤ Js.Dbl.toRat quantity) (hqB : Js.Dbl.toRat quantity ≤ 10 ^ 9)
     (hd : 0 ≤ Js.Dbl.toRat discount) (hd100 : Js.Dbl.toRat discount ≤ 100)
-    (ht : 0 ≤ Js.Dbl.toRat tax) :
-    totalWithTax price quantity discount tax ⦃ r => 0 ≤ Js.Dbl.toRat r ⦄ := by
+    (ht : 0 ≤ Js.Dbl.toRat tax) (htB : Js.Dbl.toRat tax ≤ 1000) :
+    totalWithTax price quantity discount tax
+      ⦃ r => r.f.isFin = true ∧ 0 ≤ Js.Dbl.toRat r ⦄ := by
   sorry
 
 /-- Whenever the total comes out finite it is a whole number of cents: it is a
@@ -36,11 +40,14 @@ theorem nan_propagates (quantity discount tax : Js.Dbl) :
       ⦃ r => Js.Dbl.isNaN r = true ⦄ := by
   sorry
 
-/-- `perHead` on non-negative inputs returns a non-negative value: `%` stays
-below the total and `/` of non-negatives is non-negative. -/
+/-- `perHead` on a finite non-negative `total ≤ 10⁹` split `parts ≥ 1` ways
+returns a finite non-negative share: `%` stays below the total and the
+division cannot overflow. -/
 theorem perHead_nonneg (total parts : Js.Dbl)
-    (ht : 0 ≤ Js.Dbl.toRat total) (hp : 0 ≤ Js.Dbl.toRat parts) :
-    perHead total parts ⦃ r => 0 ≤ Js.Dbl.toRat r ⦄ := by
+    (htf : total.f.isFin = true) (hpf : parts.f.isFin = true)
+    (ht : 0 ≤ Js.Dbl.toRat total) (htB : Js.Dbl.toRat total ≤ 10 ^ 9)
+    (hp : 1 ≤ Js.Dbl.toRat parts) :
+    perHead total parts ⦃ r => r.f.isFin = true ∧ 0 ≤ Js.Dbl.toRat r ⦄ := by
   sorry
 
 /-- Whatever the rate, `effect` answers `NaN` or a whole `±1`/`±0`. -/
@@ -54,11 +61,4 @@ theorem effect_signs (rate : Js.Dbl) :
 returns a finite value it is non-negative. -/
 theorem shelf_nonneg (price min : Js.Dbl) :
     shelfPrice price min ⦃ r => r.f.isFin = true → 0 ≤ Js.Dbl.toRat r ⦄ := by
-  sorry
-
-/-- `bonus` reads the computed integer constant `freeUnits` through
-`Js.Dbl.ofNumNe`, which refuses `0` — so the view fails and the postcondition is
-vacuous. The function stays `tested` on every input. -/
-theorem bonus_nonneg (price : Js.Dbl) :
-    bonus price ⦃ r => r.f.isFin = true → 0 ≤ Js.Dbl.toRat r ⦄ := by
   sorry

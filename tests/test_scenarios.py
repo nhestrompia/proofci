@@ -594,17 +594,17 @@ def ts_results():
 
 
 TS_DBL = "src/pricing.ts"
-TS_DBL_GUARANTEES = ("total/nonneg", "total/whole-cents", "total/menu-price", "total/nan-propagates", "per-head/nonneg", "effect/signs", "shelf/covered", "bonus/covered")
-DBL_TOTAL, DBL_WHOLE, DBL_MENU, DBL_NAN, DBL_LEFT, DBL_EFFECT, DBL_SHELF_G, DBL_BONUS_G = TS_DBL_GUARANTEES
-DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "perHead", "effect", "shelfPrice", "bonus")]
+TS_DBL_GUARANTEES = ("total/nonneg", "total/whole-cents", "total/menu-price", "total/nan-propagates", "per-head/nonneg", "effect/signs", "shelf/covered")
+DBL_TOTAL, DBL_WHOLE, DBL_MENU, DBL_NAN, DBL_LEFT, DBL_EFFECT, DBL_SHELF_G = TS_DBL_GUARANTEES
+DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "perHead", "effect", "shelfPrice")]
 DBL_SHELF = TS_DBL + "::shelfPrice"
-DBL_BRIDGE = {"functions": {**dict.fromkeys(DBL_FNS[:4], "proved"), DBL_SHELF: "proved", TS_DBL + "::bonus": "tested"}}
+DBL_BRIDGE = {"functions": dict.fromkeys(DBL_FNS, "proved")}
 
 
 def dbl_results():
-    # `shelf` and `bonus` carry non-required guarantees their statements are
-    # meant to stay unproved — they are coverage and test-forever targets.
-    return {**dict.fromkeys(TS_DBL_GUARANTEES, V), "shelf/covered": U, "bonus/covered": U}
+    # `shelf` carries a non-required guarantee its statement is meant to stay
+    # unproved — it is a coverage and test-forever target.
+    return {**dict.fromkeys(TS_DBL_GUARANTEES, V), "shelf/covered": U}
 
 
 def ts_transfer_loses_money(head):
@@ -868,7 +868,7 @@ SCENARIOS.update({
     # The proof of rejects-overdraft is written for the view's exact shape, so the extra condition breaks it.
     "ts-bridge-mistranslated-view": (None, {**ts_results(), TS_OVERDRAFT: U}, 1, {
         "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"},
-        "function_reasons": {BR_TRANSFER: "did not check"}, "summary": {"proved": 3, "tested": 2, "failed": 0}}),
+        "function_reasons": {BR_TRANSFER: "did not check"}, "summary": {"proved": 2, "tested": 1, "failed": 0}}),
     "ts-bridge-mistranslated-view-required": (policy_requires_bridge, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1, {
         "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"}}),
     # A view that is wrong for most inputs never reaches the bridge: Node disagrees first, as before.
@@ -892,15 +892,15 @@ SCENARIOS.update({
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
     # Recursive records and unions tagged by `kind`, and the functions that walk them, are bridged by induction.
     # Binary64 functions: exact arithmetic, NaN and -0, all bridged to `proved`.
-    "ts-dbl-baseline": (None, dbl_results(), 0, {**DBL_BRIDGE, "summary": {"proved": 4, "tested": 1, "failed": 0}}),
+    "ts-dbl-baseline": (None, dbl_results(), 0, {**DBL_BRIDGE, "summary": {"proved": 4, "tested": 0, "failed": 0}}),
     # A floor planted where the code rounds: only the bridge sees it — no sample hits a halfway cent.
     "ts-dbl-bridge-mistranslated-view": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
-        "env": DBL_RARE, "functions": {**dict.fromkeys(DBL_FNS, "proved"), TS_DBL + "::totalWithTax": "tested", TS_DBL + "::bonus": "tested"},
+        "env": DBL_RARE, "functions": {**dict.fromkeys(DBL_FNS, "proved"), TS_DBL + "::totalWithTax": "tested"},
         "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
-        "summary": {"proved": 3, "tested": 2, "failed": 0}}),
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
     # A division planted where the code multiplies: Node disagrees on the first samples.
     "ts-dbl-mistranslated-view-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
-        "env": DBL_COMMON, "functions": {TS_DBL + "::totalWithTax": "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 5}}),
+        "env": DBL_COMMON, "functions": {TS_DBL + "::totalWithTax": "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 4}}),
     # A subtraction planted where the code takes the remainder: Node disagrees.
     "ts-dbl-rem-mistranslated-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
         "env": DBL_REM, "functions": {TS_DBL + "::perHead": "failed"}}),
@@ -947,6 +947,49 @@ SCENARIOS.update({
         "env": dbl_mut("dbl_isnan"), "functions": {DBL_SHELF: "failed"}}),
     "ts-dbl-mutant-isint": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
         "env": dbl_mut("dbl_isint"), "functions": {DBL_SHELF: "failed"}}),
+    # Rare mutants: each plants a wrong operation gated on a value no Node
+    # sample hits, so only the bridge can catch it — the function becomes
+    # `tested` with no Node disagreement (summary failed stays 0).
+    "ts-dbl-rare-mutant-add": (None, dbl_results(), 0, {
+        "env": dbl_mut("dbl_rare_add"), "functions": {DBL_SHELF: "tested"},
+        "function_reasons": {DBL_SHELF: "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-sub": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
+        "env": dbl_mut("dbl_rare_sub"), "functions": {TS_DBL + "::totalWithTax": "tested"},
+        "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-mul": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
+        "env": dbl_mut("dbl_rare_mul"), "functions": {TS_DBL + "::totalWithTax": "tested"},
+        "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-div": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
+        "env": dbl_mut("dbl_rare_div"), "functions": {TS_DBL + "::totalWithTax": "tested"},
+        "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-ulp": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
+        "env": dbl_mut("dbl_rare_ulp"), "functions": {TS_DBL + "::totalWithTax": "tested"},
+        "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-rem": (None, {**dbl_results(), DBL_LEFT: U}, 1, {
+        "env": dbl_mut("dbl_rare_rem"), "functions": {TS_DBL + "::perHead": "tested"},
+        "function_reasons": {TS_DBL + "::perHead": "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-neg": (None, dbl_results(), 0, {
+        "env": dbl_mut("dbl_rare_neg"), "functions": {DBL_SHELF: "tested"},
+        "function_reasons": {DBL_SHELF: "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-lt": (None, dbl_results(), 0, {
+        "env": dbl_mut("dbl_rare_lt"), "functions": {DBL_SHELF: "tested"},
+        "function_reasons": {DBL_SHELF: "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-eq": (None, dbl_results(), 0, {
+        "env": dbl_mut("dbl_rare_eq"), "functions": {DBL_SHELF: "tested"},
+        "function_reasons": {DBL_SHELF: "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
+    "ts-dbl-rare-mutant-isnan": (None, dbl_results(), 0, {
+        "env": dbl_mut("dbl_rare_isnan"), "functions": {DBL_SHELF: "tested"},
+        "function_reasons": {DBL_SHELF: "did not check"},
+        "summary": {"proved": 3, "tested": 1, "failed": 0}}),
     "ts-tree-baseline": (None, dict.fromkeys(TREE_GUARANTEES, V), 0, {
         **TREE_BRIDGE, "summary": {"proved": 4, "tested": 0, "failed": 0}}),
     "ts-tree-bridge-required": (policy_requires_bridge, dict.fromkeys(TREE_GUARANTEES, V), 0, TREE_BRIDGE),

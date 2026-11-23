@@ -26,12 +26,6 @@ targets:
       - id: covered
         theorem: shelf_nonneg
         required: false
-  - id: bonus
-    function: src/pricing.ts::bonus
-    guarantees:
-      - id: covered
-        theorem: bonus_nonneg
-        required: false
   - id: effect
     function: src/pricing.ts::effect
     guarantees:

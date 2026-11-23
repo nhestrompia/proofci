@@ -937,6 +937,10 @@ export class Translator {
     if (this.checker.isArrayType(type)) return this.mentionsNumber(this.checker.getTypeArguments(type)[0], node, seen, depth + 1);
     if (!(type.flags & ts.TypeFlags.Object)) return false;
     for (const p of this.checker.getPropertiesOfType(type)) {
+      // `fields` drops anything but plain fields (index signatures, methods),
+      // so their `number`s don't differ between modes either.
+      const decl = p.valueDeclaration;
+      if (!decl || !(ts.isPropertySignature(decl) || ts.isPropertyAssignment(decl) || ts.isShorthandPropertyAssignment(decl))) continue;
       if (this.mentionsNumber(this.checker.getTypeOfSymbol(p), node, seen, depth + 1)) return true;
     }
     if (type.objectFlags & ts.ObjectFlags.Reference) {
@@ -2878,6 +2882,46 @@ export class Scope {
     return fresh;
   }
 
+  // True when this safe-integer expression can never evaluate to `-0`: a
+  // literal, a `number` parameter (a `-0` there is a translator bug), or
+  // `+`/`-` of such values — x + y is `-0` only when both are. `-0`
+  // producers are `*`, `/`, `%`, unary `-` and round/ceil/trunc on a
+  // negative; anything else is assumed unsafe.
+  cannotBeNegZero(node, depth = 0) {
+    if (depth > 8) return false;
+    node = unwrap(node);
+    if (ts.isNumericLiteral(node)) return true;
+    if (ts.isPrefixUnaryExpression(node)) return false;
+    if (ts.isBinaryExpression(node)) {
+      if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken && node.operatorToken.kind !== ts.SyntaxKind.MinusToken) return false;
+      return this.cannotBeNegZero(node.left, depth + 1) && this.cannotBeNegZero(node.right, depth + 1);
+    }
+    if (ts.isConditionalExpression(node)) {
+      return this.cannotBeNegZero(node.whenTrue, depth + 1) && this.cannotBeNegZero(node.whenFalse, depth + 1);
+    }
+    if (ts.isIdentifier(node)) {
+      const declaration = this.symbol(node)?.valueDeclaration;
+      if (!declaration) return false;
+      if (ts.isParameter(declaration)) return this.isNumber(node);
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer && this.isModuleLevel(declaration)) {
+        return this.cannotBeNegZero(declaration.initializer, depth + 1);
+      }
+      return false;
+    }
+    if (ts.isCallExpression(node)) {
+      const declaration = this.symbol(node.expression)?.valueDeclaration;
+      if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body) return false;
+      let safe = true;
+      const visit = (inner) => {
+        if (ts.isReturnStatement(inner) && inner.expression && !this.cannotBeNegZero(inner.expression, depth + 1)) safe = false;
+        ts.forEachChild(inner, visit);
+      };
+      visit(declaration.body);
+      return safe;
+    }
+    return false;
+  }
+
   numeric(node, env, lines) {
     if (!this.isNumber(node)) throw this.t.fail(node, "only `number` operands are supported here");
     return this.expression(node, env, lines);
@@ -2961,7 +3005,12 @@ export class Scope {
             // What double code can't re-evaluate is lifted from the integer
             // result instead — exact, but the bridge won't prove it.
             if (!(error instanceof Unsupported)) throw error;
-            if (constant.leanType === "Js.Num") return this.bind(`Js.Dbl.ofNumNe _root_.${constant.lean}`, this.lines);
+            if (constant.leanType === "Js.Num") {
+              // An expression that can never be `-0` lifts plainly; the rest go
+              // through `ofNumNe`, which refuses `0` at runtime.
+              const lift = declaration.initializer && this.cannotBeNegZero(declaration.initializer) ? "Js.Dbl.ofNumR" : "Js.Dbl.ofNumNe";
+              return this.bind(`${lift} _root_.${constant.lean}`, this.lines);
+            }
             throw error;
           }
         }

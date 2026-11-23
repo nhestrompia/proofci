@@ -12,7 +12,6 @@ import hashlib
 import itertools
 import json
 import os
-import re
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -355,7 +354,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             contract_src = _contract_text(policy_checkout, active.lean)
             for o in pending:
                 sig = (extraction.signatures or {}).get(o.function) or {}
-                if sig.get("dbl") and f"theorem {o.theorem}" in contract_src and _theorem_mentions(contract_src, o.theorem, "Js.Num"):
+                if sig.get("dbl") and "Js.Num" in claims.theorems(contract_src).get(o.theorem, {}).get("statement", ""):
                     o.status, o.reason = CONTRACT_STALE, (
                         f"`{o.function}` now needs binary64 numbers because of {sig['dbl']}; "
                         f"restate the contract on `Js.Dbl`")
@@ -728,12 +727,3 @@ def lean_function(rust_path: str):
     """`ledger::calculate_fee` -> `ledger.calculate_fee` (Aeneas naming)."""
     return ".".join(rust_path.split("::"))
 
-
-def _theorem_mentions(contract_src: str, theorem: str, needle: str) -> bool:
-    """Whether `needle` appears in `theorem`'s slice of the contract."""
-    start = contract_src.find(f"theorem {theorem}")
-    if start < 0:
-        return False
-    rest = contract_src[start:]
-    nxt = re.search(r"\n/-- |\ntheorem ", rest[1:])
-    return needle in rest[: nxt.start() + 1 if nxt else len(rest)]

@@ -52,6 +52,21 @@ test("floored division keeps the exact quotient", () => {
   emits("export function f(a: number) { return Math.sign(a); }", "Core.F64.sign");
 });
 
+test("a computed integer that can't be `-0` lifts plainly into doubles", () => {
+  // clampInt(0) is a literal or a `number` parameter on every return path, so
+  // `freeUnits` is provably not `-0` and `Js.Dbl.ofNumR` keeps it provable.
+  emits(`export function clampInt(n: number) { return n < 0 ? 0 : n; }
+const freeUnits = clampInt(0);
+export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumR");
+});
+
+test("a computed integer that may be `-0` still lifts through ofNumNe", () => {
+  // `*` can produce `-0`, so the lift must keep its runtime `0` refusal.
+  emits(`export function double(n: number) { return n * 0; }
+const zeroish = double(1);
+export function f(price: number) { return price + zeroish + 0.5; }`, "Js.Dbl.ofNumNe");
+});
+
 test("the right side of && only runs when it has to", () => {
   emits(`function g(a: number): boolean { return a > 0; }
     export function f(a: number) { return a !== 0 && g(a); }`, "if ¬(a.val = 0) then");
