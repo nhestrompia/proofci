@@ -2887,22 +2887,27 @@ export class Scope {
   // `+`/`-` of such values — x + y is `-0` only when both are. `-0`
   // producers are `*`, `/`, `%`, unary `-` and round/ceil/trunc on a
   // negative; anything else is assumed unsafe.
-  cannotBeNegZero(node, depth = 0) {
+  cannotBeNegZero(node, depth = 0, params = null) {
     if (depth > 8) return false;
     node = unwrap(node);
     if (ts.isNumericLiteral(node)) return true;
     if (ts.isPrefixUnaryExpression(node)) return false;
     if (ts.isBinaryExpression(node)) {
       if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken && node.operatorToken.kind !== ts.SyntaxKind.MinusToken) return false;
-      return this.cannotBeNegZero(node.left, depth + 1) && this.cannotBeNegZero(node.right, depth + 1);
+      return this.cannotBeNegZero(node.left, depth + 1, params) && this.cannotBeNegZero(node.right, depth + 1, params);
     }
     if (ts.isConditionalExpression(node)) {
-      return this.cannotBeNegZero(node.whenTrue, depth + 1) && this.cannotBeNegZero(node.whenFalse, depth + 1);
+      return this.cannotBeNegZero(node.whenTrue, depth + 1, params) && this.cannotBeNegZero(node.whenFalse, depth + 1, params);
     }
     if (ts.isIdentifier(node)) {
       const declaration = this.symbol(node)?.valueDeclaration;
       if (!declaration) return false;
-      if (ts.isParameter(declaration)) return this.isNumber(node);
+      if (ts.isParameter(declaration)) {
+        // A parameter returned to the caller carries the argument's value: it is
+        // `-0`-safe exactly when this call's argument is.
+        if (params?.has(declaration)) return this.cannotBeNegZero(params.get(declaration), depth + 1);
+        return this.isNumber(node);
+      }
       if (ts.isVariableDeclaration(declaration) && declaration.initializer && this.isModuleLevel(declaration)) {
         return this.cannotBeNegZero(declaration.initializer, depth + 1);
       }
@@ -2911,9 +2916,14 @@ export class Scope {
     if (ts.isCallExpression(node)) {
       const declaration = this.symbol(node.expression)?.valueDeclaration;
       if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body) return false;
+      const argumentsOf = new Map();
+      declaration.parameters.forEach((parameter, index) => {
+        if (node.arguments[index]) argumentsOf.set(parameter, node.arguments[index]);
+      });
       let safe = true;
       const visit = (inner) => {
-        if (ts.isReturnStatement(inner) && inner.expression && !this.cannotBeNegZero(inner.expression, depth + 1)) safe = false;
+        if (ts.isReturnStatement(inner) && inner.expression &&
+            !this.cannotBeNegZero(inner.expression, depth + 1, argumentsOf)) safe = false;
         ts.forEachChild(inner, visit);
       };
       visit(declaration.body);

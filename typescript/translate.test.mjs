@@ -67,6 +67,14 @@ const zeroish = double(1);
 export function f(price: number) { return price + zeroish + 0.5; }`, "Js.Dbl.ofNumNe");
 });
 
+test("a parameter returned by a helper is only as `-0`-safe as its argument", () => {
+  // `n` is `-0`-free only because the call passes a literal; passing `n * 0`
+  // (which is `-0` in JavaScript) must keep the runtime `0` refusal.
+  emits(`export function clampInt(n: number) { return n < 0 ? 0 : n; }
+const freeUnits = clampInt(0 * -1);
+export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumNe");
+});
+
 test("the right side of && only runs when it has to", () => {
   emits(`function g(a: number): boolean { return a > 0; }
     export function f(a: number) { return a !== 0 && g(a); }`, "if ¬(a.val = 0) then");
