@@ -242,6 +242,28 @@ export class Dyn {
       const x = inner.declare(dl.declarations[0], dl.declarations[0].name.text);
       return [`${I}for ${x} in (← iter ${v(this.expr(s.expression, sc))}) do`, this.sub(s.statement, inner, d + 1)];
     }
+    if (ts.isWhileStatement(s))
+      return [`${I}for _ in fuel do`, `${this.ind(d + 1)}if !(truthy ${v(this.expr(s.expression, sc))}) then break`, this.sub(s.statement, sc, d + 1)];
+    if (ts.isForStatement(s)) {
+      const inner = new Scope(sc, s, this);
+      const out = [];
+      const dl = s.initializer;
+      if (dl && ts.isVariableDeclarationList(dl)) {
+        if (!(dl.flags & ts.NodeFlags.Let)) throw new Unsupported(dl, "only `let` in `for (;;)`");
+        for (const dcl of dl.declarations) {
+          if (!ts.isIdentifier(dcl.name)) throw new Unsupported(dcl, "only plain declarations");
+          if (inner.boxed(dcl)) throw new Unsupported(dcl, "a `for (;;)` variable captured by a closure");
+          out.push(...this.bind(dcl, dcl.name.text, dcl.initializer ? this.expr(dcl.initializer, inner) : P(".undef"), inner, I, true));
+        }
+      } else if (dl) out.push(...this.effect(dl, inner, I));
+      if (hasContinue(s.statement)) throw new Unsupported(s, "`continue` in `for (;;)`");
+      const J = this.ind(d + 1);
+      out.push(`${I}for _ in fuel do`);
+      if (s.condition) out.push(`${J}if !(truthy ${v(this.expr(s.condition, inner))}) then break`);
+      out.push(this.sub(s.statement, inner, d + 1));
+      if (s.incrementor) out.push(...this.effect(s.incrementor, inner, J));
+      return out;
+    }
     if (s.kind === ts.SyntaxKind.BreakStatement && !s.label) return [`${I}break`];
     if (s.kind === ts.SyntaxKind.ContinueStatement && !s.label) return [`${I}continue`];
     if (ts.isEmptyStatement(s)) return [];
@@ -516,6 +538,13 @@ function ends(s) {
 }
 
 // Names in scope. A variable that a nested function assigns lives in a heap cell.
+// A `continue` that would skip the update of the enclosing `for (;;)`.
+function hasContinue(n) {
+  if (n.kind === ts.SyntaxKind.ContinueStatement) return true;
+  if (ts.isIterationStatement(n, false) || ts.isFunctionLike(n)) return false;
+  return ts.forEachChild(n, hasContinue) ?? false;
+}
+
 class Scope {
   constructor(parent, node, dyn, fnBoundary = false) {
     this.parent = parent; this.node = node; this.dyn = dyn; this.fnBoundary = fnBoundary;
