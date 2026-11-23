@@ -101,6 +101,53 @@ class ScanTests(unittest.TestCase):
             self.assertIn("TypeScript", err.getvalue())
 
 
+class DevJsonTests(unittest.TestCase):
+    """`dev --json` must report unsupported functions on every run, cached or not."""
+
+    def _repo(self, root):
+        (root / "proofci").mkdir()
+        (root / "proofci" / "Contract.lean").write_text("theorem g : True := by sorry\n")
+        (root / "proofci" / "Proofs.lean").write_text("theorem g : True := by sorry\n")
+        (root / "proofci.yaml").write_text(
+            "version: 1\nlanguage: typescript\npackage: .\nlean: proofci\ntargets:\n"
+            "  - id: t\n    function: src/a.ts::ok\n    guarantees: [{id: g, theorem: g}]\n"
+            "  - id: u\n    function: src/a.ts::broken\n    guarantees: [{id: h, theorem: h}]\n")
+        (root / "src").mkdir()
+        (root / "src" / "a.ts").write_text(
+            "export function ok() { return 1 }\nexport function broken() { return 2 }\n")
+
+    def test_cached_run_keeps_unsupported(self):
+        from proofci import dev, extract
+        with tempfile.TemporaryDirectory() as tmp:
+            root, work = Path(tmp) / "repo", Path(tmp) / "work"
+            root.mkdir()
+            self._repo(root)
+            failure = {"src/a.ts::broken": "src/a.ts:2: `any` is not supported yet\nHow to fix: write the real type"}
+            extraction = mock.Mock(failures=failure, lean_file=root / "proofci" / "Contract.lean",
+                                   module="Repo", modelled=[], names={})
+            built = mock.Mock(status=0, output="")
+
+            def fake_assemble(ws_root, *args):
+                ws_root.mkdir(parents=True, exist_ok=True)
+                (ws_root / "Proofs.lean").write_text("theorem g : True := by sorry\n")
+
+            with mock.patch.object(dev.typescript, "extract", return_value=extraction), \
+                    mock.patch.object(dev.lean, "assemble", side_effect=fake_assemble), \
+                    mock.patch.object(dev.lean, "_copy_lean_tree"), \
+                    mock.patch.object(dev.lean, "_lake", return_value=built):
+                captured = []
+                status = dev.run(root, work, out=captured.append, as_json=True)
+            self.assertEqual(status, 0)
+            first = json.loads(captured[-1])["unsupported"]["src/a.ts::broken"]
+            self.assertEqual(first["hint"], "write the real type")
+            # Second run reuses the translation but must not lose the entry.
+            with mock.patch.object(dev.lean, "_copy_lean_tree"), \
+                    mock.patch.object(dev.lean, "_lake", return_value=built):
+                captured = []
+                status = dev.run(root, work, out=captured.append, as_json=True)
+            self.assertEqual(json.loads(captured[-1])["unsupported"]["src/a.ts::broken"], first)
+
+
 class LocalTests(unittest.TestCase):
     """`proofci local` must wrap the check in the same sandboxed container CI uses."""
 
@@ -112,6 +159,10 @@ class LocalTests(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             self.calls.append((command, kwargs))
+            if "merge-base" in command:
+                return mock.Mock(returncode=0, stdout="deadbeef\n")
+            if command[:2] == ["git", "-C"] and "rev-parse" in command:
+                return mock.Mock(returncode=0, stdout="origin/main\n" if "--abbrev-ref" in command else "cafef00d\n")
             mounted = [arg.split(":")[0] for arg in command if isinstance(arg, str) and arg.endswith(":/out")]
             if mounted and ("check" in command or "scan" in command):
                 (Path(mounted[0]) / "report.json").write_text('{"passed": true}\n')
@@ -163,6 +214,27 @@ class LocalTests(unittest.TestCase):
         with mock.patch.object(local.subprocess, "run", side_effect=no_report):
             status = local.run(self.repo, "HEAD", "base", "image:x")
         self.assertEqual(status, 2)
+
+    def test_default_base_is_the_merge_base(self):
+        out, errs = io.StringIO(), []
+        with redirect_stdout(out):
+            status = local.run(self.repo, None, "base", "image:x", err=errs.append)
+        self.assertEqual(status, 0)
+        merge = next(c for c, _ in self.calls if "merge-base" in c)
+        self.assertEqual(merge[-2:], ["HEAD", "origin/main"])
+        self.assertIn("deadbeef", "\n".join(errs))            # printed to stderr
+        self.assertEqual(json.loads(out.getvalue())["base"], "deadbeef")
+
+    def test_policy_head_says_it_is_not_ci(self):
+        errs = []
+        with redirect_stdout(io.StringIO()):
+            local.run(self.repo, "HEAD", "head", "image:x", err=errs.append)
+        self.assertTrue(any("not the result CI reports" in e for e in errs))
+
+    def test_scan_fetch_without_a_manifest_is_an_error(self):
+        with self.assertRaises(check.ConfigError):
+            local.run(self.repo, "HEAD", "base", "image:x", scan=True, fetch_deps=True)
+        self.assertFalse(any("fetch" in c for c, _ in self.calls))
 
     def test_base_ref_failure_is_an_error(self):
         def git_fails(command, **kwargs):

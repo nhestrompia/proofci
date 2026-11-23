@@ -100,10 +100,12 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=Fa
             result["unsupported"]["*"] = {"reason": head, "hint": hint}
             return done(1)
         ws = lean.assemble(ws_root, ex.lean_file, ex.module, repo / manifest.lean, repo / manifest.lean)
-        state = {"crate": crate_key, "module": ex.module, "modelled": ex.modelled, "names": ex.names or {}}
+        state = {"crate": crate_key, "module": ex.module, "modelled": ex.modelled,
+                 "names": ex.names or {}, "unsupported": result["unsupported"]}
         say(f"translated the code ({time.monotonic() - t0:.1f}s); "
             f"standard-library models used: {len(ex.modelled)}")
     else:
+        result["unsupported"] = state.get("unsupported", {})
         ws = lean.Workspace(ws_root, state["module"])
         # Refresh the Lean sources from the repository.
         for module in ("Contract", "Proofs"):
