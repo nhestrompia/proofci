@@ -242,12 +242,10 @@ def _require_bridge(value, language, functions):
 
 
 def _accept_downgrades(value, language, functions):
-    if not value:
-        return ()
-    if language != "typescript":
-        raise ManifestError("accept_downgrades is only available for TypeScript")
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
         raise ManifestError("accept_downgrades must be a list of target functions")
+    if value and language != "typescript":
+        raise ManifestError("accept_downgrades is only available for TypeScript")
     unknown = sorted(set(value) - set(functions))
     if unknown:
         raise ManifestError(f"accept_downgrades names {unknown[0]!r}, which is not the function of any target")

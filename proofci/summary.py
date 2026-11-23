@@ -36,8 +36,10 @@ def _functions(report):
 def _downgrades(report):
     """Functions proved on the base branch that are not proved in this pull request."""
     downgrades = report.get("downgrades") or []
+    stale = report.get("stale_accepts") or []
     if not downgrades:
-        return []
+        return (["", "Accepted under `accept_downgrades` but not a downgrade here — stale entries a "
+                 "maintainer may want to remove: " + ", ".join(f"`{f}`" for f in stale)] if stale else [])
     lines = ["", "### Proved on the base branch, not proved now", "",
              "| | Function | On the base | In this pull request | Accepted | Why |",
              "|---|---|---|---|---|---|"]
@@ -46,6 +48,9 @@ def _downgrades(report):
         why = (d["reason"] or "").replace("|", "\\|").replace("\n", " ")[:300]
         lines.append(f"| {'✅' if d['accepted'] else '⛔'} | `{d['function']}` | {d['was']} | {now} | "
                      f"{'yes' if d['accepted'] else 'no'} | {why} |")
+    if stale:
+        lines += ["", "Accepted under `accept_downgrades` but not a downgrade here — stale entries a "
+                  "maintainer may want to remove: " + ", ".join(f"`{f}`" for f in stale)]
     unaccepted = [d for d in downgrades if not d["accepted"]]
     if unaccepted:
         lines += ["", "A maintainer accepts a downgrade by listing the function under `accept_downgrades` in "

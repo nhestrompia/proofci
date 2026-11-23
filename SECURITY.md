@@ -107,8 +107,7 @@ guarantee holds of the Lean view, and that the view matches JavaScript rests on 
 comparison with Node alone. ProofCI cannot tell a tactic that gave up from a wrong
 view, so it never reports a failed bridge as "failed" and never as proved; a repository
 that wants such a function to block sets `require_bridge` in `proofci.yaml` (policy: a
-pull request cannot change it). `async` functions have no bridge yet, so they are always
-tested, not proved.
+pull request cannot change it).
 
 Independently of `require_bridge`, a function that was **proved** on the base branch may
 not silently drop: each function's bridge status is re-derived on the base checkout with

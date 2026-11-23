@@ -74,8 +74,13 @@ bridge doesn't cover, whatever `require_bridge` says. The report's "Proved on th
 section lists each downgrade with its old and new status and the reason. A downgrade is accepted
 only through the policy: name the function under `accept_downgrades` in `proofci.yaml`, which is a
 policy change and waits for maintainer approval like the rest — the pull request's own entry does
-nothing on its own. If the base branch can't be re-checked at all, the status is "unknown" and the
-check stays blocked (fail closed), again liftable only through `accept_downgrades`.
+nothing on its own. The base side is a verdict only when the check there actually finished: a base
+re-check that times out or runs out of budget is "unknown", not "not proved", and so is any
+non-`proved` result when the pull request touched the dependency files (package.json or a lockfile),
+because those could be why the base didn't check. An "unknown" base blocks like a downgrade
+(fail closed), again liftable only through `accept_downgrades`. When the file the bridge would
+check on the base is byte-identical to the one it already checked in the pull request, the result
+is reused and no second bridge run is spent.
 
 For Rust there is no equivalent: a required guarantee that was verified and no longer is already
 fails the check.
