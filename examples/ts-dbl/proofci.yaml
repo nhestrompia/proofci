@@ -1,0 +1,27 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: total
+    function: src/pricing.ts::totalWithTax
+    guarantees:
+      - id: nonneg
+        theorem: total_nonneg
+      - id: whole-cents
+        theorem: whole_cents
+      - id: menu-price
+        theorem: menu_price_exact
+      - id: nan-propagates
+        theorem: nan_propagates
+  - id: per-head
+    function: src/pricing.ts::perHead
+    guarantees:
+      - id: nonneg
+        theorem: perHead_nonneg
+  - id: effect
+    function: src/pricing.ts::effect
+    guarantees:
+      - id: signs
+        theorem: effect_signs

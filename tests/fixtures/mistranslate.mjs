@@ -16,6 +16,63 @@ const EDITS = {
   recursive: [["let tmp2 ← Js.add list_1.value tmp1", "let tmp2 ← Js.sub list_1.value tmp1"]],
   // The same, only for an item of 4242.
   recursive_rare: [["let tmp2 ← Js.add list_1.value tmp1", "let tmp2 ← if list_1.value.val = 4242 then Js.sub list_1.value tmp1 else Js.add list_1.value tmp1"]],
+  // Binary64: multiplies where the code divides — wrong for most inputs, so Node sees it.
+  dbl_common: [["let tmp1 ← Js.Dbl.mul price quantity", "let tmp1 ← Js.Dbl.div price quantity"]],
+  // Binary64: floors instead of rounding only for the exact amount the menu example hits
+  // (2805.84 cents) — a value no sample is likely to hit, so the bridge is what must catch it.
+  dbl_rare: [["let tmp9 ← Js.Dbl.math Core.F64.jsround tmp8",
+    "let tmp9 ← if tmp8.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.math Core.F64.floor tmp8 else Js.Dbl.math Core.F64.jsround tmp8"]],
+  // Binary64: subtracts where the code takes the JS remainder — wrong for most inputs.
+  dbl_rem: [["let tmp1 ← Js.Dbl.rem total parts", "let tmp1 ← Js.Dbl.sub total parts"]],
+  // Binary64 mutants, one per translated operation. Each swaps one emitted call for a
+  // different operation; the literal mutant is off by one ulp and the `num` mutant
+  // swaps a `Js.Dbl` op for the `Js.Num` op so the view no longer type-checks.
+  dbl_div: [["let tmp10 ← Js.Dbl.div tmp9 (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp10 ← Js.Dbl.mul tmp9 (Js.Dbl.lit 0x4059000000000000)"]],
+  dbl_sub: [["let tmp3 ← Js.Dbl.sub (Js.Dbl.lit 0x3ff0000000000000) tmp2",
+    "let tmp3 ← Js.Dbl.add (Js.Dbl.lit 0x3ff0000000000000) tmp2"]],
+  dbl_add: [["let tmp8 ← Js.Dbl.add whole tmp7", "let tmp8 ← Js.Dbl.sub whole tmp7"]],
+  dbl_neg: [["let tmp9 ← Js.Dbl.neg frac", "let tmp9 ← Js.Dbl.math Core.F64.abs frac"]],
+  dbl_floor: [["let tmp11 ← Js.Dbl.math Core.F64.floor tmp10", "let tmp11 ← Js.Dbl.math Core.F64.ceil tmp10"]],
+  dbl_ceil: [["let tmp5 ← Js.Dbl.math Core.F64.ceil tmp4", "let tmp5 ← Js.Dbl.math Core.F64.floor tmp4"]],
+  dbl_round: [["let tmp9 ← Js.Dbl.math Core.F64.jsround tmp8", "let tmp9 ← Js.Dbl.math Core.F64.trunc tmp8"]],
+  dbl_trunc: [["let tmp2 ← Js.Dbl.math Core.F64.trunc clipped", "let tmp2 ← Js.Dbl.math Core.F64.ceil clipped"]],
+  dbl_abs: [["let tmp1 ← Js.Dbl.math Core.F64.abs price", "let tmp1 ← Js.Dbl.math Core.F64.neg price"]],
+  dbl_min: [["Js.Dbl.min (Js.Dbl.max tmp1 min)", "Js.Dbl.max (Js.Dbl.max tmp1 min)"]],
+  dbl_max: [["Js.Dbl.max tmp1 min", "Js.Dbl.min tmp1 min"]],
+  dbl_sign: [["let tmp3 ← Js.Dbl.math Core.F64.sign tmp2", "let tmp3 ← Js.Dbl.math Core.F64.abs tmp2"]],
+  dbl_eq: [["((clipped).f).eq ((whole).f)", "((clipped).f).eq ((min).f)"]],
+  dbl_lt: [["((price).f).lt ((Js.Dbl.lit 0x0).f)", "((price).f).lt ((Js.Dbl.lit 0x4059000000000000).f)"]],
+  dbl_le: [["((frac).f).le ((Js.Dbl.lit 0x3fa999999999999a).f)", "((Js.Dbl.lit 0x3fa999999999999a).f).le ((frac).f)"]],
+  dbl_isfinite: [["Js.Dbl.isFinite price", "Js.Dbl.isNaN price"]],
+  dbl_isnan: [["Js.Dbl.isNaN price", "Js.Dbl.isFinite price"]],
+  dbl_isint: [["Js.Dbl.isInteger min", "Js.Dbl.isNaN min"]],
+  dbl_ulp: [["let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000001)"]],
+  dbl_num: [["let tmp1 ← Js.Dbl.mul price quantity", "let tmp1 ← Js.mul price quantity"]],
+  // Rare variants: the mutation only fires on a value no Node sample hits
+  // (0x40a5ebae147ae148 = 3317.84), so the bridge is what must catch it —
+  // Node sees no disagreement and the function stays `tested`.
+  dbl_rare_add: [["let tmp8 ← Js.Dbl.add whole tmp7",
+    "let tmp8 ← if whole.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.sub whole tmp7 else Js.Dbl.add whole tmp7"]],
+  dbl_rare_sub: [["let tmp3 ← Js.Dbl.sub (Js.Dbl.lit 0x3ff0000000000000) tmp2",
+    "let tmp3 ← if tmp2.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.add (Js.Dbl.lit 0x3ff0000000000000) tmp2 else Js.Dbl.sub (Js.Dbl.lit 0x3ff0000000000000) tmp2"]],
+  dbl_rare_mul: [["let tmp1 ← Js.Dbl.mul price quantity",
+    "let tmp1 ← if price.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.div price quantity else Js.Dbl.mul price quantity"]],
+  dbl_rare_div: [["let tmp10 ← Js.Dbl.div tmp9 (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp10 ← if tmp9.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.mul tmp9 (Js.Dbl.lit 0x4059000000000000) else Js.Dbl.div tmp9 (Js.Dbl.lit 0x4059000000000000)"]],
+  dbl_rare_rem: [["let tmp1 ← Js.Dbl.rem total parts",
+    "let tmp1 ← if total.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.sub total parts else Js.Dbl.rem total parts"]],
+  dbl_rare_neg: [["let tmp9 ← Js.Dbl.neg frac",
+    "let tmp9 ← if frac.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.math Core.F64.abs frac else Js.Dbl.neg frac"]],
+  dbl_rare_lt: [["((price).f).lt ((Js.Dbl.lit 0x0).f)",
+    "(if price.f = Core.F64.ofBits 0x40a5ebae147ae148 then ((price).f).lt ((Js.Dbl.lit 0x4059000000000000).f) else ((price).f).lt ((Js.Dbl.lit 0x0).f))"]],
+  dbl_rare_eq: [["((clipped).f).eq ((whole).f)",
+    "(if clipped.f = Core.F64.ofBits 0x40a5ebae147ae148 then ((clipped).f).eq ((min).f) else ((clipped).f).eq ((whole).f))"]],
+  dbl_rare_isnan: [["Js.Dbl.isNaN price",
+    "(if price.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.isFinite price else Js.Dbl.isNaN price)"]],
+  dbl_rare_ulp: [["let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp2 ← if discountPct.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000001) else Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)"]],
 };
 
 export function run(kind, configPath) {

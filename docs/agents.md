@@ -97,3 +97,16 @@ Structured errors (`errors` on guarantees and contract failures):
 "errors": [...], "guarantees": [{guarantee, function, theorem, verified, reason, claim, hypotheses}]}`.
 
 The schema is covered by `tests/test_agent_interface.py`.
+
+## Contracts on `number` (doubles)
+
+A function the translator moved to IEEE-754 binary64 (`Js.Dbl`) needs its contract
+stated on `Js.Dbl` — a stale `Js.Num` contract is `CONTRACT_STALE` with the
+construct that flipped the mode in `reason`. Write exact decimals as
+`dbl!"12.99"`; write bounds and monotonicity on `x.f.toRatD` (the exact rational
+of a finite double) using the lemmas in `spike/core/F64.lean`, and guard on
+`x.f.isFin = true` when the contract needs a finite value. Double proof files
+start with `set_option exponentiation.threshold 4096` + `maxRecDepth 100000`;
+unfold the view with `simp [Js.Dbl.add, Js.Dbl.sub, Js.Dbl.mul, Js.Dbl.div,
+Js.Dbl.math, WP.spec_ok]` and rewrite with `Js.Dbl.toRat_eq` to reach `toRatD`.
+See `examples/ts-dbl` for a worked contract and proofs.

@@ -1,0 +1,14 @@
+version: 1
+language: typescript
+package: .
+lean: proofci
+
+targets:
+  - id: shelf
+    function: src/pricing.ts::shelfPrice
+    guarantees:
+      - id: nan-answer
+        theorem: shelf_nan
+      - id: covered
+        theorem: shelf_nonneg
+        required: false

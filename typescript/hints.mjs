@@ -80,8 +80,6 @@ function emptyRecordHint({ node, checker }) {
 
 const METHODS = {
   pow: "write the product out with one factor per power (`a * a * a` for `Math.pow(a, 3)`)",
-  round: "for `Math.round(a / b)` with `b > 0`, write `Math.floor((2 * a + b) / (2 * b))`; a whole number rounds to itself",
-  sign: "compare with 0 (`a > 0 ? 1 : a < 0 ? -1 : 0`)",
   random: none("randomness is not a function of the inputs"),
   sort: none("`sort` has no model; keep the input sorted, or prove the guarantee for the unsorted list"),
   reverse: "build the reversed array with a loop from the end, pushing onto a new local array",
@@ -192,7 +190,14 @@ export const HINTS = [
   [/would share a Lean name/, "rename one of the two declarations"],
   [/is not a plain field/, "declare it as a field (`name: T`), not a method, getter or computed key"],
   [/unions must be tagged records|union members need a string/, TAGGED],
-  [/is not a safe integer/, "work in whole units (cents, basis points); `number` is a safe integer and fractions have no model yet"],
+  [/is not a safe integer/, "work in whole units (cents, basis points); `number` is a safe integer here, so only arithmetic that could leave the integers (`/`, `Math.round`, a `Number.is*` test, `NaN`/`Infinity`) gets the full double model"],
+  [/`toFixed` on a double|a double can't be printed yet|`toString` on a double/, "format the value in the host and pass it back as a `string`, or compare against an exact `number`"],
+  [/only parses to an integer for now/, "parse at the boundary and pass the `number` in"],
+  [/isn't bridged yet — write the loop/, "write the loop by hand, or keep the index an integer (a `for` loop, `xs.findIndex` on integers)"],
+  [/declare it with the same numbers/, "a `const` keeps the numeric mode it was declared for: integer literals read as doubles only inside double code, and a fractional `const` can't be read by integer code"],
+  [/is taken — rename it or the constant/, "a constant re-evaluated for double code is named `<const>Dbl` — rename whichever `Dbl`-suffixed name it collides with"],
+  [/is used from both safe-integer and double code/, "a helper can't serve both numeric modes — copy it under a second name so each caller gets the one in its mode"],
+  [/real `number` arithmetic inside `async` isn't bridged yet/, "keep the awaited calls in the `async` function and move the arithmetic into a plain function it calls"],
 
   // functions
   [/this function has no body to translate/, `translate a function with a body (not an overload or \`declare\`); for a package function, ${PACKAGE}`],

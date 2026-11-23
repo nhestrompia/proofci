@@ -15,7 +15,7 @@ const num = x => {
   bits.setFloat64(0, x);
   return `(F64.ofBits ${bits.getBigUint64(0)})`;
 };
-const MATH = { floor: "F64.floor", ceil: "F64.ceil", trunc: "F64.trunc" };
+const MATH = { floor: "F64.floor", ceil: "F64.ceil", trunc: "F64.trunc", round: "F64.jsround", sign: "F64.sign", abs: "F64.abs" };
 const UNITS = t => `[${[...Array(t.length).keys()].map(i => t.charCodeAt(i)).join(", ")}]`;
 // Methods that lower to a built-in, by the receiver's type and the number of arguments.
 const STRING_METHODS = {
@@ -43,7 +43,7 @@ const regexOf = (checker, node) => {
 };
 const HOF = { map: "map", filter: "filter", some: "some", every: "every", find: "find", findIndex: "findIndex" };
 const isSet = t => t.symbol?.name === "Set" || t.symbol?.name === "ReadonlySet";
-const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numFinite", isSafeInteger: "numFinite", isNaN: "numNaN" };
+const NUMBER_TESTS = { isFinite: "numFinite", isInteger: "numInteger", isSafeInteger: "numSafe", isNaN: "numNaN" };
 const READS = new Set(["length", "join", "slice", "includes", "indexOf", "map", "filter", "some", "every", "find", "reduce", "forEach", "lastIndexOf", "at", "flat", "flatMap", "findIndex"]);
 const ARRAY_METHODS = { "includes/1": "includes", "join/1": "join", "slice/1": "sliceFrom", "slice/2": "slice", "indexOf/1": "indexOfStr", "lastIndexOf/1": "lastIndexOfStr", "at/1": "atRel", "flat/0": "flat" };
 
@@ -430,10 +430,10 @@ export function lower(root, targets, { paths, eff } = {}) {
         flush();
         return parts.length === 1 ? `.prim .concat [${parts[0]}, .array []]` : parts.reduce((a, b) => `.prim .concat [${a}, ${b}]`);
       }
-      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && MATH[e.expression.name.text]) {
+      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && MATH[e.expression.name.text] && e.arguments.length === 1) {
         return `.math ${MATH[e.expression.name.text]} (${E(e.arguments[0])})`;
       }
-      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && ["min", "max", "abs"].includes(e.expression.name.text)) {
+      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.expression.getText() === "Math" && ["min", "max"].includes(e.expression.name.text)) {
         return `.prim .${e.expression.name.text} [${e.arguments.map(E).join(", ")}]`;
       }
       if (ts.isCallExpression(e)) {

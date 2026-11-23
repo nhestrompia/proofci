@@ -45,7 +45,41 @@ test("arithmetic binds each step, so a failure stops the function", () => {
 test("floored division keeps the exact quotient", () => {
   emits("export function f(a: number, b: number) { return Math.floor(a / b); }", "Js.floorDiv a b");
   emits("export function f(a: number, b: number) { return Math.ceil(a / b); }", "Js.ceilDiv a b");
-  emits("export function f(a: number, b: number) { return a / b; }", "Js.div a b");
+  emits("export function f(a: number, b: number) { return a / b; }", "Js.Dbl.div a b");
+  emits("export function f(a: number) { return a * 0.5; }", "Js.Dbl.mul a (Js.Dbl.lit 0x3fe0000000000000)");
+  emits("export function f() { return 9007199254740993; }", "Js.Dbl.lit 0x");
+  emits("export function f(a: number) { return Math.round(a * 10) / 10; }", "Core.F64.jsround", "Js.Dbl.div");
+  emits("export function f(a: number) { return Math.sign(a); }", "Core.F64.sign");
+});
+
+test("a computed integer that can't be `-0` lifts plainly into doubles", () => {
+  // clampInt(0) is a literal or a `number` parameter on every return path, so
+  // `freeUnits` is provably not `-0` and `Js.Dbl.ofNumR` keeps it provable.
+  emits(`export function clampInt(n: number) { return n < 0 ? 0 : n; }
+const freeUnits = clampInt(0);
+export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumR");
+});
+
+test("a computed integer that may be `-0` still lifts through ofNumNe", () => {
+  // `*` can produce `-0`, so the lift must keep its runtime `0` refusal.
+  emits(`export function double(n: number) { return n * 0; }
+const zeroish = double(1);
+export function f(price: number) { return price + zeroish + 0.5; }`, "Js.Dbl.ofNumNe");
+});
+
+test("a parameter returned by a helper is only as `-0`-safe as its argument", () => {
+  // `n` is `-0`-free only because the call passes a literal; passing `n * 0`
+  // (which is `-0` in JavaScript) must keep the runtime `0` refusal.
+  emits(`export function clampInt(n: number) { return n < 0 ? 0 : n; }
+const freeUnits = clampInt(0 * -1);
+export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumNe");
+});
+
+test("literal products that come out `+0` lift plainly", () => {
+  // `0 * 1` is `+0`, so the const can lift without the runtime `0` refusal.
+  emits(`export function clampInt(n: number) { return n < 0 ? 0 : n; }
+const freeUnits = clampInt(0 * 1);
+export function f(price: number) { return price + freeUnits + 0.5; }`, "Js.Dbl.ofNumR");
 });
 
 test("the right side of && only runs when it has to", () => {
@@ -147,8 +181,6 @@ test("structural typing can't smuggle one record in as another", () => {
 
 test("JavaScript behavior the model doesn't cover is rejected", () => {
   const cases = [
-    ["export function f(a: number) { return a * 0.5; }", /not a safe integer/],
-    ["export function f() { return 9007199254740993; }", /not a safe integer/],
     ["export function f(a: number) { return a == 1; }", /not supported/],
     ["export function f(a: symbol) { return a ? 1 : 0; }", /truthiness|type `symbol`/],
     ["export function f(a: number, b: boolean) { return a && b; }", /boolean/],
@@ -556,7 +588,7 @@ test("a function with no source is rejected", () => {
 });
 
 test("a failed target stays declared so that the other targets are judged", () => {
-  const result = run("export function f(a: number) { return a * 0.5; }");
+  const result = run("export function f(a: number) { return Math.sqrt(a); }");
   assert.ok(result.source.includes("axiom a.f"), result.source);
 });
 
@@ -714,9 +746,10 @@ test("a literal compares with an optional value through some", () => {
 });
 
 test("number built-ins", () => {
-  emits("export function f(a: number) { return Number.isFinite(a); }", "Js.isFinite a");
-  emits("export function f(a?: number) { return Number.isInteger(a); }", "Option.isSome a");
-  emits("export function f(a: number) { return Number.isNaN(a); }", "Js.isNaN a");
+  emits("export function f(a: number) { return Number.isFinite(a); }", "Js.Dbl.isFinite a");
+  emits("export function f(a?: number) { return Number.isInteger(a); }", "map Js.Dbl.isInteger", ".getD false");
+  emits("export function f(a: number) { return Number.isNaN(a); }", "Js.Dbl.isNaN a");
+  emits("export function f(a: number) { return Number.isSafeInteger(a); }", "Js.Dbl.isSafe a");
   emits("export function f(a: number) { return a.toFixed(2); }", "Js.toFixed a");
   emits("export function f(a: number) { return a.toFixed(); }", "Js.numStr a");
   emits("export function f(a: number) { return a.toString(); }", "Js.numStr a");

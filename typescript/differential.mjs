@@ -11,6 +11,8 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const MAX = Number.MAX_SAFE_INTEGER;
+const DBL_EDGES = [NaN, Infinity, -Infinity, -0, 0.1, 0.2, 0.5, -0.5, 2 ** 53, 2 ** 53 - 1, -(2 ** 53), 5e-324,
+  1.7976931348623157e308, Number.EPSILON, 0.49999999999999994, -0.49999999999999994, 1 / 3];
 const EDGES = [0, 1, -1, 2, -2, 3, 7, 10, -10, 100, 500, 1000, 9999, 10000, 10001, 94906265, 94906266, 2 ** 31, 2 ** 32, 2 ** 52, MAX - 1, MAX, -MAX];
 
 const TEXTS = ["", "a", "b", "abc", " x ", "A-b", "a,b,c", ",", ",,", "Hello World", "é", "😀", "a😀b", "\ud800", "ÄB", "\t\n", "12", "$&", " 42 ", "-7", "+3", "007", "-0", "1e3", "0x1F", "1.5", "9007199254740993"];
@@ -52,12 +54,20 @@ export function generator(seed) {
     if (shape < 0.9) return Math.floor(next() * 200_000_001) - 100_000_000;
     return Math.floor((next() - 0.5) * 2 * MAX);
   };
+  const dbl = () => {
+    const shape = next();
+    if (shape < 0.3) return number();
+    if (shape < 0.5) return pick(DBL_EDGES);
+    if (shape < 0.7) return (next() - 0.5) * 200;
+    return next() < 0.5 ? number() / 7 : (next() - 0.5) * 1e308;
+  };
   const defs = new Map();
   let depth = 0;
   const deep = type => depth >= DEPTH && recurs(type);
   const value = type => {
     switch (type.kind) {
       case "number": return number();
+      case "double": return dbl();
       case "boolean": return next() < 0.5;
       case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
       case "void": return undefined;
@@ -102,6 +112,12 @@ export function term(type, value, defs = new Map()) {
     case "number":
       if (!Number.isSafeInteger(value)) return undefined;
       return `(Js.lit (${value === 0 ? 0 : value}))`;
+    case "double": {
+      if (typeof value !== "number") return undefined;
+      const buf = new DataView(new ArrayBuffer(8));
+      buf.setFloat64(0, value);
+      return `(Js.Dbl.lit 0x${buf.getBigUint64(0).toString(16)})`;
+    }
     case "boolean":
       return typeof value === "boolean" ? String(value) : undefined;
     case "bigint":

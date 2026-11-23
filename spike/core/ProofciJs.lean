@@ -1,4 +1,5 @@
 import Aeneas
+import F64
 
 /-!
 # JavaScript numbers for translated TypeScript
@@ -8,10 +9,14 @@ succeeds. It fails whenever the exact result is not a safe integer, so a proof
 that a function returns a value also proves it never rounded, overflowed or
 produced `NaN` or `Infinity`.
 
+`Js.Dbl` is a full IEEE-754 binary64 (`Core.F64`): fractions, `NaN`, `Infinity`
+and `-0` exactly as JavaScript computes them. It is the sibling of `Js.Num` for
+functions that work on prices, percentages, averages or ratios. `ok` means the
+same thing for both: JavaScript computes that value.
+
 The direction matters: `ok v` means JavaScript computes `v`. A failure says
-nothing about JavaScript, so code that uses fractions is unproved, never
-misjudged. `-0` is treated as `0`: the translator rejects everything that could
-tell them apart.
+nothing about JavaScript, so code that uses unmodelled forms is unproved, never
+misjudged.
 
 This file declares no axioms.
 -/
@@ -115,6 +120,7 @@ def truthyBool : Option Bool → Bool
 def truthyBig : Option Int → Bool
   | some n => n != 0
   | none => false
+
 
 theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 9007199254740991) :
     mk v ⦃ r => r.val = v ⦄ := by
@@ -644,6 +650,12 @@ def isFinite (_ : Num) : Bool := true
 /-- `Number.isNaN(x)`, false for the same reason. -/
 def isNaN (_ : Num) : Bool := false
 
+/-- `Number.isInteger`: every `Num` is a whole number. -/
+def isInteger (_ : Num) : Bool := true
+
+/-- `Number.isSafeInteger`: every `Num` is in the exact range. -/
+def isSafeInteger (_ : Num) : Bool := true
+
 /-- `x.toFixed(d)`. A safe integer has no fraction to round, so this only pads. `d` must be
     in the range JavaScript allows, and it throws otherwise. -/
 def toFixed (x d : Num) : Result Str :=
@@ -811,5 +823,162 @@ def agree {α} [DecidableEq α] (label : String) (r : Result α) (expected : Opt
   | .ok v => IO.println (if some v = expected then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
   | .vis (.fail .panic) _ => IO.println (if threw then s!"PROOFCI_DIFF agree {label}" else s!"PROOFCI_DIFF differ {label}")
   | _ => IO.println s!"PROOFCI_DIFF failed {label}"
+
+/-- A JavaScript `number` in full: IEEE-754 binary64 (`Core.F64`). -/
+structure Dbl where
+  f : Core.F64
+  deriving DecidableEq, Repr
+
+instance : Inhabited Dbl := ⟨⟨.fin false 0⟩⟩
+
+namespace Dbl
+
+def add (x y : Dbl) : Result Dbl := ok ⟨x.f.add y.f⟩
+def sub (x y : Dbl) : Result Dbl := ok ⟨x.f.sub y.f⟩
+def mul (x y : Dbl) : Result Dbl := ok ⟨x.f.mul y.f⟩
+def div (x y : Dbl) : Result Dbl := ok ⟨x.f.div y.f⟩
+/-- `x % y`: the sign of the dividend, exactly as JavaScript. -/
+def rem (x y : Dbl) : Result Dbl := ok ⟨x.f.rem y.f⟩
+def neg (x : Dbl) : Result Dbl := ok ⟨x.f.neg⟩
+
+/-- `Math.floor`, `ceil`, `trunc`, `round`, `sign` and `abs`, named by their `F64` op. -/
+def math (f : Core.F64 → Core.F64) (x : Dbl) : Result Dbl := ok ⟨f x.f⟩
+
+/-- `Math.min(x, y)` -/
+def min (x y : Dbl) : Dbl := ⟨x.f.fmin y.f⟩
+/-- `Math.max(x, y)` -/
+def max (x y : Dbl) : Dbl := ⟨x.f.fmax y.f⟩
+
+/-- `Number.isFinite` -/
+def isFinite (x : Dbl) : Bool := x.f.isFin
+/-- `Number.isNaN` -/
+def isNaN (x : Dbl) : Bool := x.f.isNan
+/-- `Number.isInteger` -/
+def isInteger (x : Dbl) : Bool := x.f.isInt'
+/-- `Number.isSafeInteger` -/
+def isSafe (x : Dbl) : Bool := x.f.isSafe
+
+/-- `if (x)` on a possibly missing double: `0`, `-0` and `NaN` are falsy. -/
+def truthy : Option Dbl → Bool
+  | some ⟨.fin _ 0⟩ | some ⟨.nan⟩ | none => false
+  | some _ => true
+
+/-- A double read back as a `Num`, when it already holds an integer in the safe
+range (`-0` reads as `0`). Anything else fails, like `Core.asNum`. -/
+def numOf (x : Dbl) : Result Num :=
+  match x.f with
+  | .fin s n => if n % Core.F64.unit = 0 then Js.mk (Core.F64.signed s (n / Core.F64.unit)) else fail .undef
+  | _ => fail .undef
+
+/-- A safe integer read as a double; safe integers are exactly representable.
+Used for constants whose double re-evaluation is refused: exact, but the
+bridge does not prove the lifted result. -/
+def ofNum (x : Num) : Dbl := ⟨Core.F64.ofInt x.val⟩
+
+/-- Lifts a computed integer into a double. Only for values whose expression
+can't produce `-0` (see `ofNumNe` for the case that can). -/
+def ofNumR (x : Result Num) : Result Dbl := do
+  let v ← x
+  ok (ofNum v)
+
+/-- The lift double code uses when re-evaluating a constant is refused. `0`
+fails: JavaScript may have computed `-0` there, which `Num` cannot
+distinguish, so the lift fails closed rather than erase a sign. -/
+def ofNumNe (x : Result Num) : Result Dbl := do
+  let v ← x
+  if v.val = 0 then fail .undef else ok (ofNum v)
+
+/-- The length as a double, for code working on doubles. -/
+def len {α} (xs : List α) : Result Dbl := ok ⟨Core.F64.ofInt xs.length⟩
+
+/-- `s.indexOf(sub)` as a double. -/
+def strIndexOf (s sub : Str) : Result Dbl := do
+  let r ← Js.strIndexOf s sub
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `s.lastIndexOf(sub)` as a double. -/
+def strLastIndexOf (s sub : Str) : Result Dbl := do
+  let r ← Js.strLastIndexOf s sub
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `s.charCodeAt(i)` as a double. -/
+def charCodeAt (s : Str) (i : Num) : Result Dbl := do
+  let r ← Js.charCodeAt s i
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `xs.indexOf(v)` as a double. -/
+def indexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Dbl := do
+  let r ← Js.indexOf xs v
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `xs.lastIndexOf(v)` as a double. -/
+def lastIndexOf {α} [DecidableEq α] (xs : List α) (v : α) : Result Dbl := do
+  let r ← Js.lastIndexOf xs v
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- `xs.findIndex(...)` as a double. -/
+def findIndex {α} (f : α → Result Bool) (xs : List α) : Result Dbl := do
+  let r ← Js.findIndex f xs
+  ok ⟨Core.F64.ofInt r.val⟩
+
+/-- The real number a finite double stands for, as a rational; `0` for `NaN` and
+the infinities, which have none. Contracts use it to talk about value, not bits. -/
+def toRat (x : Dbl) : Rat :=
+  match x.f with
+  | .fin s n => (if s then -(n : Rat) else n) / 2 ^ 1074
+  | _ => 0
+
+
+/-- `Js.Dbl.toRat` is the model's `toRatD`, so `Core.F64` order lemmas apply. -/
+theorem toRat_eq (x : Dbl) : toRat x = x.f.toRatD := by
+  cases x with
+  | mk f =>
+    cases f with
+    | fin s n =>
+      rw [Core.F64.toRat_fin, Int.cast_natCast, Core.F64.unit_rat]
+      cases s <;> simp [toRat, Core.F64.signed, Int.cast_natCast]
+    | nan => rfl
+    | inf s => rfl
+
+/-- `ofDecimal m e`: the nearest double to `m * 10^-e`, so `ofDecimal 1299 2` is
+`12.99`. Contracts use it to write readable decimal literals; `Core.F64.ofDecimal`
+rounds to the nearest binary64, ties to even — the IEEE-correct value as long as
+`m` and `10^e` are safe integers (any sane fixed-point literal). -/
+def ofDecimal (m : Int) (e : Nat) : Dbl :=
+  ⟨Core.F64.ofDecimal m e⟩
+
+/-- A literal, by its binary64 bits: what a test vector or a generated term carries. -/
+def lit (b : Nat) : Dbl := ⟨Core.F64.ofBits b⟩
+
+/-- `"12"` or `"12.99"` (optional leading `-`) → `(magnitude, scale)` for `ofDecimal`. -/
+private def parseDecimal (s : String) : Option (Int × Nat) := do
+  let neg := s.startsWith "-"
+  let s := if neg then String.ofList (s.toList.drop 1) else s
+  match String.splitOn s "." with
+  | [w] =>
+    let w ← String.toNat? w
+    pure ((if neg then -(w : Int) else (w : Int)), 0)
+  | [w, f] =>
+    let w ← String.toNat? w
+    let fnum ← String.toNat? f
+    let e := String.length f
+    let mag : Int := (w : Int) * 10 ^ e + fnum
+    pure ((if neg then -mag else mag), e)
+  | _ => none
+
+/-- `dbl!"12.99"`: a decimal literal compiled to `Js.Dbl.lit <bits>` — the nearest
+binary64 is computed at elaboration time, so in contracts it reads as a decimal
+while comparing to `lit`/bits stays `decide`-cheap. -/
+elab "dbl!" s:str : term => do
+  match parseDecimal s.getString with
+  | some (m, e) =>
+    -- `ofDecimal 0 e` is `+0`; a signed zero literal keeps `-0`'s bits.
+    let bits := if m == 0 && s.getString.startsWith "-" then 0x8000000000000000
+      else Core.F64.toBits (Core.F64.ofDecimal m e)
+    pure (Lean.mkApp (Lean.mkConst ``Js.Dbl.lit) (Lean.Expr.lit (.natVal bits)))
+  | none => throwError "dbl!: expected a decimal like \"12\" or \"12.99\", got {s.getString.quote}"
+
+
+end Dbl
 
 end Js

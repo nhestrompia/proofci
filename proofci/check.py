@@ -351,9 +351,17 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             audit = lean.audit(ws, [(o.theorem, lean_names.get(o.function, lean_function(o.function))) for o in pending],
                                list(model_names))
         except lean.ContractError as error:
-            names = {o.theorem for o in pending}
-            mark(CONTRACT_STALE, "the protected contract no longer elaborates against this code; "
-                 "a maintainer must update it:\n" + str(error), only=names)
+            contract_src = _contract_text(policy_checkout, active.lean)
+            for o in pending:
+                sig = (extraction.signatures or {}).get(o.function) or {}
+                if sig.get("dbl") and "Js.Num" in claims.theorems(contract_src).get(o.theorem, {}).get("statement", ""):
+                    o.status, o.reason = CONTRACT_STALE, (
+                        f"`{o.function}` now needs binary64 numbers because of {sig['dbl']}; "
+                        f"restate the contract on `Js.Dbl`")
+                else:
+                    o.status, o.reason = CONTRACT_STALE, (
+                        "the protected contract no longer elaborates against this code; "
+                        "a maintainer must update it:\n" + str(error))
             report.timings["contract"] = round(time.monotonic() - t0, 1)
             return report
         report.timings["contract"] = round(time.monotonic() - t0, 1)
@@ -718,3 +726,4 @@ def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="ba
 def lean_function(rust_path: str):
     """`ledger::calculate_fee` -> `ledger.calculate_fee` (Aeneas naming)."""
     return ".".join(rust_path.split("::"))
+
