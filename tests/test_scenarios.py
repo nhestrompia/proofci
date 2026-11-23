@@ -727,7 +727,7 @@ SCENARIOS.update({
     "ts-tree-mistranslated-view-seen-by-node": (None, dict.fromkeys(TREE_GUARANTEES, X), 1, {
         "env": RECURSIVE, "functions": {TREE + "::total": "failed"}}),
     "ts-async-baseline": (None, dict.fromkeys(ASYNC_GUARANTEES, V), 0, {
-        "functions": {ASYNC_FN: "tested"}, "function_reasons": {ASYNC_FN: "did not finish"},
+        "functions": {ASYNC_FN: "tested"}, "function_reasons": {ASYNC_FN: "the bridge proof"},
         "summary": {"proved": 0, "tested": 1, "failed": 0}}),
     "ts-async-bridge-required": (policy_requires_bridge, dict.fromkeys(ASYNC_GUARANTEES, X), 1, {
         "functions": {ASYNC_FN: "tested"}}),
@@ -764,7 +764,7 @@ SCENARIOS.update({
 
 # A crash in the translator also reports `unsupported`, so these check the cause.
 TS_REASONS = {
-    "ts-async-bridge-required": "did not finish",
+    "ts-async-bridge-required": "the bridge proof",
     "ts-bridge-mistranslated-view-required": "require_bridge",
     "ts-bridge-requirement-dropped-by-pr": "require_bridge",
     "ts-bridge-mistranslated-view-seen-by-node": "disagrees with Node",
