@@ -75,7 +75,8 @@ def fail(message):
 
 def bridge_limits():
     """`docker run` options that hand the TypeScript bridge's time limits to the check."""
-    names = ("PROOFCI_BRIDGE_TIMEOUT", "PROOFCI_BRIDGE_BUDGET")
+    names = ("PROOFCI_BRIDGE_TIMEOUT", "PROOFCI_BRIDGE_BUDGET", "PROOFCI_MUTATION_FULL",
+             "PROOFCI_MUTANTS", "PROOFCI_MUTATION_BUDGET")
     return [option for name in names if os.environ.get(name) for option in ("-e", f"{name}={os.environ[name]}")]
 
 

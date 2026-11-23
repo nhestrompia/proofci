@@ -88,6 +88,8 @@ def _claims(report):
             rests.append("a Lean view tested against Node but not proved to match JavaScript")
         if rests:
             lines.append("  - relies on " + "; ".join(rests))
+        for w in g.get("strength") or []:
+            lines.append(f"  - strength: {w}")
     return lines
 
 

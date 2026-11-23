@@ -189,8 +189,19 @@ wrong.
 | Proofs need updating after a refactor | ❌ `unproven`, with Lean's error; update `Proofs.lean` in the same PR |
 | Code breaks a guarantee | ❌ `unproven`; no proof can exist |
 | Signature changed so the contract no longer type-checks | ⚠️ `contract-stale`; a maintainer updates the contract (a policy change) |
+| A hypothesis can never hold (`a ≠ a`, a closed condition that decides to false) | ⚠️ `contract-stale`; the guarantee is vacuous — it would prove for any code |
 | Code reaches something ProofCI cannot translate | ⛔ `unsupported`, with the source line |
 | Guarantee removed or contract weakened | blocked until an approver approves that exact commit |
+
+A proved guarantee can still be weak: its entry under "What each guarantee says"
+gets a **strength:** line when its hypotheses hold on none of the generated
+inputs (probably vacuous), or when it still verifies against small defects
+planted in the translated code (it doesn't constrain the function; the line
+names the mutated line). These don't fail the check — they flag statements a
+human should look at before trusting the green. The hypothesis check is cheap and runs on every TypeScript verification;
+the planted-defect check runs only on guarantees whose statement is new or
+changed in the pull request (set `PROOFCI_MUTATION_FULL=1` to sweep every
+verified guarantee).
 
 See [the demo repository](https://github.com/nhestrompia/proofci-demo/pulls)
 for live examples.

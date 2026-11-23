@@ -383,6 +383,7 @@ export async function differential({ root, out, module, signatures, files, impor
     "open Aeneas Aeneas.Std Result", ""];
   const skipped = [];
   const labels = [];
+  const witness = {};   // arg terms per target for the contract-witness check
   let seed = 1;
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
@@ -410,6 +411,7 @@ export async function differential({ root, out, module, signatures, files, impor
         const run = replay(trace, effects);
         labels.push(`${target} ${show(inputs)}`);
         if (args.includes(undefined) || !run) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+        (witness[target] ??= []).push(args);
         lines.push(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
           + `${expected === undefined ? "none" : `(some ${expected})`} ${run.trace}`);
       }
@@ -426,12 +428,14 @@ export async function differential({ root, out, module, signatures, files, impor
       const args = signature.params.map((type, i) => term(type, inputs[i]));
       labels.push(`${target} ${show(inputs)}`);
       if (args.includes(undefined)) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+      (witness[target] ??= []).push(args);
       lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
         + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
   }
   writeFileSync(join(out, "Differential.lean"), `${lines.join("\n")}\n`);
   writeFileSync(join(out, "cases.json"), JSON.stringify(labels));
+  writeFileSync(join(out, "inputs.json"), JSON.stringify(witness));
   return { skipped };
 }
 

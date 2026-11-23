@@ -313,6 +313,20 @@ def contract_no_panic(head):
 contract_no_panic.also_base = no_panic_contract
 
 
+def unsatisfiable_hypothesis_contract(checkout):
+    # `h` can never hold: the guarantee is vacuous and blocked as contract-stale.
+    edit(checkout / "proofci/Contract.lean", ZERO_CONTRACT,
+         "theorem zero_amount_no_fee (fee_bps : Std.U64) (h : fee_bps.val ≠ fee_bps.val) :\n"
+         "    calculate_fee 0#u64 fee_bps ⦃ fee => fee.val = 0 ⦄ := by sorry")
+
+
+def contract_unsatisfiable_hypothesis(head):
+    unsatisfiable_hypothesis_contract(head)
+
+
+contract_unsatisfiable_hypothesis.also_base = unsatisfiable_hypothesis_contract
+
+
 def contract_adds_undocumented_guarantee(head):
     edit(head / "proofci.yaml",
          "      - id: zero-amount\n        theorem: zero_amount_no_fee   # no fee on a zero amount\n",
@@ -459,6 +473,9 @@ SCENARIOS = {
     "contract-assumes-result": (weak_contract_assumes_result, {
         "fees/fee-capped": V, "fees/zero-amount": U, "transfer/conservation": V, "transfer/rejects-overdraft": V}, 1),
     "contract-no-panic": (contract_no_panic, dict.fromkeys(GUARANTEES, V), 0),
+    "contract-unsatisfiable-hypothesis": (contract_unsatisfiable_hypothesis, {
+        "fees/fee-capped": V, "fees/zero-amount": S, "transfer/conservation": V,
+        "transfer/rejects-overdraft": V}, 1),
     # An approved policy change must still put a /-- claim on a new guarantee ...
     "contract-adds-undocumented-guarantee": (contract_adds_undocumented_guarantee,
         {**dict.fromkeys(GUARANTEES, V), "fees/no-cap": S}, 1, {"policy": "head"}),
@@ -538,12 +555,23 @@ def run_scenario(name, out_dir=None):
         problems.append(f"no guarantee was rejected for the expected reason: {wanted!r}")
     if name == "weaken-policy" and not data["policy_changes"]:
         problems.append("policy change not reported")
-    if name == "contract-no-panic" and any(g.get("warnings") for g in data["guarantees"]):
+    if name == "contract-no-panic" and any(g.get("warnings") or g.get("strength") for g in data["guarantees"]):
         problems.append("a no-panic guarantee was warned about")
     if name == "contract-assumes-result":
-        warned = {f"{g['target']}/{g['guarantee']}" for g in data["guarantees"] if g.get("warnings")}
+        warned = {f"{g['target']}/{g['guarantee']}" for g in data["guarantees"]
+                  if g.get("warnings") or g.get("strength")}
         if warned != {"fees/zero-amount"}:
             problems.append(f"expected a contract warning on fees/zero-amount only, got {warned}")
+    for key, wanted in options.get("warnings", {}).items():
+        got = [w for g in data["guarantees"] if f"{g['target']}/{g['guarantee']}" == key
+               for w in g.get("warnings", []) + g.get("strength", [])]
+        if not any(wanted in w for w in got):
+            problems.append(f"expected a warning matching {wanted!r} on {key}: {got}")
+    if "only_warnings" in options:
+        warned = {f"{g['target']}/{g['guarantee']}" for g in data["guarantees"]
+                  if g.get("warnings") or g.get("strength")}
+        if warned != set(options["only_warnings"]):
+            problems.append(f"warnings on {warned}, expected only {options['only_warnings']}")
     if problems:
         problems.append(done.stdout[-4000:])
     return problems
@@ -662,6 +690,45 @@ def ts_alias_hides_a_write(head):
 
 def ts_contract_weakened(head):
     edit(head / "proofci/Contract.lean", "fee.val ≤ 500", "fee.val ≤ 5000")
+
+
+def vacuous_fee_hypothesis(checkout):
+    # The product is essentially never 424242: no generated input satisfies the
+    # hypothesis, so the guarantee is probably vacuous. Weaker than the old
+    # hypothesis, so the same proof still checks.
+    edit(checkout / "proofci/Contract.lean",
+         "(h : amount.val * rate.val ≤ 9007199254740991)",
+         "(h : amount.val * rate.val = 424242)")
+
+
+def ts_vacuous_hypothesis(head):
+    vacuous_fee_hypothesis(head)
+    # The proof states the theorem verbatim, so it must match the new contract.
+    edit(head / "proofci/Proofs.lean",
+         "(h : amount.val * rate.val ≤ 9007199254740991)",
+         "(h : amount.val * rate.val = 424242)")
+
+
+ts_vacuous_hypothesis.also_base = vacuous_fee_hypothesis
+
+
+def unconstrained_to_contract(checkout):
+    # Pins only `to`: every planted defect elsewhere keeps it true — the
+    # mutation check warns that it doesn't constrain the function.
+    edit(checkout / "proofci/Contract.lean",
+         "b.from.val + b.to.val = a.from.val + a.to.val ∧ 0 ≤ b.from.val",
+         "a.to.val - amount.val ≤ b.to.val")
+
+
+def ts_vacuous_postcondition(head):
+    unconstrained_to_contract(head)
+    # The proof states the theorem verbatim, so it must match the new contract.
+    edit(head / "proofci/Proofs.lean",
+         "b.from.val + b.to.val = a.from.val + a.to.val ∧ 0 ≤ b.from.val",
+         "a.to.val - amount.val ≤ b.to.val")
+
+
+ts_vacuous_postcondition.also_base = unconstrained_to_contract
 
 
 # --- the proved-guarantee ratchet: a proved function must not silently lose its bridge
@@ -844,6 +911,24 @@ SCENARIOS.update({
     "ts-mutates-callers-array": (ts_mutates_callers_array, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-alias-hides-a-write": (ts_alias_hides_a_write, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-contract-weakened": (ts_contract_weakened, ts_results(), 1),
+    # A hypothesis no generated input satisfies flags the guarantee as probably
+    # vacuous; the check warns rather than fails (search can't prove it). A
+    # boundary mutant on transfer also escapes every guarantee — the real
+    # contract leaves that path unconstrained, which the warning is for.
+    "ts-vacuous-hypothesis": (ts_vacuous_hypothesis, ts_results(), 0, {
+        # the contract is planted on both sides, so opt in to the full sweep
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "warnings": {"fees/capped": "none of the",
+                     "transfer/conservation": "still verifies",
+                     "transfer/rejects-overdraft": "still verifies"},
+        "only_warnings": {"fees/capped", "transfer/conservation", "transfer/rejects-overdraft"}}),
+    # The weakened postcondition survives every behavioural mutant — the
+    # guarantee doesn't constrain the function's result enough to catch one.
+    "ts-vacuous-postcondition": (ts_vacuous_postcondition, ts_results(), 0, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "warnings": {"transfer/conservation": "still verifies",
+                     "transfer/rejects-overdraft": "still verifies"},
+        "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
     # The ratchet: the guarantee was going to fail anyway, but the report also names the downgrade.
     "ts-proved-function-rewritten-off-the-bridge": (ts_sum_bridged_away, {**ts_results(), TS_SUM: U}, 1, {
         "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
