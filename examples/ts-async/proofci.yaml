@@ -27,3 +27,9 @@ targets:
         theorem: canViewLink_anonymous
       - id: true-only-for-a-reason
         theorem: canViewLink_true_sound
+
+# `canViewLink` is `async`; its bridge proof does not finish in the budget, so its status is
+# always "tested, not proved" and the base check can't prove it either. Accepting it here —
+# in the policy, not in a pull request — is the explicit way to keep that from blocking.
+accept_downgrades:
+  - src/permissions/link.ts::canViewLink
