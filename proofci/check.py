@@ -10,6 +10,7 @@ caller re-runs with `policy="head"`.
 
 import hashlib
 import itertools
+import json
 import os
 import tempfile
 import time
@@ -17,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import bridge, extract, lean, manifest as manifest_mod, typescript
+from . import bridge, extract, lean, manifest as manifest_mod, mutation, typescript
 
 VERIFIED = "verified"
 UNPROVEN = "unproven"
@@ -276,8 +277,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         try:
             lean.build_contract(ws)
             model_names = {f"{extraction.crate_name}.{name}": path for path, name in (extraction.modelled or [])}
-            names = extraction.names or {}
-            audit = lean.audit(ws, [(o.theorem, names.get(o.function, lean_function(o.function))) for o in pending],
+            lean_names = extraction.names or {}
+            audit = lean.audit(ws, [(o.theorem, lean_names.get(o.function, lean_function(o.function))) for o in pending],
                                list(model_names))
         except lean.ContractError as error:
             names = {o.theorem for o in pending}
@@ -297,15 +298,11 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 o.effects = [f"{e}: {extraction.effect_text[e]}" for e in extraction.effects[o.function]]
                 o.arguments_stable = list(extraction.arguments_relied.get(o.function, []))
                 o.constants_stable = list((extraction.constants_relied or {}).get(o.function, []))
-            if item.get("hypothesis_mentions_function"):
-                o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
-                                  "may assume what it should prove")
-            if item.get("trivial_conclusion"):
-                o.warnings.append(f"the conclusion of `{o.theorem}` is trivially true")
-            if item.get("post_ignores_result"):
-                o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result, "
-                                  "so it only restates facts about the inputs")
-            if not item["function_found"]:
+            if item.get("unsatisfiable_hypothesis"):
+                o.status, o.reason = CONTRACT_STALE, (
+                    f"a hypothesis of `{o.theorem}` can never hold ({item['unsatisfiable_hypothesis']}), "
+                    f"so the statement is vacuous: it would prove for any version of `{o.function}`")
+            elif not item["function_found"]:
                 o.status, o.reason = UNSUPPORTED, f"`{o.function}` is not in the translated code"
             elif item["kind"] != "theorem":
                 o.status, o.reason = CONTRACT_STALE, f"`{o.theorem}` is not a theorem in the contract"
@@ -319,6 +316,38 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                     f"`{o.function}` depends on code without a verified model: " + ", ".join(extra))
             else:
                 candidates.append(o)
+            if item.get("hypothesis_mentions_function"):
+                o.warnings.append(f"a hypothesis of `{o.theorem}` mentions `{o.function}`, so the statement "
+                                  "may assume what it should prove")
+            if item.get("trivial_conclusion"):
+                o.warnings.append(f"the conclusion of `{o.theorem}` is trivially true")
+            if item.get("post_ignores_result"):
+                o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result, "
+                                  "so it only restates facts about the inputs")
+
+
+        # 3b. Hypothesis witnesses (TypeScript): the comparison with Node
+        #     already generated inputs of the right types. If the hypotheses
+        #     of a guarantee hold on none of them, it may be vacuous: warn.
+        if active.language == "typescript":
+            inputs_file = work / "differential" / "inputs.json"
+            witness = json.loads(inputs_file.read_text()) if inputs_file.is_file() else {}
+            checks = [(o.theorem, witness[o.function][:60]) for o in pending if witness.get(o.function)]
+            if checks:
+                t0 = time.monotonic()
+                verdicts = lean.vacuity(ws, checks)
+                report.timings["vacuity"] = round(time.monotonic() - t0, 1)
+                if verdicts is None:
+                    report.notes.append("the hypothesis-witness check could not run")
+                else:
+                    for o in pending:
+                        results = verdicts.get(o.theorem, [])
+                        if (results and not any(v["result"] == "satisfied" for v in results)
+                                and (failed := [v for v in results if v["result"] == "unsatisfied"])):
+                            o.warnings.append(
+                                f"the hypotheses of `{o.theorem}` hold on none of the {len(results)} generated "
+                                f"inputs (e.g. {failed[0].get('hypothesis', '?')} fails); if no input can satisfy "
+                                "them the guarantee is vacuous — relax or remove the hypothesis")
 
         # 4. Judge the proofs. `ws` has only built trusted code; proof code
         # only ever runs in disposable copies of it.
@@ -378,6 +407,33 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 else:
                     judge_each(candidates, trial)
         report.timings["proofs"] = round(time.monotonic() - t0, 1)
+
+        # 5. Does a verified guarantee constrain the function it names? Plant
+        #    small defects in the view; a proof that still builds against a
+        #    mutant that changes observable behaviour does not rule out that
+        #    behaviour: warn, don't fail (it may sit on paths the guarantee
+        #    never meant to cover). Needs the generated inputs, so this is
+        #    TypeScript-only.
+        t0 = time.monotonic()
+        verified = [o for o in report.outcomes if o.status == VERIFIED]
+        inputs_file = work / "differential" / "inputs.json"
+        inputs = (json.loads(inputs_file.read_text()) if active.language == "typescript"
+                  and inputs_file.is_file() else {})
+        if verified and inputs and mutation.BUDGET > 0:
+            module_text = (ws.root / f"{ws.crate_module}.lean").read_text()
+            defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in verified}
+            escaped, planted = mutation.check(ws, work, module_text, inputs, defs,
+                                              PARALLEL_JUDGES, verified)
+            for o in verified:
+                for m in escaped.get(o.theorem, []):
+                    o.warnings.append(
+                        f"`{o.theorem}` still verifies with a planted defect in `{o.function}` ({m}) "
+                        "that changes its observable behaviour; the statement may not rule out that "
+                        "behaviour — tighten it, or confirm this path is meant to be uncovered")
+            if planted:
+                report.notes.append(f"planted {planted} defects in the translated code to test the "
+                                    "verified guarantees")
+        report.timings["mutation"] = round(time.monotonic() - t0, 1)
     if active.language == "typescript":
         for o in report.outcomes:
             if o.status == UNPROVEN and o.reason and not o.reason.startswith("no proofs found"):

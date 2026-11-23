@@ -235,6 +235,32 @@ def proofciPostIgnoresResult (e : Expr) : Bool :=
     | _ => false
   else false
 
+/-- Reduces `decide p` to `true`/`false`, or none when `p` has no `Decidable`
+    instance or still depends on variables. Used only to judge contract
+    hypotheses, never proofs. -/
+def proofciDecide (p : Expr) : MetaM (Option Bool) := do
+  try
+    let d ← mkAppOptM ``decide #[some p, none]
+    let r ← withTransparency .all (whnf d)
+    if r.isConstOf ``Bool.true then return some true
+    if r.isConstOf ``Bool.false then return some false
+    return none
+  catch _ => return none
+
+/-- A hypothesis that can never hold: `False`, `a ≠ a`, `¬ (a = a)`, or a
+    closed proposition that `decide` refutes. A theorem with one proves every
+    implementation, so it tells the reader nothing. -/
+def proofciUnsatisfiable (p : Expr) : MetaM (Option String) := do
+  if p.isConstOf ``False then return some "False"
+  if p.isAppOfArity ``Ne 3 && p.appArg! == p.appFn!.appArg! then return some "a ≠ a"
+  if p.isAppOfArity ``Not 1 then
+    let inner := p.appArg!
+    if inner.isAppOfArity ``Eq 3 && inner.appArg! == inner.appFn!.appArg! then return some "¬ (a = a)"
+  if !p.hasLooseBVars && !p.hasFVar then
+    if let some false ← proofciDecide p then
+      return some (toString (← ppExpr p) ++ " (which decides to false)")
+  return none
+
 def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
   let env ← getEnv
   let fnFound := env.contains fn
@@ -243,18 +269,24 @@ def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
   let mut hypothesis := false
   let mut trivial := false
   let mut ignores := false
+  let mut vacuous := Json.null
   match env.find? thm with
   | some (.thmInfo info) =>
     kind := "theorem"
     let r ← forallTelescope info.type fun xs body => do
       let mut hyp := false
+      let mut bad := Json.null
       for x in xs do
         let ty ← inferType x
-        if (← isProp ty) && ty.getUsedConstants.contains fn then hyp := true
+        if (← isProp ty) then
+          if ty.getUsedConstants.contains fn then hyp := true
+          if bad.isNull then
+            if let some why ← proofciUnsatisfiable ty then
+              bad := Json.str s!"{← ppExpr ty} — {why}"
       let refl := body.isAppOfArity ``Eq 3 && body.appFn!.appArg! == body.appArg!
       pure (body.getUsedConstants.contains fn, hyp, body.isConstOf ``True || refl,
-            proofciPostIgnoresResult body)
-    (conclusion, hypothesis, trivial, ignores) := r
+            proofciPostIgnoresResult body, bad)
+    (conclusion, hypothesis, trivial, ignores, vacuous) := r
   | some _ => kind := "other"
   | none => pure ()
   let axioms ← if fnFound then collectAxioms fn else pure #[]
@@ -266,9 +298,108 @@ def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
     ("conclusion_mentions_function", Json.bool conclusion),
     ("hypothesis_mentions_function", Json.bool hypothesis),
     ("trivial_conclusion", Json.bool trivial), ("post_ignores_result", Json.bool ignores),
+    ("unsatisfiable_hypothesis", vacuous),
     ("models", Json.arr (used.map (fun n => Json.str n.toString)).toArray),
     ("function_axioms", Json.arr (axioms.map (fun a => Json.str a.toString)))]).compress)
 """
+
+
+VACUITY_MARKER = "PROOFCI_VACUITY "
+VACUITY_LEAN = r"""
+import Contract
+open Lean Meta Elab
+
+/-- Reduces `decide p` to `true`/`false`, or none when `p` has no `Decidable`
+    instance or still depends on variables. -/
+def proofciDecide (p : Expr) : MetaM (Option Bool) := do
+  try
+    let d ← mkAppOptM ``decide #[some p, none]
+    let r ← withTransparency .all (whnf d)
+    if r.isConstOf ``Bool.true then return some true
+    if r.isConstOf ``Bool.false then return some false
+    return none
+  catch _ => return none
+
+/-- Do the hypotheses of `thm` hold of the concrete `args` (one term per
+    non-proposition binder, in order)? A theorem whose hypotheses no input
+    satisfies is vacuous: it proves for every implementation.
+    No early `return` inside `for`: that compiles through spec functions that
+    carry `sorry`, and evaluating them is refused. -/
+def proofciVacuity (thm : Name) (args : Array (TSyntax `term)) : MetaM Json := do
+  let env ← getEnv
+  match env.find? thm with
+  | some (.thmInfo info) =>
+    forallTelescope info.type fun xs _ => do
+      let init : Array Expr × Array Expr × Array Expr × Json := (#[], #[], #[], Json.null)
+      let s0 ← xs.foldlM (init := init) fun s x => do
+        let (binders, values, hyps, bad) := s
+        if !bad.isNull then return s
+        let ty := (← inferType x).replaceFVars binders values
+        if (← isProp ty) then return (binders, values, hyps.push ty, bad)
+        if values.size ≥ args.size then
+          return (binders, values, hyps, Json.mkObj [("result", "unchecked"),
+            ("reason", "the statement takes more arguments than generated")])
+        try
+          let e ← Lean.Elab.Term.TermElabM.run' (Term.elabTerm args[values.size]! (some ty))
+          if (e.find? (·.isConstOf ``sorryAx)).isSome then
+            return (binders, values, hyps, Json.mkObj [("result", "unchecked"),
+              ("reason", "a generated input doesn't match the statement")])
+          return (binders.push x, values.push e, hyps, bad)
+        catch _ =>
+          return (binders, values, hyps, Json.mkObj [("result", "unchecked"),
+            ("reason", "a generated input doesn't match the statement")])
+      let (_, values, hyps, bad) := s0
+      if !bad.isNull then return bad
+      if values.size != args.size then
+        return Json.mkObj [("result", "unchecked"),
+          ("reason", "the statement takes fewer arguments than generated")]
+      let init2 : Option String × Nat := (none, 0)
+      let (failed, unknown) ← hyps.foldlM (init := init2) fun s p => do
+        match s with
+        | (some _, _) => return s
+        | (none, u) =>
+          match ← proofciDecide p with
+          | some false => return (some (toString (← ppExpr p)), u)
+          | some true => return s
+          | none => return (none, u + 1)
+      match failed with
+      | some h =>
+        return Json.mkObj [("result", "unsatisfied"), ("hypothesis", Json.str h)]
+      | none =>
+        return Json.mkObj [("result", Json.str (if unknown > 0 then "unknown" else "satisfied"))]
+  | _ => return Json.mkObj [("result", "unchecked"), ("reason", "no such theorem")]
+"""
+
+
+def vacuity(ws, checks):
+    """Whether each theorem's hypotheses hold of generated inputs.
+
+    `checks` is a list of `(theorem, vectors)`; a vector is a list of Lean
+    terms, one per argument of the statement. Returns {theorem: verdicts} or
+    None when the check file can't be built at all. Runs over trusted inputs
+    only: the contract and terms generated from the code's own types."""
+    lines, calls = [VACUITY_LEAN.strip(), ""], []
+    for i, (theorem, vectors) in enumerate((t, v) for t, vs in checks for v in vs):
+        binds = "\n".join(f"  let a{j} : TSyntax `term ← `({term})"
+                          for j, term in enumerate(vectors))
+        args = "#[" + ", ".join(f"a{j}" for j in range(len(vectors))) + "]"
+        lines.append(f"#eval! do\n{binds}\n"
+                     f"  IO.println (\"{VACUITY_MARKER}{i} \" ++ "
+                     f"(← proofciVacuity `{theorem} {args}).compress)")
+        calls.append(theorem)
+    (ws.root / "Vacuity.lean").write_text("\n".join(lines) + "\n")
+    result = _lake(ws, ["env", "lean", "Vacuity.lean"], timeout=300)
+    found = {}
+    for line in result.output.splitlines():
+        if line.startswith(VACUITY_MARKER):
+            case, _, payload = line[len(VACUITY_MARKER):].partition(" ")
+            found[int(case)] = json.loads(payload)
+    if result.status != 0 or len(found) != len(calls):
+        return None
+    verdicts = {}
+    for theorem, (case, payload) in zip(calls, sorted(found.items())):
+        verdicts.setdefault(theorem, []).append(payload)
+    return verdicts
 
 
 def audit(ws, checks, models=()):

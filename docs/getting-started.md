@@ -182,8 +182,15 @@ wrong.
 | Proofs need updating after a refactor | ❌ `unproven`, with Lean's error; update `Proofs.lean` in the same PR |
 | Code breaks a guarantee | ❌ `unproven`; no proof can exist |
 | Signature changed so the contract no longer type-checks | ⚠️ `contract-stale`; a maintainer updates the contract (a policy change) |
+| A hypothesis can never hold (`a ≠ a`, a closed condition that decides to false) | ⚠️ `contract-stale`; the guarantee is vacuous — it would prove for any code |
 | Code reaches something ProofCI cannot translate | ⛔ `unsupported`, with the source line |
 | Guarantee removed or contract weakened | blocked until an approver approves that exact commit |
+
+A proved guarantee can still be weak: the report's **Contract warnings** mark one
+whose hypotheses hold on none of the generated inputs (probably vacuous), or that
+still verifies against small defects planted in the translated code (it doesn't
+constrain the function). Warnings don't fail the check — they flag statements
+a human should look at before trusting the green.
 
 See [the demo repository](https://github.com/nhestrompia/proofci-demo/pulls)
 for live examples.
