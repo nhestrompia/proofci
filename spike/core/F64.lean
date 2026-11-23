@@ -267,24 +267,23 @@ theorem toRat_fin (s : Bool) (n : Nat) :
     (fin s n).toRatD = (signed s n : Rat) / ((unit : Int) : Rat) := by
   cases s <;> simp [toRatD, toRat, signed, Int.cast_neg]
 
-set_option debug.skipKernelTC true
 theorem toRat_fin_mul_unit (s : Bool) (k : Nat) :
     (fin s (k * unit)).toRatD = ((signed s k : Int) : Rat) := by
   have c : ((unit : Int) : Rat) ≠ 0 :=
     ne_of_gt (Int.cast_pos.mpr (Nat.cast_pos.mpr unit_pos))
   rw [toRat_fin]
   have hs : signed s (k * unit) = signed s k * (unit : Int) := by
-    cases s <;> simp only [signed_false, signed_true, Nat.cast_mul, neg_mul]
+    cases s
+    · rw [signed_false, signed_false, Nat.cast_mul]
+    · rw [signed_true, signed_true, Nat.cast_mul, neg_mul]
   rw [hs, Int.cast_mul, mul_div_assoc, div_self c, mul_one]
-
-set_option debug.skipKernelTC false
 
 /-- `fin false (K·unit)` has value `K`, so a `toRat` bound of `K` translates to
 a magnitude bound of `K·unit` via `mag_le_of_toRatD_le`. -/
 theorem const_mag (K : Nat) : (fin false (K * unit)).toRatD = K := by
   have c : ((unit : Nat) : Rat) ≠ 0 := Nat.cast_ne_zero.mpr (ne_of_gt unit_pos)
   rw [toRat_fin]
-  simp only [signed_false, Int.cast_natCast, Nat.cast_mul, Int.cast_mul,
+  simp only [signed_false, Nat.cast_mul, Int.cast_mul,
     Int.cast_natCast (R := Rat), mul_div_assoc]
   rw [div_self c, mul_one]
 
@@ -505,7 +504,6 @@ theorem jsround_isInt {x : F64} (hx : x.isFin = true) :
   simp only [jsround]
   split_ifs <;> simp [isInt']
 
-set_option debug.skipKernelTC true
 /-- `Math.floor` never exceeds its argument. -/
 theorem floor_le_toRat {x : F64} (hx : x.isFin = true) :
     (x.floor).toRatD ≤ x.toRatD := by
@@ -527,11 +525,11 @@ theorem floor_le_toRat {x : F64} (hx : x.isFin = true) :
     · rw [toRat_fin]
     · simp only [toRat_fin]
       rw [div_le_div_iff_of_pos_right c]
-      simp only [signed_true, Nat.cast_mul, Nat.cast_add, 
-        add_mul, one_mul]
-      exact Int.cast_le.mpr (by omega)
+      apply Int.cast_le.mpr
+      rw [signed_true, signed_true, Nat.cast_mul, Nat.cast_add, add_mul]
+      simp only [Nat.cast_one, one_mul]
+      omega
 
-set_option debug.skipKernelTC true
 /-- `Math.ceil` never goes below its argument. -/
 theorem toRat_le_ceil {x : F64} (hx : x.isFin = true) :
     x.toRatD ≤ (x.ceil).toRatD := by
@@ -549,20 +547,22 @@ theorem toRat_le_ceil {x : F64} (hx : x.isFin = true) :
     · rw [toRat_fin]
     · simp only [toRat_fin]
       rw [div_le_div_iff_of_pos_right c]
-      simp only [signed_false, Nat.cast_mul, Nat.cast_add, 
-        add_mul, one_mul]
-      exact Int.cast_le.mpr (by omega)
+      apply Int.cast_le.mpr
+      rw [signed_false, signed_false, Nat.cast_mul, Nat.cast_add, add_mul]
+      simp only [Nat.cast_one, one_mul]
+      omega
   · rw [ceil_fin_true]
     split_ifs with h
     · simp only [toRat_fin]
       rw [div_le_div_iff_of_pos_right c]
-      simp only [signed_true]
-      exact Int.cast_le.mpr (by omega)
+      apply Int.cast_le.mpr
+      rw [signed_true, signed_true, Nat.cast_zero]
+      omega
     · simp only [toRat_fin]
       rw [div_le_div_iff_of_pos_right c]
-      simp only [signed_true, Nat.cast_mul]
-      exact Int.cast_le.mpr (by omega)
-set_option debug.skipKernelTC false
+      apply Int.cast_le.mpr
+      rw [signed_true, signed_true, Nat.cast_mul]
+      omega
 
 /-- `trunc`/`floor`/`ceil`/`Math.round`/`abs`/`neg` keep finiteness. -/
 theorem isFin_trunc {x : F64} : (x.trunc).isFin = x.isFin := by
@@ -636,7 +636,6 @@ private theorem toRat_sub_bound (s : Bool) (K n : Nat)
     exact Int.cast_le.mpr hR
 
 
-set_option debug.skipKernelTC true
 /-- `Math.round` lands within half a `unit` of its argument. -/
 theorem jsround_err_half {x : F64} (hx : x.isFin = true) :
     |(x.jsround).toRatD - x.toRatD| ≤ (1 : Rat) / 2 := by
@@ -651,41 +650,49 @@ theorem jsround_err_half {x : F64} (hx : x.isFin = true) :
     split_ifs with hlt hte
     · have hK : -(↑unit / 2 : Int) ≤ signed false (n / unit * unit) - signed false n ∧
           signed false (n / unit * unit) - signed false n ≤ ↑unit / 2 := by
-        simp only [signed_false, Nat.cast_mul]; omega
+        rw [signed_false, signed_false, Nat.cast_mul]
+        omega
       exact toRat_sub_bound false _ n (abs_le.mpr hK)
     · have hK : -(↑unit / 2 : Int) ≤
           signed false ((n / unit + 1) * unit) - signed false n ∧
           signed false ((n / unit + 1) * unit) - signed false n ≤ ↑unit / 2 := by
-        simp only [signed_false, Nat.cast_mul, Nat.cast_add, 
-          add_mul, one_mul]; omega
+        rw [signed_false, signed_false, Nat.cast_mul, Nat.cast_add, add_mul]
+        simp only [Nat.cast_one, one_mul]
+        omega
       exact toRat_sub_bound false _ n (abs_le.mpr hK)
     · have hgtN : unit < n % unit * 2 :=
         Nat.lt_of_le_of_ne (Nat.le_of_not_lt hlt) (fun h => hte h.symm)
       have hK : -(↑unit / 2 : Int) ≤
           signed false ((n / unit + 1) * unit) - signed false n ∧
           signed false ((n / unit + 1) * unit) - signed false n ≤ ↑unit / 2 := by
-        simp only [signed_false, Nat.cast_mul, Nat.cast_add, add_mul, one_mul]; omega
+        rw [signed_false, signed_false, Nat.cast_mul, Nat.cast_add, add_mul]
+        simp only [Nat.cast_one, one_mul]
+        omega
       exact toRat_sub_bound false _ n (abs_le.mpr hK)
   · rw [jsround_fin]
     simp only [eq_self, ite_true]
     split_ifs with hlt hte
     · have hK : -(↑unit / 2 : Int) ≤ signed true (n / unit * unit) - signed true n ∧
           signed true (n / unit * unit) - signed true n ≤ ↑unit / 2 := by
-        simp only [signed_true, Nat.cast_mul]; omega
+        rw [signed_true, signed_true, Nat.cast_mul]
+        omega
       exact toRat_sub_bound true _ n (abs_le.mpr hK)
     · have hK : -(↑unit / 2 : Int) ≤
           signed true ((n / unit + 0) * unit) - signed true n ∧
           signed true ((n / unit + 0) * unit) - signed true n ≤ ↑unit / 2 := by
-        simp only [signed_true, Nat.cast_mul, add_zero]; omega
+        rw [signed_true, signed_true, Nat.cast_mul, Nat.cast_add, add_mul]
+        simp only [Nat.cast_zero]
+        omega
       exact toRat_sub_bound true _ n (abs_le.mpr hK)
     · have hgtN : unit < n % unit * 2 :=
         Nat.lt_of_le_of_ne (Nat.le_of_not_lt hlt) (fun h => hte h.symm)
       have hK : -(↑unit / 2 : Int) ≤
           signed true ((n / unit + 1) * unit) - signed true n ∧
           signed true ((n / unit + 1) * unit) - signed true n ≤ ↑unit / 2 := by
-        simp only [signed_true, Nat.cast_mul, Nat.cast_add, add_mul, one_mul]; omega
+        rw [signed_true, signed_true, Nat.cast_mul, Nat.cast_add, add_mul]
+        simp only [Nat.cast_one, one_mul]
+        omega
       exact toRat_sub_bound true _ n (abs_le.mpr hK)
-set_option debug.skipKernelTC false
 theorem le_iff {x y : F64} (hx : x.isFin = true) (hy : y.isFin = true) :
     x.le y = true ↔ x.toRatD ≤ y.toRatD := by
   rw [le, Bool.or_eq_true_iff]
