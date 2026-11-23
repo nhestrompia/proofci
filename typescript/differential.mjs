@@ -23,8 +23,15 @@ const UNITS = ["a", "b", "x", "A", "Z", "0", "7", " ", "\t", "\n", "-", "_", ","
 let handles = 0;
 
 // Whether a value of `type` can hold the type it sits in (`{ kind: "recursive" }` names that type).
+// Whether a value of `type` can hold a recursive one, through any field (types that hold each
+// other recur through a record or union described in full); and whether it must.
 const recurs = type => type.kind === "recursive" || ["array", "set", "optional"].includes(type.kind) && recurs(type.item ?? type.inner)
-  || type.kind === "map" && recurs(type.value);
+  || type.kind === "map" && recurs(type.value)
+  || type.kind === "record" && type.fields.some(f => recurs(f.type))
+  || type.kind === "tagged" && type.variants.some(v => v.fields.some(f => recurs(f.type)));
+const mustRecur = type => type.kind === "recursive"
+  || type.kind === "record" && type.fields.some(f => mustRecur(f.type))
+  || type.kind === "tagged" && type.variants.every(v => v.fields.some(f => mustRecur(f.type)));
 // How deep a recursive value is generated: below this, a recursive field is empty where it can be.
 const DEPTH = 3;
 
@@ -71,7 +78,7 @@ export function generator(seed) {
       case "tagged": {
         defs.set(type.lean, type);
         // The translator refuses a recursive type with no variant that ends.
-        const ends = type.variants.filter(v => v.fields.every(f => f.type.kind !== "recursive"));
+        const ends = type.variants.filter(v => v.fields.every(f => !mustRecur(f.type)));
         const variant = pick(depth >= DEPTH && ends.length ? ends : type.variants);
         return { kind: variant.tag, ...Object.fromEntries(variant.fields.map(f => [f.name, value(f.type)])) };
       }

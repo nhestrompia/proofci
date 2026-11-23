@@ -180,7 +180,8 @@ medusa `4f1baa07fb117a900400a61ebb2e7c6729717e04`, trigger.dev
 AFFiNE `dc2b2212441602452f3cf0ea50a4eaedaf03bcc2`, cal.com `ae027bb70e694e2d2c44569f398d6cbcee0389b1`.
 Counts above are for the translator at `1a02063`. At `642a2c3` they were 238 (plane 11, trigger.dev
 96, AFFiNE 26). The refusal of nullable arguments over a free parameter (between `2e48118` and
-`1a02063`) and mutual recursion left them unchanged.
+`1a02063`) and mutual recursion left them unchanged, as did declared types that hold each other
+(`045840d` before, `2b04268` after; `async` functions are not counted as pure).
 
 ## Limits
 
