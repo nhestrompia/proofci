@@ -6,9 +6,9 @@ export function totalWithTax(price: number, quantity: number, discountPct: numbe
   return Math.round(withTax * 100) / 100;
 }
 
-/** The amount left after taking `bucket`-sized chunks out of `price`. */
-export function leftover(price: number, bucket: number): number {
-  return price % bucket;
+/** Each share when `total` is split `parts` ways after dropping the remainder. */
+export function perHead(total: number, parts: number): number {
+  return (total - (total % parts)) / parts;
 }
 
 /** Which way a rate moves a price: up, down, or not at all. */

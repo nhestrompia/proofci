@@ -396,7 +396,7 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
     | _ => none
   | .min, h, [.num a, .num b] => some (.num (a.fmin b), h)
   | .max, h, [.num a, .num b] => some (.num (a.fmax b), h)
-  | .abs, h, [.num a] => some (.num (F64.abs a), h)
+  | .abs, h, [a] => (asNum a).map fun a => (numVal (Js.abs a), h)
   | .includes, h, [.str s, .str t] => some (.bool (Js.strIncludes s t), h)
   | .includes, h, [.ref l, .str t] => match h[l]? with
     | some (.array xs) => (strsOf xs).map fun ss => (.bool (Js.includes ss t), h)

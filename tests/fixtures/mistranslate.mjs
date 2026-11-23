@@ -18,11 +18,12 @@ const EDITS = {
   recursive_rare: [["let tmp2 ← Js.add list_1.value tmp1", "let tmp2 ← if list_1.value.val = 4242 then Js.sub list_1.value tmp1 else Js.add list_1.value tmp1"]],
   // Binary64: multiplies where the code divides — wrong for most inputs, so Node sees it.
   dbl_common: [["let tmp1 ← Js.Dbl.mul price quantity", "let tmp1 ← Js.Dbl.div price quantity"]],
-  // Binary64: floors where the code rounds to nearest — off only on a halfway cent, which no
-  // sample is likely to hit; the bridge is what must catch it.
-  dbl_rare: [["Js.Dbl.math Core.F64.jsround", "Js.Dbl.math Core.F64.floor"]],
+  // Binary64: floors instead of rounding only for the exact amount the menu example hits
+  // (2805.84 cents) — a value no sample is likely to hit, so the bridge is what must catch it.
+  dbl_rare: [["let tmp9 ← Js.Dbl.math Core.F64.jsround tmp8",
+    "let tmp9 ← if tmp8.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.math Core.F64.floor tmp8 else Js.Dbl.math Core.F64.jsround tmp8"]],
   // Binary64: subtracts where the code takes the JS remainder — wrong for most inputs.
-  dbl_rem: [["let tmp1 ← Js.Dbl.rem price bucket", "let tmp1 ← Js.Dbl.sub price bucket"]],
+  dbl_rem: [["let tmp1 ← Js.Dbl.rem total parts", "let tmp1 ← Js.Dbl.sub total parts"]],
 };
 
 export function run(kind, configPath) {

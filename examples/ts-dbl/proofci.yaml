@@ -13,11 +13,11 @@ targets:
         theorem: menu_price_exact
       - id: nan-propagates
         theorem: nan_propagates
-  - id: leftover
-    function: src/pricing.ts::leftover
+  - id: per-head
+    function: src/pricing.ts::perHead
     guarantees:
       - id: exact
-        theorem: leftover_exact
+        theorem: perHead_exact
   - id: effect
     function: src/pricing.ts::effect
     guarantees:

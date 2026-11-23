@@ -522,6 +522,7 @@ def run_scenario(name, out_dir=None):
     mutate, expected, expected_exit, *rest = SCENARIOS[name]
     options = rest[0] if rest else {}
     example = (TS_ASYNC_EXAMPLE if name.startswith("ts-async-") else TS_TREE_EXAMPLE if name.startswith("ts-tree-")
+               else TS_DBL_EXAMPLE if name.startswith("ts-dbl-")
                else TS_EXAMPLE if name.startswith("ts-") else EXAMPLE)
     with tempfile.TemporaryDirectory() as tmp:
         base, head = Path(tmp) / "base", Path(tmp) / "head"
@@ -593,9 +594,9 @@ def ts_results():
 
 
 TS_DBL = "src/pricing.ts"
-TS_DBL_GUARANTEES = ("total/always-returns", "total/menu-price", "total/nan-propagates", "leftover/exact", "effect/signs")
+TS_DBL_GUARANTEES = ("total/always-returns", "total/menu-price", "total/nan-propagates", "per-head/exact", "effect/signs")
 DBL_TOTAL, DBL_MENU, DBL_NAN, DBL_LEFT, DBL_EFFECT = TS_DBL_GUARANTEES
-DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "leftover", "effect")]
+DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "perHead", "effect")]
 DBL_BRIDGE = {"functions": dict.fromkeys(DBL_FNS, "proved")}
 
 
@@ -876,7 +877,9 @@ SCENARIOS.update({
     "ts-transfer-loses-money": (ts_transfer_loses_money, {**ts_results(), TS_CONSERVES: U}, 1),
     "ts-fee-cap-raised": (ts_fee_cap_raised, {**ts_results(), TS_FEE: U}, 1),
     "ts-overdraft-check-removed": (ts_overdraft_check_removed, {**ts_results(), TS_CONSERVES: U, TS_OVERDRAFT: U}, 1),
-    "ts-fractional-fee": (ts_fractional_fee, {**ts_results(), TS_FEE: X}, 1),
+    # The fee moves to doubles (a fractional literal), so the `Js.Num` contract no longer
+    # elaborates: a maintainer must restate the bound on `Js.Dbl`. One stale file blocks all four.
+    "ts-fractional-fee": (ts_fractional_fee, dict.fromkeys(TS_GUARANTEES, S), 1),
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
     # Recursive records and unions tagged by `kind`, and the functions that walk them, are bridged by induction.
@@ -892,7 +895,7 @@ SCENARIOS.update({
         "env": DBL_COMMON, "functions": {TS_DBL + "::totalWithTax": "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 3}}),
     # A subtraction planted where the code takes the remainder: Node disagrees.
     "ts-dbl-rem-mistranslated-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
-        "env": DBL_REM, "functions": {TS_DBL + "::leftover": "failed"}}),
+        "env": DBL_REM, "functions": {TS_DBL + "::perHead": "failed"}}),
     "ts-tree-baseline": (None, dict.fromkeys(TREE_GUARANTEES, V), 0, {
         **TREE_BRIDGE, "summary": {"proved": 4, "tested": 0, "failed": 0}}),
     "ts-tree-bridge-required": (policy_requires_bridge, dict.fromkeys(TREE_GUARANTEES, V), 0, TREE_BRIDGE),
@@ -989,7 +992,7 @@ TS_REASONS = {
     "ts-bridge-mistranslated-view-seen-by-node": "disagrees with Node",
     "ts-dbl-mistranslated-view-seen-by-node": "disagrees with Node",
     "ts-dbl-rem-mistranslated-seen-by-node": "disagrees with Node",
-    "ts-fractional-fee": "not a safe integer",
+    "ts-fractional-fee": "no longer elaborates",
     "ts-cast-hides-a-type": "only `number` operands",
     "ts-return-type-not-written": "add a return type of `number`",
     "ts-lists-its-own-assumption": "only `number` operands",

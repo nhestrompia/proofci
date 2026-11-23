@@ -3341,7 +3341,7 @@ export class Scope {
       const f = this.t.doubles ? { isFinite: "isFinite", isNaN: "isNaN", isInteger: "isInteger", isSafeInteger: "isSafe" }[name] : name;
       const expr = this.expression(args[0], env, lines);
       if (this.t.doubles && this.nullable(this.typeOf(args[0])))
-        return this.isOptionalNumber(args[0]) ? `((${expr}).map Js.Dbl.${f}).getD false` : undefined;
+        return this.isOptionalNumber(args[0]) ? `(((${expr}).map Js.Dbl.${f}).getD false)` : undefined;
       if (!this.isNumber(args[0])) return undefined;
       return `(Js.${this.t.doubles ? "Dbl." : ""}${f} ${expr})`;
     };

@@ -163,7 +163,7 @@ export const dAbs = (): number => Math.abs(-0.5);
 export const dMinNan = (a: number): number => Math.min(a, NaN);
 export const dMax = (a: number, b: number): number => Math.max(a, b) / 1.5;
 export const dEq = (): boolean => 0.1 + 0.2 === 0.3;
-export const dNanEq = (): boolean => NaN === NaN;
+export const dNanEq = (n: number): boolean => n === n;
 export const dLt = (a: number): boolean => a < 0.5;
 export const dFin = (): boolean => Number.isFinite(0.1 + 0.2);
 export const dFinInf = (): boolean => Number.isFinite(Infinity - Infinity);

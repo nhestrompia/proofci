@@ -20,6 +20,26 @@ theorem le_isInt {x y : F64} {a b : Int} (hx : Core.F64.IsInt x a) (hy : Core.F6
     have h2 : ¬ a = b := by omega
     simp [h1, h2, hab]
 
+theorem isFin_of_isInt {x : F64} {a : Int} (h : Core.F64.IsInt x a) : x.isFin = true := by
+  unfold Core.F64.IsInt at h
+  rcases h with rfl | ⟨_, rfl⟩ <;> rfl
+theorem not_nan_of_isInt {x : F64} {a : Int} (h : Core.F64.IsInt x a) : x.isNan = false := by
+  unfold Core.F64.IsInt at h
+  rcases h with rfl | ⟨_, rfl⟩ <;> rfl
+theorem isInt'_of_isInt {x : F64} {a : Int} (h : Core.F64.IsInt x a) : x.isInt' = true := by
+  unfold Core.F64.IsInt at h
+  rcases h with rfl | ⟨_, rfl⟩
+  · simp only [F64.ofInt, F64.isInt', Nat.mul_mod_left]; rfl
+  · simp only [F64.isInt', Nat.zero_mod]; rfl
+theorem isSafe_of_isInt {x : F64} {a : Js.Num} (h : Core.F64.IsInt x a.val) : x.isSafe = true := by
+  unfold Core.F64.IsInt at h
+  rcases h with rfl | ⟨_, rfl⟩
+  · have hb : a.val.natAbs ≤ 9007199254740991 := by
+      have h1 := a.lo; have h2 := a.hi; omega
+    have hu : 0 < F64.unit := by rw [F64.unit]; exact Nat.pow_pos (by decide)
+    simp only [F64.ofInt, F64.isSafe, Nat.mul_mod_left, Nat.mul_div_left _ hu, hb]; rfl
+  · simp only [F64.isSafe, Nat.zero_mod, Nat.zero_div]; rfl
+
 theorem isInt_zero (s : Bool) : Core.F64.IsInt (fin s 0) 0 := by
   cases s
   · exact Or.inl (by simp [ofInt])
@@ -1292,15 +1312,23 @@ theorem SimB.present_num {p s e} {a : Js.Num} (h : SimE p s e a) : SimB p s e (J
 theorem SimE.numFinite {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Js.isFinite a) := by
   refine sim_prim (args1 hx) ?_
   rintro h _ ⟨v, rfl, ri⟩
-  have e := num_arg ri
-  obtain ⟨y, rfl, _⟩ := ri
-  exact ⟨.bool true, h, by simp [primV, Core.numFinite, e], List.prefix_refl _, rfl⟩
+  obtain ⟨y, rfl, hi⟩ := ri
+  exact ⟨.bool true, h, by simp [primV, Core.numFinite, F64.isFin_of_isInt hi], List.prefix_refl _, rfl⟩
 theorem SimE.numNaN {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numNaN [x]) (Js.isNaN a) := by
   refine sim_prim (args1 hx) ?_
   rintro h _ ⟨v, rfl, ri⟩
-  have e := num_arg ri
-  obtain ⟨y, rfl, _⟩ := ri
-  exact ⟨.bool false, h, by simp [primV, Core.numNaN, e], List.prefix_refl _, rfl⟩
+  obtain ⟨y, rfl, hi⟩ := ri
+  exact ⟨.bool false, h, by simp [primV, Core.numNaN, F64.not_nan_of_isInt hi], List.prefix_refl _, rfl⟩
+theorem SimE.numInteger {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numInteger [x]) (Js.isInteger a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  obtain ⟨y, rfl, hi⟩ := ri
+  exact ⟨.bool true, h, by simp [primV, Core.numInteger, F64.isInt'_of_isInt hi], List.prefix_refl _, rfl⟩
+theorem SimE.numSafe {a : Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numSafe [x]) (Js.isSafeInteger a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  obtain ⟨y, rfl, hi⟩ := ri
+  exact ⟨.bool true, h, by simp [primV, Core.numSafe, F64.isSafe_of_isInt hi], List.prefix_refl _, rfl⟩
 theorem SimE.numFinite_opt {k} {a : Opt k Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Option.isSome a) := by
   refine sim_prim (args1 hx) ?_
   rintro h _ ⟨v, rfl, ri⟩
@@ -1313,9 +1341,36 @@ theorem SimE.numFinite_opt {k} {a : Opt k Js.Num} (hx : SimE p s x a) : SimE p s
     · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
   | some n =>
     have ri' : rep h n v := ri
-    have e := num_arg ri'
-    obtain ⟨y, rfl, _⟩ := ri'
-    exact ⟨.bool true, h, by simp [primV, Core.numFinite, e], List.prefix_refl _, rfl⟩
+    obtain ⟨y, rfl, hi⟩ := ri'
+    exact ⟨.bool true, h, by simp [primV, Core.numFinite, F64.isFin_of_isInt hi], List.prefix_refl _, rfl⟩
+theorem SimE.numInteger_opt {k} {a : Opt k Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numInteger [x]) (Option.isSome a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
+  | some n =>
+    have ri' : rep h n v := ri
+    obtain ⟨y, rfl, hi⟩ := ri'
+    exact ⟨.bool true, h, by simp [primV, Core.numInteger, F64.isInt'_of_isInt hi], List.prefix_refl _, rfl⟩
+theorem SimE.numSafe_opt {k} {a : Opt k Js.Num} (hx : SimE p s x a) : SimE p s (.prim .numSafe [x]) (Option.isSome a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
+  | some n =>
+    have ri' : rep h n v := ri
+    obtain ⟨y, rfl, hi⟩ := ri'
+    exact ⟨.bool true, h, by simp [primV, Core.numSafe, F64.isSafe_of_isInt hi], List.prefix_refl _, rfl⟩
 theorem SimE.toFixed {a d : Js.Num} {r : List Nat} (hx : SimE p s x a) (hy : SimE p s y d) (h : Js.toFixed a d = ok r) :
     SimE p s (.prim .toFixed [x, y]) r := by
   refine sim_prim (args2 hx hy) ?_
@@ -2784,6 +2839,286 @@ theorem ok_inj' {α : Type} {a b : α} (h : (ok a : Result α) = ok b) : a = b :
 theorem fail_intro {α : Type} {G : Prop} {e} {r : α} : (Result.fail e : Result α) = ok r → G := by
   intro h; simp at h
 
+/-! ## Doubles: `Js.Dbl`
+
+A `Js.Dbl` keeps every bit: its `rep` is exact (`v = .num a.f`), so `NaN`,
+infinities, `-0` and every rounding step are visible to a proof. -/
+
+instance : TyRep Js.Dbl := ⟨fun _ a v => v = .num a.f, fun _ h => h⟩
+instance : NotNull Js.Dbl := ⟨by rintro _ _ _ rfl; rfl⟩
+
+theorem SimE.dlit {p s} (b : Nat) : SimE p s (.lit (.num (F64.ofBits b))) (Js.Dbl.lit b) :=
+  fun _ _ => ⟨_, _, Evals.lit _ _ _, Ext.refl _, rfl⟩
+
+/-- A `Js.Num` literal the heap holds as `ofInt` can be read as a double exactly. -/
+theorem SimE.dnumLit {p s} (a : Js.Num) : SimE p s (.lit (.num (F64.ofInt a.val))) (⟨F64.ofInt a.val⟩ : Js.Dbl) :=
+  fun _ _ => ⟨_, _, Evals.lit _ _ _, Ext.refl _, rfl⟩
+
+/-- Any `F64` literal evaluates to its double, whatever encoding emitted it. -/
+theorem SimE.dnum {p s} (x : F64) : SimE p s (.lit (.num x)) (⟨x⟩ : Js.Dbl) :=
+  fun _ _ => ⟨_, _, Evals.lit _ _ _, Ext.refl _, rfl⟩
+theorem SimE.dadd {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.add a b = ok r) : SimE p s (.bin .add x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ rfl rfl
+  have : r = ⟨a.f.add b.f⟩ := by simpa [Js.Dbl.add] using h.symm
+  subst this; exact ⟨_, rfl, rfl⟩
+theorem SimE.dsub {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.sub a b = ok r) : SimE p s (.bin .sub x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ rfl rfl
+  have : r = ⟨a.f.sub b.f⟩ := by simpa [Js.Dbl.sub] using h.symm
+  subst this; exact ⟨_, rfl, rfl⟩
+theorem SimE.dmul {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.mul a b = ok r) : SimE p s (.bin .mul x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ rfl rfl
+  have : r = ⟨a.f.mul b.f⟩ := by simpa [Js.Dbl.mul] using h.symm
+  subst this; exact ⟨_, rfl, rfl⟩
+theorem SimE.ddiv {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.div a b = ok r) : SimE p s (.bin .div x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ rfl rfl
+  have : r = ⟨a.f.div b.f⟩ := by simpa [Js.Dbl.div] using h.symm
+  subst this; exact ⟨_, rfl, rfl⟩
+theorem SimE.drem {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.rem a b = ok r) : SimE p s (.bin .rem x y) r := by
+  refine sim_bin hx hy ?_
+  rintro _ _ _ rfl rfl
+  have : r = ⟨a.f.rem b.f⟩ := by simpa [Js.Dbl.rem] using h.symm
+  subst this; exact ⟨_, rfl, rfl⟩
+
+theorem SimE.dneg {p s e} {a r : Js.Dbl} (hx : SimE p s e a) (h : Js.Dbl.neg a = ok r) :
+    SimE p s (.neg e) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
+  have : r = ⟨a.f.neg⟩ := by simpa [Js.Dbl.neg] using h.symm
+  subst this; exact ⟨_, s₂, Evals.neg ev, h₂, rfl⟩
+
+theorem SimE.dmath {p s e} (f : F64 → F64) {a r : Js.Dbl} (hx : SimE p s e a)
+    (h : Js.Dbl.math f a = ok r) : SimE p s (.math f e) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
+  have : r = ⟨f a.f⟩ := by simpa [Js.Dbl.math] using h.symm
+  subst this; exact ⟨_, s₂, Evals.math ev, h₂, rfl⟩
+
+theorem SimE.dmin {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .min [x, y]) (Js.Dbl.min a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨v, w, rfl, rfl, rfl⟩
+  exact ⟨_, _, by simp [primV, Js.Dbl.min], List.prefix_refl _, rfl⟩
+theorem SimE.dmax {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimE p s (.prim .max [x, y]) (Js.Dbl.max a b) := by
+  refine sim_prim (args2 hx hy) ?_
+  rintro _ _ ⟨v, w, rfl, rfl, rfl⟩
+  exact ⟨_, _, by simp [primV, Js.Dbl.max], List.prefix_refl _, rfl⟩
+
+theorem SimE.dnumFinite {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Js.Dbl.isFinite a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, rfl⟩
+  exact ⟨.bool a.f.isFin, h, by simp [primV, Core.numFinite, Js.Dbl.isFinite], List.prefix_refl _, rfl⟩
+theorem SimE.dnumInteger {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numInteger [x]) (Js.Dbl.isInteger a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, rfl⟩
+  exact ⟨.bool a.f.isInt', h, by simp [primV, Core.numInteger, Js.Dbl.isInteger], List.prefix_refl _, rfl⟩
+theorem SimE.dnumSafe {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numSafe [x]) (Js.Dbl.isSafe a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, rfl⟩
+  exact ⟨.bool a.f.isSafe, h, by simp [primV, Core.numSafe, Js.Dbl.isSafe], List.prefix_refl _, rfl⟩
+theorem SimE.dnumNaN {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numNaN [x]) (Js.Dbl.isNaN a) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, rfl⟩
+  exact ⟨.bool a.f.isNan, h, by simp [primV, Core.numNaN, Js.Dbl.isNaN], List.prefix_refl _, rfl⟩
+
+/-- `Js.Dbl.numOf` retypes an exact double as a safe integer when it holds one. -/
+theorem dnumOf_isInt {x : F64} {r : Js.Num} (h : Js.Dbl.numOf ⟨x⟩ = ok r) : Core.F64.IsInt x r.val := by
+  cases x with
+  | nan => simp only [Js.Dbl.numOf] at h; exact (fail_not_ok h).elim
+  | inf s => simp only [Js.Dbl.numOf] at h; exact (fail_not_ok h).elim
+  | fin s n =>
+    simp only [Js.Dbl.numOf] at h
+    split at h
+    · rename_i hn
+      simp only [Js.mk] at h
+      split at h
+      · rename_i _
+        simp only [ok.injEq] at h
+        subst h
+        have hu : 0 < F64.unit := by rw [F64.unit]; exact Nat.pow_pos (by decide)
+        have hd : n / F64.unit * F64.unit = n := Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero hn)
+        by_cases hn0 : n = 0
+        · subst hn0
+          cases s with
+          | false => exact Or.inl (by simp [F64.ofInt, F64.signed])
+          | true => exact Or.inr ⟨by simp [F64.signed], rfl⟩
+        · have hdv : F64.unit ∣ n := Nat.dvd_of_mod_eq_zero hn
+          have hk : 0 < n / F64.unit := Nat.div_pos (Nat.le_of_dvd (Nat.pos_of_ne_zero hn0) hdv) hu
+          cases s with
+          | false =>
+            left
+            simp only [F64.ofInt, F64.signed, Bool.false_eq_true, if_false]
+            have hneg : ¬ (↑(n / F64.unit) : Int) < 0 := by omega
+            rw [decide_eq_false hneg, Int.natAbs_natCast, hd]
+          | true =>
+            left
+            simp only [F64.ofInt, F64.signed, if_true]
+            have hneg : (-(↑(n / F64.unit) : Int)) < 0 := by omega
+            rw [decide_eq_true hneg, Int.natAbs_neg, Int.natAbs_natCast, hd]
+      · exact (fail_not_ok h).elim
+    · exact (fail_not_ok h).elim
+
+theorem SimE.dnumFinite_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
+    SimE p s (.prim .numFinite [x]) (Option.getD (a.map Js.Dbl.isFinite) false) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
+  | some d =>
+    obtain rfl : v = .num d.f := ri
+    exact ⟨.bool (Js.Dbl.isFinite d), h, by simp [primV, Core.numFinite, Js.Dbl.isFinite], List.prefix_refl _, rfl⟩
+theorem SimE.dnumInteger_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
+    SimE p s (.prim .numInteger [x]) (Option.getD (a.map Js.Dbl.isInteger) false) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
+  | some d =>
+    obtain rfl : v = .num d.f := ri
+    exact ⟨.bool (Js.Dbl.isInteger d), h, by simp [primV, Core.numInteger, Js.Dbl.isInteger], List.prefix_refl _, rfl⟩
+theorem SimE.dnumSafe_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
+    SimE p s (.prim .numSafe [x]) (Option.getD (a.map Js.Dbl.isSafe) false) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
+  | some d =>
+    obtain rfl : v = .num d.f := ri
+    exact ⟨.bool (Js.Dbl.isSafe d), h, by simp [primV, Core.numSafe, Js.Dbl.isSafe], List.prefix_refl _, rfl⟩
+theorem SimE.dnumNaN_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
+    SimE p s (.prim .numNaN [x]) (Option.getD (a.map Js.Dbl.isNaN) false) := by
+  refine sim_prim (args1 hx) ?_
+  rintro h _ ⟨v, rfl, ri⟩
+  cases a with
+  | none =>
+    have hn : nothingOk k v := ri
+    cases k <;> simp only [nothingOk] at hn
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numNaN], List.prefix_refl _, rfl⟩
+    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numNaN], List.prefix_refl _, rfl⟩
+    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numNaN], List.prefix_refl _, rfl⟩
+  | some d =>
+    obtain rfl : v = .num d.f := ri
+    exact ⟨.bool (Js.Dbl.isNaN d), h, by simp [primV, Core.numNaN, Js.Dbl.isNaN], List.prefix_refl _, rfl⟩
+theorem SimE.dnumOf {p s e} {a : Js.Dbl} {r : Js.Num} (hx : SimE p s e a) (h : Js.Dbl.numOf a = ok r) :
+    SimE p s e r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
+  exact ⟨_, s₂, ev, h₂, _, rfl, dnumOf_isInt h⟩
+
+theorem SimE.dlen_str {p s e} {a : List Nat} {r : Js.Dbl} (hx : SimE p s e a) (h : Js.Dbl.len a = ok r) :
+    SimE p s (.length e) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
+  obtain ⟨F, hF⟩ := ev
+  have : r = ⟨F64.ofInt a.length⟩ := by simpa [Js.Dbl.len] using h.symm
+  subst this
+  refine ⟨.num (F64.ofInt a.length), s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, rfl⟩
+  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
+  simp [eval, hF g hg]
+theorem SimE.dlen_arr {p s e α} {_ : TyRep α} {a : List α} {r : Js.Dbl} (hx : SimE p s e a) (h : Js.Dbl.len a = ok r) :
+    SimE p s (.length e) r := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, ev, h₂, l, vs, rfl, hl, hf⟩ := hx s₁ h₁
+  have hlen := hf.length_eq
+  have : r = ⟨F64.ofInt a.length⟩ := by simpa [Js.Dbl.len] using h.symm
+  subst this
+  refine ⟨_, s₂, Evals.length ev hl, h₂, ?_⟩
+  rw [hlen]
+  rfl
+
+theorem SimE.dstrIndexOf {a b : List Nat} {r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.strIndexOf a b = ok r) : SimE p s (.prim .strIndexOf [x, y]) r := by
+  obtain ⟨n, hn, rfl⟩ : ∃ n, Js.strIndexOf a b = ok n ∧ r = ⟨F64.ofInt n.val⟩ := by
+    simp only [Js.Dbl.strIndexOf] at h
+    cases hjs : Js.strIndexOf a b with
+    | ret n => rw [hjs] at h; simp at h; exact ⟨n, rfl, h.symm⟩
+    | div => rw [hjs] at h; simp at h
+    | vis e k => rw [hjs] at h; simp at h
+  refine sim_prim (args2 hx hy) ?_
+  rintro h' _ ⟨v, w, rfl, rfl, rfl⟩
+  exact ⟨numVal n, _, by simp [primV, hn, Result.match.ok], List.prefix_refl _, rfl⟩
+theorem SimE.dstrLastIndexOf {a b : List Nat} {r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
+    (h : Js.Dbl.strLastIndexOf a b = ok r) : SimE p s (.prim .strLastIndexOf [x, y]) r := by
+  obtain ⟨n, hn, rfl⟩ : ∃ n, Js.strLastIndexOf a b = ok n ∧ r = ⟨F64.ofInt n.val⟩ := by
+    simp only [Js.Dbl.strLastIndexOf] at h
+    cases hjs : Js.strLastIndexOf a b with
+    | ret n => rw [hjs] at h; simp at h; exact ⟨n, rfl, h.symm⟩
+    | div => rw [hjs] at h; simp at h
+    | vis e k => rw [hjs] at h; simp at h
+  refine sim_prim (args2 hx hy) ?_
+  rintro h' _ ⟨v, w, rfl, rfl, rfl⟩
+  exact ⟨numVal n, _, by simp [primV, hn, Result.match.ok], List.prefix_refl _, rfl⟩
+theorem SimE.dcharCodeAt {a : List Nat} {i : Js.Num} {r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y i)
+    (h : Js.Dbl.charCodeAt a i = ok r) : SimE p s (.prim .charCodeAt [x, y]) r := by
+  obtain ⟨n, hn, rfl⟩ : ∃ n, Js.charCodeAt a i = ok n ∧ r = ⟨F64.ofInt n.val⟩ := by
+    simp only [Js.Dbl.charCodeAt] at h
+    cases hjs : Js.charCodeAt a i with
+    | ret n => rw [hjs] at h; simp at h; exact ⟨n, rfl, h.symm⟩
+    | div => rw [hjs] at h; simp at h
+    | vis e k => rw [hjs] at h; simp at h
+  refine sim_prim (args2 hx hy) ?_
+  rintro h' _ ⟨v, w, rfl, rfl, ri⟩
+  exact ⟨numVal n, _, by simp [primV, num_arg ri, hn, Result.match.ok], List.prefix_refl _, rfl⟩
+
+theorem SimC.dlt {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimC p s (.bin .lt x y) (a.f.lt b.f = true) :=
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
+theorem SimC.dgt {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimC p s (.bin .gt x y) (b.f.lt a.f = true) :=
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
+theorem SimC.dle {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimC p s (.bin .le x y) (a.f.le b.f = true) :=
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
+theorem SimC.dge {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimC p s (.bin .ge x y) (b.f.le a.f = true) :=
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
+theorem SimC.deq {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimC p s (.bin .eq x y) (a.f.eq b.f = true) :=
+  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
+theorem SimC.dne {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
+    SimC p s (.bin .ne x y) (¬(a.f.eq b.f = true)) :=
+  SimC.ne_of_eq (SimC.deq hx hy)
+
+/-- `if (d)` on a double: falsy exactly at `0`, `-0` and `NaN`. -/
+theorem SimB.dbl {p s e} {a : Js.Dbl} (h : SimE p s e a) : SimB p s e (Js.Dbl.truthy (some a) = true) := by
+  intro s₁ h₁
+  obtain ⟨v, s₂, he, hk, rfl⟩ := h s₁ h₁
+  refine ⟨_, s₂, he, hk, ?_⟩
+  obtain ⟨f⟩ := a
+  match f with
+  | .nan => exact Iff.rfl
+  | .inf _ => exact Iff.rfl
+  | .fin _ n => match n with | 0 => exact Iff.rfl | _ + 1 => exact Iff.rfl
+
+theorem SimB.dbl_opt {p s e k} {a : Opt k Js.Dbl} (h : SimE p s e a) : SimB p s e (Js.Dbl.truthy a = true) :=
+  opt_cases (Q := fun o => SimB p s e (Js.Dbl.truthy o = true)) a h
+    (fun h => (SimB.none h rfl).iff (by simp [Js.Dbl.truthy]))
+    (fun _ h => (SimB.dbl (SimE.some_inv h)).iff (by simp [Js.Dbl.truthy]))
+
 end Core
 
 /-- The heap half of a step's fact. -/
@@ -2867,265 +3202,3 @@ elab "carry " k:term : tactic => withMainContext do
       let (_, g') ← (← g.assert d.userName t pf).intro1P
       replaceMainGoal [← g'.tryClear d.fvarId]
 
-/-! ## Doubles: `Js.Dbl`
-
-A `Js.Dbl` keeps every bit: its `rep` is exact (`v = .num a.f`), so `NaN`,
-infinities, `-0` and every rounding step are visible to a proof. -/
-
-instance : TyRep Js.Dbl := ⟨fun _ a v => v = .num a.f, fun _ h => h⟩
-instance : NotNull Js.Dbl := ⟨by rintro _ _ _ rfl; rfl⟩
-
-theorem SimE.dlit {p s} (b : Nat) : SimE p s (.lit (.num (F64.ofBits b))) (Js.Dbl.lit b) :=
-  fun _ _ => ⟨_, _, Evals.lit _ _ _, Ext.refl _, rfl⟩
-
-/-- A `Js.Num` literal the heap holds as `ofInt` can be read as a double exactly. -/
-theorem SimE.dnumLit {p s} (a : Js.Num) : SimE p s (.lit (.num (F64.ofInt a.val))) (⟨F64.ofInt a.val⟩ : Js.Dbl) :=
-  fun _ _ => ⟨_, _, Evals.lit _ _ _, Ext.refl _, rfl⟩
-
-theorem SimE.dadd {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.add a b = ok r) : SimE p s (.bin .add x y) r := by
-  refine sim_bin hx hy ?_
-  rintro _ _ _ rfl rfl
-  have : r = ⟨a.f.add b.f⟩ := by simpa [Js.Dbl.add] using h.symm
-  subst this; exact ⟨_, rfl, rfl⟩
-theorem SimE.dsub {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.sub a b = ok r) : SimE p s (.bin .sub x y) r := by
-  refine sim_bin hx hy ?_
-  rintro _ _ _ rfl rfl
-  have : r = ⟨a.f.sub b.f⟩ := by simpa [Js.Dbl.sub] using h.symm
-  subst this; exact ⟨_, rfl, rfl⟩
-theorem SimE.dmul {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.mul a b = ok r) : SimE p s (.bin .mul x y) r := by
-  refine sim_bin hx hy ?_
-  rintro _ _ _ rfl rfl
-  have : r = ⟨a.f.mul b.f⟩ := by simpa [Js.Dbl.mul] using h.symm
-  subst this; exact ⟨_, rfl, rfl⟩
-theorem SimE.ddiv {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.div a b = ok r) : SimE p s (.bin .div x y) r := by
-  refine sim_bin hx hy ?_
-  rintro _ _ _ rfl rfl
-  have : r = ⟨a.f.div b.f⟩ := by simpa [Js.Dbl.div] using h.symm
-  subst this; exact ⟨_, rfl, rfl⟩
-theorem SimE.drem {p s x y} {a b r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.rem a b = ok r) : SimE p s (.bin .rem x y) r := by
-  refine sim_bin hx hy ?_
-  rintro _ _ _ rfl rfl
-  have : r = ⟨a.f.rem b.f⟩ := by simpa [Js.Dbl.rem] using h.symm
-  subst this; exact ⟨_, rfl, rfl⟩
-
-theorem SimE.dneg {p s e} {a r : Js.Dbl} (hx : SimE p s e a) (h : Js.Dbl.neg a = ok r) :
-    SimE p s (.neg e) r := by
-  intro s₁ h₁
-  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
-  have : r = ⟨a.f.neg⟩ := by simpa [Js.Dbl.neg] using h.symm
-  subst this; exact ⟨_, s₂, Evals.neg ev, h₂, rfl⟩
-
-theorem SimE.dmath {p s e} (f : F64 → F64) {a r : Js.Dbl} (hx : SimE p s e a)
-    (h : Js.Dbl.math f a = ok r) : SimE p s (.math f e) r := by
-  intro s₁ h₁
-  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
-  have : r = ⟨f a.f⟩ := by simpa [Js.Dbl.math] using h.symm
-  subst this; exact ⟨_, s₂, Evals.math ev, h₂, rfl⟩
-
-theorem SimE.dmin {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimE p s (.prim .min [x, y]) (Js.Dbl.min a b) := by
-  refine sim_prim (args2 hx hy) ?_
-  rintro _ _ ⟨v, w, rfl, rfl, rfl⟩
-  exact ⟨_, _, by simp [primV, Js.Dbl.min], List.prefix_refl _, rfl⟩
-theorem SimE.dmax {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimE p s (.prim .max [x, y]) (Js.Dbl.max a b) := by
-  refine sim_prim (args2 hx hy) ?_
-  rintro _ _ ⟨v, w, rfl, rfl, rfl⟩
-  exact ⟨_, _, by simp [primV, Js.Dbl.max], List.prefix_refl _, rfl⟩
-
-theorem SimE.dnumFinite {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numFinite [x]) (Js.Dbl.isFinite a) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, rfl⟩
-  exact ⟨.bool a.f.isFin, h, by simp [primV, Core.numFinite, Js.Dbl.isFinite], List.prefix_refl _, rfl⟩
-theorem SimE.dnumInteger {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numInteger [x]) (Js.Dbl.isInteger a) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, rfl⟩
-  exact ⟨.bool a.f.isInt', h, by simp [primV, Core.numInteger, Js.Dbl.isInteger], List.prefix_refl _, rfl⟩
-theorem SimE.dnumSafe {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numSafe [x]) (Js.Dbl.isSafe a) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, rfl⟩
-  exact ⟨.bool a.f.isSafe, h, by simp [primV, Core.numSafe, Js.Dbl.isSafe], List.prefix_refl _, rfl⟩
-theorem SimE.dnumNaN {a : Js.Dbl} (hx : SimE p s x a) : SimE p s (.prim .numNaN [x]) (Js.Dbl.isNaN a) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, rfl⟩
-  exact ⟨.bool a.f.isNan, h, by simp [primV, Core.numNaN, Js.Dbl.isNaN], List.prefix_refl _, rfl⟩
-
-/-- `Js.Dbl.numOf` retypes an exact double as a safe integer when it holds one. -/
-theorem dnumOf_isInt {x : F64} {r : Js.Num} (h : Js.Dbl.numOf ⟨x⟩ = ok r) : Core.F64.IsInt x r.val := by
-  match x, h with
-  | .fin s n, h =>
-    simp only [Js.Dbl.numOf, Js.mk] at h
-    split at h <;> simp_all
-    rename_i _ hn _; subst h
-    have hd : n / F64.unit * F64.unit = n := Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero hn)
-    by_cases hn0 : n = 0
-    · subst hn0; cases s <;> simp [F64.ofInt, F64.signed, Core.F64.IsInt]
-    · cases s with
-      | false =>
-        left
-        simp [F64.ofInt, F64.signed, hd]
-      | true =>
-        by_cases hk : n / F64.unit = 0
-        · have : n = 0 := by omega
-          subst this; simp at hn0
-        · left
-          have : (F64.signed true (n / F64.unit)).natAbs * F64.unit = n := by
-            simp [F64.signed, hd]
-          simp [F64.ofInt, F64.signed, this]
-  | .nan, h => simp [Js.Dbl.numOf] at h
-  | .inf s, h => simp [Js.Dbl.numOf] at h
-
-theorem SimE.dnumFinite_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
-    SimE p s (.prim .numFinite [x]) (Option.getD (a.map Js.Dbl.isFinite) false) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, ri⟩
-  cases a with
-  | none =>
-    have hn : nothingOk k v := ri
-    cases k <;> simp only [nothingOk] at hn
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
-    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numFinite], List.prefix_refl _, rfl⟩
-  | some d =>
-    obtain rfl : v = .num d.f := ri
-    exact ⟨.bool (Js.Dbl.isFinite d), h, by simp [primV, Core.numFinite, Js.Dbl.isFinite], List.prefix_refl _, rfl⟩
-theorem SimE.dnumInteger_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
-    SimE p s (.prim .numInteger [x]) (Option.getD (a.map Js.Dbl.isInteger) false) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, ri⟩
-  cases a with
-  | none =>
-    have hn : nothingOk k v := ri
-    cases k <;> simp only [nothingOk] at hn
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
-    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numInteger], List.prefix_refl _, rfl⟩
-  | some d =>
-    obtain rfl : v = .num d.f := ri
-    exact ⟨.bool (Js.Dbl.isInteger d), h, by simp [primV, Core.numInteger, Js.Dbl.isInteger], List.prefix_refl _, rfl⟩
-theorem SimE.dnumSafe_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
-    SimE p s (.prim .numSafe [x]) (Option.getD (a.map Js.Dbl.isSafe) false) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, ri⟩
-  cases a with
-  | none =>
-    have hn : nothingOk k v := ri
-    cases k <;> simp only [nothingOk] at hn
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
-    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numSafe], List.prefix_refl _, rfl⟩
-  | some d =>
-    obtain rfl : v = .num d.f := ri
-    exact ⟨.bool (Js.Dbl.isSafe d), h, by simp [primV, Core.numSafe, Js.Dbl.isSafe], List.prefix_refl _, rfl⟩
-theorem SimE.dnumNaN_opt {k} {a : Opt k Js.Dbl} (hx : SimE p s x a) :
-    SimE p s (.prim .numNaN [x]) (Option.getD (a.map Js.Dbl.isNaN) false) := by
-  refine sim_prim (args1 hx) ?_
-  rintro h _ ⟨v, rfl, ri⟩
-  cases a with
-  | none =>
-    have hn : nothingOk k v := ri
-    cases k <;> simp only [nothingOk] at hn
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numNaN], List.prefix_refl _, rfl⟩
-    · cases hn; exact ⟨.bool false, h, by simp [primV, Core.numNaN], List.prefix_refl _, rfl⟩
-    · rcases hn with rfl | rfl <;> exact ⟨.bool false, h, by simp [primV, Core.numNaN], List.prefix_refl _, rfl⟩
-  | some d =>
-    obtain rfl : v = .num d.f := ri
-    exact ⟨.bool (Js.Dbl.isNaN d), h, by simp [primV, Core.numNaN, Js.Dbl.isNaN], List.prefix_refl _, rfl⟩
-theorem SimE.dnumOf {p s e} {a : Js.Dbl} {r : Js.Num} (hx : SimE p s e a) (h : Js.Dbl.numOf a = ok r) :
-    SimE p s e r := by
-  intro s₁ h₁
-  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
-  exact ⟨_, s₂, ev, h₂, _, rfl, dnumOf_isInt h⟩
-
-theorem SimE.dlen_str {p s e} {a : List Nat} {r : Js.Dbl} (hx : SimE p s e a) (h : Js.Dbl.len a = ok r) :
-    SimE p s (.length e) r := by
-  intro s₁ h₁
-  obtain ⟨v, s₂, ev, h₂, rfl⟩ := hx s₁ h₁
-  obtain ⟨F, hF⟩ := ev
-  have : r = ⟨F64.ofInt a.length⟩ := by simpa [Js.Dbl.len] using h.symm
-  subst this
-  refine ⟨.num (F64.ofInt a.length), s₂, ⟨F + 1, fun f hf => ?_⟩, h₂, rfl⟩
-  obtain ⟨g, rfl, hg⟩ := succ_of_le hf
-  simp [eval, hF g hg]
-theorem SimE.dlen_arr {p s e α} {_ : TyRep α} {a : List α} {r : Js.Dbl} (hx : SimE p s e a) (h : Js.Dbl.len a = ok r) :
-    SimE p s (.length e) r := by
-  intro s₁ h₁
-  obtain ⟨v, s₂, ev, h₂, l, vs, rfl, hl, hf⟩ := hx s₁ h₁
-  have hlen := hf.length_eq
-  have : r = ⟨F64.ofInt a.length⟩ := by simpa [Js.Dbl.len] using h.symm
-  subst this
-  refine ⟨_, s₂, Evals.length ev hl, h₂, ?_⟩
-  rw [hlen]
-
-theorem SimE.dstrIndexOf {a b : List Nat} {r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.strIndexOf a b = ok r) : SimE p s (.prim .strIndexOf [x, y]) r := by
-  obtain ⟨n, hn, rfl⟩ : ∃ n, Js.strIndexOf a b = ok n ∧ r = ⟨F64.ofInt n.val⟩ := by
-    unfold Js.Dbl.strIndexOf at h
-    match m : Js.strIndexOf a b, h with
-    | .ok n, h => exact ⟨_, m, by simpa [m] using h.symm⟩
-    | .fail _ _, h => simp [m] at h
-    | .div, h => simp [m] at h
-  refine sim_prim (args2 hx hy) ?_
-  rintro h' _ ⟨v, w, rfl, rfl, rfl⟩
-  exact ⟨numVal n, _, by simp [primV, hn, Result.match.ok], List.prefix_refl _, rfl⟩
-theorem SimE.dstrLastIndexOf {a b : List Nat} {r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b)
-    (h : Js.Dbl.strLastIndexOf a b = ok r) : SimE p s (.prim .strLastIndexOf [x, y]) r := by
-  obtain ⟨n, hn, rfl⟩ : ∃ n, Js.strLastIndexOf a b = ok n ∧ r = ⟨F64.ofInt n.val⟩ := by
-    unfold Js.Dbl.strLastIndexOf at h
-    match m : Js.strLastIndexOf a b, h with
-    | .ok n, h => exact ⟨_, m, by simpa [m] using h.symm⟩
-    | .fail _ _, h => simp [m] at h
-    | .div, h => simp [m] at h
-  refine sim_prim (args2 hx hy) ?_
-  rintro h' _ ⟨v, w, rfl, rfl, rfl⟩
-  exact ⟨numVal n, _, by simp [primV, hn, Result.match.ok], List.prefix_refl _, rfl⟩
-theorem SimE.dcharCodeAt {a : List Nat} {i : Js.Num} {r : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y i)
-    (h : Js.Dbl.charCodeAt a i = ok r) : SimE p s (.prim .charCodeAt [x, y]) r := by
-  obtain ⟨n, hn, rfl⟩ : ∃ n, Js.charCodeAt a i = ok n ∧ r = ⟨F64.ofInt n.val⟩ := by
-    unfold Js.Dbl.charCodeAt at h
-    match m : Js.charCodeAt a i, h with
-    | .ok n, h => exact ⟨_, m, by simpa [m] using h.symm⟩
-    | .fail _ _, h => simp [m] at h
-    | .div, h => simp [m] at h
-  refine sim_prim (args2 hx hy) ?_
-  rintro h' _ ⟨v, w, rfl, rfl, ri⟩
-  exact ⟨numVal n, _, by simp [primV, num_arg ri, hn, Result.match.ok], List.prefix_refl _, rfl⟩
-
-theorem SimC.dlt {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimC p s (.bin .lt x y) (a.f.lt b.f = true) :=
-  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
-theorem SimC.dgt {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimC p s (.bin .gt x y) (b.f.lt a.f = true) :=
-  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
-theorem SimC.dle {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimC p s (.bin .le x y) (a.f.le b.f = true) :=
-  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
-theorem SimC.dge {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimC p s (.bin .ge x y) (b.f.le a.f = true) :=
-  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
-theorem SimC.deq {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimC p s (.bin .eq x y) (a.f.eq b.f = true) :=
-  sim_cmp hx hy (by rintro _ _ _ rfl rfl; simp [binary])
-theorem SimC.dne {p s x y} {a b : Js.Dbl} (hx : SimE p s x a) (hy : SimE p s y b) :
-    SimC p s (.bin .ne x y) (¬(a.f.eq b.f = true)) :=
-  SimC.ne_of_eq (SimC.deq hx hy)
-
-/-- `if (d)` on a double: falsy exactly at `0`, `-0` and `NaN`. -/
-theorem SimB.dbl {p s e} {a : Js.Dbl} (h : SimE p s e a) : SimB p s e (Js.Dbl.truthy (some a) = true) := by
-  intro s₁ h₁
-  obtain ⟨v, s₂, he, hk, rfl⟩ := h s₁ h₁
-  refine ⟨_, s₂, he, hk, ?_⟩
-  match a.f with
-  | .nan => exact Iff.rfl
-  | .inf _ => exact Iff.rfl
-  | .fin _ n => match n with | 0 => exact Iff.rfl | _ + 1 => exact Iff.rfl
-
-theorem SimB.dbl_opt {p s e k} {a : Opt k Js.Dbl} (h : SimE p s e a) : SimB p s e (Js.Dbl.truthy a = true) :=
-  opt_cases (Q := fun o => SimB p s e (Js.Dbl.truthy o = true)) a h
-    (fun h => (SimB.none h rfl).iff (by simp [Js.Dbl.truthy]))
-    (fun _ h => (SimB.dbl (SimE.some_inv h)).iff (by simp [Js.Dbl.truthy]))

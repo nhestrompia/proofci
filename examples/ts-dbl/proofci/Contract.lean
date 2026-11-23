@@ -16,10 +16,10 @@ theorem nan_propagates (quantity discount tax : Js.Dbl) :
     totalWithTax (Js.Dbl.lit 0x7ff8000000000000) quantity discount tax
       ⦃ r => Js.Dbl.isNaN r = true ⦄ := by sorry
 
-/-- `7.5 % 2` is `1.5`, bit for bit. -/
-theorem leftover_exact :
-    leftover (Js.Dbl.lit 0x401e000000000000) (Js.Dbl.lit 0x4000000000000000)
-      ⦃ r => r = Js.Dbl.lit 0x3ff8000000000000 ⦄ := by sorry
+/-- `7.5` split `2` ways is exactly `3`, bit for bit. -/
+theorem perHead_exact :
+    perHead (Js.Dbl.lit 0x401e000000000000) (Js.Dbl.lit 0x4000000000000000)
+      ⦃ r => r = Js.Dbl.lit 0x4008000000000000 ⦄ := by sorry
 
 /-- Whatever the rate, `effect` answers `NaN` or a whole `±1`/`±0`. -/
 theorem effect_signs (rate : Js.Dbl) :

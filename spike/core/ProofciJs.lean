@@ -650,6 +650,12 @@ def isFinite (_ : Num) : Bool := true
 /-- `Number.isNaN(x)`, false for the same reason. -/
 def isNaN (_ : Num) : Bool := false
 
+/-- `Number.isInteger`: every `Num` is a whole number. -/
+def isInteger (_ : Num) : Bool := true
+
+/-- `Number.isSafeInteger`: every `Num` is in the exact range. -/
+def isSafeInteger (_ : Num) : Bool := true
+
 /-- `x.toFixed(d)`. A safe integer has no fraction to round, so this only pads. `d` must be
     in the range JavaScript allows, and it throws otherwise. -/
 def toFixed (x d : Num) : Result Str :=
