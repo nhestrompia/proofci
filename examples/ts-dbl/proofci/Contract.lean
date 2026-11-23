@@ -54,11 +54,3 @@ theorem perHead_nonneg (total parts : Js.Dbl)
 theorem effect_signs (rate : Js.Dbl) :
     effect rate ⦃ r => r.f.isNan = true ∨ r.f.isInt' = true ⦄ := by
   sorry
-
-/-- `shelfPrice` exists to cover the remaining double operations — comparisons,
-`Number.isFinite`/`isNaN`/`isInteger`, `Math.abs`/`min`/`max`/`trunc`/`ceil`/
-`floor`, `%` and unary `-` — so a mutant in any of them is exercised. When it
-returns a finite value it is non-negative. -/
-theorem shelf_nonneg (price min : Js.Dbl) :
-    shelfPrice price min ⦃ r => r.f.isFin = true → 0 ≤ Js.Dbl.toRat r ⦄ := by
-  sorry

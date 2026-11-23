@@ -20,12 +20,6 @@ targets:
     guarantees:
       - id: nonneg
         theorem: perHead_nonneg
-  - id: shelf
-    function: src/pricing.ts::shelfPrice
-    guarantees:
-      - id: covered
-        theorem: shelf_nonneg
-        required: false
   - id: effect
     function: src/pricing.ts::effect
     guarantees:
