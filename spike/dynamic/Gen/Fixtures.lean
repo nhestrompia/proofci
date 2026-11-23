@@ -65,4 +65,25 @@ def halvings (n' : Val) : M Val := do
     m' ← (do math F64.floor (← (do bin .div m' (num 2))))
     k' ← (bin .add k' (num 1))
   return k'
+abbrev lastOf.pre (xs' : Val) (h : Heap) : Prop :=
+  Is h (.arr .num) xs'
+def lastOf (xs' : Val) : M Val := do
+  return (← (do let a2 := (← (do let r1 := xs'; method .«at» r1 [(← (do neg (num 1)))])); if nullish a2 then (pure (num 0)) else pure a2))
+abbrev lastCh.pre (s' : Val) (h : Heap) : Prop :=
+  Is h .str s'
+def lastCh (s' : Val) : M Val := do
+  return (← (do let a2 := (← (do let r1 := s'; method .«at» r1 [(← (do neg (num 1)))])); if nullish a2 then (pure (str "")) else pure a2))
+abbrev ruler.pre (n' : Val) (h : Heap) : Prop :=
+  Is h .num n'
+def ruler (n' : Val) : M Val := do
+  return (← (do let r1 := (str "-"); method .«repeat» r1 [(← (do bin .rem n' (num 8)))]))
+abbrev padRight.pre (s' : Val) (n' : Val) (h : Heap) : Prop :=
+  Is h .str s' ∧
+  Is h .num n'
+def padRight (s' : Val) (n' : Val) : M Val := do
+  return (← (do let r1 := s'; method .padEnd r1 [(← (do bin .rem n' (num 12))), (str ".")]))
+abbrev flatten.pre (rows' : Val) (h : Heap) : Prop :=
+  Is h (.arr (.arr .num)) rows'
+def flatten (rows' : Val) : M Val := do
+  return (← (do let r1 := rows'; method .flat r1 []))
 end Fixtures

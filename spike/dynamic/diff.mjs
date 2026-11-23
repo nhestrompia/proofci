@@ -20,7 +20,7 @@ export const TARGETS = [
   ["Closure", `${C}/continue/core/util/messageContent.ts`, ["renderContextItemsWithStatus"]],
   ["Budget", `${A}/fields/formula/budget.ts`, ["FormulaEvaluationBudget.new", "FormulaEvaluationBudget.consume", "FormulaEvaluationBudget.consumeRegex"]],
   ["Slideshow", `${C}/immich/web/src/lib/utils/slideshow-history.ts`, ["SlideshowHistory.reset", "SlideshowHistory.queue"]],
-  ["Fixtures", `${here}/fixtures.ts`, ["colorIndexes", "bumpBoth", "Counter.bump", "padCode", "firstAbove", "sumIndexed", "halvings"]],
+  ["Fixtures", `${here}/fixtures.ts`, ["colorIndexes", "bumpBoth", "Counter.bump", "padCode", "firstAbove", "sumIndexed", "halvings", "lastOf", "lastCh", "ruler", "padRight", "flatten"]],
   ["Bank", `${here}/../../examples/ts-bank/src/ledger.ts`, ["calculateFee", "transfer", "sumAmounts"]],
 ];
 

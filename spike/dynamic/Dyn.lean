@@ -17,6 +17,11 @@ inductive R (α : Type) where
 
 def M (α : Type) : Type := Heap → R α
 
+instance : Lean.Order.PartialOrder (R α) := inferInstanceAs (Lean.Order.PartialOrder (Lean.Order.FlatOrder R.stuck))
+instance : Lean.Order.CCPO (R α) := inferInstanceAs (Lean.Order.CCPO (Lean.Order.FlatOrder R.stuck))
+instance : Lean.Order.PartialOrder (M α) := inferInstanceAs (Lean.Order.PartialOrder (Heap → R α))
+instance : Lean.Order.CCPO (M α) := inferInstanceAs (Lean.Order.CCPO (Heap → R α))
+
 @[inline] def M.pure (a : α) : M α := fun h => .ok a h
 @[inline] def M.bind (m : M α) (f : α → M β) : M β := fun h => match m h with
   | .ok a h' => f a h'
@@ -257,6 +262,7 @@ def toNum : Val → M Val
   | .num x => pure (.num x)
   | .bool b => pure (num (if b then 1 else 0))
   | .big n => if n.natAbs ≤ 2 ^ 53 then pure (num n) else stuck
+  | .str s => prim .toNum [.str s]
   | _ => stuck
 
 /-- `String(v)`, for the values whose text the model has. -/
@@ -319,22 +325,21 @@ instance : ForIn M Live Val where
     | some (.array xs) => forLoop x.l f xs.length 0 b h
     | _ => .stuck
 
-/-- `while` and `for (;;)`: at most `n` rounds, then the model stops. -/
+/-- `while` and `for (;;)`: no bound; a loop that never ends is `stuck`, the least fixed point. -/
 structure Fuel where
-  n : Nat
 
-def fuel : Fuel := ⟨2 ^ 20⟩
+def fuel : Fuel := {}
 
-def whileLoop {β : Type} (f : Unit → β → M (ForInStep β)) : Nat → β → M β
-  | 0, _ => stuck
-  | k + 1, b => fun h => match f () b h with
-    | .ok (.done b') h' => .ok b' h'
-    | .ok (.yield b') h' => whileLoop f k b' h'
-    | .thrown v h' => .thrown v h'
-    | .stuck => .stuck
+def whileLoop {β : Type} (f : Unit → β → M (ForInStep β)) (b : β) : M β := fun h =>
+  match f () b h with
+  | .ok (.done b') h' => .ok b' h'
+  | .ok (.yield b') h' => whileLoop f b' h'
+  | .thrown v h' => .thrown v h'
+  | .stuck => .stuck
+partial_fixpoint
 
 instance : ForIn M Fuel Unit where
-  forIn x b f := whileLoop f x.n b
+  forIn _ b f := whileLoop f b
 
 /-- A callback over an array: `step i item acc` gives the next state or stops. -/
 def eachLoop {β : Type} (l : Loc) (step : Nat → Val → β → M (ForInStep β)) : Nat → Nat → β → M β
@@ -389,7 +394,7 @@ def jsReduce (o : Val) (f : Val → Val → Val → M Val) (init : Val) : M Val 
 
 inductive Meth where
   | startsWith | endsWith | includes | trim | toLowerCase | toUpperCase | slice | indexOf
-  | lastIndexOf | charAt | charCodeAt | split | join | concat | replaceAll | substring | padStart
+  | lastIndexOf | charAt | charCodeAt | split | join | concat | replaceAll | substring | padStart | padEnd | «repeat» | «at» | flat
   deriving DecidableEq, Repr
 
 def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args with
@@ -401,6 +406,12 @@ def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args wi
   | .str _, .toUpperCase, [] => prim .toUpper [o]
   | .str _, .padStart, [n] => prim .padStart [o, n, .str [32]]
   | .str _, .padStart, [n, f] => prim .padStart [o, n, f]
+  | .str _, .padEnd, [n] => prim .padEnd [o, n, .str [32]]
+  | .str _, .padEnd, [n, f] => prim .padEnd [o, n, f]
+  | .str _, .«repeat», [n] => prim .strRepeat [o, n]
+  | .str _, .«at», [n] => prim .atRel [o, n]
+  | .ref _, .«at», [n] => prim .atRel [o, n]
+  | .ref _, .flat, [] => prim .flat [o]
   | .str _, .slice, [a] => prim .sliceFrom [o, a]
   | .str _, .slice, [a, b] => prim .slice [o, a, b]
   | .str _, .indexOf, [a] => prim .strIndexOf [o, a]
@@ -533,13 +544,15 @@ theorem eachLoop_spec {β} {l : Loc} {xs : List Val} {step : Nat → Val → β 
     simp only [eachLoop, harr i b h hI, List.getElem?_eq_getElem hi, e']
     exact ih (i + 1) b' h' (by omega) hI'
 
-/-- Invariant rule for `while`/`for (;;)`: each round keeps `I` and lowers `μ` below the fuel. -/
+/-- Invariant rule for `while`/`for (;;)`: each round keeps `I` and lowers `μ`. -/
 theorem whileLoop_spec {β} {f : Unit → β → M (ForInStep β)} {P : β → Heap → Prop}
     (I : β → Heap → Prop) (μ : β → Heap → Nat)
     (hstep : ∀ b h, I b h → Spec (f () b) h (fun r h' => match r with
       | .done b' => P b' h'
       | .yield b' => I b' h' ∧ μ b' h' < μ b h)) :
-    ∀ n b h, I b h → μ b h < n → Spec (whileLoop f n b) h P := by
+    ∀ b h, I b h → Spec (whileLoop f b) h P := by
+  suffices ∀ n b h, I b h → μ b h < n → Spec (whileLoop f b) h P from
+    fun b h hI => this _ b h hI (Nat.lt_succ_self _)
   intro n
   induction n with
   | zero => intro b h _ hμ; omega
@@ -547,7 +560,7 @@ theorem whileLoop_spec {β} {f : Unit → β → M (ForInStep β)} {P : β → H
     intro b h hI hμ
     have hs := hstep b h hI
     unfold Spec at hs ⊢
-    simp only [whileLoop]
+    rw [whileLoop]
     cases e : f () b h with
     | ok r h' =>
       rw [e] at hs

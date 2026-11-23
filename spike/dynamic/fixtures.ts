@@ -56,3 +56,23 @@ export function halvings(n: number): number {
   }
   return k;
 }
+
+export function lastOf(xs: number[]): number {
+  return xs.at(-1) ?? 0;
+}
+
+export function lastCh(s: string): string {
+  return s.at(-1) ?? "";
+}
+
+export function ruler(n: number): string {
+  return "-".repeat(n % 8);
+}
+
+export function padRight(s: string, n: number): string {
+  return s.padEnd(n % 12, ".");
+}
+
+export function flatten(rows: number[][]): number[] {
+  return rows.flat();
+}

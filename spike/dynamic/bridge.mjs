@@ -55,7 +55,7 @@ export function generate(root, file, fn) {
   const P = sig.params.map((_, i) => `p${i}`), V = sig.params.map((_, i) => `v${i}`);
   const crepNames = ["crep_num", "crep_bool", "crep_str", "crep_list", "crepOpt_some", "crepOpt_none", "crep_none", "crep_some", ...recs.map((t) => `crep_${short(plain(t))}`)].join(", ");
   const nums = sig.params.flatMap((t, i) => plain(t) === "Js.Num" ? [i] : []);
-  const truthies = nums.length ? ` | (exfalso; simp only [${nums.map((i) => `t${i}`).join(", ")}, decide_eq_true_eq, decide_eq_false_iff_not, Bool.not_eq_true, ne_eq, not_not] at *; omega)` : "";
+  const truthies = nums.length ? ` | (exfalso; simp only [${nums.map((i) => `t${i}`).join(", ")}, decide_eq_true_eq, decide_eq_false_iff_not, Bool.not_eq_true, ne_eq, not_not, Bool.or_eq_true, Bool.and_eq_true] at *; omega)` : "";
   const opts = sig.params.flatMap((t, i) => t.kind === "optional" ? [i] : []);
   const optCases = opts.length ? ` | (${opts.map((i) => `cases p${i}`).join("; ")} <;> simp_all [${crepNames}, numIs_num, List.lookup])` : "";
   const hyps = sig.params.map((t, i) => `(h${i} : ${crepOf(t, P[i], V[i], "h")})`).join(" ");
@@ -84,11 +84,31 @@ theorem ${key}_dyn {h : Core.Heap} ${V.map((v) => `{${v} : Core.Val}`).join(" ")
   ${nums.map((i) => `have t${i} := truthy_numIs h${i}\n  `).join("")}` : ""}refine rel_intro (Q := fun r v h' => h <+: h' ∧ ${crepOf(sig.result, "r", "v", "h'")}) ?_ hr
   unfold ${sig.lean} D.${fn}
 ${callees(source, sig.lean, dyn, fn)}  rsteps
-  all_goals first | contradiction | omega | (exfalso; omega)${truthies}${optCases} | (refine ⟨by first | rfl | trivial | exact List.prefix_refl _ | exact List.prefix_append _ _ | exact (List.prefix_append _ _).trans (List.prefix_append _ _), ?_⟩; first | rfl | (simp [${crepNames}, numIs_num, List.lookup, *]; done) | (simp only [${crepNames}] at *; simp [${crepNames}, numIs_num, List.lookup, *]))
+${loopTactic(source, dyn.defs.get(fn) ?? "", crepNames)}  all_goals first | contradiction | omega | (exfalso; omega)${truthies}${optCases} | (exfalso; simp_all; done) | (refine ⟨List.prefix_refl _, ?_⟩; simp_all [${crepNames}]; done) | (refine ⟨by first | rfl | trivial | exact List.prefix_refl _ | exact List.prefix_append _ _ | exact (List.prefix_append _ _).trans (List.prefix_append _ _), ?_⟩; first | rfl | (simp [${crepNames}, numIs_num, List.lookup, *]; done) | (simp only [${crepNames}] at *; simp [${crepNames}, numIs_num, List.lookup, *]))
 
 #print axioms ${key}_dyn
 `;
   return { text, key, typedDef: sig.lean };
+}
+
+// One `while`/`for (;;)` loop: the typed loop state and the dynamic `let mut` tuple, matched by name.
+function loopTactic(source, dynDef, crepNames) {
+  const typed = [...source.matchAll(/Aeneas\.Std\.loop \(fun \(state : [^)]*\) => match state with \| \(?([\w, ]+?)\)? =>/g)];
+  const loops = dynDef.split("for _ in fuel do").length - 1;
+  if (typed.length !== 1 || loops !== 1) return "";
+  const tnames = typed[0][1].split(",").map((x) => x.trim().replace(/_\d+$/, ""));
+  const [pre, body] = dynDef.split("for _ in fuel do");
+  const declared = [...pre.matchAll(/let mut (\w+)'/g)].map((m) => m[1]);
+  const dnames = declared.filter((n) => new RegExp(`^\\s+${n}' (←|:=)`, "m").test(body.split(/\n  return/)[0]));
+  if (dnames.length !== tnames.length || !tnames.every((n) => dnames.includes(n))) return "";
+  const n = tnames.length;
+  const proj = (i) => n === 1 ? "" : ".2".repeat(i) + (i < n - 1 ? ".1" : "");
+  const S = `(fun s z h' => h <+: h' ∧ ${tnames.map((t, i) => `crep h' s${proj(i)} z${proj(dnames.indexOf(t))}`).join(" ∧ ")})`;
+  const pat = (p) => n === 1 ? `${p}0` : `⟨${tnames.map((_, i) => `${p}${i}`).join(", ")}⟩`;
+  const lcs = tnames.map((_, i) => `lc${i}`);
+  const init = `⟨by first | exact List.prefix_refl _ | assumption | exact List.prefix_append _ _, ${lcs.map(() => `by simp only [${crepNames}] at *; first | exact numIs_num | assumption`).join(", ")}⟩`;
+  const enter = `rintro ${pat("ls")} ${pat("lz")} _ ⟨_, ${lcs.join(", ")}⟩; (try simp only [${crepNames}] at ${lcs.join(" ")}); ${lcs.map((l) => `(try have := truthy_numIs ${l})`).join("; ")}; (try dsimp only); rsteps; all_goals try (simp only [wpost_cy, wpost_dd]; exact ⟨by first | assumption | exact List.prefix_refl _, ${lcs.map(() => `by simp only [${crepNames}]; first | assumption | exact numIs_num`).join(", ")}⟩)`;
+  return `  all_goals try (refine rel_while ${S} ${S} ${init} ?_ ?_ <;> (${enter}))\n`;
 }
 
 // Other functions of the file: unfolded so a call steps through the callee on both sides.

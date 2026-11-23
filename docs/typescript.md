@@ -639,7 +639,7 @@ type shape is a new feature. The plan is to add a second path that doesn't need 
 4. **Prove the translation.** Generate a proof, per function, that the typed output
    matches the dynamic semantics, so the translator leaves the trusted base. The [spike](../spike/dynamic/README.md#step-4-the-typed-view-equals-the-dynamic-one)
    generates such proofs, stepping both sides together with one lemma per typed operation,
-   and they reject wrong typed views. It proves 57 of 72 generated bridges (83 functions
-   tried), including `/`, the array callbacks, optional fields and `for ... of`. `while`
-   and `for (;;)` have dynamic semantics and an invariant rule, but no lemma relating them
-   to the typed loops yet.
+   and they reject wrong typed views. It proves 71 of 75 generated bridges (127 functions
+   tried), including `/`, the array callbacks, optional fields, nullable tests and all
+   loop forms. The rest is product work: running it in the action and comparing `dyn.mjs`
+   with Node on every function it proves.

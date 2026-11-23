@@ -272,6 +272,22 @@ theorem rel_isArray_opt {α β δ : Type} [CRep α] {t : Result β} {o : Option 
     obtain ⟨l, vs, rfl, hl, _⟩ := hv
     exact rel_isArray_arr rfl hl H
 
+/-- `x === null` (or `=== undefined`) on an optional number whose missing value is that one. -/
+theorem bin_eqNul {o : Option Js.Num} {w nul : Val} {h : Heap}
+    (hw : crepOpt nul h o w) (hn : nul = .null ∨ nul = .undef) :
+    bin .eq w nul = pure (Val.bool o.isNone) := by
+  cases o with
+  | none => simp only [crepOpt_none] at hw; subst hw; rcases hn with rfl | rfl <;> rfl
+  | some x =>
+    simp only [crepOpt_some, crep_num] at hw; obtain ⟨y, rfl, _⟩ := hw
+    rcases hn with rfl | rfl <;> rfl
+
+theorem rel_eqNul {β δ : Type} {t : Result β} {o : Option Js.Num} {w nul : Val} {k : Val → M δ} {h Q}
+    (hw : crepOpt nul h o w) (hn : nul = .null ∨ nul = .undef)
+    (H : Rel t (k (.bool o.isNone)) h Q) : Rel t (bin .eq w nul >>= k) h Q := by
+  unfold Rel at *; intro r e
+  rw [bin_eqNul hw hn, dpure_bind]; exact H r e
+
 @[simp] theorem truthy_str {s : List Nat} : truthy (.str s) = decide (s ≠ []) := by
   cases s <;> rfl
 
@@ -314,6 +330,19 @@ theorem rel_dneg {α δ : Type} {t : Result α} {a : Int} {v : Val} {k : Val →
 section
 open Core.F64
 variable {v w : Val} {a b : Int}
+theorem ite_or_bool {p : Prop} [Decidable p] {c : Bool} :
+    (if p then (pure (.bool (decide p)) : M Val) else pure (.bool c)) = pure (.bool (decide p || c)) := by
+  by_cases hp : p <;> simp [hp]
+theorem ite_or_bool' {b c : Bool} :
+    (if b = true then (pure (.bool b) : M Val) else pure (.bool c)) = pure (.bool (b || c)) := by
+  cases b <;> rfl
+theorem ite_and_bool {p : Prop} [Decidable p] {c : Bool} :
+    (if p then (pure (.bool c) : M Val) else pure (.bool (decide p))) = pure (.bool (decide p && c)) := by
+  by_cases hp : p <;> simp [hp]
+theorem ite_and_bool' {b c : Bool} :
+    (if b = true then (pure (.bool c) : M Val) else pure (.bool b)) = pure (.bool (b && c)) := by
+  cases b <;> rfl
+
 theorem bin_lt_is (hv : NumIs v a) (hw : NumIs w b) : bin .lt v w = pure (.bool (decide (a < b))) := by
   obtain ⟨x, rfl, hx⟩ := hv; obtain ⟨y, rfl, hy⟩ := hw
   show (pure (.bool (x.lt y)) : M Val) = _; rw [lt_isInt hx hy]
@@ -526,6 +555,222 @@ theorem rel_padStart {β : Type} {s fill f : List Nat} {n : Js.Num} {w : Val}
     simp [method, prim, primV, asNum_isInt hx, et, okStr]
   rw [spec_bind, spec_eq hp]
   have H' := H t; unfold Rel at H'; exact H' r er
+
+theorem rel_padEnd {β : Type} {s fill f : List Nat} {n : Js.Num} {w : Val}
+    {g : List Nat → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (hf : f = fill) (H : ∀ t, Rel (g t) (k (.str t)) h Q) :
+    Rel (Std.bind (Js.padEnd s n fill) g) (method .padEnd (.str s) [w, .str f] >>= k) h Q := by
+  subst hf
+  obtain ⟨x, rfl, hx⟩ := hv
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hp : method .padEnd (.str s) [.num x, .str f] h = .ok (.str t) h := by
+    simp [method, prim, primV, asNum_isInt hx, et, okStr]
+  rw [spec_bind, spec_eq hp]
+  have H' := H t; unfold Rel at H'; exact H' r er
+
+theorem rel_padEnd1 {β : Type} {s fill : List Nat} {n : Js.Num} {w : Val}
+    {g : List Nat → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (hf : fill = [32]) (H : ∀ t, Rel (g t) (k (.str t)) h Q) :
+    Rel (Std.bind (Js.padEnd s n fill) g) (method .padEnd (.str s) [w] >>= k) h Q := by
+  subst hf
+  obtain ⟨x, rfl, hx⟩ := hv
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hp : method .padEnd (.str s) [.num x] h = .ok (.str t) h := by
+    simp [method, prim, primV, asNum_isInt hx, et, okStr]
+  rw [spec_bind, spec_eq hp]
+  have H' := H t; unfold Rel at H'; exact H' r er
+
+theorem rel_repeat {β : Type} {s : List Nat} {n : Js.Num} {w : Val}
+    {g : List Nat → Result β} {δ : Type} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (H : ∀ t, Rel (g t) (k (.str t)) h Q) :
+    Rel (Std.bind (Js.strRepeat s n) g) (method .«repeat» (.str s) [w] >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  unfold Rel at *; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have hp : method .«repeat» (.str s) [.num x] h = .ok (.str t) h := by
+    simp [method, prim, primV, asNum_isInt hx, et, okStr]
+  rw [spec_bind, spec_eq hp]
+  have H' := H t; unfold Rel at H'; exact H' r er
+
+theorem f2_getElem? {α β : Type} {R : α → β → Prop} : ∀ {xs ys} (_ : List.Forall₂ R xs ys) (i : Nat),
+    (xs[i]? = none ∧ ys[i]? = none) ∨ ∃ a b, xs[i]? = some a ∧ ys[i]? = some b ∧ R a b
+  | _, _, .nil, _ => Or.inl ⟨rfl, rfl⟩
+  | _, _, .cons hr _, 0 => Or.inr ⟨_, _, rfl, rfl, hr⟩
+  | _, _, .cons _ hf, i + 1 => by simpa using f2_getElem? hf i
+
+theorem crepOpt_getD {α} [CRep α] {h : Heap} {o : Option α} {p : Option Val}
+    (H : (o = none ∧ p = none) ∨ ∃ a b, o = some a ∧ p = some b ∧ crep h a b) :
+    crepOpt .undef h o (p.getD .undef) := by
+  rcases H with ⟨rfl, rfl⟩ | ⟨a, b, rfl, rfl, hab⟩
+  · rfl
+  · exact hab
+
+@[simp] theorem nullish_undef : nullish .undef = true := rfl
+@[simp] theorem nullish_null : nullish .null = true := rfl
+@[simp] theorem nullish_str {s : List Nat} : nullish (.str s) = false := rfl
+
+/-- `xs[i]` on an array, as `Js.at_`: a missing slot reads `undefined`. -/
+theorem rel_index {α β δ : Type} [CRep α] {xs : List α} {vs : List Val} {l : Loc} {n : Js.Num} {w : Val}
+    {t : Result β} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs) (hv : NumIs w n.val)
+    (H : ∀ u, crepOpt .undef h (Js.at_ xs n) u → Rel t (k u) h Q) :
+    Rel t (index (.ref l) w >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  have hc : crepOpt .undef h (Js.at_ xs n) ((x.index.bind (vs[·]?)).getD .undef) := by
+    apply crepOpt_getD
+    unfold Js.at_
+    by_cases ha : n.val < 0
+    · rw [if_pos ha]; refine Or.inl ⟨rfl, ?_⟩
+      rcases hx with hx | ⟨h0, rfl⟩
+      · rw [hx, F64.index_ofInt_neg ha]; rfl
+      · omega
+    · rw [if_neg ha, F64.index_isInt hx (by omega)]; exact f2_getElem? hf _
+  have ep : index (.ref l) (.num x) h = .ok ((x.index.bind (vs[·]?)).getD .undef) h := by
+    show (match h[l]? with | some (.array xs) => _ | _ => _) = _
+    rw [hl]
+  unfold Rel at *; intro r e
+  have H' := H _ hc; unfold Rel at H'
+  rw [spec_bind, spec_eq ep]; exact H' r e
+
+/-- `xs.at(i)` on an array. -/
+theorem rel_atArr {α β δ : Type} [CRep α] {xs : List α} {vs : List Val} {l : Loc} {n : Js.Num} {w : Val}
+    {t : Result β} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs) (hv : NumIs w n.val)
+    (H : ∀ u, crepOpt .undef h (Js.atRel xs n) u → Rel t (k u) h Q) :
+    Rel t (method .«at» (.ref l) [w] >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  have ep : method .«at» (.ref l) [.num x] h = .ok ((Js.atRel vs n).getD .undef) h := by
+    simp [method, prim, primV, hl, asNum_isInt hx]
+  have hc : crepOpt .undef h (Js.atRel xs n) ((Js.atRel vs n).getD .undef) := by
+    apply crepOpt_getD
+    unfold Js.atRel; rw [hf.length_eq]
+    split
+    · exact Or.inl ⟨rfl, rfl⟩
+    · exact f2_getElem? hf _
+  unfold Rel at *; intro r e
+  have H' := H _ hc; unfold Rel at H'
+  rw [spec_bind, spec_eq ep]; exact H' r e
+
+/-- `s.at(i)` on a string. -/
+theorem rel_atStr {β δ : Type} {s : List Nat} {n : Js.Num} {w : Val} {t : Result β} {k : Val → M δ} {h Q}
+    (hv : NumIs w n.val) (H : ∀ u, crepOpt .undef h (Js.strAt s n) u → Rel t (k u) h Q) :
+    Rel t (method .«at» (.str s) [w] >>= k) h Q := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  have ep : method .«at» (.str s) [.num x] h = .ok ((Js.strAt s n).elim .undef .str) h := by
+    simp [method, prim, primV, asNum_isInt hx]
+  have hc : crepOpt .undef h (Js.strAt s n) ((Js.strAt s n).elim .undef .str) := by
+    cases Js.strAt s n <;> rfl
+  unfold Rel at *; intro r e
+  have H' := H _ hc; unfold Rel at H'
+  rw [spec_bind, spec_eq ep]; exact H' r e
+
+/-- `if (x)` on an optional number whose missing value is `null` or `undefined`. -/
+theorem truthy_crepOpt {o : Option Js.Num} {w nul : Val} {h : Heap} (hw : crepOpt nul h o w)
+    (hn : nul = .null ∨ nul = .undef) : truthy w = Js.truthyNum o := by
+  cases o with
+  | none => simp only [crepOpt_none] at hw; subst hw; rcases hn with rfl | rfl <;> rfl
+  | some x =>
+    simp only [crepOpt_some, crep_num] at hw
+    rw [truthy_numIs hw]; by_cases hx : x.val = 0 <;> simp [Js.truthyNum, hx]
+
+/-- `x!`: the typed view fails on a missing value, so only a present one is related. -/
+theorem rel_unwrap {β δ : Type} {o : Option Js.Num} {w nul : Val} {g : Js.Num → Result β} {d : M δ} {h Q}
+    (hw : crepOpt nul h o w) (H : ∀ x : Js.Num, NumIs w x.val → Rel (g x) d h Q) :
+    Rel (Std.bind (Js.unwrap o) g) d h Q := by
+  cases o with
+  | none => unfold Rel; intro r e; simp [Js.unwrap] at e
+  | some x =>
+    simp only [crepOpt_some, crep_num] at hw
+    have H' := H x hw
+    unfold Rel at *; intro r e
+    simp only [Js.unwrap, Std.bind_ok] at e
+    exact H' r e
+
+theorem flatV_f2 {h : Heap} : ∀ {xss : List (List Js.Num)} {vs : List Val},
+    List.Forall₂ (crep h) xss vs → ∃ ws, flatV h vs = some ws ∧ List.Forall₂ (crep h) xss.flatten ws
+  | [], [], .nil => ⟨[], rfl, .nil⟩
+  | _ :: _, _ :: _, .cons hx hr => by
+    obtain ⟨m, ys, rfl, hm, hxy⟩ := hx
+    obtain ⟨ws, ew, hw⟩ := flatV_f2 hr
+    exact ⟨ys ++ ws, by simp [flatV, hm, ew], f2_append hxy hw⟩
+
+/-- `xs.flat()` on an array of number arrays: a new array. -/
+theorem rel_flat {β δ : Type} {xss : List (List Js.Num)} {vs : List Val} {l : Loc}
+    {t : Result β} {k : Val → M δ} {h Q}
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xss vs)
+    (H : ∀ ws, crep (h ++ [.array ws]) (Js.flat xss) (.ref h.length) →
+      Rel t (k (.ref h.length)) (h ++ [.array ws]) Q) :
+    Rel t (method .flat (.ref l) [] >>= k) h Q := by
+  obtain ⟨ws, ew, hw⟩ := flatV_f2 hf
+  have ep : method .flat (.ref l) [] h = .ok (.ref h.length) (h ++ [.array ws]) := by
+    simp [method, prim, primV, hl, ew]
+  have H' := H ws ⟨h.length, ws, rfl, by simp, hw.imp fun _ _ x => x⟩
+  unfold Rel at *; intro r e
+  rw [spec_bind, spec_eq ep]; exact H' r e
+
+/-- `Number(s)` on a string: decimal integers only, as `Js.numOfStr`. -/
+theorem rel_numOfStr {β δ : Type} {s : List Nat} {g : Js.Num → Result β} {k : Val → M δ} {h Q}
+    (H : ∀ n : Js.Num, ∀ u, NumIs u n.val → Rel (g n) (k u) h Q) :
+    Rel (Std.bind (Js.numOfStr s) g) (toNum (.str s) >>= k) h Q := by
+  unfold Rel at *; intro r e
+  obtain ⟨n, en, er⟩ := bind_ok e
+  have ep : toNum (.str s) h = .ok (numVal n) h := by
+    show prim .toNum [.str s] h = _
+    simp [prim, primV, en, Result.match]; rfl
+  have H' := H n (numVal n) ⟨_, rfl, Or.inl rfl⟩; unfold Rel at H'
+  rw [spec_bind, spec_eq ep]; exact H' r er
+
+/-- `String(x)` on a number. -/
+theorem toStr_numIs {v : Val} {n : Js.Num} (hv : NumIs v n.val) : toStr v = pure (.str (Js.numStr n)) := by
+  obtain ⟨x, rfl, hx⟩ := hv
+  funext h
+  simp [toStr, prim, primV, textOf, asNum_isInt hx]; rfl
+
+theorem rel_trimD {β δ : Type} {s : List Nat} {t : Result β} {k : Val → M δ} {h Q}
+    (H : Rel t (k (.str (Js.trim s))) h Q) : Rel t (method .trim (.str s) [] >>= k) h Q := by
+  unfold Rel at *; intro r e
+  show Spec (pure (Val.str (Js.trim s)) >>= k) h (Q r)
+  rw [dpure_bind]; exact H r e
+
+theorem rel_toStr {β δ : Type} {v : Val} {n : Js.Num} {t : Result β} {k : Val → M δ} {h Q}
+    (hv : NumIs v n.val) (H : Rel t (k (.str (Js.numStr n))) h Q) : Rel t (toStr v >>= k) h Q := by
+  rw [toStr_numIs hv, dpure_bind]; exact H
+
+theorem nullish_crepOpt {α} [CRep α] {o : Option α} {w nul : Val} {h : Heap} (hw : crepOpt nul h o w)
+    (hn : nul = .null ∨ nul = .undef) (hs : ∀ a : α, crep h a w → nullish w = false) :
+    nullish w = o.isNone := by
+  cases o with
+  | none => simp only [crepOpt_none] at hw; subst hw; rcases hn with rfl | rfl <;> rfl
+  | some a => exact hs a hw
+
+theorem rel_atArrG {α β δ : Type} [CRep α] {xs : List α} {vs : List Val} {l : Loc} {n : Js.Num} {w : Val}
+    {o : Option α} {t : Result β} {k : Val → M δ} {h Q} (ho : Js.atRel xs n = o)
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs) (hv : NumIs w n.val)
+    (H : ∀ u, crepOpt .undef h o u → Rel t (k u) h Q) :
+    Rel t (method .«at» (.ref l) [w] >>= k) h Q := by
+  subst ho; exact rel_atArr hl hf hv H
+
+theorem rel_atStrG {β δ : Type} {s : List Nat} {n : Js.Num} {w : Val} {o : Option (List Nat)}
+    {t : Result β} {k : Val → M δ} {h Q} (ho : Js.strAt s n = o)
+    (hv : NumIs w n.val) (H : ∀ u, crepOpt .undef h o u → Rel t (k u) h Q) :
+    Rel t (method .«at» (.str s) [w] >>= k) h Q := by
+  subst ho; exact rel_atStr hv H
+
+theorem rel_indexG {α β δ : Type} [CRep α] {xs : List α} {vs : List Val} {l : Loc} {n : Js.Num} {w : Val}
+    {o : Option α} {t : Result β} {k : Val → M δ} {h Q} (ho : Js.at_ xs n = o)
+    (hl : h[l]? = some (.array vs)) (hf : List.Forall₂ (crep h) xs vs) (hv : NumIs w n.val)
+    (H : ∀ u, crepOpt .undef h o u → Rel t (k u) h Q) :
+    Rel t (index (.ref l) w >>= k) h Q := by
+  subst ho; exact rel_index hl hf hv H
+
+theorem rel_max_ok {a b : Js.Num} {v w : Val} {h} {Q : Js.Num → Val → Heap → Prop}
+    (hv : NumIs v a.val) (hw : NumIs w b.val) (H : ∀ u, NumIs u (Js.max a b).val → Q (Js.max a b) u h) :
+    Rel (ok (Js.max a b)) (prim .max [v, w]) h Q := by
+  have := rel_max (g := ok) (k := pure) hv hw fun u hu => by
+    unfold Rel; intro r e; rw [ok_eq_ok] at e; subst e; simp only [spec_pure]; exact H u hu
+  rwa [Std.bind_ok, dbind_pure] at this
 
 theorem mk_ok_val {n : Int} {t : Js.Num} (e : Js.mk n = ok t) : t.val = n := by
   simp only [Js.mk] at e
@@ -843,6 +1088,65 @@ theorem rel_forOf {α β γ : Type} [CRep α] [CRep β]
         obtain ⟨z'', hz'', hc''⟩ := hr0 (i + 1) z' rfl hc
         exact ⟨z'', ef ▸ hz'', hc''⟩
 
+/-- What one round of a typed loop and of `whileLoop` must agree on. -/
+def wpost {σ β ε : Type} (S : σ → ε → Heap → Prop) (T : β → ε → Heap → Prop) :
+    ControlFlow σ β → ForInStep ε → Heap → Prop
+  | .cont s, .yield z, h => S s z h
+  | .done r, .done z, h => T r z h
+  | _, _, _ => False
+
+@[simp] theorem wpost_cy {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {s z h} :
+    wpost S T (.cont s) (.yield z) h = S s z h := rfl
+@[simp] theorem wpost_dd {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {r z h} :
+    wpost S T (.done r) (.done z) h = T r z h := rfl
+@[simp] theorem wpost_cd {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {s z h} :
+    wpost S T (.cont s) (.done z) h = False := rfl
+@[simp] theorem wpost_dy {σ β ε} {S : σ → ε → Heap → Prop} {T : β → ε → Heap → Prop} {r z h} :
+    wpost S T (.done r) (.yield z) h = False := rfl
+
+/-- A typed loop against `while`/`for (;;)`: `S` relates the states before each round, `T` the results. -/
+theorem rel_while {σ β γ ε δ : Type} {B : σ → Result (ControlFlow σ β)} {s0 : σ}
+    {G : β → Result γ} {f : Unit → ε → M (ForInStep ε)} {z0 : ε} {k : ε → M δ} {h : Heap} {Q}
+    (S : σ → ε → Heap → Prop) (T : β → ε → Heap → Prop)
+    (h0 : S s0 z0 h)
+    (hstep : ∀ s z h, S s z h → Rel (B s) (f () z) h (wpost S T))
+    (H : ∀ r z h', T r z h' → Rel (G r) (k z) h' Q) :
+    Rel (Std.bind (Aeneas.Std.loop B s0) G) (forIn (m := M) fuel z0 f >>= k) h Q := by
+  unfold Rel; intro r e
+  obtain ⟨t, et, er⟩ := bind_ok e
+  have key := Core.loop_ind (B := B)
+    (fun s t => ∀ z h, S s z h → Spec (whileLoop f z) h (fun z' h' => T t z' h')) ?_ s0 t et
+  · obtain ⟨z', h', ew, hT⟩ := spec_ok (key z0 h h0)
+    rw [spec_bind]
+    show Spec (whileLoop f z0) h _
+    rw [spec_eq ew]
+    have H' := H t z' h' hT; unfold Rel at H'; exact H' r er
+  · intro s y ey
+    have one : ∀ z h, S s z h → Spec (f () z) h (wpost S T y) := by
+      intro z h hS
+      have S1 := hstep s z h hS; unfold Rel at S1
+      exact S1 _ ey
+    cases y with
+    | done t0 =>
+      intro z h hS
+      have sp := one z h hS
+      unfold Spec at sp ⊢; rw [whileLoop]
+      revert sp; cases f () z h with
+      | ok st h' => cases st <;> simp
+      | thrown v h' => simp
+      | stuck => simp
+    | cont s' =>
+      intro r0 ih z h hS
+      have sp := one z h hS
+      unfold Spec at sp ⊢; rw [whileLoop]
+      revert sp; cases f () z h with
+      | ok st h' =>
+        cases st with
+        | done z' => simp
+        | yield z' => intro sp; have := ih z' h' sp; unfold Spec at this; exact this
+      | thrown v h' => simp
+      | stuck => simp
+
 macro_rules | `(tactic| dsafe) => `(tactic| first | exact numIs_num | assumption)
 
 /-- Closes the side goals of a relational lemma: the operands are numbers, then introduces the result. -/
@@ -852,51 +1156,67 @@ macro "rmin" : tactic => `(tactic| first | (intro _ _) | exact numIs_num | assum
 
 /-- One typed number operation with its dynamic twin. -/
 macro "rops" : tactic => `(tactic| first
-  | (refine rel_add ?_ ?_ ?_ <;> rnum)
-  | (refine rel_sub ?_ ?_ ?_ <;> rnum)
-  | (refine rel_mul ?_ ?_ ?_ <;> rnum)
-  | (refine rel_rem ?_ ?_ ?_ <;> rnum)
-  | (refine rel_floorDiv ?_ ?_ ?_ <;> rnum)
-  | (refine rel_ceilDiv ?_ ?_ ?_ <;> rnum)
-  | (refine rel_truncDiv ?_ ?_ ?_ <;> rnum)
-  | (refine rel_neg ?_ ?_ <;> rnum)
-  | (refine rel_div ?_ ?_ ?_ <;> rnum)
-  | (refine rel_max ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu; try simp only [truthy_numIs hu]) | exact numIs_num | assumption)
-  | (refine rel_dneg numIs_num ?_; intro _ _)
+  | (with_reducible refine rel_add ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_sub ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_mul ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_rem ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_floorDiv ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_ceilDiv ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_truncDiv ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_neg ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_div ?_ ?_ ?_ <;> rnum)
+  | (with_reducible refine rel_max ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu; try simp only [truthy_numIs hu]) | exact numIs_num | assumption)
+  | (with_reducible refine rel_dneg numIs_num ?_; intro _ _)
   | (casesm ∃ _, _)
   | (with_reducible refine rel_trim ?_)
+  | (with_reducible refine rel_eqNul (by assumption) (by first | (left; rfl) | (right; rfl)) ?_)
+  | (rw [bin_eqNul (by assumption) (by first | (left; rfl) | (right; rfl))]; (try simp only [dpure_bind, spec_pure]))
   | (with_reducible refine rel_isArray_opt (by assumption) (by first | (left; rfl) | (right; rfl)) ?_)
   | (with_reducible subst_vars; refine rel_isArray_arr rfl (by assumption) ?_)
   | (with_reducible refine rel_isArray_nul (by first | (left; rfl) | (right; rfl) | assumption | (simp only [crep_none] at *; assumption)) ?_)
-  | (refine rel_dtoNum (by first | rfl | assumption) ?_; intro _ _)
-  | (refine rel_arr (by simp [crep_num, crep_none, crep_some, crep_str, crep_bool, numIs_num]; try assumption) ?_; intro _ _)
-  | (refine rel_len (by assumption) (by assumption) ?_; intro _ _ _ _)
-  | (refine rel_slen ?_; intro _ _ _ _)
-  | (refine rel_map (by assumption) (by assumption) ?_ ?_ <;> intros)
-  | (refine rel_filter (by assumption) (by assumption) ?_ ?_ <;> intros)
-  | (refine rel_findIndex (by assumption) (by assumption) ?_ ?_ <;> intros)
-  | (refine rel_some (by assumption) (by assumption) ?_ ?_ <;> intros)
-  | (refine rel_every (by assumption) (by assumption) ?_ ?_ <;> intros)
-  | (refine rel_lastIndexOf (by assumption) (by assumption) (by first | rfl | decide) ?_; intro _ _ _)
-  | (refine rel_reduce (by assumption) (by assumption) (by first | exact numIs_num | assumption) ?_ ?_ <;> intros)
+  | (with_reducible refine rel_dtoNum (by first | rfl | assumption) ?_; intro _ _)
+  | (with_reducible refine rel_arr (by simp [crep_num, crep_none, crep_some, crep_str, crep_bool, numIs_num]; try assumption) ?_; intro _ _)
+  | (with_reducible refine rel_len (by assumption) (by assumption) ?_; intro _ _ _ _)
+  | (with_reducible refine rel_slen ?_; intro _ _ _ _)
+  | (with_reducible refine rel_map (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (with_reducible refine rel_filter (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (with_reducible refine rel_findIndex (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (with_reducible refine rel_some (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (with_reducible refine rel_every (by assumption) (by assumption) ?_ ?_ <;> intros)
+  | (with_reducible refine rel_lastIndexOf (by assumption) (by assumption) (by first | rfl | decide) ?_; intro _ _ _)
+  | (with_reducible refine rel_reduce (by assumption) (by assumption) (by first | exact numIs_num | assumption) ?_ ?_ <;> intros)
   | (refine rel_padStart ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
+  | (refine rel_padEnd ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
+  | (refine rel_padEnd1 ?_ (by first | rfl | decide) ?_ <;> first | (intro _) | rnum)
+  | (refine rel_repeat ?_ ?_ <;> first | (intro _) | rnum)
+  | (with_reducible refine rel_trimD ?_)
+  | (refine rel_toStr (by assumption) ?_)
+  | (with_reducible refine rel_numOfStr ?_; intro _ _ _)
+  | ((with_reducible show Dyn.Rel _ (method .«at» _ _ >>= _) _ _); generalize ho : Js.atRel _ _ = o; refine rel_atArrG ho (by assumption) (by assumption) ?_ ?_ <;> first | rnum | (intro _ _))
+  | ((with_reducible show Dyn.Rel _ (method .«at» _ _ >>= _) _ _); generalize ho : Js.strAt _ _ = o; refine rel_atStrG ho ?_ ?_ <;> first | rnum | (intro _ _))
+  | ((with_reducible show Dyn.Rel _ (index _ _ >>= _) _ _); generalize ho : Js.at_ _ _ = o; refine rel_indexG ho (by assumption) (by assumption) ?_ ?_ <;> first | rnum | (intro _ _))
+  | (with_reducible refine rel_flat (by assumption) (by assumption) ?_; intro _ _)
+  | (with_reducible refine rel_unwrap (by assumption) ?_; intro _ _)
+  | (rw [truthy_crepOpt (by assumption) (by first | (left; rfl) | (right; rfl))])
+  | (rw [nullish_crepOpt (by assumption) (by first | (left; rfl) | (right; rfl)) (fun _ hc => by simp only [crep_str, crep_num] at hc; first | (subst hc; rfl) | (obtain ⟨_, rfl, _⟩ := hc; rfl))])
   | (refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
 
 /-- Steps the typed view and the dynamic code together: a typed operation with its dynamic
 twin, a typed `ok` bind, a branch on both sides at once, or one dynamic step. -/
 macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_min_ok ?_ ?_ ?_ <;> rmin)
+  | (refine rel_max_ok ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu) | exact numIs_num | assumption)
   | (exfalso; simp only [not_true_eq_false, Bool.false_eq_true, truthy_bool, decide_eq_true_eq] at *; done)
-  | (exfalso; (try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not] at *); omega)
+  | (exfalso; (try simp only [truthy_bool, Bool.not_not, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not, Bool.or_eq_true, Bool.and_eq_true] at *); omega)
   | (exfalso; have := nullish_of_crep_none ‹crep _ (none : Option _) _›; simp_all; done)
   | (exfalso; have := not_nullish_of_crep_some ‹crep _ (some (_ : Js.Num)) _›; simp_all; done)
   | rops
   | (simp only [Std.bind_ok, Std.bind_assoc, bind_tc_ok, bind_assoc_eq, dbind_assoc, dpure_bind])
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
-  | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
+  | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is, ite_or_bool, ite_or_bool', ite_and_bool, ite_and_bool']))
   | (split <;> (rename_i hc
                 try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val, Js.isArray, Option.isSome, truthy_str] at hc
-                try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
-  | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is])))
+                try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is, ite_or_bool, ite_or_bool', ite_and_bool, ite_and_bool']))
+  | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is, ite_or_bool, ite_or_bool', ite_and_bool, ite_and_bool'])))
 
 end Dyn
