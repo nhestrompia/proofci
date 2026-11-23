@@ -61,12 +61,15 @@ class Report:
     notes: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)
     functions: list = field(default_factory=list)   # TypeScript only: one bridge.FunctionStatus per translated function
+    downgrades: list = field(default_factory=list)  # TypeScript only: proved on the base branch, not proved now
+    stale_accepts: list = field(default_factory=list)  # `accept_downgrades` entries that are no downgrade here
 
     @property
     def passed(self):
         required = [o for o in self.outcomes if o.required]
         policy_ok = not self.policy_changes or self.policy_source == "head"
-        return policy_ok and bool(required) and all(o.status == VERIFIED for o in required)
+        return (policy_ok and bool(required) and all(o.status == VERIFIED for o in required)
+                and all(d["accepted"] for d in self.downgrades))
 
     def to_json(self):
         return {
@@ -80,6 +83,8 @@ class Report:
             "functions": [f.entry() for f in self.functions],
             "bridge_summary": {status: sum(f.status == status for f in self.functions)
                                for status in (bridge.PROVED, bridge.TESTED, bridge.FAILED)},
+            "downgrades": self.downgrades,
+            "stale_accepts": self.stale_accepts,
             "notes": self.notes,
             "timings_seconds": self.timings,
         }
@@ -149,6 +154,10 @@ def policy_changes(base_checkout, base, head_checkout, head):
             changes.append(f"effect `{effect_id}` was added")
     if old["require_bridge"] != new["require_bridge"]:
         changes.append(f"`require_bridge` changed from `{old['require_bridge']}` to `{new['require_bridge']}`")
+    if old["accept_downgrades"] != new["accept_downgrades"]:
+        added = ", ".join(f"`{f}`" for f in sorted(set(new["accept_downgrades"]) - set(old["accept_downgrades"])))
+        removed = ", ".join(f"`{f}`" for f in sorted(set(old["accept_downgrades"]) - set(new["accept_downgrades"])))
+        changes.append(f"`accept_downgrades` changed (added: {added or 'none'}; removed: {removed or 'none'})")
     if _tree_digest(base_checkout, base.lean, "Contract") != _tree_digest(head_checkout, head.lean, "Contract"):
         changes.append(f"the contract `{head.contract}` changed")
     return changes
@@ -267,6 +276,17 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                                        bridge_timeout, bridge_budget)
             pending = [o for o in pending if o.status == ERROR]
             report.timings["bridge"] = round(time.monotonic() - t0, 1)
+
+            # 3b. The ratchet: a function proved on the base branch must not silently drop to
+            # tested, unsupported, failed or removed. The base side is re-derived below.
+            t0 = time.monotonic()
+            budget = (None if bridge_budget is None
+                      else max(0, bridge_budget - report.timings["bridge"]))
+            report.downgrades, report.stale_accepts = _ratchet(
+                report, base_checkout, head_checkout, base, active, work, functions,
+                failures, vendor_dir, bridge_timeout, budget)
+            if report.downgrades:
+                report.timings["ratchet"] = round(time.monotonic() - t0, 1)
         if not (ws.root / "Proofs.lean").is_file():
             mark(UNPROVEN, f"no proofs found at `{active.proofs}`", only={o.theorem for o in pending})
             return report
@@ -418,6 +438,138 @@ def _bridge(report, extraction, active, work, functions, timeout, budget):
     report.functions = ordered
     _attach(report)
     return ordered
+
+
+# Dependency declarations and manager config a pull request can rewrite to change what
+# the base re-check sees; any of them changing makes a non-proved base result inconclusive.
+_DEP_FILES = ("package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
+              "pnpm-lock.yaml", "pnpm-workspace.yaml") + tuple(sorted(typescript.CONFIG_FILES))
+
+# Bridge reasons that mean the check never reached a verdict, which is no evidence either way.
+_INCOMPLETE = ("time budget", "did not finish", "could not be run", "out of memory",
+               "is not installed", "generator failed")
+
+
+def _incomplete(reason):
+    return any(m in (reason or "") for m in _INCOMPLETE)
+
+
+def _deps_changed(base_checkout, head_checkout, package_rel):
+    """Any dependency file changed between the base and head checkouts, in the package
+    directory or an ancestor of it — the vendored install reads the nearest lockfile and
+    manager config at or above the package (see typescript.find_lockfile/CONFIG_FILES)."""
+    root = base_checkout.resolve()
+    directory = (root / package_rel).resolve()
+    while root in (directory, *directory.parents):
+        rel = directory.relative_to(root)
+        for name in _DEP_FILES:
+            old, new = directory / name, head_checkout / rel / name
+            if old.is_file() != new.is_file() or (old.is_file() and old.read_bytes() != new.read_bytes()):
+                return True
+        if directory == root:
+            break
+        directory = directory.parent
+    return False
+
+
+def _base_statuses(base_checkout, base, work, functions, vendor_dir, timeout, budget, now,
+                   deps_changed):
+    """Bridge status of each of `functions` on the base checkout, re-derived with the same
+    toolchain. `proved`, `tested` or `failed` are verdicts; "not proved" only for a function
+    whose file does not exist on the base, or — when the pull request left the dependency
+    files untouched — for one the base could not translate, which could not have been proved
+    there either. Everything else is "unknown": a base result the pull request's vendored
+    dependencies or budget could influence, or one that never reached a verdict, can hide a
+    proved function, so it blocks like a downgrade. The comparison with Node is skipped on
+    purpose: it can only turn a status into `failed`, never into or out of `proved`."""
+    sub = work / "base-check"
+    sub.mkdir(exist_ok=True)
+    missing = {f for f in functions
+               if not (base_checkout / base.crate / f.rsplit("::", 1)[0]).is_file()}
+    todo = [f for f in functions if f not in missing]
+    statuses = dict.fromkeys(missing, "not proved")
+    if not todo:
+        return statuses
+    try:
+        extraction = typescript.extract(base_checkout, base.crate, sub, todo, base_checkout,
+                                        base.assumes, vendor_dir, base.effects)
+    except Exception:
+        statuses.update(dict.fromkeys(todo, "unknown"))
+        return statuses
+    inconclusive = "unknown" if deps_changed else "not proved"
+    statuses.update(dict.fromkeys(extraction.failures, inconclusive))
+    todo = [f for f in todo if f not in extraction.failures]
+    if not todo:
+        return statuses
+
+    inputs = sub / "inputs"
+    inputs.mkdir(exist_ok=True)
+    files, reasons = bridge.generate(extraction, todo, inputs)
+    statuses.update(dict.fromkeys(reasons, inconclusive))
+    for function, name in files.items():
+        head_file = work / "bridge" / name
+        if head_file.is_file() and head_file.read_bytes() == (inputs / name).read_bytes():
+            # Byte-identical bridge input: the base result is the head result. A finished
+            # head run means the function was not proved on the base either; a head run
+            # that timed out is inconclusive, and re-checking it can only time out again.
+            statuses[function] = "not proved" if not _incomplete(now[function][1]) else "unknown"
+    todo = [f for f in files if f not in statuses]
+    results = bridge.run(extraction, sub, todo, timeout, budget) if todo else {}
+    for function, status in results.items():
+        if status.status != bridge.PROVED and (deps_changed or _incomplete(status.reason)):
+            statuses[function] = "unknown"
+        else:
+            statuses[function] = status.status
+    return statuses
+
+
+def _downgrades(now, was, accepted):
+    """One entry per function not proved here that was proved on the base (or whose base
+    status could not be determined — fail closed). `now` maps function -> (status, reason)."""
+    out = []
+    for function in sorted(now):
+        status, reason = now[function]
+        if status == bridge.PROVED:
+            continue
+        if was.get(function) == bridge.PROVED:
+            out.append({"function": function, "was": bridge.PROVED, "now": status,
+                        "reason": reason or "the bridge no longer proves this function",
+                        "accepted": function in accepted})
+        elif was.get(function) == "unknown":
+            out.append({"function": function, "was": "unknown", "now": status,
+                        "reason": "the base branch could not be checked, so whether this function "
+                                  "was proved there is unknown", "accepted": function in accepted})
+    return out
+
+
+def _ratchet(report, base_checkout, head_checkout, base, active, work, functions, failures,
+             vendor_dir, bridge_timeout, bridge_budget):
+    """Downgrades of functions the base branch had proved (see `_downgrades`).
+
+    Only functions still named by a target are compared: a function whose target was removed
+    is a policy change, judged like every other one. The base statuses come from re-running
+    the same toolchain on the base checkout — trusted inputs, never the pull request's view
+    of them — and only for the functions that could be a downgrade."""
+    tracked = {t.function for t in base.targets} & set(functions)
+    now = {}
+    for status in report.functions:
+        if status.function in tracked:
+            now[status.function] = (status.status, status.reason)
+    for function, reason in failures.items():
+        if function in tracked:
+            head, _ = typescript.split_hint(reason)
+            now[function] = ("unsupported", head.strip())
+    for function in tracked - set(now):
+        now[function] = ("removed", "the function is not in the pull request's code")
+    todo = sorted(f for f, (status, _) in now.items() if status != bridge.PROVED)
+    accepted = set(active.accept_downgrades or ())
+    if not todo:
+        return [], sorted(accepted)
+    deps_changed = _deps_changed(base_checkout, head_checkout, base.crate)
+    was = _base_statuses(base_checkout, base, work, todo, vendor_dir, bridge_timeout,
+                         bridge_budget, now, deps_changed)
+    downgrades = _downgrades({f: now[f] for f in todo}, was, accepted)
+    return downgrades, sorted(accepted - {d["function"] for d in downgrades})
 
 
 def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
