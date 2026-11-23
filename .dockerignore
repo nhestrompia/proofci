@@ -6,6 +6,7 @@
 !typescript/package.json
 !typescript/package-lock.json
 !typescript/translate.mjs
+!typescript/probe.mjs
 !typescript/differential.mjs
 !typescript/paths.mjs
 !typescript/hazard.mjs

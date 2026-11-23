@@ -301,6 +301,15 @@ TOP_LEVEL = re.compile(r"^\S")
 DECL_NAME = re.compile(r"\b(?:theorem|lemma|def|abbrev|instance|opaque|axiom)\s+([^\s(:{\[]+)")
 # Lake prints `error: Proofs.lean:L:C: msg`; plain lean prints `Proofs.lean:L:C: error: msg`.
 ERROR_LINE = re.compile(r"^(?:error: Proofs\.lean:(\d+):\d+:|Proofs\.lean:(\d+):\d+: error)", re.M)
+# The same two shapes, for any file name (used to report errors to agents).
+LEAN_ERROR = re.compile(r"^(?:error:\s*)?(\S+\.lean):(\d+):(\d+):\s*(?:error:\s*)?(.*)$", re.M)
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def structured_errors(text):
+    """Lean errors in `text` as {file, line, column, message} entries."""
+    return [{"file": f, "line": int(l), "column": int(c), "message": m.strip()}
+            for f, l, c, m in LEAN_ERROR.findall(ANSI.sub("", text))]
 
 
 def _blocks(lines):

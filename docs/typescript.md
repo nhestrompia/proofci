@@ -37,6 +37,9 @@ with one of three statuses:
 The report lists every function with its status and the reason, and a summary count
 (`2 proved, 1 tested but not proved, 0 failed`). The same data is in `report.json` as
 `functions` and `bridge_summary`, and each guarantee carries its function's `bridge` status.
+The full report schema and the local commands that produce it (`scan`, `dev --json`,
+`local`) are in [agents](agents.md); [AGENTS.md](../AGENTS.md) is the same story
+written for a coding agent.
 
 Reasons for "tested, not proved" you will see: `a loop in async code has no bridge yet` (or
 `finally`, or an `await` of a recursive `async` function or one in another file); the function

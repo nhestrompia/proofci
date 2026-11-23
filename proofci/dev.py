@@ -4,7 +4,9 @@ Keeps a workspace between runs. The Rust code is re-translated and the
 contract rebuilt only when they change; otherwise a run only rebuilds the
 proofs and prints Lean's messages (errors, unsolved goals), which is what a
 person or an agent needs to iterate. `--judge` then runs the same comparator
-check as CI on the current proofs.
+check as CI on the current proofs. `--json` prints one machine-readable
+document instead of log lines: what failed to translate, Lean's errors with
+file and line, and each guarantee's verdict.
 
 This is a convenience for authors. CI always runs `proofci check`, which
 shares none of this cached state.
@@ -53,13 +55,22 @@ def _report(output, limit=60000):
     return (text + "\n\n" if text else "") + summary
 
 
-def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print):
+def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=False, out=print):
     repo = repo.resolve()
     manifest = load_manifest(repo)
     work.mkdir(parents=True, exist_ok=True)
     state_file = work / "state.json"
     state = json.loads(state_file.read_text()) if state_file.exists() else {}
     functions = sorted({t.function for t in manifest.targets})
+    result = {"unsupported": {}, "errors": [], "guarantees": []}
+
+    say = (lambda *args: None) if as_json else out
+
+    def done(status):
+        result["ok"] = status == 0
+        if as_json:
+            out(json.dumps(result, indent=2))
+        return status
 
     t0 = time.monotonic()
     crate_key = (_digest([repo / manifest.crate]) + json.dumps(functions)
@@ -76,17 +87,21 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print)
                 ex = typescript.extract(repo, manifest.crate, work / "translate", functions, assumes=manifest.assumes, effects=manifest.effects,
                                    vendor_dir=vendor)
                 for function, reason in ex.failures.items():
-                    out(f"unsupported: {function}: {reason}")
+                    say(f"unsupported: {function}: {reason}")
+                    head, hint = typescript.split_hint(reason)
+                    result["unsupported"][function] = {"reason": head, "hint": hint}
                 if len(ex.failures) == len(functions):
-                    return 1
+                    return done(1)
             else:
                 ex = extract.extract(repo, manifest.crate, work / "translate", start_from=functions, vendor_dir=vendor)
         except extract.Unsupported as error:
-            out(f"unsupported: {error}")
-            return 1
+            say(f"unsupported: {error}")
+            head, hint = typescript.split_hint(str(error))
+            result["unsupported"]["*"] = {"reason": head, "hint": hint}
+            return done(1)
         ws = lean.assemble(ws_root, ex.lean_file, ex.module, repo / manifest.lean, repo / manifest.lean)
         state = {"crate": crate_key, "module": ex.module, "modelled": ex.modelled, "names": ex.names or {}}
-        out(f"translated the code ({time.monotonic() - t0:.1f}s); "
+        say(f"translated the code ({time.monotonic() - t0:.1f}s); "
             f"standard-library models used: {len(ex.modelled)}")
     else:
         ws = lean.Workspace(ws_root, state["module"])
@@ -100,21 +115,23 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print)
             lean._copy_lean_tree(repo / manifest.lean, module, ws_root, required=module == "Contract")
     state_file.write_text(json.dumps(state))
     if show:
-        out((ws_root / f"{state['module']}.lean").read_text())
+        say((ws_root / f"{state['module']}.lean").read_text())
 
     t1 = time.monotonic()
     contract = lean._lake(ws, ["build", "Contract"])
     if contract.status != 0:
-        out("the contract does not build:\n" + lean._errors(contract.output, limit=80))
-        return 1
+        say("the contract does not build:\n" + lean._errors(contract.output, limit=80))
+        result["errors"] = lean.structured_errors(contract.output)
+        return done(1)
     if not (ws_root / "Proofs.lean").exists():
-        out(f"no {manifest.proofs} yet")
-        return 1
+        say(f"no {manifest.proofs} yet")
+        return done(1)
     proofs = lean._lake(ws, ["build", "Proofs"])
-    out(_report(proofs.output))
-    out(f"proofs {'build' if proofs.status == 0 else 'do not build'} ({time.monotonic() - t1:.1f}s)")
+    say(_report(proofs.output))
+    say(f"proofs {'build' if proofs.status == 0 else 'do not build'} ({time.monotonic() - t1:.1f}s)")
+    result["errors"] = lean.structured_errors(proofs.output)
     if proofs.status != 0 or not judge:
-        return 0 if proofs.status == 0 else 1
+        return done(0 if proofs.status == 0 else 1)
 
     status = 0
     for target, guarantee in manifest.guarantees():
@@ -125,9 +142,12 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, out=print)
             shutil.rmtree(trial.root, ignore_errors=True)
         mark = "verified" if verdict.accepted else f"not verified: {verdict.reason}"
         lean_name = state.get("names", {}).get(target.function, lean_function(target.function))
-        out(f"{target.id}/{guarantee.id} ({lean_name}): {mark}")
+        say(f"{target.id}/{guarantee.id} ({lean_name}): {mark}")
+        result["guarantees"].append({
+            "guarantee": f"{target.id}/{guarantee.id}", "function": target.function,
+            "theorem": guarantee.theorem, "verified": verdict.accepted, "reason": verdict.reason})
         status |= 0 if verdict.accepted else 1
-    return status
+    return done(status)
 
 
 __all__ = ["run", "ConfigError"]
