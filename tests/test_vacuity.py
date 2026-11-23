@@ -65,10 +65,11 @@ class FailedDeclarationsTest(unittest.TestCase):
 class UnknownMutantsTest(unittest.TestCase):
     """A mutant we cannot judge is dropped, never counted as an escape."""
 
-    def run_check(self, evals, build):
+    def run_check(self, evals, build, proofs=""):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "Model.lean").write_text(VIEW)
+            (root / "Proofs.lean").write_text(proofs)
             ws = SimpleNamespace(root=root, crate_module="Model")
             o = SimpleNamespace(function="f", theorem="t")
             seen = itertools.count()
@@ -78,7 +79,7 @@ class UnknownMutantsTest(unittest.TestCase):
                  patch.object(lean, "clone", return_value=ws), \
                  patch.object(lean, "_lake", return_value=build):
                 return mutation.check(ws, root, VIEW, {"f": [["x"]]},
-                                      {"f": "transfer"}, 1, [o])
+                                      {"f": "transfer"}, 1, [o], [o])
 
     def test_failed_mutant_eval_is_unknown_not_escape(self):
         escaped, _ = self.run_check(lambda i: {0: "r0"} if i == 0 else None,
@@ -91,22 +92,31 @@ class UnknownMutantsTest(unittest.TestCase):
         self.assertEqual(escaped, {})
 
     def test_unrelated_declaration_failure_still_counts_as_escape(self):
-        root_error = "error: Proofs.lean:3:8: failed"
+        escaped, _ = self.run_check(lambda i: {0: "r0"} if i == 0 else {0: "r1"},
+                                    sandbox.Result(1, "error: Proofs.lean:3:8: failed", False),
+                                    "theorem other := by\n  skip\n  skip\n  skip\n")
+        self.assertIn("t", escaped)
+
+    def test_an_unchanged_guarantee_that_rejects_suppresses_the_warning(self):
+        """The suspect is `t`, but `peer` — an unchanged verified guarantee of
+        the same function — rejects the mutant, so `t` does not warn."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "Model.lean").write_text(VIEW)
-            (root / "Proofs.lean").write_text("theorem other := by\n  skip\n  skip\n  skip\n")
+            (root / "Proofs.lean").write_text("theorem peer := by\n  skip\n  skip\n  skip\n")
             ws = SimpleNamespace(root=root, crate_module="Model")
-            o = SimpleNamespace(function="f", theorem="t")
+            suspect = SimpleNamespace(function="f", theorem="t")
+            peer = SimpleNamespace(function="f", theorem="peer")
             seen = itertools.count()
             def fake_eval(ws, calls, text, timeout):
                 return {0: "r0"} if next(seen) == 0 else {0: "r1"}
             with patch.object(mutation, "_eval_outputs", fake_eval), \
                  patch.object(lean, "clone", return_value=ws), \
-                 patch.object(lean, "_lake", return_value=sandbox.Result(1, root_error, False)):
+                 patch.object(lean, "_lake", return_value=sandbox.Result(
+                     1, "error: Proofs.lean:3:8: failed", False)):
                 escaped, _ = mutation.check(ws, root, VIEW, {"f": [["x"]]},
-                                            {"f": "transfer"}, 1, [o])
-        self.assertIn("t", escaped)
+                                            {"f": "transfer"}, 1, [suspect], [suspect, peer])
+        self.assertEqual(escaped, {})
 
 
 if __name__ == "__main__":

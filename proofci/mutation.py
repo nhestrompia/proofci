@@ -120,9 +120,11 @@ def _failed_declarations(root, output):
     return failed
 
 
-def check(ws, work, module_text, inputs, names, jobs, candidates):
+def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
     """`inputs`: {function: [arg terms]} from the comparison with Node;
-    `names`: {function: lean def name}; `candidates`: the verified outcomes.
+    `names`: {function: lean def name}; `candidates`: the guarantees under
+    test; `all_outcomes`: every verified guarantee (a mutant is rejected when
+    any guarantee of the function fails it, not only those under test).
     Returns (escaped, planted): escaped maps each theorem that rejected no
     behavioural mutant to the mutant descriptions it let through."""
     pending = {}
@@ -182,7 +184,7 @@ def check(ws, work, module_text, inputs, names, jobs, candidates):
     # A failure attributed to an unrelated declaration (another function's
     # proof, support code) does not count as a rejection.
     theorems = {}
-    for o in candidates:
+    for o in all_outcomes:
         theorems.setdefault(o.function, set()).add(o.theorem)
     escaped = {}
     for o in candidates:

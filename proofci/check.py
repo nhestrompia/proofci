@@ -474,7 +474,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             if suspects:
                 defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in suspects}
                 escaped, planted = mutation.check(ws, work, module_text, inputs, defs,
-                                                  PARALLEL_JUDGES, suspects)
+                                                  PARALLEL_JUDGES, suspects, verified)
             for o in suspects:
                 for m in escaped.get(o.theorem, []):
                     o.warnings.append(
