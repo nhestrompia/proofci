@@ -55,7 +55,7 @@ array callbacks on numbers through `Js.map`'s recursion on one side and `eachLoo
 `Math.max`, unary `-`, `+b` on booleans, `trim`, `lastIndexOf` and `Array.isArray`;
 `rel_arr` relates an array literal; `CRep (Option α)` covers optional fields; `rel_forOf` relates a `for ... of`
 loop with one mutable variable, Aeneas's `loop` on one side (by `Core.loop_ind`) and `forLoop`
-on the other; `rel_tail` handles an operation in tail position; `rel_ok` ends both sides;
+on the other; `rel_while` does the same for `while` and `for (;;)`; `rel_tail` handles an operation in tail position; `rel_ok` ends both sides;
 `rel_dbind` takes a dynamic step the typed view doesn't have (a field read). A typed `if` is
 split together with the dynamic one, with contradictory branches closed by `omega`. `Rel`
 allows any dynamic result type, so a loop body (`M (ForInStep Val)`) steps with the same
@@ -63,40 +63,44 @@ lemmas. Nothing is written per function.
 
 | Measure | Result |
 |---|---|
-| Functions tried | 83: `ts-bank` (3), `corpus-gaps.tsv` (45), `corpus-rem.tsv` (35) |
-| Generated | 72 (65 before); `dyn.mjs` now translates `while` and `for (;;)` |
-| Proved | 57 (38 before): `transfer`, `calculateFee`, `sumAmounts`, 25 gaps fixtures, 29 in `corpus-rem.tsv` |
-| Check time | 15 files take 2 s, 26 take 3 s, 11 take 4 s, 3 take 5-6 s, `listCount` 23 s, `validateDate` 34 s |
+| Functions tried | 127: `ts-bank` (3), `corpus-gaps.tsv` (89; it grew from 45), `corpus-rem.tsv` (35) |
+| Generated | 75 (72 before) |
+| Proved | 71 (57 before): `ts-bank` 3, gaps 33, `corpus-rem.tsv` 35 |
+| Check time | 15 files take 2 s, 39 take 3 s, 7 take 4 s, 4 take 5-6 s, 4 take 7 s (`listCount` among them, 23 s before), `gcd` 12 s, `validateDate` 23 s (34 s before) |
 | Timeouts (45 s) | 0 |
-| Wrong typed views | 255 of 256 fail over 30 kinds, counting proved bridges only; the survivor changes the `else` literal of `if Array.isArray(ys)` in `listCount`, a branch that can't run; 3 new kinds: `some` for `every`, `every` for `some`, `Math.min` for `Math.max` |
-| Not proved | 15: 6 stop at a call with no lemma, 3 call something `dyn.mjs` turns into `stuck`, 3 are `while`/`for` loops, 3 test a nullable field for `null` or `undefined` |
+| Wrong typed views | 316 of 317 fail over 30 kinds, on the 62 proved bridges that have a spot to mutate (255 of 256 before); the survivor is still the `else` literal of `if Array.isArray(ys)` in `listCount`, a branch that can't run |
+| Not proved | 4: `pairs` maps with a callback that allocates an array, which `rel_map` doesn't cover; `squash`, `hasVowel` and `firstDash` use a regular expression, which `dyn.mjs` turns into `stuck` |
+| Not generated | 52 gaps rows: `switch` (17), recursion (9), generics (7), dictionaries (6), regular expression literals (3), recursive types (3), module constants (2), tagged unions (2), `in`, `Object.keys`, `Object.values` |
 
-New since the last round: `/` (`halfIfEven`), `some` (`anyMultiple`), `every` (`allOdd`),
-`reduce` (`pagesFor`), `Math.max` (`orCall`), `trim` with `slice` (`andCall`), `+b`
-(`flagCount`), `Array.isArray` (`listCount`), `lastIndexOf` (`lastTag`), optional fields
-(`withHole`, `withUndefined`, `withNulls`, `nested`, `slotOf`). The 4 open goals are closed:
-`orConditional` and `negativeLiterals` needed number truthiness (`truthy_numIs`),
-`callFour` and `validateDate` call other functions, which the generator now unfolds.
-`sumPresent` proves through `rel_arr`. `dyn.mjs` changes: `+true` is `1` and `lastIndexOf`
-works on arrays of strings; `while (c) S` and `for (init; c; u) S` become a Lean `for` over
-`fuel`, at most 2^20 rounds, then `stuck`. A `continue` in a `for (;;)` body, a non-`let`
-initializer and a loop variable captured by a closure are unsupported. `whileLoop_spec` in
-[Dyn.lean](Dyn.lean) is the invariant rule: each round keeps the invariant and lowers a measure
-below the fuel. The Node comparison now has 22 functions, including `sumIndexed` (`for (;;)`)
-and `halvings` (`while`): 2,200 runs, 2,056 agree, 144 stop, 0 differ.
+New since the last round:
 
-Still not proved: `at`/`!` (`orIndex`), `padEnd`, string-to-number, `flat`, number-to-string,
-and `at`/`strAt`/`repeat`, which `dyn.mjs` still turns into `stuck`. `boxOrZero`,
-`boxIsUndef` and `slotUndef` test a field typed `number | null` (or `| undefined`) for one of the two;
-`crep` relates `none` to both, so the comparison can't be decided. The generator would need the
-nullable kind per type. No relational lemma pairs the typed path's loops with `whileLoop` yet,
-so `digitSum`, `gcd` and `powersOfTwo` stop at the loop; no fixture proof uses
-`whileLoop_spec` yet.
+- **Library calls.** `rel_atArr`/`rel_atStr` relate `at` on arrays and strings, `rel_index`
+  relates `xs[i]` (`at_`), `rel_unwrap` relates `!`, `rel_padEnd`, `rel_repeat`, `rel_flat`,
+  `rel_numOfStr` (string to number) and `rel_toStr` (number to string). `dyn.mjs`
+  now computes `at`, string `at`, `repeat`, `padEnd` and `flat` through Core's primitives
+  instead of `stuck`, and `Dyn.toNum` reads strings with Core's `numOfStr`.
+- **Loops.** `while` and `for (;;)` no longer take a fuel bound: `whileLoop` is a least fixed
+  point (`partial_fixpoint`), so a loop that never ends has no result. `rel_while` relates it
+  to the typed path's `loop` through `Core.loop_ind`; the generator emits the invariant from
+  the loop's mutable variables. `digitSum`, `gcd` and `powersOfTwo` prove.
+- **Nullable kind.** The generator emits `crepOpt .null` or `crepOpt .undef` from the declared
+  type, so `x === null` and `x === undefined` decide (`rel_eqNul`, `truthy_crepOpt`,
+  `nullish_crepOpt`). `boxOrZero`, `boxIsUndef` and `slotUndef` prove.
+- **Speed.** The operation lemmas are tried at reducible transparency, so a failed match
+  is cheap, and `a || b`, `a && b` on comparisons collapse to one boolean (`ite_or_bool`,
+  `ite_and_bool`) instead of splitting every branch.
 
-Verdict: go for continuing, still no-go for replacing Core's bridges. 57 of 72 generated
-bridges prove with no timeouts; Core's bridges cover 22 of 24 original gaps fixtures and 32 of
-35 in `corpus-rem.tsv`. What's left is the typed-loop lemma for `while`/`for`, the nullable
-kind in `crep`, and a lemma per remaining call.
+The Node comparison now has 27 functions, including `ruler` (`repeat`), `padRight` (`padEnd`),
+`lastOf`/`lastCh` (`at`) and `flatten`: 2,700 runs, 2,509 agree, 191 stop, 0 differ.
+
+Verdict: go for continuing. For the 71 functions it proves, the proof work is done and
+generated, with nothing written per function. What still separates them from replacing Core's
+bridges is not proof but product work: the action doesn't run `bridge.mjs` or check its
+output; `diff.mjs` compares `dyn.mjs` with Node on 27 functions, not on these 71, so the
+dynamic reading of most of them has only the shared operations' evidence; and the slowest
+proofs (`validateDate`, 23 s) would add to every run. Beyond these 71, 52 of 127 rows don't
+generate, mostly `switch`, recursion and generics in `dyn.mjs`, and regular expressions have
+no dynamic model.
 
 How it fits with Core's bridges: today `bridge3.mjs` proves the typed view simulates Core, and
 Core is trusted to be JavaScript, checked against Node by `differential.mjs`. This bridge
@@ -181,8 +185,8 @@ allocates. That generation is not done, so `addSpace_spec` (50 lines) and `color
 - `parseChartDecimalPlaces` and `calculateFee` need lemmas for `Number.isInteger` and
   `Math.floor` on `num`; unfolding `num` makes Lean evaluate `2^1074`.
 - Library calls outside a small list are `stuck`: `throw new` of an unseen class, callbacks
-  stored in fields (`this.onChange(...)`), `Number`-to-string on non-integers. That accounts
-  for the 93 stopped runs.
+  stored in fields (`this.onChange(...)`), `Number`-to-string on non-integers, regular expressions. Of the Node
+  comparison's 2,700 runs, 191 stop at such a step.
 - Inheritance, getters, `static`, recursion, `async` and generators are `unsupported`.
 - Preconditions stop at depth 3 of nested types (deeper types become `any`), and recursive types
   aren't expressible.
