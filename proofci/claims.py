@@ -19,7 +19,6 @@ DOC_THEOREM = re.compile(
 SCOPE = re.compile(r"^(namespace|section|end)\b(?:\s+([\w.]+))?", re.M)
 THEOREM = re.compile(
     r"(?<![\w'.])(?:private |protected |noncomputable |partial )*theorem\s+(?P<name>[^\s(:{\[]+)")
-BINDER = re.compile(r"\((\w[\w' ]*?)\s*:\s*([^()]*(?:\([^()]*\)[^()]*)*)\)")
 # Binder types that say something rather than name something: a condition the
 # guarantee only holds under. `=` must not start `=>` (a `⦃ _ => ... ⦄` arrow).
 PROP = re.compile(r"[≤≥<>≠∈∉∀∃↔¬∧∨]|(?<![\w.])=(?!=)|\bProp\b")
@@ -38,12 +37,35 @@ def _open(signature):
     return signature
 
 
+def _binder(inner):
+    """`(names, condition)` for a binder's contents, split at its top-level `:`."""
+    depth = 0
+    for i, char in enumerate(inner):
+        if char in "([{⟨⦃":
+            depth += 1
+        elif char in ")]}⟩⦄":
+            depth -= 1
+        elif char == ":" and depth == 0:
+            return inner[:i].strip(), " ".join(inner[i + 1:].split())
+    return inner.strip(), None
+
+
 def _hypotheses(signature):
     """`(name : condition)` binders whose condition is a proposition."""
     found = []
-    for names, condition in BINDER.findall(_open(signature)):
-        if PROP.search(condition):
-            found.append(" ".join(f"{names} : {' '.join(condition.split())}".split()))
+    signature = _open(signature)
+    depth, start = 0, None
+    for i, char in enumerate(signature):
+        if char == "(":
+            depth += 1
+            if depth == 1:
+                start = i + 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                names, condition = _binder(signature[start:i])
+                if condition is not None and PROP.search(condition):
+                    found.append(" ".join(f"{names} : {condition}".split()))
     return found
 
 
