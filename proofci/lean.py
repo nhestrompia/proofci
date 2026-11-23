@@ -336,9 +336,10 @@ def proofciVacuity (thm : Name) (args : Array (TSyntax `term)) : MetaM Json := d
         if !bad.isNull then return s
         let ty := (← inferType x).replaceFVars binders values
         if (← isProp ty) then return (binders, values, hyps.push ty, bad)
-        if values.size ≥ args.size then
-          return (binders, values, hyps, Json.mkObj [("result", "unchecked"),
-            ("reason", "the statement takes more arguments than generated")])
+        -- Binders beyond the generated inputs (e.g. an async oracle and
+        -- history) stay free: hypotheses not mentioning them still decide,
+        -- ones that do come back `unknown` rather than checking nothing.
+        if values.size ≥ args.size then return (binders, values, hyps, bad)
         try
           let e ← Lean.Elab.Term.TermElabM.run' (Term.elabTerm args[values.size]! (some ty))
           if (e.find? (·.isConstOf ``sorryAx)).isSome then

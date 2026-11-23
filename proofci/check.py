@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -105,6 +106,24 @@ def _tree_digest(checkout: Path, lean_dir: str, module: str):
         else:
             digest.update(str(path.relative_to(root)).encode() + b"\0<missing>\0")
     return digest.hexdigest()
+
+
+_THEOREM = re.compile(r"\btheorem\s+(\w+)")
+
+
+def _contract_statements(path):
+    """{theorem name: statement up to `:=`, whitespace-normalized} of a contract
+    (its file plus the `Contract/` dir beside it, like `_tree_digest`)."""
+    path = Path(path)
+    files = [path] + sorted(path.with_suffix("").rglob("*.lean"))
+    text = "\n".join(re.sub(r"--[^\n]*", "", p.read_text()) for p in files if p.is_file())
+    if not text.strip():
+        return {}
+    statements = {}
+    for m in _THEOREM.finditer(text):
+        end = text.find(":=", m.end())
+        statements[m.group(1)] = " ".join(text[m.start():end if end >= 0 else len(text)].split())
+    return statements
 
 
 def policy_changes(base_checkout, base, head_checkout, head):
@@ -344,10 +363,12 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                         results = verdicts.get(o.theorem, [])
                         if (results and not any(v["result"] == "satisfied" for v in results)
                                 and (failed := [v for v in results if v["result"] == "unsatisfied"])):
+                            undecided = len(results) - len(failed)
                             o.warnings.append(
-                                f"the hypotheses of `{o.theorem}` hold on none of the {len(results)} generated "
-                                f"inputs (e.g. {failed[0].get('hypothesis', '?')} fails); if no input can satisfy "
-                                "them the guarantee is vacuous — relax or remove the hypothesis")
+                                f"none of the {len(results)} generated inputs satisfies the hypotheses of "
+                                f"`{o.theorem}` ({len(failed)} fail{'' if not undecided else f', {undecided} could not be decided'}; "
+                                f"e.g. {failed[0].get('hypothesis', '?')} fails); if no input can satisfy them "
+                                "the guarantee is vacuous — relax or remove the hypothesis")
 
         # 4. Judge the proofs. `ws` has only built trusted code; proof code
         # only ever runs in disposable copies of it.
@@ -421,10 +442,20 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                   and inputs_file.is_file() else {})
         if verified and inputs and mutation.BUDGET > 0:
             module_text = (ws.root / f"{ws.crate_module}.lean").read_text()
-            defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in verified}
-            escaped, planted = mutation.check(ws, work, module_text, inputs, defs,
-                                              PARALLEL_JUDGES, verified)
-            for o in verified:
+            # Default: sweep only guarantees whose statement is new or changed
+            # against the trusted contract — a human has to re-judge those
+            # anyway, and an unchanged contract on unchanged code replants the
+            # same defects. PROOFCI_MUTATION_FULL sweeps everything.
+            base_statements = _contract_statements(policy_checkout / active.contract)
+            head_statements = _contract_statements(head_checkout / active.contract)
+            suspects = verified if mutation.FULL else [o for o in verified
+                if base_statements.get(o.theorem) != head_statements.get(o.theorem)]
+            escaped, planted = {}, 0
+            if suspects:
+                defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in suspects}
+                escaped, planted = mutation.check(ws, work, module_text, inputs, defs,
+                                                  PARALLEL_JUDGES, suspects)
+            for o in suspects:
                 for m in escaped.get(o.theorem, []):
                     o.warnings.append(
                         f"`{o.theorem}` still verifies with a planted defect in `{o.function}` ({m}) "

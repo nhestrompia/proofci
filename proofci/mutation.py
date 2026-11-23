@@ -19,6 +19,9 @@ from . import lean
 
 MAX_MUTANTS = int(os.environ.get("PROOFCI_MUTANTS", 3))
 BUDGET = int(os.environ.get("PROOFCI_MUTATION_BUDGET", 600))
+# The default checks only guarantees whose statement is new or changed in the
+# PR; PROOFCI_MUTATION_FULL=1 sweeps every verified guarantee.
+FULL = os.environ.get("PROOFCI_MUTATION_FULL", "") not in ("", "0", "false")
 MAX_INPUTS = 40
 
 TOP_LEVEL = re.compile(r"^\S")
@@ -49,7 +52,7 @@ def _def_block(lines, name):
 
 
 def plant(text, name, limit=MAX_MUTANTS):
-    """Mutate `def name` inside the module text; returns [(kind, line, mutant_text)]."""
+    """Mutate `def name` inside the module text; returns [(kind, line, mutated_line, mutant_text)]."""
     lines = text.splitlines(keepends=True)
     block = _def_block(lines, name)
     if not block:
@@ -62,7 +65,7 @@ def plant(text, name, limit=MAX_MUTANTS):
             if re.search(pattern, lines[i]):
                 mutated = lines[:]
                 mutated[i] = re.sub(pattern, replacement, lines[i], count=1)
-                mutants.append((kind, i + 1, "".join(mutated)))
+                mutants.append((kind, i + 1, mutated[i].strip(), "".join(mutated)))
                 break
     return mutants
 
@@ -110,7 +113,7 @@ def _failed_declarations(root, output):
             continue
         file_lines = text.splitlines()
         for start, end, _ in lean._blocks(text.splitlines(keepends=True)):
-            if any(start <= line < end for line in lines):
+            if any(start < line <= end for line in lines):  # error lines are 1-based
                 m = lean.DECL_NAME.match(file_lines[start])
                 if m:
                     failed.add(m.group(1))
@@ -145,12 +148,12 @@ def check(ws, work, module_text, inputs, names, jobs, candidates):
     base, n = {}, 0
     for f in pending:
         base[f], n = n, n + len(calls[f])
-    todo = [(i, f, kind, line, mutant)
-            for i, (f, (kind, line, mutant)) in enumerate(
+    todo = [(i, f, kind, line, src, mutant)
+            for i, (f, (kind, line, src, mutant)) in enumerate(
                 (f, m) for f in pending for m in pending[f])]
 
     def one(entry):
-        i, f, kind, line, mutant = entry
+        i, f, kind, line, src, mutant = entry
         left = deadline - time.monotonic()
         if left <= 0:
             return None
@@ -158,11 +161,17 @@ def check(ws, work, module_text, inputs, names, jobs, candidates):
         (copy.root / f"{copy.crate_module}.lean").write_text(mutant)
         offset = base[f]
         out = _eval_outputs(copy, calls[f], mutant, min(120, max(30, int(left))))
-        if out is not None and all(out.get(k) == original.get(offset + k)
-                                   for k in range(len(calls[f]))):
+        if out is None:
+            return ("unknown", f)
+        if all(out.get(k) == original.get(offset + k) for k in range(len(calls[f]))):
             return None  # equivalent mutant: changes no observable behaviour
         done = lean._lake(copy, ["build", "Proofs"], timeout=max(30, int(left)))
-        return (f, kind, line, set() if done.status == 0 else _failed_declarations(copy.root, done.output))
+        failed = set() if done.status == 0 else _failed_declarations(copy.root, done.output)
+        # A failure we cannot attribute to a declaration (timeout, sandbox
+        # error, error outside Proofs*) is not evidence of escape: don't judge.
+        if done.timed_out or (done.status != 0 and not failed):
+            return ("unknown", f)
+        return ("done", f, kind, line, src, failed)
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         results = [r for r in pool.map(one, todo) if r]
@@ -170,10 +179,17 @@ def check(ws, work, module_text, inputs, names, jobs, candidates):
     # A point-wise guarantee legitimately ignores mutants on paths it never
     # meant to cover, so judge the function's guarantees together: warn each
     # only when no guarantee rejects any behavioural mutant of the function.
+    # A failure attributed to an unrelated declaration (another function's
+    # proof, support code) does not count as a rejection.
+    theorems = {}
+    for o in candidates:
+        theorems.setdefault(o.function, set()).add(o.theorem)
     escaped = {}
     for o in candidates:
-        effective = [(kind, line, failed) for f, kind, line, failed in results if f == o.function]
-        if effective and all(o.theorem not in failed and not failed for _, _, failed in effective):
-            escaped[o.theorem] = [f"{kind} at `{o.function}` line {line}"
-                                  for kind, line, _ in effective]
+        own = theorems.get(o.function, set())
+        effective = [(kind, line, src, failed) for _, f, kind, line, src, failed in
+                     (r for r in results if r[0] == "done") if f == o.function]
+        if effective and all(not (failed & own) for _, _, _, failed in effective):
+            escaped[o.theorem] = [f"{kind} at `{o.function}` line {line}: `{src}`"
+                                  for kind, line, src, _ in effective]
     return escaped, sum(len(m) for m in pending.values())

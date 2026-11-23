@@ -189,8 +189,12 @@ wrong.
 A proved guarantee can still be weak: the report's **Contract warnings** mark one
 whose hypotheses hold on none of the generated inputs (probably vacuous), or that
 still verifies against small defects planted in the translated code (it doesn't
-constrain the function). Warnings don't fail the check — they flag statements
-a human should look at before trusting the green.
+constrain the function; the warning names the mutated line). Warnings don't fail
+the check — they flag statements a human should look at before trusting the
+green. The hypothesis check is cheap and runs on every TypeScript verification;
+the planted-defect check runs only on guarantees whose statement is new or
+changed in the pull request (set `PROOFCI_MUTATION_FULL=1` to sweep every
+verified guarantee).
 
 See [the demo repository](https://github.com/nhestrompia/proofci-demo/pulls)
 for live examples.

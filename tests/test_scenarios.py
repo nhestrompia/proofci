@@ -829,6 +829,8 @@ SCENARIOS.update({
     # boundary mutant on transfer also escapes every guarantee — the real
     # contract leaves that path unconstrained, which the warning is for.
     "ts-vacuous-hypothesis": (ts_vacuous_hypothesis, ts_results(), 0, {
+        # the contract is planted on both sides, so opt in to the full sweep
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
         "warnings": {"fees/capped": "none of the",
                      "transfer/conservation": "still verifies",
                      "transfer/rejects-overdraft": "still verifies"},
@@ -836,6 +838,7 @@ SCENARIOS.update({
     # The weakened postcondition survives every behavioural mutant — the
     # guarantee doesn't constrain the function's result enough to catch one.
     "ts-vacuous-postcondition": (ts_vacuous_postcondition, ts_results(), 0, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
         "warnings": {"transfer/conservation": "still verifies",
                      "transfer/rejects-overdraft": "still verifies"},
         "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
