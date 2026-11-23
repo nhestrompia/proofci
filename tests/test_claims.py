@@ -100,6 +100,41 @@ class ClaimTests(unittest.TestCase):
                     "theorem undocumented : True := by sorry\n")
         self.assertIsNone(claims.theorems(contract)["undocumented"]["claim"])
 
+    def test_verdict_says_passed(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        text = summary.markdown(check.Report(outcomes=[o]).to_json())
+        self.assertIn("**Result: passed** — all 1 required guarantees verified.", text)
+
+    def test_verdict_names_unverified_guarantees(self):
+        ok = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        bad = check.Outcome("t", "g2", "m::f", "undocumented", True, check.UNPROVEN)
+        text = summary.markdown(check.Report(outcomes=[ok, bad]).to_json())
+        self.assertIn("**Result: blocked** — 1 of 2 required guarantees not verified.", text)
+
+    def test_verdict_names_a_pending_policy_change(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], policy_changes=["guarantee g added"])
+        text = summary.markdown(r.to_json())
+        self.assertIn("policy change waits for maintainer approval", text)
+
+    def test_verdict_names_an_invalid_contract(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], policy_source="head", invalid_contract=True)
+        text = summary.markdown(r.to_json())
+        self.assertIn("missing `/--` doc comments", text)
+
+    def test_verdict_names_missing_required_guarantees(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", False, check.VERIFIED)
+        text = summary.markdown(check.Report(outcomes=[o]).to_json())
+        self.assertIn("the policy lists no required guarantees", text)
+
+    def test_verdict_combines_reasons(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.ERROR)
+        r = check.Report(outcomes=[o], policy_changes=["g added"], invalid_contract=True)
+        text = summary.markdown(r.to_json())
+        self.assertIn("waits for maintainer approval; the approved contract is missing", text)
+        self.assertIn("1 of 1 required guarantees not verified", text)
+
     def test_summary_shows_the_claim_it_replaces(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
         o.claim = "The fee never exceeds the new cap."

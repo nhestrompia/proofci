@@ -81,6 +81,7 @@ class Report:
             "language": self.language,
             "policy_source": self.policy_source,
             "policy_changes": self.policy_changes,
+            "invalid_contract": self.invalid_contract,
             "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
             "guarantees": [o.__dict__ for o in self.outcomes],
             "functions": [f.entry() for f in self.functions],

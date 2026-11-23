@@ -65,15 +65,26 @@ def _claims(report):
     return lines
 
 
-def markdown(report):
-    lines = ["## ProofCI", ""]
+def _verdict(report):
     required = [g for g in report["guarantees"] if g["required"]]
     if report["passed"]:
-        lines.append(f"**Result: passed** — all {len(required)} required guarantees verified.")
-    else:
-        bad = sum(g["status"] != "verified" for g in required)
-        lines.append(f"**Result: blocked** — {bad} of {len(required)} required guarantees not verified.")
-    lines.append("")
+        return f"**Result: passed** — all {len(required)} required guarantees verified."
+    reasons = []
+    if report["policy_changes"] and report["policy_source"] != "head":
+        reasons.append("the policy change waits for maintainer approval")
+    if report.get("invalid_contract"):
+        reasons.append("the approved contract is missing `/--` doc comments on new guarantees")
+    bad = sum(g["status"] != "verified" for g in required)
+    if bad:
+        reasons.append(f"{bad} of {len(required)} required guarantees not verified")
+    if not required:
+        reasons.append("the policy lists no required guarantees")
+    # The proved/unproved ratchet adds a reason for each proved-now-unproved function here.
+    return "**Result: blocked** — " + "; ".join(reasons) + "."
+
+
+def markdown(report):
+    lines = ["## ProofCI", "", _verdict(report), ""]
     if report["policy_changes"]:
         approved = report["policy_source"] == "head"
         lines.append("### Policy changes " + ("(approved)" if approved else "(need maintainer approval)"))
