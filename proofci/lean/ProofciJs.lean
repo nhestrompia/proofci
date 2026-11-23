@@ -875,6 +875,13 @@ Used for constants whose double re-evaluation is refused: exact, but the
 bridge does not prove the lifted result. -/
 def ofNum (x : Num) : Dbl := ⟨Core.F64.ofInt x.val⟩
 
+/-- The lift double code uses when re-evaluating a constant is refused. `0`
+fails: JavaScript may have computed `-0` there, which `Num` cannot
+distinguish, so the lift fails closed rather than erase a sign. -/
+def ofNumNe (x : Result Num) : Result Dbl := do
+  let v ← x
+  if v.val = 0 then fail .undef else ok (ofNum v)
+
 /-- The length as a double, for code working on doubles. -/
 def len {α} (xs : List α) : Result Dbl := ok ⟨Core.F64.ofInt xs.length⟩
 

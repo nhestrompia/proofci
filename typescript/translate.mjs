@@ -1260,7 +1260,8 @@ export class Translator {
       const result = scope.convert(declaration.initializer, type, new Map(), lines);
       this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
       const numeric = leanType === "Js.Num" || leanType === "Js.Dbl";
-      this.constants.set(declaration, { lean, pure: false, dbl: numeric ? this.doubles : undefined });
+      const modeSpecific = numeric || this.mentionsNumber(type, declaration);
+      this.constants.set(declaration, { lean, leanType, pure: false, dbl: modeSpecific ? this.doubles : undefined });
       this.leanNames.add(lean);
       return this.constants.get(declaration);
     } finally {
@@ -1283,6 +1284,17 @@ export class Translator {
     const lines = [];
     const outer = this.doubles;
     this.doubles = true;
+    const snapshot = {
+      order: this.order.length, types: this.types, dblTypes: this.dblTypes, functions: this.functions,
+      constants: this.constants, typeOwners: this.typeOwners, modeSpecificTypes: this.modeSpecificTypes, leanNames: this.leanNames,
+    };
+    this.types = new Map(this.types);
+    this.dblTypes = new Map(this.dblTypes);
+    this.functions = new Map(this.functions);
+    this.constants = new Map(this.constants);
+    this.typeOwners = new Map(this.typeOwners);
+    this.modeSpecificTypes = new Set(this.modeSpecificTypes);
+    this.leanNames = new Set(this.leanNames);
     try {
       const leanType = this.type(type, declaration);
       const result = scope.convert(declaration.initializer, type, new Map(), lines);
@@ -1290,6 +1302,17 @@ export class Translator {
       this.dblConstants.set(declaration, lean);
       this.leanNames.add(lean);
       return lean;
+    } catch (error) {
+      // A failed re-evaluation must not leak the names it registered.
+      this.order.length = snapshot.order;
+      this.types = snapshot.types;
+      this.dblTypes = snapshot.dblTypes;
+      this.functions = snapshot.functions;
+      this.constants = snapshot.constants;
+      this.typeOwners = snapshot.typeOwners;
+      this.modeSpecificTypes = snapshot.modeSpecificTypes;
+      this.leanNames = snapshot.leanNames;
+      throw error;
     } finally {
       this.doubles = outer;
     }
@@ -2924,7 +2947,8 @@ export class Scope {
             // What double code can't re-evaluate is lifted from the integer
             // result instead — exact, but the bridge won't prove it.
             if (!(error instanceof Unsupported)) throw error;
-            return `(Js.Dbl.ofNum ${this.bind(`_root_.${constant.lean}`, this.lines)})`;
+            if (constant.leanType === "Js.Num") return this.bind(`Js.Dbl.ofNumNe _root_.${constant.lean}`, this.lines);
+            throw error;
           }
         }
         throw this.t.fail(node, `the constant \`${declaration.name.text}\` is ${constant.dbl ? "a double" : "an integer"}, but this function works on ${this.t.doubles ? "doubles" : "safe integers"} — declare it with the same numbers`);
