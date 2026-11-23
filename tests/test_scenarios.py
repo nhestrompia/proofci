@@ -452,6 +452,12 @@ def function_problems(data, options):
     for change in options.get("policy_changes", []):
         if not any(change in c for c in data["policy_changes"]):
             problems.append(f"policy change not reported: {change!r}: {data['policy_changes']}")
+    for wanted in options.get("downgrades", []):
+        found = [d for d in data.get("downgrades", []) if d["function"] == wanted["function"]]
+        if not found:
+            problems.append(f"no downgrade recorded for {wanted['function']}: {data.get('downgrades')}")
+        elif any(found[0][key] != value for key, value in wanted.items()):
+            problems.append(f"downgrade {found[0]} != expected {wanted}")
     return problems
 
 
@@ -473,7 +479,8 @@ def run_scenario(name, out_dir=None):
         vendor = Path(tmp) / "vendor"
         done = subprocess.run(
             [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report,
-             *(["--vendor", vendor] if vendor.is_dir() else [])],
+             *(["--vendor", vendor] if vendor.is_dir() else []),
+             *(["--policy", options["policy"]] if options.get("policy") else [])],
             cwd=ROOT, capture_output=True, text=True, timeout=3600, env={**os.environ, **options.get("env", {})})
         if not report.exists():
             return [f"no report:\n{done.stdout}{done.stderr}"]
@@ -619,6 +626,33 @@ def ts_contract_weakened(head):
     edit(head / "proofci/Contract.lean", "fee.val ≤ 500", "fee.val ≤ 5000")
 
 
+# --- the proved-guarantee ratchet: a proved function must not silently lose its bridge
+
+def ts_sum_bridged_away(head):
+    # An agent's rewrite into a form the bridge tactics don't cover: still translated
+    # and run against Node, but the bridge theorem doesn't check.
+    edit(head / TS_LEDGER, "  let total = 0;\n  for (const amount of amounts) {",
+         "  let total = 0;\n  const copy = [...new Set(amounts)];\n  if (copy.length < 0) return -1;\n"
+         "  for (const amount of amounts) {")
+
+
+def accept_downgrade(checkout):
+    with open(checkout / "proofci.yaml", "a") as manifest:
+        manifest.write("\naccept_downgrades:\n  - src/ledger.ts::sumAmounts\n")
+
+
+def ts_sum_downgrade_accepted(head):
+    ts_sum_bridged_away(head)
+    accept_downgrade(head)
+
+
+def ts_sum_downgrade_accepted_unrelated(head):
+    # Accepting a function that isn't downgraded doesn't forgive the one that is.
+    ts_sum_bridged_away(head)
+    with open(head / "proofci.yaml", "a") as manifest:
+        manifest.write("\naccept_downgrades:\n  - src/ledger.ts::transfer\n")
+
+
 # --- the bridge: is the Lean view proved to match JavaScript, or only tested against Node?
 
 BR_FEE, BR_TRANSFER, BR_SUM = (f"{TS_LEDGER}::{f}" for f in ("calculateFee", "transfer", "sumAmounts"))
@@ -759,6 +793,20 @@ SCENARIOS.update({
     "ts-mutates-callers-array": (ts_mutates_callers_array, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-alias-hides-a-write": (ts_alias_hides_a_write, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-contract-weakened": (ts_contract_weakened, ts_results(), 1),
+    # The ratchet: the guarantee was going to fail anyway, but the report also names the downgrade.
+    "ts-proved-function-rewritten-off-the-bridge": (ts_sum_bridged_away, {**ts_results(), TS_SUM: U}, 1, {
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
+    # A pull request can't accept its own downgrade: the entry is a policy change.
+    "ts-proved-downgrade-accepted-by-pr": (ts_sum_downgrade_accepted, {**ts_results(), TS_SUM: U}, 1, {
+        "policy_changes": ["`accept_downgrades` changed"],
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
+    # With the policy change approved (--policy head stands in for it), the named downgrade is accepted.
+    "ts-proved-downgrade-accepted-after-approval": (ts_sum_downgrade_accepted, {**ts_results(), TS_SUM: U}, 1, {
+        "policy": "head",
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": True}]}),
+    "ts-proved-downgrade-accepted-unrelated": (ts_sum_downgrade_accepted_unrelated, {**ts_results(), TS_SUM: U}, 1, {
+        "policy": "head",
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
 })
 
 

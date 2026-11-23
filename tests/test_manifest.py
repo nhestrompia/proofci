@@ -175,6 +175,27 @@ targets:
             b"src/permissions/link.ts::canViewLink", b"ledger::f"), "only available for TypeScript")
         self.assertRejected(self.EFFECTS.replace(b"    kind: write\n", b""), "is missing: kind")
 
+    TS_SIMPLE = b"""
+version: 1
+language: typescript
+targets:
+  - id: fees
+    function: src/fees.ts::calculateFee
+    guarantees:
+      - id: capped
+        theorem: fee_capped
+"""
+
+    def test_accept_downgrades(self):
+        self.assertEqual(manifest.parse(self.TS_SIMPLE).accept_downgrades, ())
+        m = manifest.parse(self.TS_SIMPLE + b"accept_downgrades:\n  - src/fees.ts::calculateFee\n")
+        self.assertEqual(m.accept_downgrades, ("src/fees.ts::calculateFee",))
+        self.assertRejected(self.TS_SIMPLE + b"accept_downgrades: src/fees.ts::calculateFee\n", "must be a list")
+        self.assertRejected(self.TS_SIMPLE + b"accept_downgrades:\n  - src/other.ts::f\n", "not the function of any target")
+        self.assertRejected(self.TS_SIMPLE.replace(b"language: typescript\n", b"")
+                            .replace(b"src/fees.ts::calculateFee", b"ledger::calculate_fee")
+                            + b"accept_downgrades:\n  - ledger::calculate_fee\n", "only available for TypeScript")
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 

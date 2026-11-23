@@ -110,6 +110,12 @@ that wants such a function to block sets `require_bridge` in `proofci.yaml` (pol
 pull request cannot change it). `async` functions have no bridge yet, so they are always
 tested, not proved.
 
+Independently of `require_bridge`, a function that was **proved** on the base branch may
+not silently drop: each function's bridge status is re-derived on the base checkout with
+the same toolchain, and a proved→anything-else change is a downgrade that blocks. A
+downgrade is accepted only through the policy (`accept_downgrades`), approved like every
+other policy change; if the base can't be re-checked, the check stays blocked.
+
 The translator rejects what it can't model exactly, and only reads and
 type-checks the code. It ignores the project's `tsconfig.json`, and it rejects
 files with `@ts-` comments, compiled JavaScript beside the source, module-level

@@ -66,6 +66,20 @@ report says why. It is policy, like `assumes` and `effects`: the pull request's 
 ignored, and any change to it is reported as a policy change that waits for approval. The default
 is `false`.
 
+**Proved on the base stays proved.** Independently of `require_bridge`, the check re-derives each
+function's bridge status on the base branch with the same toolchain: a function that was `proved`
+there and is anything less in the pull request (`tested`, `failed`, `unsupported`, or gone) is a
+**downgrade**, and it blocks. So a change can't quietly rewrite a proved function into a form the
+bridge doesn't cover, whatever `require_bridge` says. The report's "Proved on the base branch"
+section lists each downgrade with its old and new status and the reason. A downgrade is accepted
+only through the policy: name the function under `accept_downgrades` in `proofci.yaml`, which is a
+policy change and waits for maintainer approval like the rest — the pull request's own entry does
+nothing on its own. If the base branch can't be re-checked at all, the status is "unknown" and the
+check stays blocked (fail closed), again liftable only through `accept_downgrades`.
+
+For Rust there is no equivalent: a required guarantee that was verified and no longer is already
+fails the check.
+
 **Limits.** One function's bridge may take 120 seconds (the `bridge-timeout` input, or
 `--bridge-timeout`), all of them together 900 seconds (`bridge-budget`, `--bridge-budget`), and
 at most four Lean processes run at once. A function that runs out of either is "tested, not
