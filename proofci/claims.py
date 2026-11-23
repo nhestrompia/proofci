@@ -9,9 +9,14 @@ the contract comes from the protected policy checkout, not the candidate.
 
 import re
 
+# The doc body cannot contain a `-/` of its own: without that guard a block comment
+# sitting between the docstring and the theorem would merge both into a fake claim.
 DOC_THEOREM = re.compile(
-    r"/--(?P<doc>.*?)-/\s*(?:@\[.*?\]\s*)*(?:private |protected |noncomputable |partial )*"
+    r"/--(?P<doc>(?:(?!-/).)*)-/\s*(?:@\[.*?\]\s*)*(?:private |protected |noncomputable |partial )*"
     r"theorem\s+(?P<name>[^\s(:{\[]+)", re.S)
+# `namespace A.B` opens a scope until `end A.B` (or the file ends); the manifest
+# names theorems qualified (`A.B.fee_capped`), so claims are keyed the same way.
+SCOPE = re.compile(r"^(namespace|end)\s+([\w.]+)", re.M)
 THEOREM = re.compile(
     r"(?<![\w'.])(?:private |protected |noncomputable |partial )*theorem\s+(?P<name>[^\s(:{\[]+)")
 BINDER = re.compile(r"\((\w[\w' ]*?)\s*:\s*([^()]*(?:\([^()]*\)[^()]*)*)\)")
@@ -42,12 +47,29 @@ def _hypotheses(signature):
     return found
 
 
+def _scope_at(text, pos):
+    """Namespace stack open at `pos` (e.g. ['A', 'B'] inside `namespace A`/`namespace B`)."""
+    stack = []
+    for m in SCOPE.finditer(text, 0, pos):
+        if m.group(1) == "end":
+            if m.group(2) in stack:
+                stack.remove(m.group(2))
+            elif stack:
+                stack.pop()
+        else:
+            stack.append(m.group(2))
+    return stack
+
+
 def theorems(text):
-    """{name: {"claim", "statement", "hypotheses"}} for each theorem in a contract."""
-    docs = {m.group("name"): " ".join(m.group("doc").split()) or None for m in DOC_THEOREM.finditer(text)}
+    """{qualified name: {"claim", "statement", "hypotheses"}} for each theorem in a contract."""
+    docs = {}
+    for m in DOC_THEOREM.finditer(text):
+        qualified = ".".join([*_scope_at(text, m.start()), m.group("name")])
+        docs[qualified] = " ".join(m.group("doc").split()) or None
     found = {}
     for m in THEOREM.finditer(text):
-        name = m.group("name")
+        name = ".".join([*_scope_at(text, m.start()), m.group("name")])
         end = text.find(":=", m.end())
         statement = text[m.start():end if end != -1 else len(text)].rstrip().rstrip(":").strip()
         signature = text[m.end():end if end != -1 else len(text)]

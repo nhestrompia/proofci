@@ -70,6 +70,20 @@ class ClaimTests(unittest.TestCase):
         text = summary.markdown(check.Report(outcomes=[o]).to_json())
         self.assertIn("no `/--` doc comment", text)
 
+    def test_namespaced_theorems_key_by_qualified_name(self):
+        contract = ("namespace Fees\n\n/-- The fee is capped. -/\ntheorem capped : True := by sorry\n\n"
+                    "end Fees\n\n/-- Free theorems. -/\ntheorem free_ok : True := by sorry\n")
+        found = claims.theorems(contract)
+        self.assertEqual(found["Fees.capped"]["claim"], "The fee is capped.")
+        self.assertNotIn("capped", found)
+        self.assertEqual(found["free_ok"]["claim"], "Free theorems.")
+
+    def test_a_comment_between_doc_and_theorem_does_not_merge(self):
+        contract = ("/-- Doc for a helper. -/\n"
+                    "/- an ordinary block comment -/\n"
+                    "theorem undocumented : True := by sorry\n")
+        self.assertIsNone(claims.theorems(contract)["undocumented"]["claim"])
+
     def test_summary_shows_the_claim_it_replaces(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
         o.claim = "The fee never exceeds the new cap."

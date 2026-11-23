@@ -62,6 +62,7 @@ class Report:
     language: str = "rust"
     policy_changes: list = field(default_factory=list)
     policy_approvers: object = None   # from the protected base policy
+    invalid_contract: bool = False    # an approved contract is missing required /-- doc comments
     notes: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)
     functions: list = field(default_factory=list)   # TypeScript only: one bridge.FunctionStatus per translated function
@@ -70,7 +71,8 @@ class Report:
     def passed(self):
         required = [o for o in self.outcomes if o.required]
         policy_ok = not self.policy_changes or self.policy_source == "head"
-        return policy_ok and bool(required) and all(o.status == VERIFIED for o in required)
+        return (policy_ok and not self.invalid_contract and bool(required)
+                and all(o.status == VERIFIED for o in required))
 
     def to_json(self):
         return {
@@ -218,6 +220,9 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 f"the contract gives `{o.theorem}` no `/--` doc comment, and {why}; the claim "
                 "is what the human reading the result sees. Write a `/-- ... -/` comment "
                 "above the theorem.")
+            # `passed` only inspects required guarantees; the contract itself is
+            # invalid, so an advisory guarantee must block the run the same way.
+            report.invalid_contract = True
 
     def mark(status, reason, only=None):
         for o in report.outcomes:

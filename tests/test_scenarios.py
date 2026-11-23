@@ -323,6 +323,18 @@ def contract_adds_undocumented_guarantee(head):
                        "    calculate_fee amount fee_bps ⦃ fee => fee.val ≤ amount.val * 2 ⦄ := by sorry\n")
 
 
+def contract_adds_undocumented_advisory(head):
+    # Advisory guarantees also need the claim: an invalid contract must block the
+    # run even though `passed` only inspects required guarantees.
+    edit(head / "proofci.yaml",
+         "      - id: zero-amount\n        theorem: zero_amount_no_fee   # no fee on a zero amount\n",
+         "      - id: zero-amount\n        theorem: zero_amount_no_fee   # no fee on a zero amount\n"
+         "      - id: no-cap\n        theorem: fee_uncapped\n        required: false\n")
+    with open(head / "proofci/Contract.lean", "a") as contract:
+        contract.write("\ntheorem fee_uncapped (amount fee_bps : Std.U64) :\n"
+                       "    calculate_fee amount fee_bps ⦃ fee => fee.val ≤ amount.val * 2 ⦄ := by sorry\n")
+
+
 def contract_drops_a_claim(head):
     edit(head / "proofci/Contract.lean",
          "/-- The fee never exceeds the amount, and computing it never overflows. -/\n", "")
@@ -453,6 +465,9 @@ SCENARIOS = {
     # ... and may not take the claim off an existing one.
     "contract-drops-a-claim": (contract_drops_a_claim,
         {**dict.fromkeys(GUARANTEES, V), "fees/fee-capped": S}, 1, {"policy": "head"}),
+    # An advisory guarantee without a claim also blocks: the contract is invalid.
+    "contract-adds-undocumented-advisory": (contract_adds_undocumented_advisory,
+        {**dict.fromkeys(GUARANTEES, V), "fees/no-cap": S}, 1, {"policy": "head"}),
 }
 
 
