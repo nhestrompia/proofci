@@ -61,6 +61,18 @@ class FailedDeclarationsTest(unittest.TestCase):
             failed = mutation._failed_declarations(root, "error: Proofs.lean:4:8: failed")
             self.assertEqual(failed, {"b"})
 
+    def test_plain_lean_error_format_and_warnings(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Proofs.lean").write_text("theorem a := by\n  skip\n")
+            self.assertEqual(
+                mutation._failed_declarations(root, "Proofs.lean:2:2: error: failed"), {"a"})
+            # warning diagnostics are not failures: nothing is attributed
+            self.assertEqual(
+                mutation._failed_declarations(root, "warning: Proofs.lean:1:4: sorry used"), set())
+
 
 class UnknownMutantsTest(unittest.TestCase):
     """A mutant we cannot judge is dropped, never counted as an escape."""
