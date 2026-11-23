@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from . import claims, extract, lean, typescript
-from .check import ConfigError, lean_function, load_manifest
+from .check import ConfigError, _contract_text, lean_function, load_manifest
 
 
 def _digest(paths):
@@ -136,8 +136,7 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=Fa
         return done(0 if proofs.status == 0 else 1)
 
     status = 0
-    contract = repo / manifest.lean / "Contract.lean"
-    stated = claims.theorems(contract.read_text()) if contract.is_file() else {}
+    stated = claims.theorems(_contract_text(repo, manifest.lean))
     for target, guarantee in manifest.guarantees():
         trial = lean.clone(ws, work / f"judge-{guarantee.theorem}")
         try:
