@@ -180,9 +180,11 @@ export class Translator {
     this.doubles = false;        // set per target: that function's numbers are doubles
     this.shaped = [];            // every type given a Lean shape, with where it was met
     this.typeOwners = new Map(); // Lean name -> the declaration that took it
+    this.modeSpecificTypes = new Set(); // Lean names that exist per numeric mode
     this.packages = new Map();   // package.json path -> { name, version }, for declared types
     this.functions = new Map();  // declaration -> { lean, text } (null while in progress)
     this.constants = new Map();
+    this.dblConstants = new Map(); // declaration -> its `Result Js.Dbl` twin's name
     this.fileChecks = new Map();
     this.order = [];
     this.assumes = new Map(assumes.map(a => [a.call, a.signature])); // `module::name` -> its listed signature
@@ -584,6 +586,12 @@ export class Translator {
 
   declareType(declaration, type, node = declaration) {
     const { key, suffix, params } = this.instantiation(declaration, type, node);
+    // A type that never mentions `number` translates identically in both
+    // modes — mirror the other table's declaration instead of duplicating it.
+    if (!this.typeTable().has(key)) {
+      const cross = this.doubles ? this.types : this.dblTypes;
+      if (cross.has(key) && !this.mentionsNumber(type, declaration)) this.typeTable().set(key, cross.get(key));
+    }
     if (this.typeTable().has(key)) {
       const known = this.typeTable().get(key);
       if (!known) {
@@ -626,8 +634,14 @@ export class Translator {
       this.checkDeclaration(declaration);
     }
     let lean = `${this.leanTypeName(declaration)}${suffix}`;
-    // The other numeric mode can already own the plain name for this declaration.
-    if (this.typeOwners.get(lean) === declaration) lean += this.doubles ? "Dbl" : "Num";
+    // The other numeric mode can already own the plain name for this
+    // declaration — but only a type mentioning `number` differs between modes,
+    // so a bigint- or string-only record is declared once and shared.
+    if (this.typeOwners.get(lean) === declaration && this.mentionsNumber(type, declaration)) {
+      this.modeSpecificTypes.add(lean);
+      lean += this.doubles ? "Dbl" : "Num";
+      this.modeSpecificTypes.add(lean);
+    }
     // Two installed versions of a package can both declare a type at this name.
     if ((this.typeOwners.get(lean) ?? declaration) !== declaration) {
       throw this.fail(declaration, `two declarations of \`${declaration.name.text}\` would share a Lean name`);
@@ -910,6 +924,21 @@ export class Translator {
     return `(Js.Dbl.lit ${bitsOf(value)})`;
   }
 
+  // Whether the type's translation differs between safe-integer and double
+  // mode: anything containing `number` (at any depth) does.
+  mentionsNumber(type, node, seen = new Set()) {
+    if (seen.has(type)) return false;
+    seen.add(type);
+    if (type.flags & ts.TypeFlags.NumberLike) return true;
+    if (type.isUnionOrIntersection()) return type.types.some(t => this.mentionsNumber(t, node, seen));
+    if (this.checker.isArrayType(type)) return this.mentionsNumber(this.checker.getTypeArguments(type)[0], node, seen);
+    if (!(type.flags & ts.TypeFlags.Object)) return false;
+    for (const p of this.checker.getPropertiesOfType(type)) {
+      if (this.mentionsNumber(this.checker.getTypeOfSymbol(p), node, seen)) return true;
+    }
+    return false;
+  }
+
   // ------------------------------------------------------------ functions
 
   // Only module-level functions: a local one could capture local variables.
@@ -1010,9 +1039,11 @@ export class Translator {
     const params = fn.parameters.map((p, index) => scope.parameter(p, index, prologue, env));
     const generics = this.generics(fn);
     const result = this.type(returns, fn);
-    // The mode matters only when the signature mentions `number`: a bigint-or
-    // string-only helper translates identically for every caller.
-    entry.dbl = [result, ...params].some(t => /Js\.(Num|Dbl)/.test(t)) ? this.doubles : undefined;
+    // The mode matters only when the signature mentions `number` or a record
+    // declared per numeric mode: other helpers translate identically for every
+    // caller, so all modes share the one definition.
+    const names = [...this.modeSpecificTypes];
+    entry.dbl = [result, ...params].some(t => /Js\.(Num|Dbl)/.test(t) || names.some(n => t.includes(n))) ? this.doubles : undefined;
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
@@ -1193,9 +1224,15 @@ export class Translator {
       // A safe-integer literal is declared once as `Js.Num`; double code reads
       // it by bits, so the one definition serves both modes.
       const dbl = !Number.isSafeInteger(value);
-      this.order.push(dbl
-        ? `def ${lean} : Js.Dbl := (Js.Dbl.lit ${bitsOf(value)})`
-        : `def ${lean} : Js.Num := ${this.number(value, declaration)}`);
+      const outer = this.doubles;
+      this.doubles = dbl;
+      try {
+        this.order.push(dbl
+          ? `def ${lean} : Js.Dbl := (Js.Dbl.lit ${bitsOf(value)})`
+          : `def ${lean} : Js.Num := ${this.number(value, declaration)}`);
+      } finally {
+        this.doubles = outer;
+      }
       this.constants.set(declaration, { lean, pure: true, dbl, value });
       return this.constants.get(declaration);
     }
@@ -1212,6 +1249,29 @@ export class Translator {
       const numeric = leanType === "Js.Num" || leanType === "Js.Dbl";
       this.constants.set(declaration, { lean, pure: false, dbl: numeric ? this.doubles : undefined });
       return this.constants.get(declaration);
+    } finally {
+      this.doubles = outer;
+    }
+  }
+
+  // A computed integer constant re-read for double code gets its own
+  // `Result Js.Dbl` evaluation: integer arithmetic would erase `-0` and fail
+  // outside the safe range, and the bridge needs a double result to prove.
+  declareConstantDbl(declaration) {
+    const known = this.dblConstants.get(declaration);
+    if (known) return known;
+    const lean = `${this.constants.get(declaration).lean}Dbl`;
+    const scope = new Scope(this, declaration);
+    const type = this.checker.getTypeAtLocation(declaration.name);
+    const lines = [];
+    const outer = this.doubles;
+    this.doubles = true;
+    try {
+      const leanType = this.type(type, declaration);
+      const result = scope.convert(declaration.initializer, type, new Map(), lines);
+      this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
+      this.dblConstants.set(declaration, lean);
+      return lean;
     } finally {
       this.doubles = outer;
     }
@@ -2840,7 +2900,7 @@ export class Scope {
       if (constant.dbl !== undefined && Boolean(constant.dbl) !== Boolean(this.t.doubles)) {
         if (!constant.dbl) {
           if (constant.pure) return `(Js.Dbl.lit ${bitsOf(constant.value)})`;
-          return `(Js.Dbl.ofNum ${this.bind(`_root_.${constant.lean}`, this.lines)})`;
+          return this.bind(`_root_.${this.t.declareConstantDbl(declaration)}`, this.lines);
         }
         throw this.t.fail(node, `the constant \`${declaration.name.text}\` is ${constant.dbl ? "a double" : "an integer"}, but this function works on ${this.t.doubles ? "doubles" : "safe integers"} — declare it with the same numbers`);
       }
@@ -3920,7 +3980,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       order: translator.order.length, types: new Map(translator.types), dblTypes: new Map(translator.dblTypes),
       functions: new Map(translator.functions), constants: new Map(translator.constants),
       assumed: new Map(translator.assumed), effectOps: new Map(translator.effectOps), anonymous: new Map(translator.anonymous),
-      typeOwners: new Map(translator.typeOwners),
+      typeOwners: new Map(translator.typeOwners), modeSpecificTypes: new Set(translator.modeSpecificTypes),
+      dblConstants: new Map(translator.dblConstants),
     };
     let declaration;
     try {
@@ -3947,6 +4008,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       translator.assumed = snapshot.assumed;
       translator.constants = snapshot.constants;
       translator.typeOwners = snapshot.typeOwners;
+      translator.modeSpecificTypes = snapshot.modeSpecificTypes;
+      translator.dblConstants = snapshot.dblConstants;
       translator.effectOps = snapshot.effectOps;
       translator.anonymous = snapshot.anonymous;
       try {
