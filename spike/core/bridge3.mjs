@@ -586,15 +586,16 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]).filter(c => reachable.includes(c));
   const cbNames = [...lean.matchAll(/^def (\S+_cb\d+) : Fn/gm)].map(m => m[1]);
   // A record of dynamic keys met only inside a function body: take its value type from the view.
-  for (const m of reachable.matchAll(/Js\.Dict Js\.Str /g)) {
+  const code = reachable.replace(/js!"[^"]*"/g, "");
+  for (const m of code.matchAll(/Js\.Dict Js\.Str /g)) {
     let i = m.index + m[0].length, depth = 0, j = i;
-    for (; j < reachable.length; j++) {
-      const c = reachable[j];
+    for (; j < code.length; j++) {
+      const c = code[j];
       if (c === "(") depth++;
       else if (c === ")") { if (depth === 0) break; depth--; }
       else if (depth === 0 && /\s/.test(c)) break;
     }
-    dictValues.add(reachable.slice(i, j));
+    dictValues.add(code.slice(i, j));
   }
   // `{}` gives no element type, so name the ones these functions use.
   const dictRules = [...dictValues].map(v => `macro_rules | \`(tactic| s_rec) => \`(tactic| apply (SimE.recEmpty (α := ${v}) (d := []) rfl))`).join("\n");
