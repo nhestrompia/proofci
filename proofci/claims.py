@@ -14,9 +14,9 @@ import re
 DOC_THEOREM = re.compile(
     r"/--(?P<doc>(?:(?!-/).)*)-/\s*(?:@\[.*?\]\s*)*(?:private |protected |noncomputable |partial )*"
     r"theorem\s+(?P<name>[^\s(:{\[]+)", re.S)
-# `namespace A.B` opens a scope until `end A.B` (or the file ends); the manifest
+# `namespace`/`section` open a scope until `end` (or the file ends); the manifest
 # names theorems qualified (`A.B.fee_capped`), so claims are keyed the same way.
-SCOPE = re.compile(r"^(namespace|end)\s+([\w.]+)", re.M)
+SCOPE = re.compile(r"^(namespace|section|end)\b(?:\s+([\w.]+))?", re.M)
 THEOREM = re.compile(
     r"(?<![\w'.])(?:private |protected |noncomputable |partial )*theorem\s+(?P<name>[^\s(:{\[]+)")
 BINDER = re.compile(r"\((\w[\w' ]*?)\s*:\s*([^()]*(?:\([^()]*\)[^()]*)*)\)")
@@ -47,30 +47,46 @@ def _hypotheses(signature):
     return found
 
 
-def _scope_at(text, pos):
-    """Namespace stack open at `pos` (e.g. ['A', 'B'] inside `namespace A`/`namespace B`)."""
-    stack = []
-    for m in SCOPE.finditer(text, 0, pos):
-        if m.group(1) == "end":
-            if m.group(2) in stack:
-                stack.remove(m.group(2))
-            elif stack:
+def _mask(text):
+    """Comments replaced by spaces, keeping length and newlines, so positions stay
+    valid and keywords inside comments (a `namespace` line in a `/- -/` block, or
+    a commented-out theorem) are ignored by the scans that run on the result."""
+    def blank(match):
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    text = re.sub(r"/-.*?-/", blank, text, flags=re.S)
+    return re.sub(r"--[^\n]*", blank, text)
+
+
+def _scope_at(masked, pos):
+    """Namespaces open at `pos`. Sections are tracked too (so `end` closes them)
+    but they don't qualify declaration names."""
+    stack = []  # "ns:Name" | "sec:Name"
+    for m in SCOPE.finditer(masked, 0, pos):
+        kind, name = m.group(1), m.group(2) or ""
+        if kind == "end":
+            if stack and (not name or stack[-1].split(":", 1)[1] == name):
                 stack.pop()
+            else:
+                deeper = next((e for e in reversed(stack) if e.split(":", 1)[1] == name), None)
+                if deeper is not None:
+                    stack.remove(deeper)
         else:
-            stack.append(m.group(2))
-    return stack
+            stack.append(("ns" if kind == "namespace" else "sec") + ":" + name)
+    return [e.split(":", 1)[1] for e in stack if e.startswith("ns:")]
 
 
 def theorems(text):
     """{qualified name: {"claim", "statement", "hypotheses"}} for each theorem in a contract."""
+    masked = _mask(text)
     docs = {}
     for m in DOC_THEOREM.finditer(text):
-        qualified = ".".join([*_scope_at(text, m.start()), m.group("name")])
+        qualified = ".".join([*_scope_at(masked, m.start()), m.group("name")])
         docs[qualified] = " ".join(m.group("doc").split()) or None
     found = {}
-    for m in THEOREM.finditer(text):
-        name = ".".join([*_scope_at(text, m.start()), m.group("name")])
-        end = text.find(":=", m.end())
+    for m in THEOREM.finditer(masked):
+        name = ".".join([*_scope_at(masked, m.start()), m.group("name")])
+        end = masked.find(":=", m.end())
         statement = text[m.start():end if end != -1 else len(text)].rstrip().rstrip(":").strip()
         signature = text[m.end():end if end != -1 else len(text)]
         found[name] = {

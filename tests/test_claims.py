@@ -78,6 +78,22 @@ class ClaimTests(unittest.TestCase):
         self.assertNotIn("capped", found)
         self.assertEqual(found["free_ok"]["claim"], "Free theorems.")
 
+    def test_a_section_end_does_not_close_the_namespace(self):
+        contract = ("namespace Fees\nsection Helpers\n/-- Helper lemma. -/\n"
+                    "theorem helper : True := by sorry\nend Helpers\n"
+                    "/-- The fee is capped. -/\ntheorem capped : True := by sorry\nend Fees\n")
+        found = claims.theorems(contract)
+        self.assertEqual(found["Fees.capped"]["claim"], "The fee is capped.")
+        # `end Helpers` closes the section; the namespace keeps qualifying names
+        self.assertEqual(found["Fees.helper"]["claim"], "Helper lemma.")
+
+    def test_keywords_inside_comments_do_not_open_scopes(self):
+        contract = ("/-\nnamespace Fake\n-/\n"
+                    "/-- The fee is capped. -/\ntheorem capped : True := by sorry\n")
+        found = claims.theorems(contract)
+        self.assertIn("capped", found)
+        self.assertNotIn("Fake.capped", found)
+
     def test_a_comment_between_doc_and_theorem_does_not_merge(self):
         contract = ("/-- Doc for a helper. -/\n"
                     "/- an ordinary block comment -/\n"
