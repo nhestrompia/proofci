@@ -181,6 +181,7 @@ export class Translator {
     this.shaped = [];            // every type given a Lean shape, with where it was met
     this.typeOwners = new Map(); // Lean name -> the declaration that took it
     this.modeSpecificTypes = new Set(); // Lean names that exist per numeric mode
+    this.leanNames = new Set();        // every Lean definition name taken, any kind
     this.packages = new Map();   // package.json path -> { name, version }, for declared types
     this.functions = new Map();  // declaration -> { lean, text } (null while in progress)
     this.constants = new Map();
@@ -647,6 +648,7 @@ export class Translator {
       throw this.fail(declaration, `two declarations of \`${declaration.name.text}\` would share a Lean name`);
     }
     this.typeOwners.set(lean, declaration);
+    this.leanNames.add(lean);
     this.typeTable().set(key, null);
     this.nesting ??= new Map();
     const depth = this.nesting.get(declaration) ?? 0;
@@ -936,6 +938,14 @@ export class Translator {
     for (const p of this.checker.getPropertiesOfType(type)) {
       if (this.mentionsNumber(this.checker.getTypeOfSymbol(p), node, seen)) return true;
     }
+    if (type.objectFlags & ts.ObjectFlags.Reference) {
+      for (const arg of this.checker.getTypeArguments(type) ?? []) {
+        if (this.mentionsNumber(arg, node, seen)) return true;
+      }
+    }
+    for (const info of this.checker.getIndexInfosOfType(type)) {
+      if (this.mentionsNumber(info.type, node, seen)) return true;
+    }
     return false;
   }
 
@@ -1028,6 +1038,7 @@ export class Translator {
     const lean = this.leanName(declaration, declaration.name.text);
     const entry = { lean, pending: true, recursive: false, async: isAsync, dbl: undefined };
     this.functions.set(declaration, entry);
+    this.leanNames.add(lean);
     this.current.push(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
     const written = this.checker.getReturnTypeOfSignature(signature);
@@ -1210,6 +1221,7 @@ export class Translator {
     if (isAsync) this.usesWorld = true;
     const lean = this.leanName(declaration, declaration.name.text);
     this.order.push(`axiom ${lean} ${params.join(" ")} : ${isAsync ? "Proofci.Effects.Eff" : "Result"} ${result}`);
+    this.leanNames.add(lean);
     return lean;
   }
 
@@ -1234,6 +1246,7 @@ export class Translator {
         this.doubles = outer;
       }
       this.constants.set(declaration, { lean, pure: true, dbl, value });
+      this.leanNames.add(lean);
       return this.constants.get(declaration);
     }
     // Anything else is computed once on import, which a `Result` constant models.
@@ -1248,6 +1261,7 @@ export class Translator {
       this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
       const numeric = leanType === "Js.Num" || leanType === "Js.Dbl";
       this.constants.set(declaration, { lean, pure: false, dbl: numeric ? this.doubles : undefined });
+      this.leanNames.add(lean);
       return this.constants.get(declaration);
     } finally {
       this.doubles = outer;
@@ -1261,6 +1275,9 @@ export class Translator {
     const known = this.dblConstants.get(declaration);
     if (known) return known;
     const lean = `${this.constants.get(declaration).lean}Dbl`;
+    if (this.leanNames.has(lean)) {
+      throw this.fail(declaration, `\`${lean}\` is taken — rename it or the constant that made it`);
+    }
     const scope = new Scope(this, declaration);
     const type = this.checker.getTypeAtLocation(declaration.name);
     const lines = [];
@@ -1271,6 +1288,7 @@ export class Translator {
       const result = scope.convert(declaration.initializer, type, new Map(), lines);
       this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
       this.dblConstants.set(declaration, lean);
+      this.leanNames.add(lean);
       return lean;
     } finally {
       this.doubles = outer;
@@ -2900,7 +2918,14 @@ export class Scope {
       if (constant.dbl !== undefined && Boolean(constant.dbl) !== Boolean(this.t.doubles)) {
         if (!constant.dbl) {
           if (constant.pure) return `(Js.Dbl.lit ${bitsOf(constant.value)})`;
-          return this.bind(`_root_.${this.t.declareConstantDbl(declaration)}`, this.lines);
+          try {
+            return this.bind(`_root_.${this.t.declareConstantDbl(declaration)}`, this.lines);
+          } catch (error) {
+            // What double code can't re-evaluate is lifted from the integer
+            // result instead — exact, but the bridge won't prove it.
+            if (!(error instanceof Unsupported)) throw error;
+            return `(Js.Dbl.ofNum ${this.bind(`_root_.${constant.lean}`, this.lines)})`;
+          }
         }
         throw this.t.fail(node, `the constant \`${declaration.name.text}\` is ${constant.dbl ? "a double" : "an integer"}, but this function works on ${this.t.doubles ? "doubles" : "safe integers"} — declare it with the same numbers`);
       }
@@ -3981,7 +4006,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       functions: new Map(translator.functions), constants: new Map(translator.constants),
       assumed: new Map(translator.assumed), effectOps: new Map(translator.effectOps), anonymous: new Map(translator.anonymous),
       typeOwners: new Map(translator.typeOwners), modeSpecificTypes: new Set(translator.modeSpecificTypes),
-      dblConstants: new Map(translator.dblConstants),
+      dblConstants: new Map(translator.dblConstants), leanNames: new Set(translator.leanNames),
     };
     let declaration;
     try {
@@ -4010,6 +4035,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       translator.typeOwners = snapshot.typeOwners;
       translator.modeSpecificTypes = snapshot.modeSpecificTypes;
       translator.dblConstants = snapshot.dblConstants;
+      translator.leanNames = snapshot.leanNames;
       translator.effectOps = snapshot.effectOps;
       translator.anonymous = snapshot.anonymous;
       try {
