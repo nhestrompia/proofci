@@ -870,6 +870,9 @@ def numOf (x : Dbl) : Result Num :=
   | .fin s n => if n % Core.F64.unit = 0 then Js.mk (Core.F64.signed s (n / Core.F64.unit)) else fail .undef
   | _ => fail .undef
 
+/-- A safe integer read as a double; safe integers are exactly representable. -/
+def ofNum (x : Num) : Dbl := ⟨Core.F64.ofInt x.val⟩
+
 /-- The length as a double, for code working on doubles. -/
 def len {α} (xs : List α) : Result Dbl := ok ⟨Core.F64.ofInt xs.length⟩
 

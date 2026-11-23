@@ -977,7 +977,7 @@ export class Translator {
   // Declares a function and everything it reaches, callees first.
   declareFunction(declaration) {
     const known = this.functions.get(declaration);
-    if (known && Boolean(known.dbl) !== Boolean(this.doubles)) {
+    if (known && known.dbl !== undefined && Boolean(known.dbl) !== Boolean(this.doubles)) {
       throw this.fail(declaration, `\`${declaration.name.text}\` is used from both safe-integer and double code — give each mode its own copy`);
     }
     if (known?.pending) {
@@ -997,7 +997,7 @@ export class Translator {
     if (fn.asteriskToken) throw this.fail(fn, "generators are not supported");
     const isAsync = this.isAsync(fn);
     const lean = this.leanName(declaration, declaration.name.text);
-    const entry = { lean, pending: true, recursive: false, async: isAsync, dbl: this.doubles };
+    const entry = { lean, pending: true, recursive: false, async: isAsync, dbl: undefined };
     this.functions.set(declaration, entry);
     this.current.push(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
@@ -1010,6 +1010,9 @@ export class Translator {
     const params = fn.parameters.map((p, index) => scope.parameter(p, index, prologue, env));
     const generics = this.generics(fn);
     const result = this.type(returns, fn);
+    // The mode matters only when the signature mentions `number`: a bigint-or
+    // string-only helper translates identically for every caller.
+    entry.dbl = [result, ...params].some(t => /Js\.(Num|Dbl)/.test(t)) ? this.doubles : undefined;
     const flow = scope.functionFlow(returns, result);
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
@@ -1187,7 +1190,9 @@ export class Translator {
     const lean = this.leanName(declaration, declaration.name.text);
     const value = this.literal(declaration.initializer);
     if (value !== undefined) {
-      const dbl = this.doubles || !Number.isSafeInteger(value);
+      // A safe-integer literal is declared once as `Js.Num`; double code reads
+      // it by bits, so the one definition serves both modes.
+      const dbl = !Number.isSafeInteger(value);
       this.order.push(dbl
         ? `def ${lean} : Js.Dbl := (Js.Dbl.lit ${bitsOf(value)})`
         : `def ${lean} : Js.Num := ${this.number(value, declaration)}`);
@@ -2833,7 +2838,10 @@ export class Scope {
     if (this.isModuleLevel(declaration)) {
       const constant = this.t.declareConstant(declaration);
       if (constant.dbl !== undefined && Boolean(constant.dbl) !== Boolean(this.t.doubles)) {
-        if (constant.pure && !constant.dbl) return `(Js.Dbl.lit ${bitsOf(constant.value)})`;
+        if (!constant.dbl) {
+          if (constant.pure) return `(Js.Dbl.lit ${bitsOf(constant.value)})`;
+          return `(Js.Dbl.ofNum ${this.bind(`_root_.${constant.lean}`, this.lines)})`;
+        }
         throw this.t.fail(node, `the constant \`${declaration.name.text}\` is ${constant.dbl ? "a double" : "an integer"}, but this function works on ${this.t.doubles ? "doubles" : "safe integers"} — declare it with the same numbers`);
       }
       return constant.pure ? `_root_.${constant.lean}` : this.bind(`_root_.${constant.lean}`, this.lines);
