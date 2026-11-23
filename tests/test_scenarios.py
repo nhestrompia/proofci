@@ -469,6 +469,14 @@ def function_problems(data, options):
     for change in options.get("policy_changes", []):
         if not any(change in c for c in data["policy_changes"]):
             problems.append(f"policy change not reported: {change!r}: {data['policy_changes']}")
+    for wanted in options.get("downgrades", []):
+        found = [d for d in data.get("downgrades", []) if d["function"] == wanted["function"]]
+        if not found:
+            problems.append(f"no downgrade recorded for {wanted['function']}: {data.get('downgrades')}")
+        elif any(found[0][key] != value for key, value in wanted.items()):
+            problems.append(f"downgrade {found[0]} != expected {wanted}")
+    if "stale_accepts" in options and sorted(data.get("stale_accepts", [])) != sorted(options["stale_accepts"]):
+        problems.append(f"stale accepts {data.get('stale_accepts')} != {options['stale_accepts']}")
     return problems
 
 
@@ -490,7 +498,8 @@ def run_scenario(name, out_dir=None):
         vendor = Path(tmp) / "vendor"
         done = subprocess.run(
             [sys.executable, "-m", "proofci", "check", "--base", base, "--head", head, "--report", report,
-             *(["--vendor", vendor] if vendor.is_dir() else [])],
+             *(["--vendor", vendor] if vendor.is_dir() else []),
+             *(["--policy", options["policy"]] if options.get("policy") else [])],
             cwd=ROOT, capture_output=True, text=True, timeout=3600, env={**os.environ, **options.get("env", {})})
         if not report.exists():
             return [f"no report:\n{done.stdout}{done.stderr}"]
@@ -684,6 +693,43 @@ def ts_vacuous_postcondition(head):
 ts_vacuous_postcondition.also_base = unconstrained_to_contract
 
 
+# --- the proved-guarantee ratchet: a proved function must not silently lose its bridge
+
+def ts_sum_bridged_away(head):
+    # An agent's rewrite into a form the bridge tactics don't cover: still translated
+    # and run against Node, but the bridge theorem doesn't check.
+    edit(head / TS_LEDGER, "  let total = 0;\n  for (const amount of amounts) {",
+         "  let total = 0;\n  const copy = [...new Set(amounts)];\n  if (copy.length < 0) return -1;\n"
+         "  for (const amount of amounts) {")
+
+
+def accept_downgrade(checkout):
+    with open(checkout / "proofci.yaml", "a") as manifest:
+        manifest.write("\naccept_downgrades:\n  - src/ledger.ts::sumAmounts\n")
+
+
+def ts_sum_downgrade_accepted(head):
+    ts_sum_bridged_away(head)
+    accept_downgrade(head)
+
+
+def ts_sum_downgrade_accepted_unrelated(head):
+    # Accepting a function that isn't downgraded doesn't forgive the one that is.
+    ts_sum_bridged_away(head)
+    with open(head / "proofci.yaml", "a") as manifest:
+        manifest.write("\naccept_downgrades:\n  - src/ledger.ts::transfer\n")
+
+
+def ts_dep_changed(head):
+    edit(head / "package.json", '"private": true', '"private": true,\n  "description": "touched"')
+
+
+def ts_dep_changed_and_code_touched(head):
+    ts_dep_changed(head)
+    # Touches the function's bridge input while the mistranslate hook still applies.
+    edit(head / TS_LEDGER, "to: accounts.to + amount", "to: accounts.to + amount + 0")
+
+
 # --- the bridge: is the Lean view proved to match JavaScript, or only tested against Node?
 
 BR_FEE, BR_TRANSFER, BR_SUM = (f"{TS_LEDGER}::{f}" for f in ("calculateFee", "transfer", "sumAmounts"))
@@ -791,9 +837,12 @@ SCENARIOS.update({
         **dict.fromkeys(TREE_GUARANTEES, V), "total/one-item": U}, 1),
     "ts-tree-mistranslated-view-seen-by-node": (None, dict.fromkeys(TREE_GUARANTEES, X), 1, {
         "env": RECURSIVE, "functions": {TREE + "::total": "failed"}}),
+    # The bridge proof never finishes for `canViewLink`, so the base can't prove it either;
+    # the example accepts that explicitly in its policy (accept_downgrades).
     "ts-async-baseline": (None, dict.fromkeys(ASYNC_GUARANTEES, V), 0, {
         "functions": {ASYNC_FN: "tested"}, "function_reasons": {ASYNC_FN: "the bridge proof"},
-        "summary": {"proved": 0, "tested": 1, "failed": 0}}),
+        "summary": {"proved": 0, "tested": 1, "failed": 0},
+        "downgrades": [{"function": ASYNC_FN, "was": "unknown", "now": "tested", "accepted": True}]}),
     "ts-async-bridge-required": (policy_requires_bridge, dict.fromkeys(ASYNC_GUARANTEES, X), 1, {
         "functions": {ASYNC_FN: "tested"}}),
     "ts-async-flipped-owner-check": (ts_async_flipped_owner_check, {ASYNC_NO_LOOKUP: V, ASYNC_SOUND: U}, 1),
@@ -842,6 +891,27 @@ SCENARIOS.update({
         "warnings": {"transfer/conservation": "still verifies",
                      "transfer/rejects-overdraft": "still verifies"},
         "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
+    # The ratchet: the guarantee was going to fail anyway, but the report also names the downgrade.
+    "ts-proved-function-rewritten-off-the-bridge": (ts_sum_bridged_away, {**ts_results(), TS_SUM: U}, 1, {
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
+    # A pull request can't accept its own downgrade: the entry is a policy change.
+    "ts-proved-downgrade-accepted-by-pr": (ts_sum_downgrade_accepted, {**ts_results(), TS_SUM: U}, 1, {
+        "policy_changes": ["`accept_downgrades` changed"],
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
+    # With the policy change approved (--policy head stands in for it), the named downgrade is accepted.
+    "ts-proved-downgrade-accepted-after-approval": (ts_sum_downgrade_accepted, {**ts_results(), TS_SUM: U}, 1, {
+        "policy": "head",
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": True}]}),
+    "ts-proved-downgrade-accepted-unrelated": (ts_sum_downgrade_accepted_unrelated, {**ts_results(), TS_SUM: U}, 1, {
+        "policy": "head",
+        "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}],
+        "stale_accepts": [BR_TRANSFER]}),
+    # With the dependency files changed, a base result short of `proved` is inconclusive:
+    # the pull request's dependencies could be why the base function didn't check. Same
+    # inputs as ts-bridge-mistranslated-view, where it stays `tested`.
+    "ts-proved-downgrade-after-dep-change": (ts_dep_changed_and_code_touched, {**ts_results(), TS_OVERDRAFT: U}, 1, {
+        "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"},
+        "downgrades": [{"function": BR_TRANSFER, "was": "unknown", "now": "tested", "accepted": False}]}),
 })
 
 
