@@ -922,8 +922,54 @@ def toRat (x : Dbl) : Rat :=
   | .fin s n => (if s then -(n : Rat) else n) / 2 ^ 1074
   | _ => 0
 
+
+/-- `Js.Dbl.toRat` is the model's `toRatD`, so `Core.F64` order lemmas apply. -/
+theorem toRat_eq (x : Dbl) : toRat x = x.f.toRatD := by
+  cases x with
+  | mk f =>
+    cases f with
+    | fin s n =>
+      rw [Core.F64.toRat_fin, Int.cast_natCast, Core.F64.unit_rat]
+      cases s <;> simp [toRat, Core.F64.signed, Int.cast_natCast]
+    | nan => rfl
+    | inf s => rfl
+
+/-- `ofDecimal m e`: the nearest double to `m * 10^-e`, so `ofDecimal 1299 2` is
+`12.99`. Contracts use it to write readable decimal literals; `Core.F64.ofDecimal`
+rounds to the nearest binary64, ties to even — the IEEE-correct value as long as
+`m` and `10^e` are safe integers (any sane fixed-point literal). -/
+def ofDecimal (m : Int) (e : Nat) : Dbl :=
+  ⟨Core.F64.ofDecimal m e⟩
+
 /-- A literal, by its binary64 bits: what a test vector or a generated term carries. -/
 def lit (b : Nat) : Dbl := ⟨Core.F64.ofBits b⟩
+
+/-- `"12"` or `"12.99"` (optional leading `-`) → `(magnitude, scale)` for `ofDecimal`. -/
+private def parseDecimal (s : String) : Option (Int × Nat) := do
+  let neg := s.startsWith "-"
+  let s := if neg then String.ofList (s.toList.drop 1) else s
+  match String.splitOn s "." with
+  | [w] =>
+    let w ← String.toNat? w
+    pure ((if neg then -(w : Int) else (w : Int)), 0)
+  | [w, f] =>
+    let w ← String.toNat? w
+    let fnum ← String.toNat? f
+    let e := String.length f
+    let mag : Int := (w : Int) * 10 ^ e + fnum
+    pure ((if neg then -mag else mag), e)
+  | _ => none
+
+/-- `dbl!"12.99"`: a decimal literal compiled to `Js.Dbl.lit <bits>` — the nearest
+binary64 is computed at elaboration time, so in contracts it reads as a decimal
+while comparing to `lit`/bits stays `decide`-cheap. -/
+elab "dbl!" s:str : term => do
+  match parseDecimal s.getString with
+  | some (m, e) =>
+    let bits := Core.F64.toBits (Core.F64.ofDecimal m e)
+    pure (Lean.mkApp (Lean.mkConst ``Js.Dbl.lit) (Lean.Expr.lit (.natVal bits)))
+  | none => throwError "dbl!: expected a decimal like \"12\" or \"12.99\", got {s.getString.quote}"
+
 
 end Dbl
 

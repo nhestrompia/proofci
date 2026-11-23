@@ -7,8 +7,6 @@ set_option exponentiation.threshold 3000
 numbers are real doubles. -/
 namespace Core.F64
 
-theorem unit_pos : 0 < unit := Nat.pow_pos (by decide)
-
 theorem signed_ofInt (a : Int) : signed (decide (a < 0)) (a.natAbs * unit) = a * (unit : Int) := by
   unfold signed
   by_cases h : a < 0

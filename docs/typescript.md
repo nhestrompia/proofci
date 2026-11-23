@@ -124,6 +124,7 @@ and others, also after `?.`), `Number.isFinite` and the other `Number` tests, `N
 number, a boolean or a string, and `Array.isArray` of a value typed as an array, possibly
 `null` or `undefined`. `Number(s)` covers blank text and decimal integers with an optional
 sign; other text (fractions, exponents, `0x`, `Infinity`, `-0`) makes the view stop.
+`number` also has a second, IEEE-754 binary64 mode — see *What `number` means* below.
 `padStart` and `padEnd` stop past 2^20 units. Arrays also have `at` (a negative index counts
 from the end), `lastIndexOf`, `findIndex`, `flat()` of an array of arrays and `flatMap` with a
 callback that returns an array; strings have `at` and `repeat`, which stops past 2^20 units.
@@ -255,10 +256,31 @@ so "this input throws" is stated as `f x = fail .panic`.
 
 ### What `number` means
 
-`number` is a safe integer. If any step would produce a fraction, `NaN`, `Infinity`
-or a value past `Number.MAX_SAFE_INTEGER`, the model fails. So a proof that a function
-returns a value also proves it never lost precision. Code that needs fractions stays
-unproven, and is never judged wrongly.
+`number` is translated per function in one of two modes. The default is the safe
+integer: if any step would produce a fraction, `NaN`, `Infinity` or a value past
+`Number.MAX_SAFE_INTEGER`, the model fails, so a proof that a function returns a
+value also proves it never lost precision. A function that needs real `number`
+behaviour — a fractional literal, a `-0` literal, `NaN` or `Infinity` (or the
+`Number.*` constants), `x / y` outside `Math.floor`/`Math.ceil`/`Math.trunc`,
+`Math.round`/`Math.sign`, `Number.isFinite`/`isNaN`/`isInteger`/`isSafeInteger`
+or the bare `isNaN`/`isFinite` — is
+translated on IEEE-754 binary64 instead (`Js.Dbl` over `Core.F64`), with
+JavaScript's exact semantics: round-to-nearest-even, NaN never equal, `+0 === -0`,
+and `%` taking the dividend's sign. The two views never mix: an integer helper or
+constant read by double code is lifted through `Js.Dbl.ofNumNe`, which refuses `0`
+(where JS may have `-0`), and a callee shared across modes is refused with a hint.
+
+Double contracts write exact decimals as `dbl!"12.99"` (or `Js.Dbl.ofDecimal 1299 2`),
+which elaborates to the nearest binary64 bits and proves by `decide`. Reasoning
+about values without bit patterns uses `x.f.toRatD` (the exact rational a finite
+double holds, `-0` as `0`), with lemmas in `spike/core/F64.lean` for bounds and
+monotonicity (`lt_iff`, `le_iff`, `eq_iff`, the `*_toRat_nonneg` family,
+`jsround_err_half` for `Math.round`'s ½-ulp error). `decide` and `simp` on doubles
+need `set_option exponentiation.threshold 4096` (and `maxRecDepth 100000`) in the
+proof file, because denominators run to `2^1074`.
+
+`toFixed` is refused with a hint — decimal text isn't modelled exactly. Anything
+else unmodelled fails closed as before.
 
 Each check also runs the translated functions in Node on generated inputs. See the
 [security model](../SECURITY.md#typescript).

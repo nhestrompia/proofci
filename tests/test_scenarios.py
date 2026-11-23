@@ -594,14 +594,17 @@ def ts_results():
 
 
 TS_DBL = "src/pricing.ts"
-TS_DBL_GUARANTEES = ("total/always-returns", "total/menu-price", "total/nan-propagates", "per-head/exact", "effect/signs")
-DBL_TOTAL, DBL_MENU, DBL_NAN, DBL_LEFT, DBL_EFFECT = TS_DBL_GUARANTEES
-DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "perHead", "effect")]
-DBL_BRIDGE = {"functions": dict.fromkeys(DBL_FNS, "proved")}
+TS_DBL_GUARANTEES = ("total/nonneg", "total/whole-cents", "total/menu-price", "total/nan-propagates", "per-head/nonneg", "effect/signs", "shelf/covered", "bonus/covered")
+DBL_TOTAL, DBL_WHOLE, DBL_MENU, DBL_NAN, DBL_LEFT, DBL_EFFECT, DBL_SHELF_G, DBL_BONUS_G = TS_DBL_GUARANTEES
+DBL_FNS = [TS_DBL + "::" + f for f in ("totalWithTax", "perHead", "effect", "shelfPrice", "bonus")]
+DBL_SHELF = TS_DBL + "::shelfPrice"
+DBL_BRIDGE = {"functions": {**dict.fromkeys(DBL_FNS[:4], "proved"), DBL_SHELF: "proved", TS_DBL + "::bonus": "tested"}}
 
 
 def dbl_results():
-    return dict.fromkeys(TS_DBL_GUARANTEES, V)
+    # `shelf` and `bonus` carry non-required guarantees their statements are
+    # meant to stay unproved — they are coverage and test-forever targets.
+    return {**dict.fromkeys(TS_DBL_GUARANTEES, V), "shelf/covered": U, "bonus/covered": U}
 
 
 def ts_transfer_loses_money(head):
@@ -789,6 +792,11 @@ HOOKS = ROOT / "tests" / "fixtures"
 DBL_COMMON = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_dbl_common.mjs")}
 DBL_RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_dbl_rare.mjs")}
 DBL_REM = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_dbl_rem.mjs")}
+
+
+def dbl_mut(kind):
+    """A translator hook that plants one wrong `Js.Dbl` operation (mutant `kind`)."""
+    return {"PROOFCI_TRANSLATOR": str(HOOKS / f"mistranslate_{kind}.mjs")}
 RECURSIVE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive.mjs")}
 RECURSIVE_RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_recursive_rare.mjs")}
 RARE = {"PROOFCI_TRANSLATOR": str(HOOKS / "mistranslate_rare.mjs")}      # a view that is wrong for one input
@@ -860,7 +868,7 @@ SCENARIOS.update({
     # The proof of rejects-overdraft is written for the view's exact shape, so the extra condition breaks it.
     "ts-bridge-mistranslated-view": (None, {**ts_results(), TS_OVERDRAFT: U}, 1, {
         "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"},
-        "function_reasons": {BR_TRANSFER: "did not check"}, "summary": {"proved": 2, "tested": 1, "failed": 0}}),
+        "function_reasons": {BR_TRANSFER: "did not check"}, "summary": {"proved": 3, "tested": 2, "failed": 0}}),
     "ts-bridge-mistranslated-view-required": (policy_requires_bridge, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1, {
         "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"}}),
     # A view that is wrong for most inputs never reaches the bridge: Node disagrees first, as before.
@@ -884,18 +892,61 @@ SCENARIOS.update({
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
     # Recursive records and unions tagged by `kind`, and the functions that walk them, are bridged by induction.
     # Binary64 functions: exact arithmetic, NaN and -0, all bridged to `proved`.
-    "ts-dbl-baseline": (None, dbl_results(), 0, {**DBL_BRIDGE, "summary": {"proved": 3, "tested": 0, "failed": 0}}),
+    "ts-dbl-baseline": (None, dbl_results(), 0, {**DBL_BRIDGE, "summary": {"proved": 4, "tested": 1, "failed": 0}}),
     # A floor planted where the code rounds: only the bridge sees it — no sample hits a halfway cent.
-    "ts-dbl-bridge-mistranslated-view": (None, {**dbl_results(), DBL_MENU: U}, 1, {
-        "env": DBL_RARE, "functions": {**dict.fromkeys(DBL_FNS, "proved"), TS_DBL + "::totalWithTax": "tested"},
+    "ts-dbl-bridge-mistranslated-view": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
+        "env": DBL_RARE, "functions": {**dict.fromkeys(DBL_FNS, "proved"), TS_DBL + "::totalWithTax": "tested", TS_DBL + "::bonus": "tested"},
         "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
-        "summary": {"proved": 2, "tested": 1, "failed": 0}}),
+        "summary": {"proved": 3, "tested": 2, "failed": 0}}),
     # A division planted where the code multiplies: Node disagrees on the first samples.
     "ts-dbl-mistranslated-view-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
-        "env": DBL_COMMON, "functions": {TS_DBL + "::totalWithTax": "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 3}}),
+        "env": DBL_COMMON, "functions": {TS_DBL + "::totalWithTax": "failed"}, "summary": {"proved": 0, "tested": 0, "failed": 5}}),
     # A subtraction planted where the code takes the remainder: Node disagrees.
     "ts-dbl-rem-mistranslated-seen-by-node": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
         "env": DBL_REM, "functions": {TS_DBL + "::perHead": "failed"}}),
+    # One planted wrong translation per new operation. Mutants in a proved
+    # function's view are seen by Node on common inputs; mutants in the
+    # uncontracted `shelfPrice` fail its Node comparison only.
+    "ts-dbl-mutant-div": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_div"), "functions": {TS_DBL + "::totalWithTax": "failed"}}),
+    "ts-dbl-mutant-sub": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_sub"), "functions": {TS_DBL + "::totalWithTax": "failed"}}),
+    "ts-dbl-mutant-ulp": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_ulp"), "functions": {TS_DBL + "::totalWithTax": "failed"}}),
+    "ts-dbl-mutant-sign": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_sign"), "functions": {TS_DBL + "::effect": "failed"}}),
+    # A `Js.Dbl` op swapped for `Js.mul` does not type-check: the contract is stale.
+    "ts-dbl-mutant-num": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {"env": dbl_mut("dbl_num")}),
+    "ts-dbl-mutant-add": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_add"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-neg": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_neg"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-floor": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_floor"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-ceil": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_ceil"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-round": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_round"), "functions": {TS_DBL + "::totalWithTax": "failed"}}),
+    "ts-dbl-mutant-trunc": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_trunc"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-abs": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_abs"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-min": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_min"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-max": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_max"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-eq": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_eq"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-lt": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_lt"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-le": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_le"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-isfinite": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_isfinite"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-isnan": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_isnan"), "functions": {DBL_SHELF: "failed"}}),
+    "ts-dbl-mutant-isint": (None, dict.fromkeys(TS_DBL_GUARANTEES, X), 1, {
+        "env": dbl_mut("dbl_isint"), "functions": {DBL_SHELF: "failed"}}),
     "ts-tree-baseline": (None, dict.fromkeys(TREE_GUARANTEES, V), 0, {
         **TREE_BRIDGE, "summary": {"proved": 4, "tested": 0, "failed": 0}}),
     "ts-tree-bridge-required": (policy_requires_bridge, dict.fromkeys(TREE_GUARANTEES, V), 0, TREE_BRIDGE),
@@ -992,7 +1043,26 @@ TS_REASONS = {
     "ts-bridge-mistranslated-view-seen-by-node": "disagrees with Node",
     "ts-dbl-mistranslated-view-seen-by-node": "disagrees with Node",
     "ts-dbl-rem-mistranslated-seen-by-node": "disagrees with Node",
-    "ts-fractional-fee": "no longer elaborates",
+    "ts-dbl-mutant-div": "disagrees with Node",
+    "ts-dbl-mutant-sub": "disagrees with Node",
+    "ts-dbl-mutant-ulp": "disagrees with Node",
+    "ts-dbl-mutant-sign": "disagrees with Node",
+    "ts-dbl-mutant-round": "disagrees with Node",
+    "ts-dbl-mutant-add": "disagrees with Node",
+    "ts-dbl-mutant-neg": "disagrees with Node",
+    "ts-dbl-mutant-floor": "disagrees with Node",
+    "ts-dbl-mutant-ceil": "disagrees with Node",
+    "ts-dbl-mutant-trunc": "disagrees with Node",
+    "ts-dbl-mutant-abs": "disagrees with Node",
+    "ts-dbl-mutant-min": "disagrees with Node",
+    "ts-dbl-mutant-max": "disagrees with Node",
+    "ts-dbl-mutant-eq": "disagrees with Node",
+    "ts-dbl-mutant-lt": "disagrees with Node",
+    "ts-dbl-mutant-le": "disagrees with Node",
+    "ts-dbl-mutant-isfinite": "disagrees with Node",
+    "ts-dbl-mutant-isnan": "disagrees with Node",
+    "ts-dbl-mutant-isint": "disagrees with Node",
+    "ts-fractional-fee": "restate the contract on `Js.Dbl`",
     "ts-cast-hides-a-type": "only `number` operands",
     "ts-return-type-not-written": "add a return type of `number`",
     "ts-lists-its-own-assumption": "only `number` operands",

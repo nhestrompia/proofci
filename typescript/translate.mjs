@@ -928,25 +928,26 @@ export class Translator {
 
   // Whether the type's translation differs between safe-integer and double
   // mode: anything containing `number` (at any depth) does.
-  mentionsNumber(type, node, seen = new Set()) {
+  mentionsNumber(type, node, seen = new Set(), depth = 0) {
+    if (depth > 24) return true; // gave up recursing: treat as mode-specific rather than share wrongly
     if (seen.has(type)) return false;
     seen.add(type);
     if (type.flags & ts.TypeFlags.NumberLike) return true;
-    if (type.isUnionOrIntersection()) return type.types.some(t => this.mentionsNumber(t, node, seen));
-    if (this.checker.isArrayType(type)) return this.mentionsNumber(this.checker.getTypeArguments(type)[0], node, seen);
+    if (type.isUnionOrIntersection()) return type.types.some(t => this.mentionsNumber(t, node, seen, depth + 1));
+    if (this.checker.isArrayType(type)) return this.mentionsNumber(this.checker.getTypeArguments(type)[0], node, seen, depth + 1);
     if (!(type.flags & ts.TypeFlags.Object)) return false;
     for (const p of this.checker.getPropertiesOfType(type)) {
-      if (this.mentionsNumber(this.checker.getTypeOfSymbol(p), node, seen)) return true;
+      if (this.mentionsNumber(this.checker.getTypeOfSymbol(p), node, seen, depth + 1)) return true;
     }
     if (type.objectFlags & ts.ObjectFlags.Reference) {
       for (const arg of this.checker.getTypeArguments(type) ?? []) {
-        if (this.mentionsNumber(arg, node, seen)) return true;
+        if (this.mentionsNumber(arg, node, seen, depth + 1)) return true;
       }
     }
-    for (const info of this.checker.getIndexInfosOfType(type)) {
-      if (this.mentionsNumber(info.type, node, seen)) return true;
-    }
-    return false;
+    // Only a pure `{[k: string]: v}` translates as a `Js.Dict`, so only its
+    // index signature can differ between modes; named records drop it.
+    const dict = this.dictRecord(type);
+    return dict !== undefined && this.mentionsNumber(dict, node, seen, depth + 1);
   }
 
   // ------------------------------------------------------------ functions
@@ -1345,31 +1346,44 @@ function bitsOf(value) {
 // literal, `x / y` outside `Math.floor/ceil/trunc(x / y)`, `Math.round` or
 // `Math.sign`, a `Number.is*` test, or `NaN`/`Infinity`/`Number` bit constants.
 function usesDoubles(declaration, checker) {
-  let doubles = false;
+  let trigger = null;
+  const file = declaration.getSourceFile();
+  const at = node => {
+    const { line, character } = ts.getLineAndCharacterOfPosition(file, node.getStart());
+    return ` at ${file.fileName}:${line + 1}:${character + 1}`;
+  };
   const visit = node => {
-    if (doubles || !node) return;
-    if (ts.isNumericLiteral(node) && !Number.isSafeInteger(Number(node.text))) doubles = true;
+    if (trigger || !node) return;
+    if (ts.isNumericLiteral(node) && !Number.isSafeInteger(Number(node.text)))
+      trigger = `the literal \`${node.text}\`${at(node)}`;
     else if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken
-      && ts.isNumericLiteral(unwrap(node.operand)) && Object.is(-Number(unwrap(node.operand).text), -0)) doubles = true;
+      && ts.isNumericLiteral(unwrap(node.operand)) && Object.is(-Number(unwrap(node.operand).text), -0))
+      trigger = `the \`-0\` literal${at(node)}`;
     else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) {
       const parent = node.parent;
       const rounded = ts.isCallExpression(parent) && ts.isPropertyAccessExpression(unwrap(parent.expression))
         && ["floor", "ceil", "trunc"].includes(unwrap(parent.expression).name.text) && parent.arguments[0] === node;
       // `bigint / bigint` is bigint division, not binary64 arithmetic.
-      if (!rounded && !(checker.getTypeAtLocation(node).flags & ts.TypeFlags.BigIntLike)) doubles = true;
+      if (!rounded && !(checker.getTypeAtLocation(node).flags & ts.TypeFlags.BigIntLike))
+        trigger = `the division \`${node.getText(file)}\`${at(node)}`;
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))) {
       const recv = unwrap(unwrap(node.expression).expression), fn = unwrap(node.expression).name.text;
-      if (ts.isIdentifier(recv) && recv.text === "Math" && ["round", "sign"].includes(fn)) doubles = true;
-      if (ts.isIdentifier(recv) && recv.text === "Number" && ["isFinite", "isNaN", "isInteger", "isSafeInteger"].includes(fn)) doubles = true;
+      if (ts.isIdentifier(recv) && recv.text === "Math" && ["round", "sign"].includes(fn))
+        trigger = `\`Math.${fn}\`${at(node)}`;
+      if (ts.isIdentifier(recv) && recv.text === "Number" && ["isFinite", "isNaN", "isInteger", "isSafeInteger"].includes(fn))
+        trigger = `\`Number.${fn}\`${at(node)}`;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(unwrap(node.expression))
-      && ["isNaN", "isFinite"].includes(unwrap(node.expression).text)) doubles = true;
-    else if (ts.isIdentifier(node) && (node.text === "NaN" || node.text === "Infinity")) doubles = true;
+      && ["isNaN", "isFinite"].includes(unwrap(node.expression).text))
+      trigger = `\`${unwrap(node.expression).text}\`${at(node)}`;
+    else if (ts.isIdentifier(node) && (node.text === "NaN" || node.text === "Infinity"))
+      trigger = `\`${node.text}\`${at(node)}`;
     else if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Number"
-      && ["POSITIVE_INFINITY", "NEGATIVE_INFINITY", "NaN", "MAX_VALUE", "MIN_VALUE", "EPSILON"].includes(node.name.text)) doubles = true;
+      && ["POSITIVE_INFINITY", "NEGATIVE_INFINITY", "NaN", "MAX_VALUE", "MIN_VALUE", "EPSILON"].includes(node.name.text))
+      trigger = `\`Number.${node.name.text}\`${at(node)}`;
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(declaration, visit);
-  return doubles;
+  return trigger;
 }
 
 export class Scope {
@@ -4035,11 +4049,14 @@ export function translate({ root, module, targets, paths, repository, policyRoot
     let declaration;
     try {
       declaration = findDeclaration(translator, target);
-      translator.doubles = usesDoubles(declaration, translator.checker);
+      const trigger = usesDoubles(declaration, translator.checker);
+      translator.doubles = Boolean(trigger);
+      translator.dblTrigger = trigger;
       if (translator.doubles && translator.isAsync(translator.bodyOf(declaration)))
         throw translator.fail(declaration, "real `number` arithmetic inside `async` isn't bridged yet — keep the awaited calls and do the numeric work in a plain function");
       names[target] = translator.declareFunction(declaration);
       signatures[target] = translator.signature(declaration);
+      if (translator.dblTrigger) signatures[target].dbl = translator.dblTrigger;
       assumed[target] = [...translator.assumedBy.get(declaration) ?? []].sort();
       if (translator.isAsync(translator.bodyOf(declaration))) {
         effectsUsed[target] = [...translator.effectsBy.get(declaration) ?? []].sort();

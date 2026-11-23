@@ -24,6 +24,32 @@ const EDITS = {
     "let tmp9 ← if tmp8.f = Core.F64.ofBits 0x40a5ebae147ae148 then Js.Dbl.math Core.F64.floor tmp8 else Js.Dbl.math Core.F64.jsround tmp8"]],
   // Binary64: subtracts where the code takes the JS remainder — wrong for most inputs.
   dbl_rem: [["let tmp1 ← Js.Dbl.rem total parts", "let tmp1 ← Js.Dbl.sub total parts"]],
+  // Binary64 mutants, one per translated operation. Each swaps one emitted call for a
+  // different operation; the literal mutant is off by one ulp and the `num` mutant
+  // swaps a `Js.Dbl` op for the `Js.Num` op so the view no longer type-checks.
+  dbl_div: [["let tmp10 ← Js.Dbl.div tmp9 (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp10 ← Js.Dbl.mul tmp9 (Js.Dbl.lit 0x4059000000000000)"]],
+  dbl_sub: [["let tmp3 ← Js.Dbl.sub (Js.Dbl.lit 0x3ff0000000000000) tmp2",
+    "let tmp3 ← Js.Dbl.add (Js.Dbl.lit 0x3ff0000000000000) tmp2"]],
+  dbl_add: [["let tmp8 ← Js.Dbl.add whole tmp7", "let tmp8 ← Js.Dbl.sub whole tmp7"]],
+  dbl_neg: [["let tmp9 ← Js.Dbl.neg frac", "let tmp9 ← Js.Dbl.math Core.F64.abs frac"]],
+  dbl_floor: [["let tmp11 ← Js.Dbl.math Core.F64.floor tmp10", "let tmp11 ← Js.Dbl.math Core.F64.ceil tmp10"]],
+  dbl_ceil: [["let tmp5 ← Js.Dbl.math Core.F64.ceil tmp4", "let tmp5 ← Js.Dbl.math Core.F64.floor tmp4"]],
+  dbl_round: [["let tmp9 ← Js.Dbl.math Core.F64.jsround tmp8", "let tmp9 ← Js.Dbl.math Core.F64.trunc tmp8"]],
+  dbl_trunc: [["let tmp2 ← Js.Dbl.math Core.F64.trunc clipped", "let tmp2 ← Js.Dbl.math Core.F64.ceil clipped"]],
+  dbl_abs: [["let tmp1 ← Js.Dbl.math Core.F64.abs price", "let tmp1 ← Js.Dbl.math Core.F64.neg price"]],
+  dbl_min: [["Js.Dbl.min (Js.Dbl.max tmp1 min)", "Js.Dbl.max (Js.Dbl.max tmp1 min)"]],
+  dbl_max: [["Js.Dbl.max tmp1 min", "Js.Dbl.min tmp1 min"]],
+  dbl_sign: [["let tmp3 ← Js.Dbl.math Core.F64.sign tmp2", "let tmp3 ← Js.Dbl.math Core.F64.abs tmp2"]],
+  dbl_eq: [["((clipped).f).eq ((whole).f)", "((clipped).f).eq ((min).f)"]],
+  dbl_lt: [["((price).f).lt ((Js.Dbl.lit 0x0).f)", "((price).f).lt ((Js.Dbl.lit 0x4059000000000000).f)"]],
+  dbl_le: [["((frac).f).le ((Js.Dbl.lit 0x3fa999999999999a).f)", "((Js.Dbl.lit 0x3fa999999999999a).f).le ((frac).f)"]],
+  dbl_isfinite: [["Js.Dbl.isFinite price", "Js.Dbl.isNaN price"]],
+  dbl_isnan: [["Js.Dbl.isNaN price", "Js.Dbl.isFinite price"]],
+  dbl_isint: [["Js.Dbl.isInteger min", "Js.Dbl.isNaN min"]],
+  dbl_ulp: [["let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000000)",
+    "let tmp2 ← Js.Dbl.div discountPct (Js.Dbl.lit 0x4059000000000001)"]],
+  dbl_num: [["let tmp1 ← Js.Dbl.mul price quantity", "let tmp1 ← Js.mul price quantity"]],
 };
 
 export function run(kind, configPath) {

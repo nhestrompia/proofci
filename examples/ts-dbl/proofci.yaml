@@ -7,8 +7,10 @@ targets:
   - id: total
     function: src/pricing.ts::totalWithTax
     guarantees:
-      - id: always-returns
-        theorem: total_always_returns
+      - id: nonneg
+        theorem: total_nonneg
+      - id: whole-cents
+        theorem: whole_cents
       - id: menu-price
         theorem: menu_price_exact
       - id: nan-propagates
@@ -16,8 +18,20 @@ targets:
   - id: per-head
     function: src/pricing.ts::perHead
     guarantees:
-      - id: exact
-        theorem: perHead_exact
+      - id: nonneg
+        theorem: perHead_nonneg
+  - id: shelf
+    function: src/pricing.ts::shelfPrice
+    guarantees:
+      - id: covered
+        theorem: shelf_nonneg
+        required: false
+  - id: bonus
+    function: src/pricing.ts::bonus
+    guarantees:
+      - id: covered
+        theorem: bonus_nonneg
+        required: false
   - id: effect
     function: src/pricing.ts::effect
     guarantees:
