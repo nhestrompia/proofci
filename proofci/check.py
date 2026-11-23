@@ -68,6 +68,7 @@ class Report:
     notes: list = field(default_factory=list)
     timings: dict = field(default_factory=dict)
     functions: list = field(default_factory=list)   # TypeScript only: one bridge.FunctionStatus per translated function
+    disagreements: list = field(default_factory=list)  # TypeScript only: inputs where Node and the Lean view differ
     downgrades: list = field(default_factory=list)  # TypeScript only: proved on the base branch, not proved now
     stale_accepts: list = field(default_factory=list)  # `accept_downgrades` entries that are no downgrade here
 
@@ -88,7 +89,8 @@ class Report:
             "policy_changes": self.policy_changes,
             "invalid_contract": self.invalid_contract,
             "policy_approvers": None if self.policy_approvers is None else list(self.policy_approvers),
-            "guarantees": [o.__dict__ for o in self.outcomes],
+            "guarantees": [o.__dict__ | {"errors": lean.structured_errors(o.reason)} for o in self.outcomes],
+            "disagreements": self.disagreements,
             "functions": [f.entry() for f in self.functions],
             "bridge_summary": {status: sum(f.status == status for f in self.functions)
                                for status in (bridge.PROVED, bridge.TESTED, bridge.FAILED)},
@@ -306,6 +308,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             disagreements, notes = typescript.differential(head_checkout, active.crate, work, ws, extraction, detail=detail)
             report.notes += notes
             if disagreements:
+                report.disagreements = disagreements
                 reason = ("ProofCI's model of this code disagrees with Node, so a proof about it would mean "
                           "nothing; please report it. First disagreement: " + disagreements[0])
                 for o in pending:

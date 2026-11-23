@@ -42,6 +42,27 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(found["label_tagged"]["hypotheses"],
                          ["slug_nonempty : ∃ s, Proofci.Assumed.slug_maker.slug title = ok s ∧ s ≠ []"])
 
+    def test_hypotheses_keep_binders_with_nested_parentheses(self):
+        found = claims.theorems(
+            "theorem t (xs : List Int) (h : ∀ x, x ∈ xs → f (g (h' x)) > 0)\n"
+            "  (nolinks : ¬ ∃ a b, P (Q a (R b))) : True := by sorry")
+        self.assertEqual(found["t"]["hypotheses"],
+                         ["h : ∀ x, x ∈ xs → f (g (h' x)) > 0",
+                          "nolinks : ¬ ∃ a b, P (Q a (R b))"])
+
+    def test_hypotheses_ignore_comments_strings_and_instance_ascriptions(self):
+        found = claims.theorems(
+            'theorem t (n : Int) [Decidable (0 < n : Prop)] -- a lone ) here\n'
+            '  (h : s ≠ "(") : True := by sorry')
+        self.assertEqual(found["t"]["hypotheses"], ['h : s ≠ "("'])
+
+    def test_hypotheses_survive_comment_markers_and_brackets_in_literals(self):
+        found = claims.theorems(
+            'theorem t (h : s ≠ "--") (k : c = \'(\') (m : c ≠ \']\')\n'
+            "  (h' : s ≠ t) : True := by sorry")
+        self.assertEqual(found["t"]["hypotheses"],
+                         ['h : s ≠ "--"', "k : c = '('", "m : c ≠ ']'", "h' : s ≠ t"])
+
     def test_statement_is_the_signature_on_one_line(self):
         statement = claims.theorems(CONTRACT)["fee_capped"]["statement"]
         self.assertEqual(statement, "theorem fee_capped (amount rate : Js.Num) "

@@ -8,12 +8,13 @@ dependencies could not be downloaded.
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 from . import check as check_mod
-from . import manifest, sandbox
+from . import manifest, sandbox, typescript
 from .summary import markdown
 
 
@@ -44,13 +45,70 @@ def main(argv=None):
     d.add_argument("--vendor", type=Path, help="crates.io dependencies downloaded by `proofci fetch`")
     d.add_argument("--judge", action="store_true", help="also run the comparator on each guarantee")
     d.add_argument("--show", action="store_true", help="print the translated Lean, the code proofs talk about")
+    d.add_argument("--json", action="store_true", help="print one machine-readable JSON document")
+    s = sub.add_parser("scan", help="TypeScript: list which exported functions translate and why others don't")
+    s.add_argument("--repo", type=Path, default=Path("."), help="checkout (proofci.yaml optional; its package is used)")
+    s.add_argument("--package", type=str, default=".", help="package directory when there is no proofci.yaml")
+    s.add_argument("--vendor", type=Path, help="packages installed by `proofci fetch`")
+    s.add_argument("--report", type=Path, help="also write the JSON document here")
+    s.add_argument("--work-dir", type=Path)
+    l = sub.add_parser("local", help="run the CI check on a repo in the toolchain image and print JSON")
+    l.add_argument("--repo", type=Path, default=Path("."), help="git checkout of the candidate (uncommitted changes count)")
+    l.add_argument("--base", default=None,
+                   help="git ref holding the protected policy "
+                        "(default: the merge-base of HEAD with the remote's default branch)")
+    l.add_argument("--policy", choices=("base", "head"), default="base",
+                   help="use the working tree's own policy (local iteration only; CI still reads the base)")
+    l.add_argument("--image", default=os.environ.get("PROOFCI_IMAGE") or "proofci-toolchain:dev",
+                   help="toolchain image (default $PROOFCI_IMAGE or proofci-toolchain:dev)")
+    l.add_argument("--scan", action="store_true",
+                   help="only translate: which exported functions are supported, and why others aren't")
+    l.add_argument("--fetch", action="store_true", help="install dependencies first (needs network)")
     args = parser.parse_args(argv)
+
+    if args.command == "local":
+        from . import local
+        try:
+            return local.run(args.repo, args.base, args.policy, args.image, args.scan, args.fetch)
+        except (check_mod.ConfigError, manifest.ManifestError, FileNotFoundError, ValueError) as error:
+            print(f"proofci: {error}", file=sys.stderr)
+            return 2
+
+    if args.command == "scan":
+        try:
+            checkout = args.repo.resolve()
+            try:
+                active = check_mod.load_manifest(checkout)
+            except (check_mod.ConfigError, manifest.ManifestError):
+                active = None
+            if active and active.language != "typescript":
+                raise check_mod.ConfigError("scan lists supported functions of a TypeScript package; "
+                                          "this repository's proofci.yaml is for Rust")
+            package = active.crate if active else args.package
+            with tempfile.TemporaryDirectory(prefix="proofci-scan-", dir=args.work_dir) as tmp:
+                outcome = typescript.probe(
+                    checkout, package, Path(tmp),
+                    assumes=active.assumes if active else (), effects=active.effects if active else (),
+                    vendor_dir=args.vendor.resolve() if args.vendor else None)
+        except (check_mod.ConfigError, manifest.ManifestError, sandbox.SandboxUnavailable,
+                check_mod.extract.Unsupported, FileNotFoundError, ValueError) as error:
+            print(f"proofci: {error}", file=sys.stderr)
+            return 2
+        document = json.dumps({"version": 1, **outcome}, indent=2)
+        print(document)
+        if args.report:
+            try:
+                args.report.write_text(document + "\n")
+            except OSError as error:
+                print(f"proofci: could not write {error.filename}: {error.strerror}", file=sys.stderr)
+                return 2
+        return 0
 
     if args.command == "dev":
         from . import dev
         try:
             return dev.run(args.repo, args.work_dir.resolve(),
-                           args.vendor.resolve() if args.vendor else None, args.judge, args.show)
+                           args.vendor.resolve() if args.vendor else None, args.judge, args.show, args.json)
         except (check_mod.ConfigError, manifest.ManifestError, sandbox.SandboxUnavailable,
                 FileNotFoundError, ValueError) as error:
             print(f"proofci: {error}", file=sys.stderr)

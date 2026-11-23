@@ -19,10 +19,24 @@ DOC_THEOREM = re.compile(
 SCOPE = re.compile(r"^(namespace|section|end)\b(?:\s+([\w.]+))?", re.M)
 THEOREM = re.compile(
     r"(?<![\w'.])(?:private |protected |noncomputable |partial )*theorem\s+(?P<name>[^\s(:{\[]+)")
-BINDER = re.compile(r"\((\w[\w' ]*?)\s*:\s*([^()]*(?:\([^()]*\)[^()]*)*)\)")
 # Binder types that say something rather than name something: a condition the
 # guarantee only holds under. `=` must not start `=>` (a `⦃ _ => ... ⦄` arrow).
 PROP = re.compile(r"[≤≥<>≠∈∉∀∃↔¬∧∨]|(?<![\w.])=(?!=)|\bProp\b")
+# Block/line comments, string literals and character literals, in one pass so the
+# leftmost match wins: a `"` inside a comment never starts a string and a `--`
+# inside a string never starts a comment. Character literals hold exactly one
+# character or escape, so an identifier prime (`h'`) is never eaten.
+LITERAL = re.compile(r"""/-.*?-/|--[^\n]*|"(?:[^"\\]|\\.)*"|'(?:\\.|[^'\\])'""", re.S)
+
+
+def _blank(match):
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
+def _syntax(text):
+    """Comments and literals replaced by spaces, keeping length, so their
+    brackets and colons are never read as Lean syntax by the depth scans."""
+    return LITERAL.sub(_blank, text)
 
 
 def _open(signature):
@@ -38,12 +52,38 @@ def _open(signature):
     return signature
 
 
+def _binder(inner):
+    """`(names, condition)` for a binder's contents, split at its top-level `:`."""
+    depth = 0
+    for i, char in enumerate(_syntax(inner)):
+        if char in "([{⟨⦃":
+            depth += 1
+        elif char in ")]}⟩⦄":
+            depth -= 1
+        elif char == ":" and depth == 0:
+            return inner[:i].strip(), " ".join(inner[i + 1:].split())
+    return inner.strip(), None
+
+
 def _hypotheses(signature):
     """`(name : condition)` binders whose condition is a proposition."""
     found = []
-    for names, condition in BINDER.findall(_open(signature)):
-        if PROP.search(condition):
-            found.append(" ".join(f"{names} : {' '.join(condition.split())}".split()))
+    clean = _open(_syntax(signature))
+    raw = signature[:len(clean)]
+    depth, start, paren = 0, None, False
+    for i, char in enumerate(clean):
+        if char in "([{⟨⦃":
+            depth += 1
+            if depth == 1:
+                start, paren = i + 1, char == "("
+        elif char in ")]}⟩⦄" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                if paren:
+                    names, condition = _binder(raw[start:i])
+                    if condition is not None and PROP.search(condition):
+                        found.append(" ".join(f"{names} : {condition}".split()))
+                paren = False
     return found
 
 
@@ -51,11 +91,7 @@ def _mask(text):
     """Comments replaced by spaces, keeping length and newlines, so positions stay
     valid and keywords inside comments (a `namespace` line in a `/- -/` block, or
     a commented-out theorem) are ignored by the scans that run on the result."""
-    def blank(match):
-        return re.sub(r"[^\n]", " ", match.group(0))
-
-    text = re.sub(r"/-.*?-/", blank, text, flags=re.S)
-    return re.sub(r"--[^\n]*", blank, text)
+    return _syntax(text)
 
 
 def _scope_at(masked, pos):

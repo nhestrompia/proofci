@@ -382,6 +382,41 @@ def extract(checkout: Path, package_rel: str, work: Path, functions, policy_chec
     return extraction
 
 
+def probe(checkout: Path, package_rel: str, work: Path, assumes=(), effects=(), vendor_dir=None):
+    """Which exported functions of the package translate, and why the rest don't.
+
+    The agent-facing scan behind `proofci scan`: same translator and sandbox as
+    `extract`, over every exported function rather than only the manifest's
+    targets. Returns {"module": name, "functions": [{"function", "translated",
+    "reason", "hint"}]}; a refused function's reason is split into its fix-it
+    hint the way `check` reports it."""
+    checkout, binds = prepare(checkout, work, vendor_dir)
+    root = checkout / package_rel
+    out = work / "probe"
+    out.mkdir(parents=True, exist_ok=True)
+    config = out / "config.json"
+    config.write_text(json.dumps({
+        "root": str(root), "module": lean_module_name(module_name(root)), "repository": str(checkout),
+        "assumes": [{"call": call, "signature": signature} for call, signature in assumes],
+        "effects": [e.entry() for e in effects]}))
+    program = support_dir() / "probe.mjs"
+    result = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
+                         binds=binds, writable=[out], cwd=out, timeout=300)
+    if result.status != 0 or not result.output.strip():
+        raise Unsupported("the scan failed:\n" + result.output[-2000:])
+    try:
+        outcome = json.loads(result.output.splitlines()[-1])
+    except ValueError:
+        raise Unsupported("the scan gave no result:\n" + result.output[-2000:])
+    if outcome.get("fatal"):
+        # A partial inventory would read as the answer; refuse instead.
+        raise Unsupported("the scan failed: " + outcome["fatal"])
+    for entry in outcome.get("functions", []):
+        if entry.get("reason"):
+            entry["reason"], entry["hint"] = split_hint(entry["reason"])
+    return outcome
+
+
 def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=None, timeout=300, detail=None):
     """Compare the translated functions with Node on generated inputs.
 
