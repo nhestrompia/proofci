@@ -75,6 +75,17 @@ class BaseStatusTests(unittest.TestCase):
         with patch.object(check.typescript, "extract", side_effect=AssertionError("must not run")):
             self.assertEqual(self.statuses(), {F: "not proved"})
 
+    def test_missing_check_uses_the_package_directory(self):
+        # A nested package: the function's file is resolved under `crate`, not the root.
+        (self.base_checkout / "packages" / "x" / "src").mkdir(parents=True)
+        (self.base_checkout / "packages" / "x" / "src" / "ledger.ts").write_text("// code")
+        self.base.crate = "packages/x"
+        seen = {}
+        with patch.object(check.typescript, "extract", return_value=self.extraction([F])) as extract:
+            self.assertEqual(self.statuses(), {F: "not proved"})
+            seen["package"] = extract.call_args[0][1]
+        self.assertEqual(seen["package"], "packages/x")
+
     def test_extraction_crash_is_unknown(self):
         with patch.object(check.typescript, "extract", side_effect=KeyError("x")):
             self.assertEqual(self.statuses(), {F: "unknown"})
@@ -130,6 +141,23 @@ class BaseStatusTests(unittest.TestCase):
         self.assertFalse(check._deps_changed(self.base_checkout, head, "."))
         (head / "package.json").write_text('{"a": 1}')
         self.assertTrue(check._deps_changed(self.base_checkout, head, "."))
+
+    def test_deps_changed_in_monorepo_ancestors(self):
+        # The package sits in packages/x; the install reads the lockfile and manager
+        # config at the checkout root, so a change there counts too.
+        head = Path(self.tmp.name) / "head"
+        for root in (self.base_checkout, head):
+            (root / "packages" / "x").mkdir(parents=True)
+            (root / "packages" / "x" / "package.json").write_text("{}")
+            (root / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'")
+        self.assertFalse(check._deps_changed(self.base_checkout, head, "packages/x"))
+        (head / "pnpm-lock.yaml").write_text("lockfileVersion: '10.0'")
+        self.assertTrue(check._deps_changed(self.base_checkout, head, "packages/x"))
+        (head / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'")
+        (head / ".npmrc").write_text("registry=https://evil.example")
+        self.assertTrue(check._deps_changed(self.base_checkout, head, "packages/x"))
+        (head / "packages" / "x" / "pnpm-workspace.yaml").write_text("packages: []")
+        self.assertTrue(check._deps_changed(self.base_checkout, head, "packages/x"))
 
 
 if __name__ == "__main__":

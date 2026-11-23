@@ -440,10 +440,10 @@ def _bridge(report, extraction, active, work, functions, timeout, budget):
     return ordered
 
 
-# Dependency declarations and compiler config a pull request can rewrite to change what
+# Dependency declarations and manager config a pull request can rewrite to change what
 # the base re-check sees; any of them changing makes a non-proved base result inconclusive.
 _DEP_FILES = ("package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
-              "pnpm-lock.yaml", "pnpm-workspace.yaml")
+              "pnpm-lock.yaml", "pnpm-workspace.yaml") + tuple(sorted(typescript.CONFIG_FILES))
 
 # Bridge reasons that mean the check never reached a verdict, which is no evidence either way.
 _INCOMPLETE = ("time budget", "did not finish", "could not be run", "out of memory",
@@ -455,10 +455,20 @@ def _incomplete(reason):
 
 
 def _deps_changed(base_checkout, head_checkout, package_rel):
-    for name in _DEP_FILES:
-        old, new = base_checkout / package_rel / name, head_checkout / package_rel / name
-        if old.is_file() != new.is_file() or (old.is_file() and old.read_bytes() != new.read_bytes()):
-            return True
+    """Any dependency file changed between the base and head checkouts, in the package
+    directory or an ancestor of it — the vendored install reads the nearest lockfile and
+    manager config at or above the package (see typescript.find_lockfile/CONFIG_FILES)."""
+    root = base_checkout.resolve()
+    directory = (root / package_rel).resolve()
+    while root in (directory, *directory.parents):
+        rel = directory.relative_to(root)
+        for name in _DEP_FILES:
+            old, new = directory / name, head_checkout / rel / name
+            if old.is_file() != new.is_file() or (old.is_file() and old.read_bytes() != new.read_bytes()):
+                return True
+        if directory == root:
+            break
+        directory = directory.parent
     return False
 
 
@@ -474,7 +484,8 @@ def _base_statuses(base_checkout, base, work, functions, vendor_dir, timeout, bu
     purpose: it can only turn a status into `failed`, never into or out of `proved`."""
     sub = work / "base-check"
     sub.mkdir(exist_ok=True)
-    missing = {f for f in functions if not (base_checkout / f.rsplit("::", 1)[0]).is_file()}
+    missing = {f for f in functions
+               if not (base_checkout / base.crate / f.rsplit("::", 1)[0]).is_file()}
     todo = [f for f in functions if f not in missing]
     statuses = dict.fromkeys(missing, "not proved")
     if not todo:
