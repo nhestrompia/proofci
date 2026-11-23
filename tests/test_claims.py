@@ -50,6 +50,12 @@ class ClaimTests(unittest.TestCase):
                          ["h : ∀ x, x ∈ xs → f (g (h' x)) > 0",
                           "nolinks : ¬ ∃ a b, P (Q a (R b))"])
 
+    def test_hypotheses_ignore_comments_strings_and_instance_ascriptions(self):
+        found = claims.theorems(
+            'theorem t (n : Int) [Decidable (0 < n : Prop)] -- a lone ) here\n'
+            '  (h : s ≠ "(") : True := by sorry')
+        self.assertEqual(found["t"]["hypotheses"], ['h : s ≠ "("'])
+
     def test_statement_is_the_signature_on_one_line(self):
         statement = claims.theorems(CONTRACT)["fee_capped"]["statement"]
         self.assertEqual(statement, "theorem fee_capped (amount rate : Js.Num) "

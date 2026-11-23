@@ -22,6 +22,17 @@ THEOREM = re.compile(
 # Binder types that say something rather than name something: a condition the
 # guarantee only holds under. `=` must not start `=>` (a `⦃ _ => ... ⦄` arrow).
 PROP = re.compile(r"[≤≥<>≠∈∉∀∃↔¬∧∨]|(?<![\w.])=(?!=)|\bProp\b")
+STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _blank(match):
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
+def _syntax(text):
+    """Comments and string literals replaced by spaces, keeping length, so their
+    brackets and colons are never read as Lean syntax by the depth scans."""
+    return STRING.sub(_blank, _mask(text))
 
 
 def _open(signature):
@@ -40,7 +51,7 @@ def _open(signature):
 def _binder(inner):
     """`(names, condition)` for a binder's contents, split at its top-level `:`."""
     depth = 0
-    for i, char in enumerate(inner):
+    for i, char in enumerate(_syntax(inner)):
         if char in "([{⟨⦃":
             depth += 1
         elif char in ")]}⟩⦄":
@@ -53,19 +64,22 @@ def _binder(inner):
 def _hypotheses(signature):
     """`(name : condition)` binders whose condition is a proposition."""
     found = []
-    signature = _open(signature)
-    depth, start = 0, None
-    for i, char in enumerate(signature):
-        if char == "(":
+    clean = _open(_syntax(signature))
+    raw = signature[:len(clean)]
+    depth, start, paren = 0, None, False
+    for i, char in enumerate(clean):
+        if char in "([{⟨⦃":
             depth += 1
             if depth == 1:
-                start = i + 1
-        elif char == ")":
+                start, paren = i + 1, char == "("
+        elif char in ")]}⟩⦄" and depth > 0:
             depth -= 1
             if depth == 0:
-                names, condition = _binder(signature[start:i])
-                if condition is not None and PROP.search(condition):
-                    found.append(" ".join(f"{names} : {condition}".split()))
+                if paren:
+                    names, condition = _binder(raw[start:i])
+                    if condition is not None and PROP.search(condition):
+                        found.append(" ".join(f"{names} : {condition}".split()))
+                paren = False
     return found
 
 
@@ -73,11 +87,8 @@ def _mask(text):
     """Comments replaced by spaces, keeping length and newlines, so positions stay
     valid and keywords inside comments (a `namespace` line in a `/- -/` block, or
     a commented-out theorem) are ignored by the scans that run on the result."""
-    def blank(match):
-        return re.sub(r"[^\n]", " ", match.group(0))
-
-    text = re.sub(r"/-.*?-/", blank, text, flags=re.S)
-    return re.sub(r"--[^\n]*", blank, text)
+    text = re.sub(r"/-.*?-/", _blank, text, flags=re.S)
+    return re.sub(r"--[^\n]*", _blank, text)
 
 
 def _scope_at(masked, pos):
