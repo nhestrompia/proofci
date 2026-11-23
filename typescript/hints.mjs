@@ -195,6 +195,7 @@ export const HINTS = [
   [/only parses to an integer for now/, "parse at the boundary and pass the `number` in"],
   [/isn't bridged yet — write the loop/, "write the loop by hand, or keep the index an integer (a `for` loop, `xs.findIndex` on integers)"],
   [/declare it with the same numbers/, "a `const` keeps the numeric mode it was declared for: integer literals read as doubles only inside double code, and a fractional `const` can't be read by integer code"],
+  [/is used from both safe-integer and double code/, "a helper can't serve both numeric modes — copy it under a second name so each caller gets the one in its mode"],
   [/real `number` arithmetic inside `async` isn't bridged yet/, "keep the awaited calls in the `async` function and move the arithmetic into a plain function it calls"],
 
   // functions

@@ -625,7 +625,9 @@ export class Translator {
       this.checkFile(file);
       this.checkDeclaration(declaration);
     }
-    const lean = `${this.leanTypeName(declaration)}${suffix}`;
+    let lean = `${this.leanTypeName(declaration)}${suffix}`;
+    // The other numeric mode can already own the plain name for this declaration.
+    if (this.typeOwners.get(lean) === declaration) lean += this.doubles ? "Dbl" : "Num";
     // Two installed versions of a package can both declare a type at this name.
     if ((this.typeOwners.get(lean) ?? declaration) !== declaration) {
       throw this.fail(declaration, `two declarations of \`${declaration.name.text}\` would share a Lean name`);
@@ -975,6 +977,9 @@ export class Translator {
   // Declares a function and everything it reaches, callees first.
   declareFunction(declaration) {
     const known = this.functions.get(declaration);
+    if (known && Boolean(known.dbl) !== Boolean(this.doubles)) {
+      throw this.fail(declaration, `\`${declaration.name.text}\` is used from both safe-integer and double code — give each mode its own copy`);
+    }
     if (known?.pending) {
       known.recursive = true;
       if (this.current.indexOf(declaration) < this.current.length - 1) this.closeCycle(declaration);
@@ -992,7 +997,7 @@ export class Translator {
     if (fn.asteriskToken) throw this.fail(fn, "generators are not supported");
     const isAsync = this.isAsync(fn);
     const lean = this.leanName(declaration, declaration.name.text);
-    const entry = { lean, pending: true, recursive: false, async: isAsync };
+    const entry = { lean, pending: true, recursive: false, async: isAsync, dbl: this.doubles };
     this.functions.set(declaration, entry);
     this.current.push(declaration);
     const signature = this.checker.getSignatureFromDeclaration(fn);
@@ -1192,10 +1197,16 @@ export class Translator {
     const type = this.checker.getTypeAtLocation(declaration.name);
     const leanType = this.type(type, declaration);
     const lines = [];
-    const result = scope.convert(declaration.initializer, type, new Map(), lines);
-    this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
-    this.constants.set(declaration, { lean, pure: false });
-    return this.constants.get(declaration);
+    const outer = this.doubles;
+    this.doubles = usesDoubles(declaration);
+    try {
+      const result = scope.convert(declaration.initializer, type, new Map(), lines);
+      this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
+      this.constants.set(declaration, { lean, pure: false, dbl: this.doubles });
+      return this.constants.get(declaration);
+    } finally {
+      this.doubles = outer;
+    }
   }
 }
 
@@ -1237,7 +1248,7 @@ function usesDoubles(declaration) {
         && ["floor", "ceil", "trunc"].includes(unwrap(parent.expression).name.text) && parent.arguments[0] === node;
       if (!rounded) doubles = true;
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))) {
-      const recv = unwrap(node.expression.expression), fn = unwrap(node.expression).name.text;
+      const recv = unwrap(unwrap(node.expression).expression), fn = unwrap(node.expression).name.text;
       if (ts.isIdentifier(recv) && recv.text === "Math" && ["round", "sign"].includes(fn)) doubles = true;
       if (ts.isIdentifier(recv) && recv.text === "Number" && ["isFinite", "isNaN", "isInteger", "isSafeInteger"].includes(fn)) doubles = true;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(unwrap(node.expression))
@@ -3110,7 +3121,7 @@ export class Scope {
       if (this.t.mayBeObject(item)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported${item.flags & ts.TypeFlags.TypeParameter ? "; a type parameter could be an object" : ""}`);
     };
     switch (method) {
-      case "includes": comparable(); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
+      case "includes": comparable(); if (this.t.doubles) throw this.t.fail(node, "`includes` on doubles isn't bridged yet — write the loop, or keep the list integers"); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
       case "indexOf": comparable(); if (this.t.doubles) throw this.t.fail(node, "`indexOf` on doubles isn't bridged yet — write the loop, or keep the index an integer"); return this.bind(`Js.indexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
       case "lastIndexOf":
         if (args.length !== 1) throw this.t.fail(node, "`lastIndexOf` with a start index is not supported yet");
@@ -3726,6 +3737,9 @@ export class Scope {
     // `undefined === 5` is false, so a possibly missing number compares as an Option.
     for (const [maybe, plain] of [[left, right], [right, left]]) {
       if (this.nullable(this.typeOf(maybe)) && this.isNumber(plain)) {
+        if (this.t.doubles) {
+          return `(((${this.expression(maybe, env, lines)}).map (fun a => a.f.eq ${this.fOf(plain, env, lines)})).getD false)`;
+        }
         return `${this.expression(maybe, env, lines)} = some ${this.expression(plain, env, lines)}`;
       }
     }
