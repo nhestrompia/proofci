@@ -1199,7 +1199,7 @@ macro "rops" : tactic => `(tactic| first
   | (with_reducible refine rel_unwrap (by assumption) ?_; intro _ _)
   | (rw [truthy_crepOpt (by assumption) (by first | (left; rfl) | (right; rfl))])
   | (rw [nullish_crepOpt (by assumption) (by first | (left; rfl) | (right; rfl)) (fun _ hc => by simp only [crep_str, crep_num] at hc; first | (subst hc; rfl) | (obtain ⟨_, rfl, _⟩ := hc; rfl))])
-  | (with_reducible refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
+  | (refine rel_forOf (by assumption) (by assumption) (by first | exact numIs_num | assumption) (fun _ => rfl) ?_ ?_ <;> intros))
 
 /-- Steps the typed view and the dynamic code together: a typed operation with its dynamic
 twin, a typed `ok` bind, a branch on both sides at once, or one dynamic step. -/
