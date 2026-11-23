@@ -262,6 +262,7 @@ def toNum : Val → M Val
   | .num x => pure (.num x)
   | .bool b => pure (num (if b then 1 else 0))
   | .big n => if n.natAbs ≤ 2 ^ 53 then pure (num n) else stuck
+  | .str s => prim .toNum [.str s]
   | _ => stuck
 
 /-- `String(v)`, for the values whose text the model has. -/
