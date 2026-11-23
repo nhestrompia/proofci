@@ -210,6 +210,33 @@ theorem call_hist {op : W.Op} {arg : W.Arg op} {o : W.Oracle} {h h' : W.Hist} {r
   rw [call_run] at e
   cases ha : o op arg h <;> simp [ha] at e <;> exact e.2.symm
 
+/-! `partial_fixpoint` needs `bind` to be monotone, so that a recursive `async` function has a
+meaning: `Eff` is ordered pointwise, as functions into `Result`. -/
+instance : Lean.Order.PartialOrder (Eff W α) :=
+  inferInstanceAs (Lean.Order.PartialOrder (W.Oracle → W.Hist → Result (Settled α × W.Hist)))
+instance : Lean.Order.CCPO (Eff W α) :=
+  inferInstanceAs (Lean.Order.CCPO (W.Oracle → W.Hist → Result (Settled α × W.Hist)))
+
+theorem std_bind_mono {γ δ : Type} {a : Result γ} {f g : γ → Result δ}
+    (h : ∀ x, Lean.Order.PartialOrder.rel (f x) (g x)) :
+    Lean.Order.PartialOrder.rel (Std.bind a f) (Std.bind a g) := Lean.Order.MonoBind.bind_mono_right (m := Result) h
+
+instance : Lean.Order.MonoBind (Eff W) where
+  bind_mono_left {_ _ m₁ m₂ f} h := by
+    intro o hist
+    show Lean.Order.PartialOrder.rel (Eff.bind m₁ f o hist) (Eff.bind m₂ f o hist)
+    unfold Eff.bind
+    exact Lean.Order.MonoBind.bind_mono_left (h o hist)
+  bind_mono_right {_ _ m f₁ f₂} h := by
+    intro o hist
+    show @Lean.Order.PartialOrder.rel (Result _) _ (Eff.bind m f₁ o hist) (Eff.bind m f₂ o hist)
+    unfold Eff.bind
+    apply std_bind_mono
+    rintro ⟨r, h'⟩
+    cases r with
+    | fulfilled a => exact h a o h'
+    | rejected e => exact Lean.Order.PartialOrder.rel_refl
+
 end Eff
 
 /-- What the differential test (see `typescript/differential.mjs`) asks of a run: the model, with an

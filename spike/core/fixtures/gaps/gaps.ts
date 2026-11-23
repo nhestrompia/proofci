@@ -505,6 +505,62 @@ function stepC(n: number, acc: number): number {
   return stepA(n - 1, acc - 3) + stepB(n - 1, acc);
 }
 
+export interface GapVertex {
+  name: string;
+  edges: GapArc[];
+}
+
+export interface GapArc {
+  weight: number;
+  to: GapVertex | null;
+}
+
+export function graphWeight(n: GapVertex): number {
+  return edgesWeight(n.edges, 0);
+}
+
+function edgesWeight(es: GapArc[], i: number): number {
+  if (i >= es.length) return 0;
+  return edgeWeight(es[i]) + edgesWeight(es, i + 1);
+}
+
+function edgeWeight(e: GapArc): number {
+  if (e.to === null) return e.weight;
+  return e.weight + graphWeight(e.to);
+}
+
+export type GapDoc =
+  | { kind: "num"; n: number }
+  | { kind: "obj"; fields: GapField[] };
+
+export interface GapField {
+  key: string;
+  value: GapDoc;
+}
+
+export function docCount(d: GapDoc): number {
+  switch (d.kind) {
+    case "num": return 1;
+    case "obj": return fieldsCount(d.fields, 0);
+  }
+}
+
+function fieldsCount(fs: GapField[], i: number): number {
+  if (i >= fs.length) return 0;
+  return docCount(fs[i].value) + fieldsCount(fs, i + 1);
+}
+
+export function evenFrom<T>(xs: T[], i: number): boolean {
+  if (i >= xs.length) return true;
+  return oddFrom(xs, i + 1);
+}
+
+function oddFrom<T>(xs: T[], i: number): boolean {
+  if (i >= xs.length) return false;
+  return evenFrom(xs, i + 1);
+}
+
+
 
 
 export function withFlag(r: Record<string, boolean>, k: string): Record<string, boolean> {
