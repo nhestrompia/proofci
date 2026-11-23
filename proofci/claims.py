@@ -22,11 +22,11 @@ THEOREM = re.compile(
 # Binder types that say something rather than name something: a condition the
 # guarantee only holds under. `=` must not start `=>` (a `⦃ _ => ... ⦄` arrow).
 PROP = re.compile(r"[≤≥<>≠∈∉∀∃↔¬∧∨]|(?<![\w.])=(?!=)|\bProp\b")
-# Block/line comments, string literals and character literals, in one pass so the
+# Block/line comments, string literals (raw `r#"..."#` too) and character literals, in one pass so the
 # leftmost match wins: a `"` inside a comment never starts a string and a `--`
 # inside a string never starts a comment. Character literals hold exactly one
 # character or escape, so an identifier prime (`h'`) is never eaten.
-LITERAL = re.compile(r"""/-.*?-/|--[^\n]*|"(?:[^"\\]|\\.)*"|'(?:\\.|[^'\\])'""", re.S)
+LITERAL = re.compile(r"""/-.*?-/|--[^\n]*|(?<![\w'.])r(#*)".*?"\1|"(?:[^"\\]|\\.)*"|'(?:\\.|[^'\\])'""", re.S)
 
 
 def _blank(match):

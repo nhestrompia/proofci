@@ -79,6 +79,10 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(set(found), {"capped"})
         self.assertEqual(found["capped"]["claim"], "Capped.")
 
+    def test_raw_strings_are_literals(self):
+        found = claims.theorems('theorem t (h : s ≠ r#"a "/- b -/" c"#) : True := trivial')
+        self.assertEqual(found["t"]["statement"], 'theorem t (h : s ≠ r#"a "/- b -/" c"#) : True')
+
     def test_declarations_inside_strings_are_not_theorems(self):
         found = claims.theorems('theorem capped : True := trivial\n'
                                 'def s := "\ntheorem capped : False := sorry"\n')
