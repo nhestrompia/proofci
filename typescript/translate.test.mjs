@@ -45,7 +45,11 @@ test("arithmetic binds each step, so a failure stops the function", () => {
 test("floored division keeps the exact quotient", () => {
   emits("export function f(a: number, b: number) { return Math.floor(a / b); }", "Js.floorDiv a b");
   emits("export function f(a: number, b: number) { return Math.ceil(a / b); }", "Js.ceilDiv a b");
-  emits("export function f(a: number, b: number) { return a / b; }", "Js.div a b");
+  emits("export function f(a: number, b: number) { return a / b; }", "Js.Dbl.div a b");
+  emits("export function f(a: number) { return a * 0.5; }", "Js.Dbl.mul a (Js.Dbl.lit 0x3fe0000000000000)");
+  emits("export function f() { return 9007199254740993; }", "Js.Dbl.lit 0x");
+  emits("export function f(a: number) { return Math.round(a * 10) / 10; }", "Core.F64.jsround", "Js.Dbl.div");
+  emits("export function f(a: number) { return Math.sign(a); }", "Core.F64.sign");
 });
 
 test("the right side of && only runs when it has to", () => {
@@ -147,8 +151,6 @@ test("structural typing can't smuggle one record in as another", () => {
 
 test("JavaScript behavior the model doesn't cover is rejected", () => {
   const cases = [
-    ["export function f(a: number) { return a * 0.5; }", /not a safe integer/],
-    ["export function f() { return 9007199254740993; }", /not a safe integer/],
     ["export function f(a: number) { return a == 1; }", /not supported/],
     ["export function f(a: symbol) { return a ? 1 : 0; }", /truthiness|type `symbol`/],
     ["export function f(a: number, b: boolean) { return a && b; }", /boolean/],
@@ -556,7 +558,7 @@ test("a function with no source is rejected", () => {
 });
 
 test("a failed target stays declared so that the other targets are judged", () => {
-  const result = run("export function f(a: number) { return a * 0.5; }");
+  const result = run("export function f(a: number) { return Math.sqrt(a); }");
   assert.ok(result.source.includes("axiom a.f"), result.source);
 });
 
@@ -714,9 +716,10 @@ test("a literal compares with an optional value through some", () => {
 });
 
 test("number built-ins", () => {
-  emits("export function f(a: number) { return Number.isFinite(a); }", "Js.isFinite a");
-  emits("export function f(a?: number) { return Number.isInteger(a); }", "Option.isSome a");
-  emits("export function f(a: number) { return Number.isNaN(a); }", "Js.isNaN a");
+  emits("export function f(a: number) { return Number.isFinite(a); }", "Js.Dbl.isFinite a");
+  emits("export function f(a?: number) { return Number.isInteger(a); }", "map Js.Dbl.isInteger", ".getD false");
+  emits("export function f(a: number) { return Number.isNaN(a); }", "Js.Dbl.isNaN a");
+  emits("export function f(a: number) { return Number.isSafeInteger(a); }", "Js.Dbl.isSafe a");
   emits("export function f(a: number) { return a.toFixed(2); }", "Js.toFixed a");
   emits("export function f(a: number) { return a.toFixed(); }", "Js.numStr a");
   emits("export function f(a: number) { return a.toString(); }", "Js.numStr a");

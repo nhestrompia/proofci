@@ -45,7 +45,7 @@ inductive Prim where
   | toLower | toUpper | slice | sliceFrom | strIndexOf | charAt | numStr
   | min | max | abs | includes | join | split | append | concat
   | replace | replaceAll | substring | indexOfStr | strLastIndexOf | charCodeAt | toText | setOf | setHas | setAdd
-  | numFinite | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys | recGet | recHas | recSet | recValues | recCopy | recPut
+  | numFinite | numInteger | numSafe | numNaN | toFixed | parseInt (auto : Bool) | toNum | isArray | padStart | padEnd | strRepeat | lastIndexOfStr | atRel | flat | keys | recGet | recHas | recSet | recValues | recCopy | recPut
   | reTest (r : Js.Re) (ic : Bool) | reReplace (r : Js.Re) (ic all : Bool) | reSplit (r : Js.Re) (ic : Bool)
   deriving DecidableEq, Repr
 
@@ -211,16 +211,30 @@ def sameKey (a b : Val) : Bool := binary .eq a b == some (.bool true)
 def addKey (acc : List Val) (v : Val) : List Val :=
   if acc.any (sameKey · v) then acc else acc ++ [v]
 
-/-- `Number.isFinite`, `isInteger` and `isSafeInteger`: not a number is false, and a typed
-number is a safe integer. Any other number stops the model rather than guessing. -/
+/-- `Number.isFinite`: `undefined` and `null` are false, a number answers for itself.
+Any other value stops the model rather than guessing. -/
 def numFinite : Val → Option Bool
   | .undef | .null => some false
-  | v => (asNum v).map fun _ => true
+  | .num x => some x.isFin
+  | _ => none
+
+/-- `Number.isInteger`, on the same terms. -/
+def numInteger : Val → Option Bool
+  | .undef | .null => some false
+  | .num x => some x.isInt'
+  | _ => none
+
+/-- `Number.isSafeInteger`, on the same terms. -/
+def numSafe : Val → Option Bool
+  | .undef | .null => some false
+  | .num x => some x.isSafe
+  | _ => none
 
 /-- `Number.isNaN`, on the same terms. -/
 def numNaN : Val → Option Bool
   | .undef | .null => some false
-  | v => (asNum v).map fun _ => false
+  | .num x => some x.isNan
+  | _ => none
 
 /-- `Array.isArray` on an array or a nullish value. Sets are stored as arrays too, so the
 lowering only uses it on values typed as arrays. -/
@@ -349,6 +363,8 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
   | .numStr, h, [v] => (asNum v).map fun a => (.str (Js.numStr a), h)
   | .toText, h, [v] => (textOf v).map fun t => (.str t, h)
   | .numFinite, h, [v] => (numFinite v).map fun b => (.bool b, h)
+  | .numInteger, h, [v] => (numInteger v).map fun b => (.bool b, h)
+  | .numSafe, h, [v] => (numSafe v).map fun b => (.bool b, h)
   | .numNaN, h, [v] => (numNaN v).map fun b => (.bool b, h)
   | .toFixed, h, [v, d] => match asNum v, asNum d with
     | some a, some d => match (Js.toFixed a d).match with
@@ -380,7 +396,7 @@ def primV : Prim → Heap → List Val → Option (Val × Heap)
     | _ => none
   | .min, h, [.num a, .num b] => some (.num (a.fmin b), h)
   | .max, h, [.num a, .num b] => some (.num (a.fmax b), h)
-  | .abs, h, [a] => (asNum a).map fun a => (numVal (Js.abs a), h)
+  | .abs, h, [.num a] => some (.num (F64.abs a), h)
   | .includes, h, [.str s, .str t] => some (.bool (Js.strIncludes s t), h)
   | .includes, h, [.ref l, .str t] => match h[l]? with
     | some (.array xs) => (strsOf xs).map fun ss => (.bool (Js.includes ss t), h)

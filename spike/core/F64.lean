@@ -142,5 +142,49 @@ def fmax (x y : F64) : F64 := match x, y with
     | fin false 0 => x
     | _ => y
 
+/-- `Math.abs`: `NaN` stays `NaN`, `-0` becomes `0`. -/
+def abs : F64 → F64
+  | nan => nan
+  | inf _ => inf false
+  | fin _ n => fin false n
+
+/-- `Math.sign`: `NaN` stays `NaN`, a zero keeps its sign, everything else is `±1`. -/
+def sign : F64 → F64
+  | nan => nan
+  | inf neg => fin neg unit
+  | fin neg n => if n = 0 then fin neg n else fin neg unit
+
+/-- `Math.round`: the nearest integer, ties going toward `+∞`. `Math.round (-0.5)`
+is `-0`, which the `fin neg 0` form keeps. -/
+def jsround : F64 → F64
+  | nan => nan
+  | inf neg => inf neg
+  | fin neg n =>
+    let q := n / unit
+    let r := n % unit
+    if r * 2 < unit then fin neg (q * unit)
+    else if r * 2 = unit then fin neg ((q + if neg then 0 else 1) * unit)
+    else fin neg ((q + 1) * unit)
+
+/-- `Number.isFinite`: anything but `NaN` and the infinities. -/
+def isFin : F64 → Bool
+  | fin _ _ => true
+  | _ => false
+
+/-- `Number.isNaN`. -/
+def isNan : F64 → Bool
+  | nan => true
+  | _ => false
+
+/-- `Number.isInteger`: a finite whole number of `unit`s. -/
+def isInt' : F64 → Bool
+  | fin _ n => n % unit = 0
+  | _ => false
+
+/-- `Number.isSafeInteger`: an integer that fits in the exact range. -/
+def isSafe : F64 → Bool
+  | fin _ n => n % unit = 0 && n / unit ≤ 9007199254740991
+  | _ => false
+
 end F64
 end Core

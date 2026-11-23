@@ -176,6 +176,8 @@ export class Translator {
     this.lenient = build({ ...OPTIONS, ...LENIENT, paths });
     this.anonymous = new Map(); // key -> shape of an inline object type
     this.types = new Map();      // declaration, or instantiation key -> { lean, text }
+    this.dblTypes = new Map();   // same, for shapes whose numbers are `Js.Dbl`
+    this.doubles = false;        // set per target: that function's numbers are doubles
     this.shaped = [];            // every type given a Lean shape, with where it was met
     this.typeOwners = new Map(); // Lean name -> the declaration that took it
     this.packages = new Map();   // package.json path -> { name, version }, for declared types
@@ -316,7 +318,7 @@ export class Translator {
   // Returns a Lean type, as text.
   type(type, node) {
     const { TypeFlags } = ts;
-    if (type.flags & TypeFlags.NumberLike) return "Js.Num";
+    if (type.flags & TypeFlags.NumberLike) return this.doubles ? "Js.Dbl" : "Js.Num";
     if (type.flags & TypeFlags.BooleanLike) return "Bool";
     if (type.flags & TypeFlags.BigIntLike) return "Int";
     if (type.flags & TypeFlags.Void) return "Unit";
@@ -335,7 +337,7 @@ export class Translator {
       && !type.getCallSignatures().length && this.checker.getIndexInfosOfType(type).length) {
       throw this.fail(node, "records with number or symbol keys are not supported");
     }
-    if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return "Js.Num";
+    if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.NumberLike)) return this.doubles ? "Js.Dbl" : "Js.Num";
     if (type.isUnion() && type.types.every(t => t.flags & TypeFlags.BigIntLike)) return "Int";
     if (this.bound(type)) return this.type(this.bound(type), node);
     if (type.flags & TypeFlags.TypeParameter) {
@@ -568,7 +570,7 @@ export class Translator {
     } catch (error) {
       if (!(error instanceof Unsupported)) throw error;
       this.generic.set(declaration, false);
-      this.types.delete(`${this.leanTypeName(declaration)}<>`);
+      this.typeTable().delete(`${this.leanTypeName(declaration)}<>`);
       this.typeOwners.delete(this.leanTypeName(declaration));
     } finally {
       this.paramHit = outer;
@@ -576,10 +578,14 @@ export class Translator {
     return this.generic.get(declaration);
   }
 
+  // Declared shapes are kept apart by whether their `number` fields are doubles,
+  // so a record can be used by integer-only and fractional code alike.
+  typeTable() { return this.doubles ? this.dblTypes : this.types; }
+
   declareType(declaration, type, node = declaration) {
     const { key, suffix, params } = this.instantiation(declaration, type, node);
-    if (this.types.has(key)) {
-      const known = this.types.get(key);
+    if (this.typeTable().has(key)) {
+      const known = this.typeTable().get(key);
       if (!known) {
         // A type that contains itself is cut where it recurs: the inner value is an opaque handle, which a
         // function can pass around and compare with `null` but not look into. A function that reads only
@@ -625,7 +631,7 @@ export class Translator {
       throw this.fail(declaration, `two declarations of \`${declaration.name.text}\` would share a Lean name`);
     }
     this.typeOwners.set(lean, declaration);
-    this.types.set(key, null);
+    this.typeTable().set(key, null);
     this.nesting ??= new Map();
     const depth = this.nesting.get(declaration) ?? 0;
     if (depth > 8) throw this.fail(declaration, "a generic type that contains itself at a growing type argument is not supported");
@@ -652,12 +658,12 @@ export class Translator {
       group.done.push({ lean, shape });
       this.cutHit = outerCut;
       if (group.root !== entry) {
-        this.types.set(key, { lean, ...shape, recursive: true, group });
+        this.typeTable().set(key, { lean, ...shape, recursive: true, group });
         this.shaped.push({ type, node });
         return lean;
       }
       shape = { ...shape, recursive: true, text: recursiveEquality(group.done, (_, message) => this.fail(declaration, message)) };
-      for (const [k, v] of this.types) if (v?.group === group) this.types.set(k, { ...v, group: undefined });
+      for (const [k, v] of this.typeTable()) if (v?.group === group) this.typeTable().set(k, { ...v, group: undefined });
     } else if (entry.recursive) shape = { ...shape, recursive: true, text: recursiveEquality([{ lean, shape }], (_, message) => this.fail(declaration, message)) };
     this.cutHit = outerCut;
     if (params) {
@@ -665,7 +671,7 @@ export class Translator {
       const header = shape.text.indexOf(" where");
       shape = { ...shape, params, own, text: `${shape.text.slice(0, header)} ${params.map(p => `(${p} : Type)`).join(" ")}${shape.text.slice(header)}` };
     }
-    this.types.set(key, { lean, ...shape });
+    this.typeTable().set(key, { lean, ...shape });
     this.shaped.push({ type, node });
     this.typeTexts.add(shape.text);
     this.order.push(shape.text);
@@ -683,7 +689,7 @@ export class Translator {
       if (this.declaring.indexOf(g.root) < this.declaring.indexOf(group.root)) group.root = g.root;
     }
     for (const d of this.declaring) if (members.includes(d) || groups.has(d.group)) Object.assign(d, { group, recursive: true });
-    for (const [k, v] of this.types) if (v && groups.has(v.group)) this.types.set(k, { ...v, group });
+    for (const [k, v] of this.typeTable()) if (v && groups.has(v.group)) this.typeTable().set(k, { ...v, group });
     return members[0].lean;
   }
 
@@ -792,6 +798,7 @@ export class Translator {
     const lean = this.type(type, node);
     if (lean === "Js.Handle") return { kind: "handle", name: this.handleOf(type) ?? type.symbol?.name ?? "object" };
     if (lean === "Js.Num") return { kind: "number" };
+    if (lean === "Js.Dbl") return { kind: "double" };
     if (lean === "Bool") return { kind: "boolean" };
     if (lean === "Int") return { kind: "bigint" };
     if (lean === "Unit") return { kind: "void" };
@@ -878,7 +885,7 @@ export class Translator {
     if (symbol?.name === "__type" || symbol?.name === "__object") return this.declareAnonymous(type, symbol.declarations?.[0]);
     const declaration = symbol?.declarations?.[0];
     if (!declaration) return undefined;
-    return this.types.get(declaration.typeParameters?.length ? this.instantiation(declaration, type, declaration).key : declaration);
+    return this.typeTable().get(declaration.typeParameters?.length ? this.instantiation(declaration, type, declaration).key : declaration);
   }
 
   // ------------------------------------------------------------ constants
@@ -894,8 +901,11 @@ export class Translator {
   }
 
   number(value, node) {
-    if (!Number.isSafeInteger(value)) throw this.fail(node, `the number ${value} is not a safe integer`);
-    return `(Js.Num.mk (${value}) (of_decide_eq_true rfl) (of_decide_eq_true rfl))`;
+    if (Number.isSafeInteger(value) && !this.doubles) {
+      return `(Js.Num.mk (${value}) (of_decide_eq_true rfl) (of_decide_eq_true rfl))`;
+    }
+    if (!this.doubles) throw this.fail(node, `the number ${value} is not a safe integer`);
+    return `(Js.Dbl.lit ${bitsOf(value)})`;
   }
 
   // ------------------------------------------------------------ functions
@@ -1170,8 +1180,11 @@ export class Translator {
     const lean = this.leanName(declaration, declaration.name.text);
     const value = this.literal(declaration.initializer);
     if (value !== undefined) {
-      this.order.push(`def ${lean} : Js.Num := ${this.number(value, declaration)}`);
-      this.constants.set(declaration, { lean, pure: true });
+      const dbl = this.doubles || !Number.isSafeInteger(value);
+      this.order.push(dbl
+        ? `def ${lean} : Js.Dbl := (Js.Dbl.lit ${bitsOf(value)})`
+        : `def ${lean} : Js.Num := ${this.number(value, declaration)}`);
+      this.constants.set(declaration, { lean, pure: true, dbl, value });
       return this.constants.get(declaration);
     }
     // Anything else is computed once on import, which a `Result` constant models.
@@ -1200,6 +1213,44 @@ class Stub {
 
 // Translates one function body. `env` maps a variable's symbol to how it reads
 // in the current branch, which is how narrowing reaches the Lean output.
+// The binary64 bits of a JavaScript number, for `Js.Dbl.lit`.
+function bitsOf(value) {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  return `0x${view.getBigUint64(0).toString(16)}`;
+}
+
+// A function works on full IEEE-754 doubles rather than safe integers when its
+// body asks for something safe integers cannot say: a fractional or `-0`
+// literal, `x / y` outside `Math.floor/ceil/trunc(x / y)`, `Math.round` or
+// `Math.sign`, a `Number.is*` test, or `NaN`/`Infinity`/`Number` bit constants.
+function usesDoubles(declaration) {
+  let doubles = false;
+  const visit = node => {
+    if (doubles || !node) return;
+    if (ts.isNumericLiteral(node) && !Number.isSafeInteger(Number(node.text))) doubles = true;
+    else if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken
+      && ts.isNumericLiteral(unwrap(node.operand)) && Object.is(-Number(unwrap(node.operand).text), -0)) doubles = true;
+    else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) {
+      const parent = node.parent;
+      const rounded = ts.isCallExpression(parent) && ts.isPropertyAccessExpression(unwrap(parent.expression))
+        && ["floor", "ceil", "trunc"].includes(unwrap(parent.expression).name.text) && parent.arguments[0] === node;
+      if (!rounded) doubles = true;
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))) {
+      const recv = unwrap(node.expression.expression), fn = unwrap(node.expression).name.text;
+      if (ts.isIdentifier(recv) && recv.text === "Math" && ["round", "sign"].includes(fn)) doubles = true;
+      if (ts.isIdentifier(recv) && recv.text === "Number" && ["isFinite", "isNaN", "isInteger", "isSafeInteger"].includes(fn)) doubles = true;
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(unwrap(node.expression))
+      && ["isNaN", "isFinite"].includes(unwrap(node.expression).text)) doubles = true;
+    else if (ts.isIdentifier(node) && (node.text === "NaN" || node.text === "Infinity")) doubles = true;
+    else if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Number"
+      && ["POSITIVE_INFINITY", "NEGATIVE_INFINITY", "NaN", "MAX_VALUE", "MIN_VALUE", "EPSILON"].includes(node.name.text)) doubles = true;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(declaration, visit);
+  return doubles;
+}
+
 export class Scope {
   constructor(translator, fn) {
     this.t = translator;
@@ -2540,7 +2591,7 @@ export class Scope {
     if (ts.isPropertyAccessExpression(node)) return this.property(node, env, lines);
     if (ts.isArrayLiteralExpression(node)) return this.arrayLiteral(node, this.typeOf(node), env, lines);
     if (ts.isElementAccessExpression(node)) {
-      if (this.isString(node.expression)) return `(Js.charAt? ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)})`;
+      if (this.isString(node.expression)) return `(Js.charAt? ${this.expression(node.expression, env, lines)} ${this.numIndex(node.argumentExpression, env, lines)})`;
       if (this.isDict(node.expression)) {
         if (node.questionDotToken) throw this.t.fail(node, "`?.[]` on a record of dynamic keys is not supported yet");
         const record = this.expression(node.expression, env, lines);
@@ -2548,7 +2599,7 @@ export class Scope {
       }
       if (!this.isArray(node.expression)) throw this.t.fail(node, "`[]` is only supported on arrays for now");
       if (node.questionDotToken) throw this.t.fail(node, "`?.` is not supported yet");
-      const read = `Js.at_ ${this.expression(node.expression, env, lines)} ${this.numeric(node.argumentExpression, env, lines)}`;
+      const read = `Js.at_ ${this.expression(node.expression, env, lines)} ${this.numIndex(node.argumentExpression, env, lines)}`;
       // An element that may be `null` reads as `null` or, past the end, `undefined`: one missing value.
       const item = this.checker.getTypeArguments(this.checker.getApparentType(this.typeOf(node.expression)))[0];
       return item && this.nullable(item) ? `(${read}).join` : `(${read})`;
@@ -2573,7 +2624,7 @@ export class Scope {
         const literal = this.t.literal(node);
         if (literal !== undefined) return this.t.number(literal, node);
         if (this.isBigInt(node.operand)) return `(-${this.expression(node.operand, env, lines)})`;
-        return this.bind(`Js.neg ${this.numeric(node.operand, env, lines)}`, lines);
+        return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}neg ${this.numeric(node.operand, env, lines)}`, lines);
       }
       throw this.t.fail(node, "this operator is not supported");
     }
@@ -2659,6 +2710,7 @@ export class Scope {
     const lean = this.leanOf(type, node);
     if (lean === "Js.Str") return `${value} ≠ []`;
     if (lean === "Js.Num") return `${value}.val ≠ 0`; // NaN never reaches here
+    if (lean === "Js.Dbl") return `Js.Dbl.truthy (some ${value}) = true`;
     if (lean === "Int") return `${value} ≠ 0`;
     if (lean === "Bool") return `${value} = true`;
     if (this.alwaysTruthy(type, node)) throw this.t.fail(node, "this value is always truthy, so the test does nothing");
@@ -2678,7 +2730,7 @@ export class Scope {
     const bigint = this.isBigInt(leftNode);
     if (rightNode !== ONE && bigint !== this.isBigInt(rightNode)) throw this.t.fail(rightNode, "mixing `number` and `bigint`");
     const right = rightNode === ONE ? (bigint ? "(1 : Int)" : this.t.number(1, leftNode)) : this.operand(rightNode, env, lines);
-    if (!bigint) return this.bind(`Js.${ARITHMETIC[op]} ${left} ${right}`, lines);
+    if (!bigint) return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}${ARITHMETIC[op]} ${left} ${right}`, lines);
     if (op === ts.SyntaxKind.SlashToken) return this.bind(`Js.bdiv ${left} ${right}`, lines);
     if (op === ts.SyntaxKind.PercentToken) return this.bind(`Js.brem ${left} ${right}`, lines);
     const symbol = { [ts.SyntaxKind.PlusToken]: "+", [ts.SyntaxKind.MinusToken]: "-", [ts.SyntaxKind.AsteriskToken]: "*" }[op];
@@ -2694,6 +2746,20 @@ export class Scope {
   numeric(node, env, lines) {
     if (!this.isNumber(node)) throw this.t.fail(node, "only `number` operands are supported here");
     return this.expression(node, env, lines);
+  }
+
+  // A number that must be an exact integer (an index, a count, a length): on
+  // doubles this retypes through `Js.Dbl.numOf`, which fails otherwise.
+  numIndex(node, env, lines) {
+    const value = this.numeric(node, env, lines);
+    return this.t.doubles ? this.bind(`Js.Dbl.numOf ${value}`, lines) : value;
+  }
+
+  // A double, as its `Core.F64` (for comparisons).
+  fOf(node, env, lines) {
+    const literal = this.t.literal(node);
+    if (literal !== undefined) return `(Js.Dbl.lit ${bitsOf(literal)}).f`;
+    return `(${this.numeric(node, env, lines)}).f`;
   }
 
   // A string literal, as code units when it can't be written in Lean source.
@@ -2730,6 +2796,7 @@ export class Scope {
     const plain = this.leanOf(this.checker.getNonNullableType(type), node);
     switch (plain) {
       case "Js.Str": return undefined;
+      case "Js.Dbl": throw this.t.fail(node, "a double can't be printed yet — format it in the host, or compare against an exact value");
       case "Js.Num": return "Js.numStr";
       case "Int": return "Js.intStr";
       case "Bool": return "Js.boolStr";
@@ -2739,11 +2806,21 @@ export class Scope {
 
   identifier(node, env) {
     if (node.text === "undefined") return "none";
+    if (this.t.doubles && (node.text === "NaN" || node.text === "Infinity")) {
+      const declaration = this.symbol(node)?.valueDeclaration;
+      if (!declaration || this.t.program.isSourceFileDefaultLibrary(declaration.getSourceFile())) {
+        return `(Js.Dbl.lit ${bitsOf(node.text === "NaN" ? NaN : Infinity)})`;
+      }
+    }
     const symbol = this.symbol(node);
     const declaration = symbol?.valueDeclaration;
     if (!declaration) throw this.t.fail(node, `\`${node.text}\` is not declared in the translated code`);
     if (this.isModuleLevel(declaration)) {
       const constant = this.t.declareConstant(declaration);
+      if (Boolean(constant.dbl) !== Boolean(this.t.doubles)) {
+        if (constant.pure && !constant.dbl) return `(Js.Dbl.lit ${bitsOf(constant.value)})`;
+        throw this.t.fail(node, `the constant \`${declaration.name.text}\` is ${constant.dbl ? "a double" : "an integer"}, but this function works on ${this.t.doubles ? "doubles" : "safe integers"} — declare it with the same numbers`);
+      }
       return constant.pure ? `_root_.${constant.lean}` : this.bind(`_root_.${constant.lean}`, this.lines);
     }
     if (ts.isFunctionDeclaration(declaration)) throw this.t.fail(node, "functions as values are not supported yet");
@@ -2774,6 +2851,10 @@ export class Scope {
     if (ts.isIdentifier(object) && object.text === "Number" && !this.isLocal(object)) {
       if (node.name.text === "MAX_SAFE_INTEGER") return this.t.number(Number.MAX_SAFE_INTEGER, node);
       if (node.name.text === "MIN_SAFE_INTEGER") return this.t.number(Number.MIN_SAFE_INTEGER, node);
+      if (this.t.doubles) {
+        const special = { POSITIVE_INFINITY: Infinity, NEGATIVE_INFINITY: -Infinity, NaN, MAX_VALUE: Number.MAX_VALUE, MIN_VALUE: Number.MIN_VALUE, EPSILON: Number.EPSILON }[node.name.text];
+        if (special !== undefined) return `(Js.Dbl.lit ${bitsOf(special)})`;
+      }
       throw this.t.fail(node, `\`Number.${node.name.text}\` is not supported`);
     }
     const state = ts.isIdentifier(object) ? env.get(this.symbol(object)) : undefined;
@@ -2788,12 +2869,12 @@ export class Scope {
       const value = this.expression(object, env, lines);
       const bare = this.checker.getNonNullableType(this.typeOf(object));
       const unwrapped = this.bind(`Js.unwrap ${value}`, lines);
-      if (node.name.text === "length" && (bare.flags & ts.TypeFlags.StringLike || this.checker.isArrayType(bare))) return this.bind(`Js.len ${unwrapped}`, lines);
+      if (node.name.text === "length" && (bare.flags & ts.TypeFlags.StringLike || this.checker.isArrayType(bare))) return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}len ${unwrapped}`, lines);
       return `${unwrapped}.${name(node.name.text)}`;
     }
-    if (this.isString(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
-    if (this.isCollection(object) && node.name.text === "size") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
-    if (this.isArray(object) && node.name.text === "length") return this.bind(`Js.len ${this.expression(object, env, lines)}`, lines);
+    if (this.isString(object) && node.name.text === "length") return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}len ${this.expression(object, env, lines)}`, lines);
+    if (this.isCollection(object) && node.name.text === "size") return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}len ${this.expression(object, env, lines)}`, lines);
+    if (this.isArray(object) && node.name.text === "length") return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}len ${this.expression(object, env, lines)}`, lines);
     if (this.isArray(object)) throw this.t.fail(node, `\`.${node.name.text}\` is not supported on arrays yet`);
     const type = this.typeOf(object);
     this.refuseHandle(object, node);
@@ -3030,14 +3111,14 @@ export class Scope {
     };
     switch (method) {
       case "includes": comparable(); return `(Js.includes ${list} ${this.convert(args[0], item, env, lines)})`;
-      case "indexOf": comparable(); return this.bind(`Js.indexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
+      case "indexOf": comparable(); if (this.t.doubles) throw this.t.fail(node, "`indexOf` on doubles isn't bridged yet — write the loop, or keep the index an integer"); return this.bind(`Js.indexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
       case "lastIndexOf":
         if (args.length !== 1) throw this.t.fail(node, "`lastIndexOf` with a start index is not supported yet");
-        comparable(); return this.bind(`Js.lastIndexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
+        comparable(); if (this.t.doubles) throw this.t.fail(node, "`lastIndexOf` on doubles isn't bridged yet — write the loop, or keep the index an integer"); return this.bind(`Js.lastIndexOf ${list} ${this.convert(args[0], item, env, lines)}`, lines);
       case "at":
         if (args.length !== 1) throw this.t.fail(node, "`at` takes one index");
         if (this.nullable(item)) throw this.t.fail(node, "`at` on an array that may hold `null` or `undefined` is not supported yet");
-        return `(Js.atRel ${list} ${this.numeric(args[0], env, lines)})`;
+        return `(Js.atRel ${list} ${this.numIndex(args[0], env, lines)})`;
       case "flat":
         if (args.length) throw this.t.fail(node, "only `flat()` without a depth is supported");
         if (!this.checker.isArrayType(item)) throw this.t.fail(node, "`flat` is only supported on an array of arrays");
@@ -3047,11 +3128,11 @@ export class Scope {
         if (!fn || !this.checker.isArrayType(fn.getReturnType())) throw this.t.fail(node, "`flatMap` is only supported with a callback that returns an array");
         return `(Js.flat ${this.bindCallback("map", this.callback(args, 1, node, env), list, lines)})`;
       }
-      case "findIndex": return this.bindCallback("findIndex", this.callback(args, 1, node, env), list, lines);
+      case "findIndex": if (this.t.doubles) throw this.t.fail(node, "`findIndex` on doubles isn't bridged yet — write the loop, or keep the index an integer"); return this.bindCallback("findIndex", this.callback(args, 1, node, env), list, lines);
       case "slice":
         if (args.length === 0) return list;
-        if (args.length === 1) return `(Js.sliceFrom ${list} ${this.numeric(args[0], env, lines)})`;
-        return `(Js.slice ${list} ${this.numeric(args[0], env, lines)} ${this.numeric(args[1], env, lines)})`;
+        if (args.length === 1) return `(Js.sliceFrom ${list} ${this.numIndex(args[0], env, lines)})`;
+        return `(Js.slice ${list} ${this.numIndex(args[0], env, lines)} ${this.numIndex(args[1], env, lines)})`;
       case "join": {
         if (!(item.flags & ts.TypeFlags.StringLike)) throw this.t.fail(node, "`join` is only supported on strings for now");
         return `(Js.join ${list} ${args[0] ? this.expression(args[0], env, lines) : this.text(",")})`;
@@ -3200,7 +3281,7 @@ export class Scope {
       if (!args[index] || !this.isString(args[index])) throw this.t.fail(node, `\`${method}\` is only supported with a string here, because it would otherwise take a regular expression`);
       return this.expression(args[index], env, lines);
     };
-    const count = index => this.numeric(args[index], env, lines);
+    const count = index => this.numIndex(args[index], env, lines);
     const none = () => { if (args.length) throw this.t.fail(node, `\`${method}\` with arguments is not supported yet`); };
     const exactly = n => { if (args.length !== n) throw this.t.fail(node, `\`${method}\` with these arguments is not supported yet`); };
     if (["split", "replace", "replaceAll", "match"].includes(method) && args[0] && this.isRegex(args[0])) return this.regexCall(value, method, node, env, lines);
@@ -3213,9 +3294,9 @@ export class Scope {
       case "startsWith": exactly(1); return `(Js.startsWith ${value} ${text(0)})`;
       case "endsWith": exactly(1); return `(Js.endsWith ${value} ${text(0)})`;
       case "includes": exactly(1); return `(Js.strIncludes ${value} ${text(0)})`;
-      case "indexOf": exactly(1); return this.bind(`Js.strIndexOf ${value} ${text(0)}`, lines);
-      case "lastIndexOf": exactly(1); return this.bind(`Js.strLastIndexOf ${value} ${text(0)}`, lines);
-      case "charCodeAt": exactly(1); return this.bind(`Js.charCodeAt ${value} ${count(0)}`, lines);
+      case "indexOf": exactly(1); return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}strIndexOf ${value} ${text(0)}`, lines);
+      case "lastIndexOf": exactly(1); return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}strLastIndexOf ${value} ${text(0)}`, lines);
+      case "charCodeAt": exactly(1); return this.bind(`Js.${this.t.doubles ? "Dbl." : ""}charCodeAt ${value} ${count(0)}`, lines);
       case "trim": none(); return `(Js.trim ${value})`;
       case "trimStart": none(); return `(Js.trimStart ${value})`;
       case "trimEnd": none(); return `(Js.trimEnd ${value})`;
@@ -3256,18 +3337,27 @@ export class Scope {
     const onArray = ts.isPropertyAccessExpression(callee) && !callee.questionDotToken
       && ts.isIdentifier(callee.expression) && callee.expression.text === "Array" && !this.isLocal(callee.expression);
     const named = global ? callee.text : onNumber ? `Number.${callee.name.text}` : onArray ? `Array.${callee.name.text}` : undefined;
-    const test = name => (this.isNumber(args[0]) ? `(Js.${name} ${this.expression(args[0], env, lines)})` : undefined);
+    const test = name => {
+      const f = this.t.doubles ? { isFinite: "isFinite", isNaN: "isNaN", isInteger: "isInteger", isSafeInteger: "isSafe" }[name] : name;
+      const expr = this.expression(args[0], env, lines);
+      if (this.t.doubles && this.nullable(this.typeOf(args[0])))
+        return this.isOptionalNumber(args[0]) ? `((${expr}).map Js.Dbl.${f}).getD false` : undefined;
+      if (!this.isNumber(args[0])) return undefined;
+      return `(Js.${this.t.doubles ? "Dbl." : ""}${f} ${expr})`;
+    };
     if (args.length === 1) {
       switch (named) {
         case "Number.isFinite": case "Number.isInteger": case "Number.isSafeInteger":
-          if (this.nullable(this.typeOf(args[0])) && this.isOptionalNumber(args[0])) return `(Option.isSome ${this.expression(args[0], env, lines)})`;
-          return test("isFinite");
+          if (this.t.doubles && this.nullable(this.typeOf(args[0])) && !this.isOptionalNumber(args[0])) break;
+          if (!this.t.doubles && this.nullable(this.typeOf(args[0])) && this.isOptionalNumber(args[0])) return `(Option.isSome ${this.expression(args[0], env, lines)})`;
+          return test({ isFinite: "isFinite", isInteger: "isInteger", isSafeInteger: "isSafeInteger" }[callee.name.text]);
         case "isFinite": return test("isFinite");
         case "isNaN": case "Number.isNaN": return test("isNaN");
         case "Boolean": return `(decide (¬¬(${this.condition(args[0], env, lines)})))`;
         case "Number":
           if (this.nullable(this.typeOf(args[0]))) break;
           if (this.isNumber(args[0])) return this.expression(args[0], env, lines);
+          if (this.t.doubles) throw this.t.fail(node, "`Number(...)` only parses to an integer for now — compute with the string itself");
           if (this.isString(args[0])) return this.bind(`Js.numOfStr ${this.expression(args[0], env, lines)}`, lines);
           if (this.isBoolean(args[0])) return `(Js.boolNum ${this.expression(args[0], env, lines)})`;
           break;
@@ -3280,6 +3370,9 @@ export class Scope {
         default:
       }
     }
+    if (this.t.doubles && (named === "parseInt" || named === "Number.parseInt") && this.isString(args[0])) {
+      throw this.t.fail(node, "`parseInt` only parses to an integer for now — compute with the string itself");
+    }
     if ((named === "parseInt" || named === "Number.parseInt") && this.isString(args[0])) {
       if (args.length === 1) return this.bind(`Js.parseIntStr true ${this.expression(args[0], env, lines)}`, lines);
       const radix = args.length === 2 && unwrap(args[1]);
@@ -3288,11 +3381,13 @@ export class Scope {
     if (ts.isPropertyAccessExpression(callee) && !callee.questionDotToken) {
       const receiver = callee.expression, method = callee.name.text;
       if (method === "toFixed" && this.isNumber(receiver) && !this.nullable(this.typeOf(receiver))) {
+        if (this.t.doubles) throw this.t.fail(node, "`toFixed` on a double isn't modelled — rounding to cents is exact only through `Math.round(x * 100) / 100`, and printing needs the host");
         const value = this.expression(receiver, env, lines);
         if (!args.length) return `(Js.numStr ${value})`;
-        if (args.length === 1) return this.bind(`Js.toFixed ${value} ${this.numeric(args[0], env, lines)}`, lines);
+        if (args.length === 1) return this.bind(`Js.toFixed ${value} ${this.numIndex(args[0], env, lines)}`, lines);
       }
       if (method === "toString" && !args.length && !this.nullable(this.typeOf(receiver))) {
+        if (this.t.doubles && this.isNumber(receiver)) throw this.t.fail(node, "`toString` on a double isn't modelled — format it in the host, or keep its exact value");
         if (this.isNumber(receiver)) return `(Js.numStr ${this.expression(receiver, env, lines)})`;
         if (this.isBigInt(receiver)) return `(Js.intStr ${this.expression(receiver, env, lines)})`;
         if (this.isBoolean(receiver)) return `(Js.boolStr ${this.expression(receiver, env, lines)})`;
@@ -3303,7 +3398,7 @@ export class Scope {
 
   isOptionalNumber(node) {
     const type = this.typeOf(node);
-    return this.nothing(type) !== undefined && this.leanOf(this.checker.getNonNullableType(type), node) === "Js.Num";
+    return this.nothing(type) !== undefined && ["Js.Num", "Js.Dbl"].includes(this.leanOf(this.checker.getNonNullableType(type), node));
   }
 
   // `kebabCase` imported from "lodash" is `lodash::kebabCase`. Relative imports are this code.
@@ -3453,6 +3548,16 @@ export class Scope {
     const args = node.arguments.map(unwrap);
     if (ROUNDING[method] && args.length === 1) {
       const inner = args[0];
+      if (this.t.doubles) {
+        const f = { floor: "floor", ceil: "ceil", trunc: "trunc" }[method];
+        if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.SlashToken) {
+          const left = this.numeric(inner.left, env, lines);
+          const right = this.numeric(inner.right, env, lines);
+          const q = this.bind(`Js.Dbl.div ${left} ${right}`, lines);
+          return this.bind(`Js.Dbl.math Core.F64.${f} ${q}`, lines);
+        }
+        return this.bind(`Js.Dbl.math Core.F64.${f} ${this.numeric(inner, env, lines)}`, lines);
+      }
       if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.SlashToken) {
         const left = this.numeric(inner.left, env, lines);
         const right = this.numeric(inner.right, env, lines);
@@ -3460,10 +3565,18 @@ export class Scope {
       }
       return this.numeric(inner, env, lines); // already a safe integer
     }
-    if (method === "abs" && args.length === 1) return `(Js.abs ${this.numeric(args[0], env, lines)})`;
-    if ((method === "min" || method === "max") && args.length === 2) {
-      const left = this.numeric(args[0], env, lines);
-      return `(Js.${method} ${left} ${this.numeric(args[1], env, lines)})`;
+    if (this.t.doubles) {
+      const f = { abs: "abs", round: "jsround", sign: "sign" }[method];
+      if (f && args.length === 1) return this.bind(`Js.Dbl.math Core.F64.${f} ${this.numeric(args[0], env, lines)}`, lines);
+      if ((method === "min" || method === "max") && args.length === 2) {
+        return `(Js.Dbl.${method} ${this.numeric(args[0], env, lines)} ${this.numeric(args[1], env, lines)})`;
+      }
+    } else {
+      if (method === "abs" && args.length === 1) return `(Js.abs ${this.numeric(args[0], env, lines)})`;
+      if ((method === "min" || method === "max") && args.length === 2) {
+        const left = this.numeric(args[0], env, lines);
+        return `(Js.${method} ${left} ${this.numeric(args[1], env, lines)})`;
+      }
     }
     throw this.t.fail(node, `\`Math.${method}\` is not supported`);
   }
@@ -3501,6 +3614,12 @@ export class Scope {
         if (this.isBigInt(node.left) && this.isBigInt(node.right)) {
           return `${this.expression(node.left, env, lines)} ${ORDER[op]} ${this.expression(node.right, env, lines)}`;
         }
+        if (this.t.doubles && this.isNumber(node.left) && this.isNumber(node.right)) {
+          const a = this.fOf(node.left, env, lines), b = this.fOf(node.right, env, lines);
+          const rel = { [ts.SyntaxKind.LessThanToken]: `(${a}).lt (${b})`, [ts.SyntaxKind.LessThanEqualsToken]: `(${a}).le (${b})`,
+            [ts.SyntaxKind.GreaterThanToken]: `(${b}).lt (${a})`, [ts.SyntaxKind.GreaterThanEqualsToken]: `(${b}).le (${a})` }[op];
+          return `${rel} = true`;
+        }
         return `${this.valueOf(node.left, env, lines)} ${ORDER[op]} ${this.valueOf(node.right, env, lines)}`;
       }
       if (op === ts.SyntaxKind.InstanceOfKeyword) {
@@ -3530,6 +3649,7 @@ export class Scope {
       throw this.t.fail(node, "this operator is not supported");
     }
     if (this.isString(node)) return `${this.expression(node, env, lines)} ≠ []`;
+    if (this.isNumber(node) && this.t.doubles) return `Js.Dbl.truthy (some ${this.expression(node, env, lines)}) = true`;
     if (this.isNumber(node)) return `${this.expression(node, env, lines)}.val ≠ 0`; // NaN never reaches here
     if (this.isBigInt(node)) return `${this.expression(node, env, lines)} ≠ 0`;
     if (this.isBoolean(node)) return `${this.expression(node, env, lines)} = true`;
@@ -3551,6 +3671,7 @@ export class Scope {
     const lean = this.leanOf(inner, node);
     if (lean === "Js.Str") return `Js.truthyStr ${value} = true`;
     if (lean === "Js.Num") return `Js.truthyNum ${value} = true`;
+    if (lean === "Js.Dbl") return `Js.Dbl.truthy ${value} = true`;
     if (lean === "Bool") return `Js.truthyBool ${value} = true`;
     if (lean === "Int") return `Js.truthyBig ${value} = true`;
     if (this.alwaysTruthy(inner, node)) return `Option.isSome ${value} = true`;
@@ -3596,6 +3717,7 @@ export class Scope {
     const left = unwrap(node.left), right = unwrap(node.right);
     if (this.isNull(left) || this.isNull(right)) return this.missing(node, env, lines);
     if (this.isNumber(left) && this.isNumber(right)) {
+      if (this.t.doubles) return `(${this.fOf(left, env, lines)}).eq (${this.fOf(right, env, lines)}) = true`;
       return `${this.valueOf(left, env, lines)} = ${this.valueOf(right, env, lines)}`;
     }
     if ((this.isBoolean(left) && this.isBoolean(right)) || (this.isBigInt(left) && this.isBigInt(right))) {
@@ -3758,13 +3880,14 @@ export function translate({ root, module, targets, paths, repository, policyRoot
   let fatal = null;
   for (const target of targets) {
     const snapshot = {
-      order: translator.order.length, types: new Map(translator.types),
+      order: translator.order.length, types: new Map(translator.types), dblTypes: new Map(translator.dblTypes),
       functions: new Map(translator.functions), constants: new Map(translator.constants),
       assumed: new Map(translator.assumed), effectOps: new Map(translator.effectOps), anonymous: new Map(translator.anonymous),
     };
     let declaration;
     try {
       declaration = findDeclaration(translator, target);
+      translator.doubles = usesDoubles(declaration);
       names[target] = translator.declareFunction(declaration);
       signatures[target] = translator.signature(declaration);
       assumed[target] = [...translator.assumedBy.get(declaration) ?? []].sort();
@@ -3778,6 +3901,8 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       failures[target] = withHint(error.message);
       translator.order.length = snapshot.order;
       translator.types = snapshot.types;
+      translator.dblTypes = snapshot.dblTypes;
+      translator.doubles = false;
       translator.functions = snapshot.functions;
       translator.assumed = snapshot.assumed;
       translator.constants = snapshot.constants;

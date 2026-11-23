@@ -16,6 +16,7 @@ const short = n => n.replace(/[^A-Za-z0-9_]/g, "_");
 export function leanType(t) {
   switch (t.kind) {
     case "number": return "Js.Num";
+    case "double": return "Js.Dbl";
     case "string": return "Js.Str";
     case "boolean": return "Bool";
     case "bigint": return "Int";
