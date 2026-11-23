@@ -30,3 +30,20 @@ test("non-exported functions are not targets", () => {
   const { functions } = run("const f = (n: number): number => n\n");
   assert.deepEqual(functions, []);
 });
+
+test("one statement can export several functions", () => {
+  const { functions } = run(
+    "export const one = (n: number): number => n, two = (n: number): number => n\n"
+    + "const three = (n: number): number => n\nexport { three }\n");
+  assert.deepEqual(functions.map(f => f.function).sort(),
+    ["src/a.ts::one", "src/a.ts::three", "src/a.ts::two"]);
+});
+
+test("type-only exports are not callable targets", () => {
+  const { functions } = run(
+    "const f = (n: number): number => n\n"
+    + "export type { f }\n"
+    + "const g = (n: number): number => n\n"
+    + "export { type g }\n");
+  assert.deepEqual(functions, []);
+});
