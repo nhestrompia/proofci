@@ -91,11 +91,34 @@ class UnknownMutantsTest(unittest.TestCase):
                                     sandbox.Result(1, "error: boom", False))
         self.assertEqual(escaped, {})
 
-    def test_unrelated_declaration_failure_still_counts_as_escape(self):
+    def test_failure_of_another_guarantee_still_counts_as_escape(self):
+        """`other` is a verified theorem of a different function; the mutant
+        still escapes the guarantees under test."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Model.lean").write_text(VIEW)
+            (root / "Proofs.lean").write_text("theorem other := by\n  skip\n  skip\n  skip\n")
+            ws = SimpleNamespace(root=root, crate_module="Model")
+            o = SimpleNamespace(function="f", theorem="t")
+            other = SimpleNamespace(function="g", theorem="other")
+            seen = itertools.count()
+            def fake_eval(ws, calls, text, timeout):
+                return {0: "r0"} if next(seen) == 0 else {0: "r1"}
+            with patch.object(mutation, "_eval_outputs", fake_eval), \
+                 patch.object(lean, "clone", return_value=ws), \
+                 patch.object(lean, "_lake", return_value=sandbox.Result(
+                     1, "error: Proofs.lean:3:8: failed", False)):
+                escaped, _ = mutation.check(ws, root, VIEW, {"f": [["x"]]},
+                                            {"f": "transfer"}, 1, [o], [o, other])
+        self.assertIn("t", escaped)
+
+    def test_broken_proof_helper_is_inconclusive_not_escape(self):
+        """The failing `helper` is no guarantee's theorem — its module may never
+        have been built, so the mutant is dropped rather than counted escaped."""
         escaped, _ = self.run_check(lambda i: {0: "r0"} if i == 0 else {0: "r1"},
                                     sandbox.Result(1, "error: Proofs.lean:3:8: failed", False),
-                                    "theorem other := by\n  skip\n  skip\n  skip\n")
-        self.assertIn("t", escaped)
+                                    "theorem helper := by\n  skip\n  skip\n  skip\n")
+        self.assertEqual(escaped, {})
 
     def test_an_unchanged_guarantee_that_rejects_suppresses_the_warning(self):
         """The suspect is `t`, but `peer` — an unchanged verified guarantee of

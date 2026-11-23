@@ -181,16 +181,20 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
     # A point-wise guarantee legitimately ignores mutants on paths it never
     # meant to cover, so judge the function's guarantees together: warn each
     # only when no guarantee rejects any behavioural mutant of the function.
-    # A failure attributed to an unrelated declaration (another function's
-    # proof, support code) does not count as a rejection.
+    # A failure in a declaration that is no guarantee's theorem (a proof
+    # helper, support code) means modules were never built, so the mutant is
+    # inconclusive and dropped; a failure attributed only to another
+    # guarantee's theorem counts as an escape.
     theorems = {}
     for o in all_outcomes:
         theorems.setdefault(o.function, set()).add(o.theorem)
+    known = {o.theorem for o in all_outcomes}
     escaped = {}
     for o in candidates:
         own = theorems.get(o.function, set())
         effective = [(kind, line, src, failed) for _, f, kind, line, src, failed in
-                     (r for r in results if r[0] == "done") if f == o.function]
+                     (r for r in results if r[0] == "done")
+                     if f == o.function and not (failed - known)]
         if effective and all(not (failed & own) for _, _, _, failed in effective):
             escaped[o.theorem] = [f"{kind} at `{o.function}` line {line}: `{src}`"
                                   for kind, line, src, _ in effective]

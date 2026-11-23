@@ -101,6 +101,12 @@ theorem withdraw_exact (balance amount : Std.U64) (h : amount.val ≤ balance.va
 result satisfies `P`". `f x ⦃ _ => True ⦄` on its own is the guarantee
 "never panics or overflows".
 
+The `/-- ... -/` line above each theorem is the claim the report shows to the
+person reading the result — write it for them, in plain words. A policy change
+that adds a guarantee without one, or removes an existing one, is reported
+`contract-stale` even after approval. An old contract whose theorems have no
+doc comments keeps working, but the report says where the claim is missing.
+
 The contract is the part people must review: ProofCI checks that proofs match
 it exactly, not that it says the right thing. It does flag statements that
 cannot constrain the code:
@@ -108,6 +114,7 @@ cannot constrain the code:
 - the function appears only in a hypothesis
 - a hypothesis assumes the result
 - the conclusion is trivially true
+- the theorem has no `/--` doc comment, so the report cannot say what it claims
 
 ## 5. Write the proofs
 
@@ -186,12 +193,12 @@ wrong.
 | Code reaches something ProofCI cannot translate | ⛔ `unsupported`, with the source line |
 | Guarantee removed or contract weakened | blocked until an approver approves that exact commit |
 
-A proved guarantee can still be weak: the report's **Contract warnings** mark one
-whose hypotheses hold on none of the generated inputs (probably vacuous), or that
-still verifies against small defects planted in the translated code (it doesn't
-constrain the function; the warning names the mutated line). Warnings don't fail
-the check — they flag statements a human should look at before trusting the
-green. The hypothesis check is cheap and runs on every TypeScript verification;
+A proved guarantee can still be weak: its entry under "What each guarantee says"
+gets a **strength:** line when its hypotheses hold on none of the generated
+inputs (probably vacuous), or when it still verifies against small defects
+planted in the translated code (it doesn't constrain the function; the line
+names the mutated line). These don't fail the check — they flag statements a
+human should look at before trusting the green. The hypothesis check is cheap and runs on every TypeScript verification;
 the planted-defect check runs only on guarantees whose statement is new or
 changed in the pull request (set `PROOFCI_MUTATION_FULL=1` to sweep every
 verified guarantee).

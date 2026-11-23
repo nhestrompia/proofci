@@ -66,10 +66,69 @@ def _reason(g):
     return lines
 
 
+def _claims(report):
+    """Per guarantee: the claim in plain words, what it rests on, and -- when an
+    approved change reworded it -- the claim it replaces."""
+    lines = ["", "### What each guarantee says", ""]
+    for g in report["guarantees"]:
+        claim = g.get("claim") or "*(the contract gives this theorem no `/--` doc comment)*"
+        lines.append(f"- {ICON.get(g['status'], '')} `{g['target']}/{g['guarantee']}` — **{g['status']}**: {claim}")
+        if g.get("previous_claim") is not None and g["previous_claim"] != claim:
+            lines.append(f"  - before this change it claimed: {g['previous_claim'] or '*(nothing)*'}")
+        rests = []
+        if g.get("hypotheses"):
+            rests.append("it holds only when " + ", ".join(f"`{h}`" for h in g["hypotheses"]))
+        for m in g.get("assumes") or []:
+            rests.append(f"the trusted model of `{m}`")
+        for c in g.get("assumed") or []:
+            rests.append(f"the outside call `{c}`")
+        if g.get("effects"):
+            rests.append("the outside calls listed below")
+        if g.get("bridge") == "tested":
+            rests.append("a Lean view tested against Node but not proved to match JavaScript")
+        if rests:
+            lines.append("  - relies on " + "; ".join(rests))
+        for w in g.get("strength") or []:
+            lines.append(f"  - strength: {w}")
+    return lines
+
+
+def _verdict(report):
+    required = [g for g in report["guarantees"] if g["required"]]
+    if report["passed"]:
+        verdict = f"**Result: passed** — all {len(required)} required guarantees verified."
+        stale = report.get("stale_accepts") or []
+        if stale:
+            verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
+                        + ", not a downgrade here — a stale entry a maintainer may remove.")
+        return verdict
+    reasons = []
+    if report["policy_changes"] and report["policy_source"] != "head":
+        reasons.append("the policy change waits for maintainer approval")
+    if report.get("invalid_contract"):
+        reasons.append("the approved contract is missing `/--` doc comments on new guarantees")
+    bad = sum(g["status"] != "verified" for g in required)
+    if bad:
+        reasons.append(f"{bad} of {len(required)} required guarantees not verified")
+    if not required:
+        reasons.append("the policy lists no required guarantees")
+    downgraded = [d["function"] for d in report.get("downgrades") or [] if not d["accepted"]]
+    if downgraded:
+        plural = len(downgraded) > 1
+        reasons.append(" and ".join(f"`{f}`" for f in downgraded)
+                       + (" were" if plural else " was")
+                       + " proved on the base branch and "
+                       + ("are" if plural else "is") + " not now")
+    verdict = "**Result: blocked** — " + "; ".join(reasons) + "."
+    stale = report.get("stale_accepts") or []
+    if stale:
+        verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
+                    + ", not a downgrade here — a stale entry a maintainer may remove.")
+    return verdict
+
+
 def markdown(report):
-    lines = ["## ProofCI", ""]
-    lines.append("**Result: passed**" if report["passed"] else "**Result: blocked**")
-    lines.append("")
+    lines = ["## ProofCI", "", _verdict(report), ""]
     if report["policy_changes"]:
         approved = report["policy_source"] == "head"
         lines.append("### Policy changes " + ("(approved)" if approved else "(need maintainer approval)"))
@@ -85,6 +144,7 @@ def markdown(report):
         lines.append(
             f"| {ICON.get(g['status'], '')} | `{g['target']}/{g['guarantee']}` | `{g['function']}` | "
             f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {g['status']} |")
+    lines += _claims(report)
     lines += _functions(report)
     lines += _downgrades(report)
     details = [g for g in report["guarantees"] if g["reason"]]
@@ -95,6 +155,8 @@ def markdown(report):
         lines += ["", "### Details", ""]
         for g in details:
             lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {g['status']}</summary>")
+            if g.get("statement"):
+                lines += ["", "The protected statement:", "", "```lean", g["statement"], "```"]
             lines += [""] + _reason(g) + ["", "</details>"]
     assumed = sorted({m for g in report["guarantees"] if g["status"] == "verified" for m in g.get("assumes", [])})
     if assumed:
