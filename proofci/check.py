@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import bridge, extract, lean, manifest as manifest_mod, typescript
+from . import bridge, claims, extract, lean, manifest as manifest_mod, typescript
 
 VERIFIED = "verified"
 UNPROVEN = "unproven"
@@ -49,6 +49,10 @@ class Outcome:
     constants_stable: list = None   # `async` code only: exported tables read after an `await`, assumed unchanged by code outside the program
     bridge: str = None              # TypeScript only: how the function's view relates to JavaScript (proved, tested or failed)
     hint: str = None                # TypeScript only: the smallest rewrite the translator accepts, when unsupported
+    claim: str = None               # the /-- doc comment on the contract theorem: what it says in plain words
+    previous_claim: str = None      # the claim the base contract stated, when an approved change reworded it
+    statement: str = None           # the contract theorem's statement, in one line
+    hypotheses: list = None         # named hypotheses of the contract theorem: what it only holds under
 
 
 @dataclass
@@ -179,6 +183,42 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             target.id, guarantee.id, target.function, guarantee.theorem, guarantee.required, ERROR)
     report.outcomes = list(outcomes.values())
 
+    # What the contract says in plain words: the /-- doc comment on each theorem.
+    stated = claims.theorems(_contract_text(policy_checkout, active.lean))
+    for o in report.outcomes:
+        info = stated.get(o.theorem)
+        if info is None:
+            continue
+        o.claim, o.statement, o.hypotheses = info["claim"], info["statement"], info["hypotheses"]
+        if not o.claim:
+            o.warnings.append(f"the contract gives `{o.theorem}` no `/--` doc comment, so the report "
+                              "cannot say in plain words what it claims")
+
+    if policy == "head":
+        # An approved policy change is the only moment a claim can appear, change or
+        # disappear: every new guarantee must state one, and an existing claim may
+        # not be dropped. A theorem that never had one keeps working but is warned
+        # about above -- the report shows where the claim is missing.
+        base_theorems = {f"{t.id}/{g.id}": g.theorem for t, g in base.guarantees()}
+        base_stated = claims.theorems(_contract_text(base_checkout, base.lean))
+        for o in report.outcomes:
+            gid = f"{o.target}/{o.guarantee}"
+            old = base_stated.get(base_theorems.get(gid) or "")
+            if old and old["claim"] != o.claim:
+                o.previous_claim = old["claim"]
+            if o.claim:
+                continue
+            if gid not in base_theorems:
+                why = "it is a new guarantee"
+            elif old and old["claim"]:
+                why = "the previous contract stated one"
+            else:
+                continue
+            o.status, o.reason = CONTRACT_STALE, (
+                f"the contract gives `{o.theorem}` no `/--` doc comment, and {why}; the claim "
+                "is what the human reading the result sees. Write a `/-- ... -/` comment "
+                "above the theorem.")
+
     def mark(status, reason, only=None):
         for o in report.outcomes:
             if only is None or o.theorem in only:
@@ -233,7 +273,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         report.timings["extract"] = round(time.monotonic() - t0, 1)
         if extraction is None:
             return report
-        pending = [o for o in report.outcomes if o.function not in failures]
+        pending = [o for o in report.outcomes if o.status == ERROR]
 
         # 2. Workspace: extracted model + protected contract + candidate proofs.
         ws = lean.assemble(work / "lean", extraction.lean_file, extraction.module,
@@ -386,6 +426,15 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                              "or the change broke what the guarantee says.")
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
+
+
+def _contract_text(checkout: Path, lean_dir: str):
+    """The contract's Lean sources as one text (Contract.lean plus Contract/**)."""
+    root = checkout / lean_dir
+    files = [root / "Contract.lean"]
+    if (root / "Contract").is_dir():
+        files += sorted((root / "Contract").rglob("*.lean"))
+    return "\n".join(p.read_text() for p in files if p.is_file())
 
 
 def _attach(report):

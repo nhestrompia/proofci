@@ -251,6 +251,12 @@ edits the contract, is blocked until a maintainer approves that exact commit. Co
 that breaks a proved function fails as `unproven`, and a proof file edited to make
 that pass is checked against the protected statement, not its own.
 
+Write a `/-- ... -/` doc comment above each contract theorem: it is the claim the
+report shows, next to the status and everything the guarantee rests on. A new
+guarantee must have one, and an approved contract change may not drop one — either
+is reported `contract-stale`. When the contract changes, the report shows the old
+and the new claim side by side.
+
 ## Packages
 
 The type checker reads the declarations of every package a file imports, so a project
