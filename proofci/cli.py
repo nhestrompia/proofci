@@ -54,7 +54,9 @@ def main(argv=None):
     s.add_argument("--work-dir", type=Path)
     l = sub.add_parser("local", help="run the CI check on a repo in the toolchain image and print JSON")
     l.add_argument("--repo", type=Path, default=Path("."), help="git checkout of the candidate (uncommitted changes count)")
-    l.add_argument("--base", default="HEAD", help="git ref holding the protected policy (default HEAD)")
+    l.add_argument("--base", default=None,
+                   help="git ref holding the protected policy "
+                        "(default: the merge-base of HEAD with the remote's default branch)")
     l.add_argument("--policy", choices=("base", "head"), default="base",
                    help="use the working tree's own policy (local iteration only; CI still reads the base)")
     l.add_argument("--image", default=os.environ.get("PROOFCI_IMAGE") or "proofci-toolchain:dev",
