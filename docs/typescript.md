@@ -38,7 +38,8 @@ The report lists every function with its status and the reason, and a summary co
 (`2 proved, 1 tested but not proved, 0 failed`). The same data is in `report.json` as
 `functions` and `bridge_summary`, and each guarantee carries its function's `bridge` status.
 
-Reasons for "tested, not proved" you will see: `no bridge for async code yet`; the function
+Reasons for "tested, not proved" you will see: `a loop in async code has no bridge yet` (or
+`finally`, or an `await` of a recursive `async` function or one in another file); the function
 relies on an assumed outside call (there is no code to bridge); the generator doesn't cover a
 form the function uses (a handle, a form of loop the tactics don't handle
 yet); `the bridge proof did not finish in 120 seconds`; or
@@ -84,10 +85,13 @@ relies on the package manager's settings and the lockfile's hashes.
 
 **What is trusted for `async` code.** The Lean library `ProofciAsync.lean` (the oracle, the
 history, `Eff`), the hazard rule (`typescript/hazard.mjs`), which the translator and the
-lowering both use, and the policy's `effects`. There is no bridge theorem for `async` code yet,
-so an `async` function is always "tested, not proved" (`no bridge for async code yet`): the view is
-compared with Node on scripted outside calls (in the action, and on the fixtures), and the lowering
-to `CoreAsync.lean` is compared with Node the same way. See
+lowering both use, and the policy's `effects`. An `async` function is bridged to `CoreAsync.lean`
+(`spike/core/abridge.mjs`, tactics in `Spike/ASim.lean`): its Core run on any oracle that answers like
+the view's ends in the same value or the same rejection, with the same history of calls. The bridge
+covers `await` of listed calls and of `async` functions of the same file (each gets its own theorem,
+which the caller's uses), `if`, `try`/`catch` around awaits, `return` and `throw`. Loops and `finally`
+in `async` code are "tested, not proved": the view is compared with Node on scripted outside calls,
+and the lowering to `CoreAsync.lean` is compared with Node the same way. See
 [`spike/core/ASYNC.md`](../spike/core/ASYNC.md). The same holds for functions with handles
 or empty records, which have no synchronous bridge.
 
