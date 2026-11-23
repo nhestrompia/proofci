@@ -1195,11 +1195,11 @@ export class Translator {
     // Anything else is computed once on import, which a `Result` constant models.
     const scope = new Scope(this, declaration);
     const type = this.checker.getTypeAtLocation(declaration.name);
-    const leanType = this.type(type, declaration);
     const lines = [];
     const outer = this.doubles;
     this.doubles = usesDoubles(declaration);
     try {
+      const leanType = this.type(type, declaration);
       const result = scope.convert(declaration.initializer, type, new Map(), lines);
       this.order.push([`def ${lean} : Result ${leanType} := do`, ...[...lines, `Result.ok ${result}`].map(l => `  ${l}`)].join("\n"));
       const numeric = leanType === "Js.Num" || leanType === "Js.Dbl";
@@ -3120,6 +3120,11 @@ export class Scope {
     const comparable = () => {
       if (args.length !== 1) throw this.t.fail(node, `\`${method}\` with a start index is not supported yet`);
       if (this.t.mayBeObject(item)) throw this.t.fail(node, `\`${method}\` on objects compares identity, which is not supported${item.flags & ts.TypeFlags.TypeParameter ? "; a type parameter could be an object" : ""}`);
+      const conflates = item.isUnion() && item.types.some(u => u.flags & ts.TypeFlags.Null)
+        && item.types.some(u => u.flags & ts.TypeFlags.Undefined);
+      if (conflates && this.isNull(unwrap(args[0]))) {
+        throw this.t.fail(node, `\`${method}\` can't tell \`null\` from \`undefined\` in this array's type — compare with \`===\` in a loop`);
+      }
     };
     switch (method) {
       case "includes":
