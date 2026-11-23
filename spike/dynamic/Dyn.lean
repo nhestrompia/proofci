@@ -255,6 +255,7 @@ def isFinite : Val → Val
 /-- `Number(v)` on numbers, and on bigints it holds exactly. -/
 def toNum : Val → M Val
   | .num x => pure (.num x)
+  | .bool b => pure (num (if b then 1 else 0))
   | .big n => if n.natAbs ≤ 2 ^ 53 then pure (num n) else stuck
   | _ => stuck
 
@@ -317,6 +318,23 @@ instance : ForIn M Live Val where
   forIn x b f := fun h => match h[x.l]? with
     | some (.array xs) => forLoop x.l f xs.length 0 b h
     | _ => .stuck
+
+/-- `while` and `for (;;)`: at most `n` rounds, then the model stops. -/
+structure Fuel where
+  n : Nat
+
+def fuel : Fuel := ⟨2 ^ 20⟩
+
+def whileLoop {β : Type} (f : Unit → β → M (ForInStep β)) : Nat → β → M β
+  | 0, _ => stuck
+  | k + 1, b => fun h => match f () b h with
+    | .ok (.done b') h' => .ok b' h'
+    | .ok (.yield b') h' => whileLoop f k b' h'
+    | .thrown v h' => .thrown v h'
+    | .stuck => .stuck
+
+instance : ForIn M Fuel Unit where
+  forIn x b f := whileLoop f x.n b
 
 /-- A callback over an array: `step i item acc` gives the next state or stops. -/
 def eachLoop {β : Type} (l : Loc) (step : Nat → Val → β → M (ForInStep β)) : Nat → Nat → β → M β
@@ -387,6 +405,7 @@ def method (m : Meth) (o : Val) (args : List Val) : M Val := match o, m, args wi
   | .str _, .slice, [a, b] => prim .slice [o, a, b]
   | .str _, .indexOf, [a] => prim .strIndexOf [o, a]
   | .str _, .lastIndexOf, [a] => prim .strLastIndexOf [o, a]
+  | .ref _, .lastIndexOf, [a] => prim .lastIndexOfStr [o, a]
   | .str _, .charAt, [a] => prim .charAt [o, a]
   | .str _, .charCodeAt, [a] => prim .charCodeAt [o, a]
   | .str _, .split, [a] => prim .split [o, a]
@@ -513,6 +532,30 @@ theorem eachLoop_spec {β} {l : Loc} {xs : List Val} {step : Nat → Val → β 
     unfold Spec
     simp only [eachLoop, harr i b h hI, List.getElem?_eq_getElem hi, e']
     exact ih (i + 1) b' h' (by omega) hI'
+
+/-- Invariant rule for `while`/`for (;;)`: each round keeps `I` and lowers `μ` below the fuel. -/
+theorem whileLoop_spec {β} {f : Unit → β → M (ForInStep β)} {P : β → Heap → Prop}
+    (I : β → Heap → Prop) (μ : β → Heap → Nat)
+    (hstep : ∀ b h, I b h → Spec (f () b) h (fun r h' => match r with
+      | .done b' => P b' h'
+      | .yield b' => I b' h' ∧ μ b' h' < μ b h)) :
+    ∀ n b h, I b h → μ b h < n → Spec (whileLoop f n b) h P := by
+  intro n
+  induction n with
+  | zero => intro b h _ hμ; omega
+  | succ k ih =>
+    intro b h hI hμ
+    have hs := hstep b h hI
+    unfold Spec at hs ⊢
+    simp only [whileLoop]
+    cases e : f () b h with
+    | ok r h' =>
+      rw [e] at hs
+      cases r with
+      | done b' => exact hs
+      | yield b' => exact ih b' h' hs.1 (by have := hs.2; omega)
+    | thrown v h' => rw [e] at hs; exact hs.elim
+    | stuck => rw [e] at hs; exact hs.elim
 
 /-- A `for ... of` loop over an array that stays `xs`, with invariant `I i acc h` before item `i`. -/
 theorem forLoop_spec {β} {l : Loc} {xs : List Val} {f : Val → β → M (ForInStep β)}

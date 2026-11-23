@@ -628,6 +628,7 @@ type shape is a new feature. The plan is to add a second path that doesn't need 
 4. **Prove the translation.** Generate a proof, per function, that the typed output
    matches the dynamic semantics, so the translator leaves the trusted base. The [spike](../spike/dynamic/README.md#step-4-the-typed-view-equals-the-dynamic-one)
    generates such proofs, stepping both sides together with one lemma per typed operation,
-   and they reject wrong typed views. It proves 38 of 65 generated bridges (83 functions
-   tried), including `length`, `map`, `filter`, `findIndex`, `padStart` and `for ... of`;
-   other library calls need lemmas, and `for`/`while` need dynamic semantics first.
+   and they reject wrong typed views. It proves 57 of 72 generated bridges (83 functions
+   tried), including `/`, the array callbacks, optional fields and `for ... of`. `while`
+   and `for (;;)` have dynamic semantics and an invariant rule, but no lemma relating them
+   to the typed loops yet.

@@ -17,7 +17,7 @@ function plain(t) {
     case "number": return "Js.Num";
     case "string": return "(List Nat)";
     case "boolean": return "Bool";
-    case "record": return t.lean;
+    case "record": return t.args?.length ? `(${t.lean} ${t.args.map(plain).join(" ")})` : t.lean;
     case "array": return `(List ${plain(t.item)})`;
     case "optional": if (t.both) throw new Error("no encoding for null-or-undefined"); return `(Option ${plain(t.inner)})`;
     default: throw new Error(`no encoding for ${t.kind}`);
@@ -28,7 +28,7 @@ const crepOf = (t, a, v, h) => t.kind === "optional" ? `crepOpt ${NUL[t.nothing]
 function records(sig) {
   const out = new Map();
   const scan = (t) => {
-    if (t.kind === "record" && !out.has(t.lean)) { t.fields.forEach((f) => scan(f.type)); out.set(t.lean, t); }
+    if (t.kind === "record" && !out.has(plain(t))) { t.fields.forEach((f) => scan(f.type)); out.set(plain(t), t); }
     if (t.kind === "optional") scan(t.inner);
     if (t.kind === "array") scan(t.item);
   };
@@ -41,8 +41,8 @@ function recordRules(t) {
     plain(f.type);
     return `(∃ w, fs.lookup ${JSON.stringify(f.name)} = some w ∧ ${crepOf(f.type, `${a}.«${f.name}»`, "w", h)})`;
   }).join(" ∧ ")}`;
-  return `instance : CRep ${t.lean} := ⟨fun h a v => ${body("h", "a", "v")}⟩
-theorem crep_${short(t.lean)} {h : Core.Heap} {a : ${t.lean}} {v} : crep h a v ↔ ${body("h", "a", "v")} := Iff.rfl`;
+  return `instance : CRep ${plain(t)} := ⟨fun h a v => ${body("h", "a", "v")}⟩
+theorem crep_${short(plain(t))} {h : Core.Heap} {a : ${plain(t)}} {v} : crep h a v ↔ ${body("h", "a", "v")} := Iff.rfl`;
 }
 
 export function generate(root, file, fn) {
@@ -53,7 +53,11 @@ export function generate(root, file, fn) {
   const dyn = dynTranslate(path.join(root, file), [fn]);
   const recs = records(sig);
   const P = sig.params.map((_, i) => `p${i}`), V = sig.params.map((_, i) => `v${i}`);
-  const crepNames = ["crep_num", "crep_bool", "crep_str", "crep_list", "crepOpt_some", "crepOpt_none", ...recs.map((t) => `crep_${short(t.lean)}`)].join(", ");
+  const crepNames = ["crep_num", "crep_bool", "crep_str", "crep_list", "crepOpt_some", "crepOpt_none", "crep_none", "crep_some", ...recs.map((t) => `crep_${short(plain(t))}`)].join(", ");
+  const nums = sig.params.flatMap((t, i) => plain(t) === "Js.Num" ? [i] : []);
+  const truthies = nums.length ? ` | (exfalso; simp only [${nums.map((i) => `t${i}`).join(", ")}, decide_eq_true_eq, decide_eq_false_iff_not, Bool.not_eq_true, ne_eq, not_not] at *; omega)` : "";
+  const opts = sig.params.flatMap((t, i) => t.kind === "optional" ? [i] : []);
+  const optCases = opts.length ? ` | (${opts.map((i) => `cases p${i}`).join("; ")} <;> simp_all [${crepNames}, numIs_num, List.lookup])` : "";
   const hyps = sig.params.map((t, i) => `(h${i} : ${crepOf(t, P[i], V[i], "h")})`).join(" ");
   const source = view.source.replace(/^import.*\n/gm, "").replace(/^open .*\n/gm, "");
   const key = short(sig.lean);
@@ -77,14 +81,21 @@ theorem ${key}_dyn {h : Core.Heap} ${V.map((v) => `{${v} : Core.Val}`).join(" ")
   ${sig.params.length ? `try simp only [${crepNames}] at ${sig.params.map((_, i) => `h${i}`).join(" ")}
   try casesm* ∃ _, _, _ ∧ _
   try subst_vars
-  ` : ""}refine rel_intro (Q := fun r v h' => h <+: h' ∧ ${crepOf(sig.result, "r", "v", "h'")}) ?_ hr
+  ${nums.map((i) => `have t${i} := truthy_numIs h${i}\n  `).join("")}` : ""}refine rel_intro (Q := fun r v h' => h <+: h' ∧ ${crepOf(sig.result, "r", "v", "h'")}) ?_ hr
   unfold ${sig.lean} D.${fn}
-  rsteps
-  all_goals first | omega | (exfalso; omega) | (refine ⟨by first | rfl | trivial | exact List.prefix_refl _ | exact List.prefix_append _ _, ?_⟩; first | rfl | (simp [${crepNames}, numIs_num, List.lookup, *]; done) | (simp only [${crepNames}] at *; simp [${crepNames}, numIs_num, List.lookup, *]))
+${callees(source, sig.lean, dyn, fn)}  rsteps
+  all_goals first | contradiction | omega | (exfalso; omega)${truthies}${optCases} | (refine ⟨by first | rfl | trivial | exact List.prefix_refl _ | exact List.prefix_append _ _ | exact (List.prefix_append _ _).trans (List.prefix_append _ _), ?_⟩; first | rfl | (simp [${crepNames}, numIs_num, List.lookup, *]; done) | (simp only [${crepNames}] at *; simp [${crepNames}, numIs_num, List.lookup, *]))
 
 #print axioms ${key}_dyn
 `;
   return { text, key, typedDef: sig.lean };
+}
+
+// Other functions of the file: unfolded so a call steps through the callee on both sides.
+function callees(source, top, dyn, fn) {
+  const typed = [...source.matchAll(/^def ([\w.]+)/gm)].map((m) => m[1]).filter((n) => n !== top);
+  const untyped = [...dyn.defs.keys()].filter((n) => n !== fn).map((n) => `D.${n}`);
+  return [...typed, ...untyped].map((n) => `  try unfold ${n}\n`).join("");
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
