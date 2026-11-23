@@ -230,6 +230,8 @@ theorem SimB.ofC {p s e P} [Decidable P] (h : SimC p s e P) : SimB p s e P :=
 macro_rules | `(tactic| s_field) => `(tactic| (apply SimE.exnMessage; sim'))
 macro_rules | `(tactic| s_field) => `(tactic| (apply SimE.exnName; sim'))
 macro_rules | `(tactic| simb) => `(tactic| exact SimB.lit_true)
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.or_t; simb; simp; done))
+macro_rules | `(tactic| simb) => `(tactic| (apply SimB.and_f; simb; simp; done))
 
 def AnsRel {α} [TyRep α] : Js.Answer α → Ans → Prop
   | .value r, .value d => ∀ h, h <+: (alloc h d).2 ∧ rep (alloc h d).2 r (alloc h d).1
@@ -682,7 +684,13 @@ macro_rules | `(tactic| astep) => `(tactic| first
         rotate_left
         rename_i hP
         apply AW.ite_neg opName ArgOK hH (by first | simb | exact SimB.ofC (by simc) | exact SimB.ofC (SimC.eq_str (by sim) (by sim))) hP
-        intro s' hu hH; carry hu; clear hu; a_view))
+        intro s' hu hH; carry hu; clear hu; a_view)
+     | (split at hr <;> first
+        | (apply AW.ite_pos opName ArgOK hH; simb; (first | trivial | simp); intro s' hu hH; carry hu; clear hu; a_view)
+        | (apply AW.ite_neg opName ArgOK hH; simb; simp; intro s' hu hH; carry hu; clear hu; a_view)
+        | (split at hr <;> (rename_i hc; first
+           | (apply AW.ite_pos opName ArgOK hH; simb; simp [hc]; intro s' hu hH; carry hu; clear hu; a_view)
+           | (apply AW.ite_neg opName ArgOK hH; simb; simp [hc]; intro s' hu hH; carry hu; clear hu; a_view)))))
   | (show AW _ _ _ _ (.block (.await _ _ _ :: _) :: _) _
      first
      | (rcases Js.Eff.bind_call hr with ⟨x, heq, hr⟩ | ⟨e, heq, rfl, rfl⟩ <;> first
