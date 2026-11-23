@@ -330,6 +330,19 @@ theorem rel_dneg {α δ : Type} {t : Result α} {a : Int} {v : Val} {k : Val →
 section
 open Core.F64
 variable {v w : Val} {a b : Int}
+theorem ite_or_bool {p : Prop} [Decidable p] {c : Bool} :
+    (if p then (pure (.bool (decide p)) : M Val) else pure (.bool c)) = pure (.bool (decide p || c)) := by
+  by_cases hp : p <;> simp [hp]
+theorem ite_or_bool' {b c : Bool} :
+    (if b = true then (pure (.bool b) : M Val) else pure (.bool c)) = pure (.bool (b || c)) := by
+  cases b <;> rfl
+theorem ite_and_bool {p : Prop} [Decidable p] {c : Bool} :
+    (if p then (pure (.bool c) : M Val) else pure (.bool (decide p))) = pure (.bool (decide p && c)) := by
+  by_cases hp : p <;> simp [hp]
+theorem ite_and_bool' {b c : Bool} :
+    (if b = true then (pure (.bool c) : M Val) else pure (.bool b)) = pure (.bool (b && c)) := by
+  cases b <;> rfl
+
 theorem bin_lt_is (hv : NumIs v a) (hw : NumIs w b) : bin .lt v w = pure (.bool (decide (a < b))) := by
   obtain ⟨x, rfl, hx⟩ := hv; obtain ⟨y, rfl, hy⟩ := hw
   show (pure (.bool (x.lt y)) : M Val) = _; rw [lt_isInt hx hy]
@@ -1194,16 +1207,16 @@ macro "rsteps" : tactic => `(tactic| repeat' (first
   | (refine rel_min_ok ?_ ?_ ?_ <;> rmin)
   | (refine rel_max_ok ?_ ?_ ?_ <;> first | (intro u hu; simp only [max_val] at hu) | exact numIs_num | assumption)
   | (exfalso; simp only [not_true_eq_false, Bool.false_eq_true, truthy_bool, decide_eq_true_eq] at *; done)
-  | (exfalso; (try simp only [truthy_bool, Bool.not_not, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not] at *); omega)
+  | (exfalso; (try simp only [truthy_bool, Bool.not_not, decide_eq_true_eq, Bool.not_eq_true, Bool.not_eq_true', not_not, decide_eq_false_iff_not, Bool.or_eq_true, Bool.and_eq_true] at *); omega)
   | (exfalso; have := nullish_of_crep_none ‹crep _ (none : Option _) _›; simp_all; done)
   | (exfalso; have := not_nullish_of_crep_some ‹crep _ (some (_ : Js.Num)) _›; simp_all; done)
   | rops
   | (simp only [Std.bind_ok, Std.bind_assoc, bind_tc_ok, bind_assoc_eq, dbind_assoc, dpure_bind])
   | (refine rel_tail ?_; (try simp only [dbind_assoc]); rops)
-  | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
+  | (apply rel_ok; (try simp only [spec_rok]); (try simp only [true_and, false_and, decide_false]); first | (refine spec_min ?_ ?_ ?_ <;> first | (intro _ _) | exact numIs_num | assumption) | (try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is, ite_or_bool, ite_or_bool', ite_and_bool, ite_and_bool']))
   | (split <;> (rename_i hc
                 try simp only [truthy_bool, decide_eq_true_eq, Bool.not_eq_true, decide_eq_false_iff_not, max_val, Js.isArray, Option.isSome, truthy_str] at hc
-                try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is]))
-  | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is])))
+                try dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is, ite_or_bool, ite_or_bool', ite_and_bool, ite_and_bool']))
+  | (apply rel_dbind; dsteps [bin_lt_is, bin_gt_is, bin_le_is, bin_ge_is, bin_eq_is, bin_ne_is, ite_or_bool, ite_or_bool', ite_and_bool, ite_and_bool'])))
 
 end Dyn

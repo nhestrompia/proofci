@@ -55,7 +55,7 @@ export function generate(root, file, fn) {
   const P = sig.params.map((_, i) => `p${i}`), V = sig.params.map((_, i) => `v${i}`);
   const crepNames = ["crep_num", "crep_bool", "crep_str", "crep_list", "crepOpt_some", "crepOpt_none", "crep_none", "crep_some", ...recs.map((t) => `crep_${short(plain(t))}`)].join(", ");
   const nums = sig.params.flatMap((t, i) => plain(t) === "Js.Num" ? [i] : []);
-  const truthies = nums.length ? ` | (exfalso; simp only [${nums.map((i) => `t${i}`).join(", ")}, decide_eq_true_eq, decide_eq_false_iff_not, Bool.not_eq_true, ne_eq, not_not] at *; omega)` : "";
+  const truthies = nums.length ? ` | (exfalso; simp only [${nums.map((i) => `t${i}`).join(", ")}, decide_eq_true_eq, decide_eq_false_iff_not, Bool.not_eq_true, ne_eq, not_not, Bool.or_eq_true, Bool.and_eq_true] at *; omega)` : "";
   const opts = sig.params.flatMap((t, i) => t.kind === "optional" ? [i] : []);
   const optCases = opts.length ? ` | (${opts.map((i) => `cases p${i}`).join("; ")} <;> simp_all [${crepNames}, numIs_num, List.lookup])` : "";
   const hyps = sig.params.map((t, i) => `(h${i} : ${crepOf(t, P[i], V[i], "h")})`).join(" ");
