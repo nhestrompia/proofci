@@ -13,7 +13,7 @@ const units = t => `[${[...Array(t.length).keys()].map(i => t.charCodeAt(i)).joi
 const q = JSON.stringify;
 const short = n => n.replace(/[^A-Za-z0-9_]/g, "_");
 
-function leanType(t) {
+export function leanType(t) {
   switch (t.kind) {
     case "number": return "Js.Num";
     case "string": return "Js.Str";
@@ -40,10 +40,10 @@ const generics = t => t.kind === "generic" ? [t] : t.kind === "array" ? generics
 // arguments, which unification fills in later.
 const binders = (ts, { eq = false, late = false } = {}) => [...new Map(ts.flatMap(generics).map(g => [g.name, g])).values()]
   .map(g => `{${g.name} : Type}${eq ? (late ? ` {_ : DecidableEq ${g.name}}` : ` [DecidableEq ${g.name}]`) : ""}${late ? ` {_ : TyRep ${g.name}}` : ` [TyRep ${g.name}]`}${g.nonNull ? ` [NotNull ${g.name}]` : ""}`).join(" ");
-const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
+export const plain = t => t.kind === "optional" ? `(Option ${plain(t.inner)})` : t.kind === "array" ? `(List ${plain(t.item)})` : leanType(t);
 
 // Key lists of record literals, reading nested ones separately.
-function recordShapes(lean) {
+export function recordShapes(lean) {
   const shapes = new Set();
   for (let at = lean.indexOf(".record ["); at >= 0; at = lean.indexOf(".record [", at + 1)) {
     let i = at + 8, depth = 0, str = false;
@@ -154,7 +154,7 @@ macro_rules | \`(tactic| c_for) => \`(tactic| (
   (focus (intro q rest ${pattern(vars.length) === "_" ? "_" : "st"} s3 w y hf hR hw hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; apply enter; intro s4 hu he2 hh; have hvq := V.mk' (α := ${T}) he2 hh hw; have hb0 := base_of hh; have hfr : Fr s3 s4 ${W} := Fr.upd (Fr.refl _ _) hu (by decide); carry hu; clear hu he2 hh; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))${tail}`;
 }
 
-function enumRules(e) {
+export function enumRules(e) {
   const n = short(e.lean);
   const tag = `${n}_tag`;
   return `def ${tag} : ${e.lean} → List Nat
@@ -347,7 +347,7 @@ function fixedPrefix(text, names) {
 
 // A union tagged by `kind`: an object whose `kind` is its variant's tag, with that variant's fields.
 // It may hold itself directly (another variant ends it), or through `T | null`, `T | undefined` or `T[]`.
-function taggedRules(given, shapes, group) {
+export function taggedRules(given, shapes, group) {
   const n = short(given.lean), tag = `${n}_tag`;
   const u = given.params ? { ...given, variants: given.declared, lean: `(${given.lean} ${given.params.join(" ")})` } : given;
   const T = u.lean;
@@ -463,7 +463,7 @@ macro_rules | \`(tactic| s_rec) => \`(tactic| (apply ${n}_lit_${short(v.lean)}_$
     .replace(/^instance : /gm, `instance${binders} : `);
 }
 
-function recordRules(record, shapes, group) {
+export function recordRules(record, shapes, group) {
   const n = short(record.lean);
   const self = Boolean(group) || !record.params && JSON.stringify(record.fields).includes(`"kind":"recursive","lean":${q(record.lean)}`);
   const r = record.params ? { ...record, fields: record.declared, lean: `(${record.lean} ${record.params.join(" ")})` } : record;
@@ -585,6 +585,18 @@ export function generate(root, target, paths, { viewSource, options } = {}) {
   const reachable = ordered.map(s => { const at = position(s); return at < 0 ? "" : source.slice(at, source.indexOf("\n\n", at) < 0 ? undefined : source.indexOf("\n\n", at)); }).join("\n");
   const constants = [...source.matchAll(/^def (\S+) : Result /gm)].map(m => m[1]).filter(c => reachable.includes(c));
   const cbNames = [...lean.matchAll(/^def (\S+_cb\d+) : Fn/gm)].map(m => m[1]);
+  // A record of dynamic keys met only inside a function body: take its value type from the view.
+  const code = reachable.replace(/js!"[^"]*"/g, "");
+  for (const m of code.matchAll(/Js\.Dict Js\.Str /g)) {
+    let i = m.index + m[0].length, depth = 0, j = i;
+    for (; j < code.length; j++) {
+      const c = code[j];
+      if (c === "(") depth++;
+      else if (c === ")") { if (depth === 0) break; depth--; }
+      else if (depth === 0 && /\s/.test(c)) break;
+    }
+    dictValues.add(code.slice(i, j));
+  }
   // `{}` gives no element type, so name the ones these functions use.
   const dictRules = [...dictValues].map(v => `macro_rules | \`(tactic| s_rec) => \`(tactic| apply (SimE.recEmpty (α := ${v}) (d := []) rfl))`).join("\n");
   dictValues.clear();

@@ -80,10 +80,10 @@ Three places hold the meaning, and they are checked against each other by tests,
 
 ## Not done
 
-* **No bridge theorem** from the view to Core's reading of async code. The existing bridge machinery
-  walks a `Result` do-block against Core statements and has no notion of a thrown outcome, so it needs
-  a thrown-aware judgement and a rule per statement kind before it can drive an `Eff` view. The two
-  test layers above are what stands in for it.
+* **Bridge:** `abridge.mjs` writes a theorem per `async` function (`Spike/ASim.lean`): for an oracle
+  related to the view's, Core's run ends with the view's value or rejection, the same history, and a heap
+  that extends the caller's. `for`/`while` loops and `finally` have no rule yet and stay tested; so do
+  recursive `async` functions and `await` of one in another file.
 * `Promise.all`, `allSettled`, `race`, `.then`, timers, generators and `for await` fail closed.
 * Effects of the `method` and `param` forms are accepted in the policy and stop the translator with a
   message: they need class and function types.

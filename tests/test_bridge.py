@@ -114,9 +114,9 @@ class RunTests(unittest.TestCase):
                          {"a.ts::f": bridge.PROVED, "a.ts::g": bridge.TESTED, "a.ts::h": bridge.TESTED})
         self.assertEqual(got["a.ts::h"].reason, "no encoding")
 
-    def test_async_has_no_bridge_yet(self):
+    def test_async_goes_to_the_generator(self):
         got = self.run_with(["a.ts::f"], extraction=fake_extraction(effects={"a.ts::f": ["getLink"]}))
-        self.assertEqual((got["a.ts::f"].status, got["a.ts::f"].reason), (bridge.TESTED, "no bridge for async code yet"))
+        self.assertEqual(got["a.ts::f"].status, bridge.PROVED)
 
     def test_assumed_call_has_no_bridge(self):
         got = self.run_with(["a.ts::f"], extraction=fake_extraction(assumed={"a.ts::f": ["slug::slug"]}))

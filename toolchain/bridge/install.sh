@@ -8,5 +8,5 @@ import json
 from proofci.lean import _lake_manifest
 open('lake-manifest.json', 'w').write(json.dumps(_lake_manifest('proofci_bridge'), indent=1))"
 export PATH=/opt/lean/bin:$PATH
-lake build Spike.Tac
+lake build Spike.Tac Spike.ASim
 chmod -R a+rX /opt/proofci/spike

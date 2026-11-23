@@ -48,7 +48,6 @@ DEFAULT_BUDGET = 900       # seconds for all of them together
 MAX_JOBS = 4               # Lean processes at once
 GENERATE_TIMEOUT = 300
 
-NO_ASYNC_BRIDGE = "no bridge for async code yet"
 
 AXIOMS = re.compile(r"^'([^']+)' (?:depends on axioms: \[([^\]]*)\]|does not depend on any axioms)\s*$", re.M)
 THEOREMS = re.compile(r"^#print axioms (\S+)$", re.M)
@@ -142,7 +141,7 @@ def generate(extraction, targets, out: Path):
     config = out / "config.json"
     config.write_text(json.dumps({
         "root": str(extraction.root), "repository": str(checkout), "policyRoot": str(policy), "viewFile": str(extraction.lean_file),
-        "out": str(out), "targets": list(targets),
+        "out": str(out), "targets": list(targets), "async": [t for t in targets if t in (extraction.effects or {})],
         "assumes": [{"call": call, "signature": signature} for call, signature in extraction.assumptions.items()],
         "effects": extraction.effect_entries,
     }))
@@ -182,9 +181,7 @@ def run(extraction, work: Path, functions, timeout=None, budget=None, jobs=None)
     results = {}
     todo = []
     for function in functions:
-        if function in (extraction.effects or {}):
-            results[function] = FunctionStatus(function, TESTED, NO_ASYNC_BRIDGE)
-        elif (extraction.assumed or {}).get(function):
+        if (extraction.assumed or {}).get(function):
             calls = ", ".join(f"`{call}`" for call in extraction.assumed[function])
             results[function] = FunctionStatus(
                 function, TESTED, f"it relies on the assumed outside call {calls}, which has no code to bridge "

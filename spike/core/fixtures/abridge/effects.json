@@ -1,0 +1,26 @@
+[
+  {
+    "id": "getName",
+    "call": "world.ts::getName",
+    "signature": "(id: string): Promise<string>",
+    "kind": "read"
+  },
+  {
+    "id": "getCount",
+    "call": "world.ts::getCount",
+    "signature": "(id: string): Promise<number>",
+    "kind": "read"
+  },
+  {
+    "id": "logEvent",
+    "call": "world.ts::logEvent",
+    "signature": "(id: string): Promise<void>",
+    "kind": "write"
+  },
+  {
+    "id": "setScore",
+    "call": "world.ts::setScore",
+    "signature": "(id: string, score: number): Promise<boolean>",
+    "kind": "write"
+  }
+]

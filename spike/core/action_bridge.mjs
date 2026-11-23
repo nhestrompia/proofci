@@ -2,7 +2,7 @@
 // function's typed view, its Core, and a theorem saying they agree (see bridge3.mjs).
 //
 // usage: node action_bridge.mjs <config.json>
-// config: { root, repository, policyRoot, viewFile, out, targets, assumes, effects }
+// config: { root, repository, policyRoot, viewFile, out, targets, async, assumes, effects }
 // The last line printed is JSON: { results: { [target]: { file } | { reason } } }.
 //
 // A target that can't be bridged gets a reason, never an exception: the caller reports it as
@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { generate } from "./bridge3.mjs";
+import { generateAsync } from "./abridge.mjs";
 import { protectedPaths, workspacePaths } from "../../typescript/paths.mjs";
 
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
@@ -34,7 +35,8 @@ function reasonOf(error) {
 const results = {};
 config.targets.forEach((target, index) => {
   try {
-    const { text } = generate(config.root, target, paths, { viewSource, options });
+    const make = (config.async ?? []).includes(target) ? generateAsync : generate;
+    const { text } = make(config.root, target, paths, { viewSource, options });
     const file = `B${index}.lean`;
     writeFileSync(join(config.out, file), text);
     results[target] = { file };

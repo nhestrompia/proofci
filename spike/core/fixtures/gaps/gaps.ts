@@ -610,3 +610,15 @@ export function hasVowel(s: string): boolean {
 export function firstDash(s: string): string {
   return s.replace(/-|_/, " ");
 }
+
+export function countDistinct(xs: string[]): number {
+  const seen: Record<string, boolean> = {};
+  let n = 0;
+  for (const x of xs) {
+    if (!(x in seen)) {
+      seen[x] = true;
+      n = n + 1;
+    }
+  }
+  return n;
+}
