@@ -1164,6 +1164,8 @@ export class Translator {
   // elaborates and the other targets are judged. Its theorems are never run.
   stub(declaration) {
     const fn = this.bodyOf(declaration);
+    const known = this.functions.get(declaration);
+    if (known) return known.lean; // already declared by an earlier caller — reuse the name
     const signature = this.checker.getSignatureFromDeclaration(fn);
     const scope = new Stub(this, fn);
     const generics = this.generics(fn);
@@ -1197,7 +1199,7 @@ export class Translator {
     const type = this.checker.getTypeAtLocation(declaration.name);
     const lines = [];
     const outer = this.doubles;
-    this.doubles = usesDoubles(declaration);
+    this.doubles = usesDoubles(declaration, this.checker);
     try {
       const leanType = this.type(type, declaration);
       const result = scope.convert(declaration.initializer, type, new Map(), lines);
@@ -1236,7 +1238,7 @@ function bitsOf(value) {
 // body asks for something safe integers cannot say: a fractional or `-0`
 // literal, `x / y` outside `Math.floor/ceil/trunc(x / y)`, `Math.round` or
 // `Math.sign`, a `Number.is*` test, or `NaN`/`Infinity`/`Number` bit constants.
-function usesDoubles(declaration) {
+function usesDoubles(declaration, checker) {
   let doubles = false;
   const visit = node => {
     if (doubles || !node) return;
@@ -1247,7 +1249,8 @@ function usesDoubles(declaration) {
       const parent = node.parent;
       const rounded = ts.isCallExpression(parent) && ts.isPropertyAccessExpression(unwrap(parent.expression))
         && ["floor", "ceil", "trunc"].includes(unwrap(parent.expression).name.text) && parent.arguments[0] === node;
-      if (!rounded) doubles = true;
+      // `bigint / bigint` is bigint division, not binary64 arithmetic.
+      if (!rounded && !(checker.getTypeAtLocation(node).flags & ts.TypeFlags.BigIntLike)) doubles = true;
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(unwrap(node.expression))) {
       const recv = unwrap(unwrap(node.expression).expression), fn = unwrap(node.expression).name.text;
       if (ts.isIdentifier(recv) && recv.text === "Math" && ["round", "sign"].includes(fn)) doubles = true;
@@ -3914,7 +3917,7 @@ export function translate({ root, module, targets, paths, repository, policyRoot
     let declaration;
     try {
       declaration = findDeclaration(translator, target);
-      translator.doubles = usesDoubles(declaration);
+      translator.doubles = usesDoubles(declaration, translator.checker);
       if (translator.doubles && translator.isAsync(translator.bodyOf(declaration)))
         throw translator.fail(declaration, "real `number` arithmetic inside `async` isn't bridged yet — keep the awaited calls and do the numeric work in a plain function");
       names[target] = translator.declareFunction(declaration);
