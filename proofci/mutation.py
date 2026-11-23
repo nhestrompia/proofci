@@ -97,14 +97,16 @@ def _eval_outputs(ws, calls, module_text, timeout):
     return out if len(out) == len(calls) else None
 
 
-ERROR_LINE_ANY = re.compile(r"(Proofs(?:/[\w.-]+)*\.lean):(\d+)")
+# Lake prints `error: Proofs.lean:L:C: msg`; plain lean `Proofs.lean:L:C: error: msg`.
+# `warning:`-level diagnostics are not build failures and must not be attributed.
+ERROR_LINE_ANY = re.compile(r"(?:error: (Proofs(?:/[\w.-]+)*\.lean):(\d+):|(Proofs(?:/[\w.-]+)*\.lean):(\d+):(\d+): error)")
 
 
 def _failed_declarations(root, output):
     """Map error locations in the judge's output back to declaration names."""
     files = {}
     for match in ERROR_LINE_ANY.finditer(output):
-        files.setdefault(match.group(1), []).append(int(match.group(2)))
+        files.setdefault(match.group(1) or match.group(3), []).append(int(match.group(2) or match.group(4)))
     failed = set()
     for name, lines in files.items():
         try:

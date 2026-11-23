@@ -87,6 +87,11 @@ def _hypotheses(signature):
     return found
 
 
+def _uncommented(text):
+    """Comments replaced by spaces, literals kept: the text a statement is read from."""
+    return LITERAL.sub(lambda m: _blank(m) if m.group(0)[0] in "/-" else m.group(0), text)
+
+
 def _mask(text):
     """Comments replaced by spaces, keeping length and newlines, so positions stay
     valid and keywords inside comments (a `namespace` line in a `/- -/` block, or
@@ -114,7 +119,7 @@ def _scope_at(masked, pos):
 
 def theorems(text):
     """{qualified name: {"claim", "statement", "hypotheses"}} for each theorem in a contract."""
-    masked = _mask(text)
+    masked, plain = _mask(text), _uncommented(text)
     docs = {}
     for m in DOC_THEOREM.finditer(text):
         qualified = ".".join([*_scope_at(masked, m.start()), m.group("name")])
@@ -123,8 +128,8 @@ def theorems(text):
     for m in THEOREM.finditer(masked):
         name = ".".join([*_scope_at(masked, m.start()), m.group("name")])
         end = masked.find(":=", m.end())
-        statement = text[m.start():end if end != -1 else len(text)].rstrip().rstrip(":").strip()
-        signature = text[m.end():end if end != -1 else len(text)]
+        statement = plain[m.start():end if end != -1 else len(text)].rstrip().rstrip(":").strip()
+        signature = plain[m.end():end if end != -1 else len(text)]
         found[name] = {
             "claim": docs.get(name),
             "statement": " ".join(statement.split()),

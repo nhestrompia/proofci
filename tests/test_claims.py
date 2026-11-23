@@ -63,6 +63,27 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(found["t"]["hypotheses"],
                          ['h : s ≠ "--"', "k : c = '('", "m : c ≠ ']'", "h' : s ≠ t"])
 
+    def test_statement_keeps_string_literals_and_drops_comments(self):
+        found = claims.theorems('theorem t (s : String) (h : s ≠ "--help") -- why\n'
+                                '  : True := trivial')
+        self.assertEqual(found["t"]["statement"], 'theorem t (s : String) (h : s ≠ "--help") : True')
+        self.assertEqual(found["t"]["hypotheses"], ['h : s ≠ "--help"'])
+
+    def test_a_literal_assignment_does_not_end_the_statement(self):
+        found = claims.theorems('theorem t : "/- default := true -/".length ≤ 41 := by decide')
+        self.assertEqual(found["t"]["statement"], 'theorem t : "/- default := true -/".length ≤ 41')
+
+    def test_a_quote_character_literal_opens_no_string(self):
+        found = claims.theorems("def quote : Char := '\"'\n/-\nnamespace Scratch\n-/\n"
+                                "/-- Capped. -/\ntheorem capped : True := trivial\n")
+        self.assertEqual(set(found), {"capped"})
+        self.assertEqual(found["capped"]["claim"], "Capped.")
+
+    def test_declarations_inside_strings_are_not_theorems(self):
+        found = claims.theorems('theorem capped : True := trivial\n'
+                                'def s := "\ntheorem capped : False := sorry"\n')
+        self.assertEqual(found["capped"]["statement"], "theorem capped : True")
+
     def test_statement_is_the_signature_on_one_line(self):
         statement = claims.theorems(CONTRACT)["fee_capped"]["statement"]
         self.assertEqual(statement, "theorem fee_capped (amount rate : Js.Num) "
