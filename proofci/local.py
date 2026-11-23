@@ -13,6 +13,7 @@ The check's own code and sandbox do not change for local use; an error or a
 timeout exits non-zero and never prints a passing report.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -28,14 +29,47 @@ SECCOMP = Path(__file__).resolve().parent.parent / "action" / "seccomp.json"
 
 def sandbox_opts():
     """The container restrictions from action/run.py. The seccomp profile is
-    shipped with the action; where it isn't installed (a bare `proofci`
-    package), fall back to no profile the way docs/development.md does."""
+    shipped with the action; a bare `proofci` package doesn't have it, and
+    running the check with no syscall filter isn't the same check."""
+    if not SECCOMP.is_file():
+        raise check_mod.ConfigError(f"{SECCOMP.name} not found next to the action; "
+                                    "run `proofci local` from the proofci checkout")
     return [
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--read-only", "--tmpfs", "/tmp:exec,mode=1777",
-        "--security-opt", f"seccomp={SECCOMP}" if SECCOMP.is_file() else "seccomp=unconfined",
+        "--security-opt", f"seccomp={SECCOMP}",
         "--security-opt", "apparmor=unconfined", "--security-opt", "systempaths=unconfined",
     ]
+
+
+def resolve_base(repo: Path, ref, err=print):
+    """The commit whose policy the check trusts.
+
+    `ref` wins when given; otherwise the merge-base of HEAD with the remote's
+    default branch -- the point a pull request's real base grew from, so an
+    agent that committed its own contract edits can't name its own HEAD."""
+    if ref is None:
+        default = subprocess.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "origin/HEAD"],
+                                 capture_output=True)
+        remote = _text(default.stdout).strip() if default.returncode == 0 else ""
+        if not remote:
+            for candidate in ("origin/main", "origin/master"):
+                ok = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", candidate],
+                                    capture_output=True)
+                if ok.returncode == 0:
+                    remote = candidate
+                    break
+        if not remote:
+            raise check_mod.ConfigError("no remote default branch found; pass --base explicitly")
+        merged = subprocess.run(["git", "-C", str(repo), "merge-base", "HEAD", remote],
+                                capture_output=True)
+        if merged.returncode != 0 or not _text(merged.stdout).strip():
+            raise check_mod.ConfigError(f"no merge-base of HEAD and {remote}; pass --base explicitly")
+        return _text(merged.stdout).strip()
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", ref], capture_output=True)
+    if sha.returncode != 0:
+        raise check_mod.ConfigError(f"git could not read `{ref}` in {repo}")
+    return _text(sha.stdout).strip()
 
 
 def checkout_ref(repo: Path, ref: str, dest: Path):
@@ -71,6 +105,7 @@ def run(repo: Path, base_ref, policy, image, scan=False, fetch_deps=False, err=l
     repo = repo.resolve()
     if not repo.is_dir():
         raise check_mod.ConfigError(f"{repo} is not a directory")
+    active = None
     if scan:
         try:
             active = check_mod.load_manifest(repo)
@@ -83,6 +118,7 @@ def run(repo: Path, base_ref, policy, image, scan=False, fetch_deps=False, err=l
     else:
         inner = ["check", "--base", "/base", "--head", "/head", "--vendor", "/vendor",
                  "--policy", policy, "--report", "/out/report.json", "--summary", "/out/summary.md"]
+    base_sha = None
     work = Path(tempfile.mkdtemp(prefix="proofci-local-"))
     try:
         out_dir = work / "out"
@@ -93,9 +129,14 @@ def run(repo: Path, base_ref, policy, image, scan=False, fetch_deps=False, err=l
         vendor.chmod(0o777)
         mounts = [f"{repo}:/head:ro", f"{out_dir}:/out", f"{vendor}:/vendor:ro"]
         if not scan:
-            base = checkout_ref(repo, base_ref, work / "base")
+            base_sha = resolve_base(repo, base_ref)
+            err(f"proofci: base {base_sha}")
+            base = checkout_ref(repo, base_sha, work / "base")
             mounts.insert(0, f"{base}:/base:ro")
         if fetch_deps:
+            if scan and active is None:
+                raise check_mod.ConfigError("--fetch installs the packages proofci.yaml names; "
+                                            "a repository without one has nothing for it to read")
             # fetch needs a --base even for a scan; the head checkout serves.
             fetch_mounts = [f"{repo}:/head:ro", f"{vendor}:/vendor"]
             base_args = ["--base", "/head"]
@@ -125,7 +166,12 @@ def run(repo: Path, base_ref, policy, image, scan=False, fetch_deps=False, err=l
         if not report.exists():
             err(f"proofci: no report was produced (exit {done.returncode})")
             return 2
-        print(report.read_text(), end="")
+        document = json.loads(report.read_text())
+        document["base"] = base_sha
+        print(json.dumps(document, indent=2))
+        if policy == "head":
+            err("proofci: `--policy head` trusted your own manifest and contract; "
+                "CI reads them from the base, so this is not the result CI reports.")
         return 0 if done.returncode == 0 else (1 if done.returncode == 1 else 2)
     finally:
         shutil.rmtree(work, ignore_errors=True)   # container-owned files may not be removable
