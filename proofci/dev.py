@@ -88,7 +88,7 @@ def _export_view(repo: Path, manifest, ws_root: Path, module: str, say):
         if views.is_symlink() or dest.is_symlink() or not views.resolve().is_relative_to(repo):
             say(f"skipped exporting the Lean view: {dest} is a symlink")
             return
-        if dest.exists() and not dest.read_text().startswith(VIEW_MARKER):
+        if dest.exists() and not dest.read_bytes().startswith(VIEW_MARKER.encode()):
             say(f"skipped exporting the Lean view: {dest} is not a generated file")
             return
         views.mkdir(exist_ok=True)
