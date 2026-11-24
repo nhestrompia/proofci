@@ -39,27 +39,31 @@ Design around them when a guarantee must reach `verified`.
 
 ## Refusals: construct → smallest rewrite that worked in the pilots
 
-| Refused | Rewrite |
-|---|---|
-| `typeof x === "string"` guard | Test for `null`/`undefined` (`x == null`); the declared type already says it. |
-| `a != null && b != null` one-condition check | Separate nested tests: `if (a === null) return …; if (b === null) return …` |
-| `any`, `unknown` | Write the real type (or `narrowed` on an `effects` entry). |
-| `Date` param/field | Split at the boundary: pass the `string`/`number` the pure core needs; `.toISOString()` in a thin wrapper. |
-| `enum` / Prisma enum import (`Type as ActivityType`) | String-literal union `type T = "a" \| "b"`, compare strings. |
-| Missing parameter type (implicit `any`); manifest also requires written return types | Annotate everything a guarantee reaches. |
-| `?.[key]` optional indexing | `v !== undefined ? v[key] : fallback`. |
-| `'k' in obj` on an interface | `obj.k !== undefined` (only when the field is set when defined). |
-| `xs.push(…)` into a parameter / shared value | `const ys = [...xs]; ys.push(…); return ys`. |
-| Literal-union member like `"NOT IN"` | Rename to a Lean-safe ASCII name (letters, digits, `_`). |
-| `Record`/`Map` lookup into a module const map | Inline the literal, or `switch` returning per-case literals. |
-| `NoInfer<T>`, `z.infer`, schema-derived types | Write the resolved type out by hand. |
-| Class/library object param, method calls | Pass the plain fields in an interface; no methods outside `async` handles. |
-| Rest params `...xs`, tuples, method members in interfaces | Array param; named-field interface; plain fields only. |
-| `JSON.*`, `Object`/`Reflect` reflection, `console.*`, `crypto`, `Math.random`, `Date.now` | No rewrite — keep them out of guaranteed functions; `console.log` can be an `assumes` entry in practice. |
-| `Math.pow` and unmodelled `Math.*` | Inline literal arithmetic (`a * a * a`; `quota * 8 / 10` for `Math.ceil(q*0.8)`). |
-| `filter(...).includes().map()` over literal lists | Translates, but the generated bridge proof goes STUCK — rewrite as `switch` on the inductive returning literals (proved in ~5 s vs timeout). |
-| Package calls (`prisma.*`, `zod.*`, `date-fns`, imported fns) | `assumes` for pure named imports (exact signature), `effects` for awaited calls; else unreachable. |
-| `Promise.all`, `.then`, timers, generators, `for await` | Out of scope — keep orchestration outside guaranteed functions. |
+The `code` column is the stable refusal code from `scan --json` — use it as
+the `code` field in `proofci/gaps.jsonl`. `type-named` covers every adopter-
+named class/interface; `other` means the reason text carries the detail.
+
+| Code | Refused | Rewrite |
+|---|---|---|
+| `typeof-expression` | `typeof x === "string"` guard | Test for `null`/`undefined` (`x == null`); the declared type already says it. |
+| `null-check` | `a != null && b != null` one-condition check | Separate nested tests: `if (a === null) return …; if (b === null) return …` |
+| `type-any`, `type-unknown` | `any`, `unknown` | Write the real type (or `narrowed` on an `effects` entry). |
+| `type-date` | `Date` param/field | Split at the boundary: pass the `string`/`number` the pure core needs; `.toISOString()` in a thin wrapper. |
+| `module-level-mutable` | `enum` / Prisma enum import (`Type as ActivityType`) | String-literal union `type T = "a" \| "b"`, compare strings. |
+| `compile-error`, `missing-types` | Missing parameter/return type (implicit `any`) | Annotate everything a guarantee reaches — the manifest requires written types. |
+| `index-non-array` | `?.[key]` optional indexing | `v !== undefined ? v[key] : fallback`. |
+| `in` | `'k' in obj` on an interface | `obj.k !== undefined` (only when the field is set when defined). |
+| `in-place-mutation` | `xs.push(…)` into a parameter / shared value | `const ys = [...xs]; ys.push(…); return ys`. |
+| `no-lean-spelling` | Literal-union member like `"NOT IN"` | Rename to a Lean-safe ASCII name (letters, digits, `_`). |
+| `record-literal` | `Record`/`Map` lookup into a module const map | Inline the literal, or `switch` returning per-case literals. |
+| `type-named` | `NoInfer<T>`, `z.infer`, schema-derived types | Write the resolved type out by hand. |
+| `type-named` | Class/library object param, method calls | Pass the plain fields in an interface; no methods outside `async` handles. |
+| `rest-parameters`, `type-tuple`, `not-plain-field` | Rest params `...xs`, tuples, method members in interfaces | Array param; named-field interface; plain fields only. |
+| `unknown-callee` | `JSON.*`, `Object`/`Reflect` reflection, `console.*`, `crypto`, `Math.random`, `Date.now` | No rewrite — keep them out of guaranteed functions; `console.log` can be an `assumes` entry in practice. |
+| `math-member` | `Math.pow` and unmodelled `Math.*` | Inline literal arithmetic (`a * a * a`; `quota * 8 / 10` for `Math.ceil(q*0.8)`). |
+| *(translates)* | `filter(...).includes().map()` over literal lists | The generated bridge proof goes STUCK — rewrite as `switch` on the inductive returning literals (proved in ~5 s vs timeout). |
+| `type-named`, `outside-package` | Package calls (`prisma.*`, `zod.*`, `date-fns`, imported fns) | `assumes` for pure named imports (exact signature), `effects` for awaited calls; else unreachable. |
+| `type-promise`, `type-named`, `unsupported-*` | `Promise.all`, `.then`, timers, generators, `for await` | Out of scope — keep orchestration outside guaranteed functions. |
 
 ## Picking worthwhile functions
 
@@ -72,6 +76,6 @@ Design around them when a guarantee must reach `verified`.
   calls `.toISOString()` at the edge is the pattern.
 - Prefer functions whose doc comment already promises something — the promise
   is the theorem.
-- On a real codebase `scan` dies on the first unsupported construct, so it
-  won't rank candidates for you. Read source, pick candidates, confirm each
-  with `dev --show`.
+- `scan --json` reports every exported function with its refusal `reason`,
+  `hint` and stable `code` (`summary.by_code` ranks the blockers). Copy `code`
+  into `proofci/gaps.jsonl` entries.

@@ -35,9 +35,9 @@ claims, and how far each function's translation is trusted.
   properties. The doc-comment claim beside each theorem is what keeps it
   honest; a statement can satisfy the checker vacuously otherwise.
 - `downgrades`: a function proved on the base that is anything less now blocks
-  (fail closed). With `--base HEAD` on a fresh adoption the base can't be
-  checked and the "was proved" wording is confusing — that's the temporary
-  workaround's artefact, not a real downgrade.
+  (fail closed). On a first adoption (`first_adoption: true`) there is no base
+  contract, so every guarantee counts as new and the run blocks until a
+  maintainer — not the PR author — approves it.
 
 ## Where the report can mislead
 

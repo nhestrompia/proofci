@@ -17,30 +17,36 @@ the toolchain image instead (see "In the image" below).
 ## What works today
 
 ```sh
-# List which exported functions translate; each refusal has reason + hint.
+# List which exported functions translate; each refusal has reason + hint +
+# a stable `code`; `summary.by_code` counts them. Per-function: a refusal
+# blocks only the functions that reach the construct. (exit 2 = fatal failure.)
 python3 -P -m proofci scan --repo <dir> [--package <subdir>] [--vendor <dir>]
-# WARNING: exits 2 on the first unsupported construct in a package — on real
-# code, pick candidates by reading source, confirm each with dev --show.
 
 # Fast iteration: translate + typecheck the contract, print Lean errors.
 python3 -P -m proofci dev --repo <dir> --json      # errors may be truncated
 python3 -P -m proofci dev --repo <dir> --show      # full Lean errors + the view
 
-# The real CI check, in the toolchain image. Run on the HOST from the ProofCI
-# checkout (it needs action/seccomp.json and shells out to docker).
-cd $CHECKOUT
-python3 -P -m proofci local --repo <dir> --image proofci-toolchain:dev --base HEAD
+# The real CI check, in the toolchain image. Runs on the host from anywhere
+# (it shells out to docker); scan/dev still need bwrap on the host.
+python3 -P -m proofci local --repo <dir> --image proofci-toolchain:dev
 ```
 
-**Temporary workaround — `--base HEAD`**: `local` reads `proofci.yaml` from the
-base ref (merge-base with the remote default branch), which does not exist on a
-first adoption — without it you get `proofci.yaml not found in /base`, exit 2.
-It will be replaced by a first-adoption mode (work in progress); `--policy head`
-does NOT fix it.
+**First adoption**: when the base ref has no `proofci.yaml` at all, the run is
+a first adoption — the candidate's manifest is used, every guarantee counts as
+new, and the run is a policy change that blocks until a maintainer who is NOT
+the pull-request author approves the contract. The new manifest's
+`policy.approvers` isn't trusted yet; it takes effect once merged. `local`
+reports `first_adoption: true` for this; no `--base` flag is needed.
+
+`PROOFCI_*` tuning variables the check honours (`PROOFCI_BRIDGE_TIMEOUT`,
+`PROOFCI_BRIDGE_BUDGET`, `PROOFCI_MUTATION_FULL`, `PROOFCI_MUTANTS`,
+`PROOFCI_MUTATION_BUDGET`, `PROOFCI_PARALLEL_JUDGES`) pass through to the
+container; no other environment is.
 
 Gotchas from the pilots:
 
-- `proofci local` must run on the host (it calls `docker`), from the checkout.
+- `proofci local` needs `docker` on the host but no longer needs the checkout:
+  it finds `seccomp.json` beside the package or at the image's install path.
 - `proofci fetch --out <dir>`: the vendor dir must be OUTSIDE the repo or the
   copy recurses forever. `chmod 777` the dir.
 - `--fetch` can't handle pnpm `link:` workspace deps; use a vendor dir.
@@ -75,7 +81,9 @@ and run `lake env lean Proofs.lean` there.
 4. **State guarantees** in `proofci/Contract.lean` with `/--` doc comments,
    ending `:= by sorry`. Shapes: see contracts.md — the checker has opinions.
 5. **Prove** in `proofci/Proofs.lean`; iterate with `dev` / `lake env lean`.
-6. **Run `local --base HEAD`** and read the report.
+6. **Run `local`** and read the report. A first adoption reports
+   `first_adoption: true` and blocks for maintainer approval in CI — locally
+   you read the report as usual.
 7. **Try to break it**: flip a comparison in the source; the check must block.
 8. Commit `proofci.yaml`, `proofci/Contract.lean`, `proofci/Proofs.lean`,
    the code refactors, and `proofci/gaps.jsonl`.
