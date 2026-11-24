@@ -437,13 +437,193 @@ def probe(checkout: Path, package_rel: str, work: Path, assumes=(), effects=(), 
     return outcome
 
 
+def _node_failure(result):
+    """Why the Node comparison never ran, with the process's last output: an
+    infrastructure failure (crash, OOM, timeout), never a disagreement."""
+    tail = " ".join(result.output.strip().split())[-400:]
+    if result.timed_out:
+        head = "the Node process that runs the comparison did not finish in time"
+    elif result.status in (134, 137, -6, -9) or "out of memory" in result.output.lower() or "heap" in result.output.lower():
+        head = "the Node process that runs the comparison ran out of memory"
+    else:
+        head = f"the Node process that runs the comparison exited with status {result.status}"
+    return head + (f"; its last output was: {tail}" if tail else " and printed nothing")
+
+
+def uncalled(checkout: Path, package_rel: str, functions):
+    """Target functions nothing else in the repository imports or calls.
+
+    A proof about a copy no shipped file references covers dead code. Returns
+    the subset of `functions` (`file.ts::name`, package-relative) with no
+    importer: static, and conservative — relative specifiers are resolved over
+    the whole checkout, bare specifiers only through each package's published
+    name, re-exports are followed, and any doubt means no warning."""
+    root = checkout.resolve()
+    package_root = package_rel.strip("/")
+    sources = {}   # normalized repo-relative extensionless path -> Path
+    refs = {}      # source key -> (text, [(resolved key, reexport, names, ns_alias)])
+    packages = {}  # published package name -> repo-relative dir (monorepo neighbours)
+    for path in sorted(p for ext in ("*.ts", "*.tsx", "*.mts", "*.cts") for p in root.rglob(ext)):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = path.relative_to(root)
+        if rel.name.endswith(".d.ts") or _TEST_FILE.search(rel.name):
+            continue
+        if any(p in _SKIP_DIRS for p in rel.parts):
+            continue
+        key = str(rel.with_suffix(""))
+        sources[key] = path
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        refs[key] = (text, _references(text))
+    for path in sorted(root.rglob("package.json")):
+        rel = path.relative_to(root)
+        if any(p in _SKIP_DIRS for p in rel.parts):
+            continue
+        name = _package_json(path).get("name")
+        if isinstance(name, str) and name:
+            packages[name] = "" if str(rel.parent) == "." else str(rel.parent)
+    resolved = {
+        key: (text, [
+            (frozenset(_resolve(spec, Path(key).parent, root, packages)), reexport, names, ns)
+            for spec, reexport, names, ns in items])
+        for key, (text, items) in refs.items()}
+    uncalled = []
+    for function in functions:
+        file_part, _, name = function.rpartition("::")
+        target_key = str(Path(package_root) / file_part)
+        for ext in _EXTS:
+            if target_key.endswith(ext):
+                target_key = target_key[: -len(ext)]
+        if target_key not in sources:
+            continue
+        providers = {target_key}
+        users = set()
+        changed = True
+        while changed:   # re-exports make another file provide the same name
+            changed = False
+            for key, (text, items) in resolved.items():
+                if key == target_key or key in users:
+                    continue
+                for mods, reexport, names, ns in items:
+                    if not any(mod in providers or mod + "/index" in providers for mod in mods):
+                        continue
+                    if names is not None and name not in names:
+                        if ns is None or not re.search(rf"\b{re.escape(ns)}\s*\.\s*{re.escape(name)}\b", text):
+                            continue
+                    users.add(key)
+                    if reexport and key not in providers:
+                        providers.add(key)
+                        changed = True
+        if not users:
+            uncalled.append(function)
+    return uncalled
+
+
+_SKIP_DIRS = {"node_modules", ".git", "proofci", "__tests__", "__mocks__", "test", "tests", "spec", "e2e"}
+_TEST_FILE = re.compile(r"[._-](test|spec|stories|e2e)\.[cm]?tsx?$")
+
+
+def _package_json(path: Path):
+    try:
+        return json.loads(path.read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+_REFERENCE = re.compile(r"""(?x)
+    \bimport\s+(?:type\s+)?(?P<iclause>[^'";]*?)\s+from\s*['"](?P<ispec>[^'"]+)['"]
+    |\bexport\s+(?:type\s+)?(?P<eclause>\{[^}]*\}|\*)\s+from\s*['"](?P<espec>[^'"]+)['"]
+    |\bimport\s*['"](?P<sspec>[^'"]+)['"]
+    |\b(?:require|import)\s*\(\s*['"](?P<dspec>[^'"]+)['"]\s*\)""")
+_EXTS = (".d.ts", ".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx")
+
+
+def _strip_ext(key):
+    for ext in _EXTS:
+        if key.endswith(ext):
+            return key[: -len(ext)]
+    return key
+
+
+def _resolve(spec, base: Path, root: Path, packages):
+    """An import specifier to its candidate module keys: relative specifiers
+    resolve against the importer's directory; a bare specifier resolves only
+    when it names a known package — its entry file or the subpath it names.
+    Unresolvable specifiers produce no key (no evidence either way)."""
+    if spec.startswith("."):
+        return {_strip_ext(os.path.normpath(str(base / spec)))}
+    segments = spec.split("/")
+    if spec.startswith("@"):
+        if len(segments) < 2:
+            return set()
+        name, sub = "/".join(segments[:2]), "/".join(segments[2:])
+    else:
+        name, sub = segments[0], "/".join(segments[1:])
+    directory = packages.get(name)
+    if directory is None:
+        return set()
+    if sub:
+        return {_strip_ext(os.path.normpath(f"{directory}/{sub}"))}
+    candidates = set()
+    manifest = _package_json(root / directory / "package.json")
+    for entry in ("main", "module", "source"):
+        value = manifest.get(entry)
+        if isinstance(value, str) and value:
+            candidates.add(_strip_ext(os.path.normpath(
+                f"{directory}/{value}" if directory else value)))
+    candidates |= {f"{directory}/index" if directory else "index",
+                   f"{directory}/src/index" if directory else "src/index"}
+    return candidates
+
+
+def _names(clause):
+    """Imported/exported source names, or None for 'anything in this module'."""
+    clause = clause.strip()
+    if clause == "*":
+        return None, None   # export * — re-exports everything
+    named = re.search(r"\{([^}]*)\}", clause)
+    if named:
+        names = set()
+        for part in named.group(1).split(","):
+            part = part.strip()
+            if part:
+                names.add(part.split(" as ")[0].strip())
+        return names, None
+    ns = re.match(r"\*\s+as\s+(\w+)", clause)
+    if ns:
+        return set(), ns.group(1)
+    return None, None   # a default import may name any export — can't tell, so don't warn
+
+
+def _references(text):
+    """(specifier, reexport?, names, ns alias) per import/export/require in `text`."""
+    found = []
+    for m in _REFERENCE.finditer(text):
+        if m.group("ispec") is not None:
+            reexport, spec = False, m.group("ispec")
+            names, ns = _names(m.group("iclause"))
+        elif m.group("espec") is not None:
+            reexport, spec = True, m.group("espec")
+            names, ns = _names(m.group("eclause"))
+        else:
+            reexport, spec, names, ns = False, m.group("sspec") or m.group("dspec"), None, None
+        found.append((spec, reexport, names, ns))
+    return found
+
+
 def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=None, timeout=300, detail=None,
                  literals=None):
     """Compare the translated functions with Node on generated inputs.
 
-    Returns (disagreements, notes). Only code that passed the translator's
-    checks runs here, and only in the sandbox: it is the candidate's code, so
-    this finds translator bugs and defends against nothing else.
+    Returns (disagreements, notes, infra): notes are informational, infra is a
+    reason the comparison itself could not run (Node crash, OOM, timeout, or
+    missing replay results) — an infrastructure failure, never a disagreement.
+    Only code that passed the translator's checks runs here, and only in the
+    sandbox: it is the candidate's code, so this finds translator bugs and
+    defends against nothing else.
 
     With a dict as `detail`, it also says which functions were involved:
     `detail["differ"]` lists the functions with a disagreement and
@@ -462,7 +642,7 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
         if extraction.assumed.get(t):
             detail["skipped"][t] = "it relies on an assumed outside call"
     if not signatures:
-        return [], skipped
+        return [], skipped, None
     if cases is None:  # each case takes about 8 ms to replay
         cases = max(25, min(200, MAX_CASES // max(len(signatures), 1)))
     config = out / "config.json"
@@ -474,9 +654,9 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     program = support_dir() / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
                        binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)
-    if node.status != 0:
+    if node.status != 0 or node.timed_out:
         detail["differ"] = sorted(signatures)
-        return ["the comparison with Node did not run: " + node.output[-600:]], []
+        return [], skipped, _node_failure(node)
     left_out = json.loads(node.output.splitlines()[-1])["skipped"]
     for item in left_out:
         function, _, why = item.partition(": ")
@@ -486,7 +666,7 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
                          writable=[ws.root / ".lake"], cwd=ws.root, timeout=timeout)
     if replay.timed_out:
         detail["differ"] = sorted(signatures)
-        return [f"the comparison with Node didn't finish in {timeout} seconds"], notes
+        return [], notes, f"replaying the comparison did not finish in {timeout} seconds"
     counts = {"agree": 0, "differ": 0, "failed": 0}
     disagreements = []
     for line in replay.output.splitlines():
@@ -502,7 +682,8 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     if sum(counts.values()) != expected:
         # Every case must report. One that doesn't compile compares nothing.
         detail["differ"] = sorted(signatures)
-        return [f"only {sum(counts.values())} of {expected} comparisons ran: " + _lean_errors(replay.output)], notes
+        return [], notes, (f"only {sum(counts.values())} of {expected} comparisons ran: "
+                           + _lean_errors(replay.output))
     notes.append(f"compared with Node: {counts['agree']} results agree, "
                  f"{counts['failed']} inputs left the safe-integer model")
-    return disagreements, notes
+    return disagreements, notes, None

@@ -63,10 +63,11 @@ class FunctionStatus:
     reason: str = ""
     seconds: float = None
     guarantees: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)   # trust notes a human should see next to the function
 
     def entry(self):
         return {"function": self.function, "status": self.status, "reason": self.reason,
-                "seconds": self.seconds, "guarantees": self.guarantees}
+                "seconds": self.seconds, "guarantees": self.guarantees, "warnings": self.warnings}
 
 
 def toolchain_dir():

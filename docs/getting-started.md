@@ -222,5 +222,12 @@ the planted-defect check runs only on guarantees whose statement is new or
 changed in the pull request (set `PROOFCI_MUTATION_FULL=1` to sweep every
 verified guarantee).
 
+A guarantee that only applies the target to literal arguments — `f (js!"x")`,
+not `f x` — is labelled **scope: example** in the report; it pins down one
+input, not the general case. `require_general: true` in `proofci.yaml` makes
+it block — see [TypeScript](typescript.md). The report also warns next to a
+function when nothing in the repository imports it (a proved copy of shipped
+code) or when the target isn't exported and Node generated no inputs.
+
 See [the demo repository](https://github.com/nhestrompia/proofci-demo/pulls)
 for live examples.

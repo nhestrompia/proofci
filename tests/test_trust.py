@@ -1,0 +1,242 @@
+"""Regression tests for the report-trust fixes: example-scope labelling,
+uncalled/non-exported targets, Node infrastructure-failure wording, the
+per-theorem hypothesis-witness check, and the one-line verdict."""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from proofci import check as check_mod, lean, sandbox, summary, typescript
+from proofci.check import Outcome, Report, VERIFIED
+
+
+class UncalledTests(unittest.TestCase):
+    """`uncalled` flags a target no other source file imports or calls."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def uncalled(self, *functions):
+        return typescript.uncalled(self.root, "", list(functions))
+
+    def test_flags_only_the_dead_target(self):
+        self.write("src/dead.ts", "export function dead() { return 1; }\n")
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/app.ts", "import { live } from './live.js';\nconsole.log(live());\n")
+        self.assertEqual(self.uncalled("src/dead.ts::dead", "src/live.ts::live"), ["src/dead.ts::dead"])
+
+    def test_reexport_relay_counts(self):
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/index.ts", "export { live } from './live.js';\n")
+        self.write("src/app.ts", "import { live } from './index';\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), [])
+
+    def test_star_reexport_counts(self):
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/index.ts", "export * from './live';\n")
+        self.write("src/app.ts", "import { live } from './index';\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), [])
+
+    def test_namespace_use_counts(self):
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/app.ts", "import * as L from './live';\nconsole.log(L.live());\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), [])
+
+    def test_a_test_file_is_no_caller(self):
+        self.write("src/dead.ts", "export function dead() { return 1; }\n")
+        self.write("src/dead.test.ts", "import { dead } from './dead';\n")
+        self.write("tests/use.ts", "import { dead } from '../src/dead';\n")
+        self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
+
+    def test_import_by_package_name_counts(self):
+        self.write("packages/lib/package.json", '{"name": "@acme/lib"}\n')
+        self.write("packages/lib/src/index.ts", "export { live } from './live';\n")
+        self.write("packages/lib/src/live.ts", "export function live() { return 2; }\n")
+        self.write("packages/app/src/app.ts", "import { live } from '@acme/lib';\n")
+        self.assertEqual(self.uncalled("packages/lib/src/live.ts::live"), [])
+
+    def test_an_unresolvable_alias_is_no_caller_but_also_no_proof_of_death(self):
+        # `@/x` (a tsconfig path alias) can't be resolved here; conservative.
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/app.ts", "import { live } from '@/live';\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), ["src/live.ts::live"])
+
+    def test_default_import_counts(self):
+        self.write("src/live.ts", "export default function live() { return 2; }\n")
+        self.write("src/app.ts", "import live from './live';\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), [])
+
+    def test_side_effect_import_counts(self):
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/app.ts", "import './live';\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), [])
+
+
+class FunctionWarningTests(unittest.TestCase):
+    """`_function_warnings` explains why a target could not be exercised."""
+
+    def test_nonexported_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src/helper.ts").write_text("function helper(x) { return x - x; }\n")
+            extraction = SimpleNamespace(signatures={"src/helper.ts::helper": {"exported": False}})
+            warned = check_mod._function_warnings(root, "", extraction, ["src/helper.ts::helper"], {})
+            self.assertTrue(any("is not exported" in w for w in warned["src/helper.ts::helper"]))
+            self.assertTrue(any("nothing in the repository calls" in w
+                                for w in warned["src/helper.ts::helper"]))
+
+
+class NodeFailureTests(unittest.TestCase):
+    """`_node_failure` reports the crash, not a disagreement."""
+
+    def result(self, status, output, timed_out=False):
+        return sandbox.Result(status, output, timed_out)
+
+    def test_oom(self):
+        why = typescript._node_failure(self.result(134, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"))
+        self.assertIn("out of memory", why)
+        self.assertIn("heap out of memory", why)
+
+    def test_exit_status(self):
+        why = typescript._node_failure(self.result(1, "Error: not in this environment\n    at ..."))
+        self.assertIn("exited with status 1", why)
+        self.assertIn("not in this environment", why)
+
+    def test_timed_out(self):
+        why = typescript._node_failure(self.result(124, "", timed_out=True))
+        self.assertIn("did not finish", why)
+
+    def test_empty_output(self):
+        why = typescript._node_failure(self.result(1, ""))
+        self.assertIn("printed nothing", why)
+
+
+class VacuityTests(unittest.TestCase):
+    """A failing theorem is retried alone; the error is carried, not dropped."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.ws = lean.Workspace(Path(self.tmp.name), "Ledger")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def vacuity(self, outputs):
+        """Run `vacuity` with `_lake` replaying the given outputs per call."""
+        calls = []
+
+        def fake_lake(ws, argv, timeout=300):
+            calls.append(argv[-1])
+            return outputs[len(calls) - 1]
+
+        with patch.object(lean, "_lake", side_effect=fake_lake):
+            verdicts, errors = lean.vacuity(self.ws, [("thm_a", [["one"]]), ("thm_b", [["two"]])])
+        return verdicts, errors, calls
+
+    def marker(self, i, result="satisfied"):
+        return f"{lean.VACUITY_MARKER}{i} " + json.dumps({"result": result, "hypothesis": "h"}) + "\n"
+
+    def test_one_bad_theorem_does_not_disable_the_check(self):
+        # The batch reports only case 0; the per-theorem retry of thm_b judges it.
+        verdicts, errors, calls = self.vacuity([
+            sandbox.Result(0, self.marker(0)),
+            sandbox.Result(0, self.marker(0)),
+        ])
+        self.assertEqual(verdicts, {"thm_a": [{"result": "satisfied", "hypothesis": "h"}],
+                                  "thm_b": [{"result": "satisfied", "hypothesis": "h"}]})
+        self.assertEqual(errors, {})
+        self.assertEqual(calls, ["Vacuity.lean", "VacuitySingle.lean"])
+
+    def test_the_lean_error_is_carried_and_named(self):
+        verdicts, errors, _ = self.vacuity([
+            sandbox.Result(1, "error: tactic failed\n"),
+            sandbox.Result(1, "error: tactic failed\n"),
+            sandbox.Result(1, "error: elaboration failed\n  deep error"),
+        ])
+        self.assertEqual(verdicts, {})
+        self.assertIn("thm_a", errors)
+        self.assertIn("thm_b", errors)
+        self.assertIn("deep error", errors["thm_b"])
+
+    def test_missing_marker_means_error(self):
+        verdicts, errors, _ = self.vacuity([
+            sandbox.Result(0, "nothing printed\n"),
+            sandbox.Result(0, "still nothing\n"),
+            sandbox.Result(0, "still nothing\n"),
+        ])
+        self.assertEqual(verdicts, {})
+        self.assertEqual(sorted(errors), ["thm_a", "thm_b"])
+
+
+class ScopeTests(unittest.TestCase):
+    """`scope: "example"` blocks under `require_general`, warns otherwise."""
+
+    def report(self, scope, general=False):
+        report = Report(language="typescript", general_required=general)
+        report.outcomes = [Outcome("t", "g", "src/x.ts::f", "thm", True, VERIFIED, scope=scope)]
+        return report
+
+    def test_example_scope_blocks_only_under_require_general(self):
+        self.assertTrue(self.report("example", general=False).passed)
+        self.assertFalse(self.report("example", general=True).passed)
+        self.assertTrue(self.report(None, general=True).passed)
+
+    def test_scope_serializes(self):
+        data = self.report("example", general=True).to_json()
+        self.assertEqual(data["guarantees"][0]["scope"], "example")
+        self.assertTrue(data["require_general"])
+
+
+class VerdictTests(unittest.TestCase):
+    """The one-line verdict names the escape once — the strength note carries the detail."""
+
+    def report(self):
+        return {
+            "passed": False, "language": "typescript", "policy_source": "base",
+            "policy_changes": [], "require_strength": True,
+            "guarantees": [
+                {"target": "view", "guarantee": "denies", "function": "src/ledger.ts::canViewLink",
+                 "theorem": "canViewLink_denies", "required": True, "status": "verified",
+                 "reason": "", "strength": [
+                     "`canViewLink_denies` still verifies with a planted defect in `src/ledger.ts::canViewLink`; "
+                     "it would also pass if `canViewLink` always returned `false`"]}],
+            "escapes": [{"guarantee": "view/denies", "theorem": "canViewLink_denies",
+                         "function": "src/ledger.ts::canViewLink",
+                         "accepts": ["`canViewLink` always returned `false`"], "defects": []}]}
+
+    def test_the_escape_is_named_once(self):
+        text = summary.markdown(self.report())
+        self.assertEqual(text.count("always returned `false`"), 1)
+        verdict = next(l for l in text.splitlines() if l.startswith("**Result: blocked**"))
+        self.assertIn("`view/denies`", verdict)
+        self.assertNotIn("it would also pass", verdict)
+
+    def test_function_warnings_show_next_to_the_table(self):
+        report = self.report() | {"functions": [
+            {"function": "src/dead.ts::dead", "status": "proved", "reason": "", "seconds": 1.0,
+             "warnings": ["nothing in the repository calls `dead`; these guarantees don't cover shipped code"]}]}
+        text = summary.markdown(report)
+        self.assertIn("nothing in the repository calls `dead`", text)
+
+    def test_example_scope_is_labelled(self):
+        report = self.report() | {"passed": True, "policy_changes": ["x"],
+                                  "guarantees": [self.report()["guarantees"][0] | {"scope": "example"}]}
+        text = summary.markdown(report)
+        self.assertIn("checks one fixed input only", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

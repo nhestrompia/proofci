@@ -60,12 +60,17 @@ yourself first.)
 ## Non-negotiable rules
 
 - Never weaken a contract, edit `proofci.yaml` policy (`targets`, `assumes`,
-  `effects`, `require_bridge`, `accept_downgrades`) to make a check pass, or
+  `effects`, `require_bridge`, `require_strength`, `require_general`,
+  `accept_downgrades`) to make a check pass, or
   remove a `/--` doc comment. Those changes are reported to a human approver.
 - Every contract theorem needs a `/-- ... -/` doc comment: the plain-English
   claim a reviewer reads.
+- Guarantees are **general**: bound variables, not literal-only arguments — a
+  statement that checks one fixed input is labelled `example` in the report.
+  A fixed-input case may supplement a general guarantee, never replace it.
 - Refactor the *code* to fit the supported subset (extract a pure core), never
-  the statement to fit the code.
+  the statement to fit the code. The original code must call the extracted
+  function; a parallel copy it never calls is dead code ProofCI will flag.
 - If a proof only goes through by making the statement false or vacuous, stop —
   that's a real bug in the code. Report it.
 

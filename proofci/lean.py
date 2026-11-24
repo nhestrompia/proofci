@@ -228,6 +228,16 @@ partial def proofciReach (env : Environment) (root : Name) : NameSet := Id.run d
     | _ => pure ()
   return seen
 
+/-- Every application of `fn` inside `e` (nested applications included). -/
+partial def proofciApps (e : Expr) (fn : Name) (acc : Array Expr := #[]) : Array Expr :=
+  let acc := if e.isAppOf fn then acc.push e else acc
+  match e with
+  | .app f a => proofciApps a fn (proofciApps f fn acc)
+  | .lam _ t b _ | .forallE _ t b _ => proofciApps b fn (proofciApps t fn acc)
+  | .letE _ t v b _ => proofciApps b fn (proofciApps v fn (proofciApps t fn acc))
+  | .mdata _ e | .proj _ _ e => proofciApps e fn acc
+  | _ => acc
+
 /-- Does the postcondition of a `WP.spec` triple ignore the result while
     still claiming something? (`f x ⦃ _ => True ⦄`, "never panics or
     overflows", is a meaningful guarantee and is not flagged.) -/
@@ -273,6 +283,7 @@ def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
   let mut trivial := false
   let mut ignores := false
   let mut vacuous := Json.null
+  let mut exampleOnly := false
   match env.find? thm with
   | some (.thmInfo info) =>
     kind := "theorem"
@@ -287,9 +298,14 @@ def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
             if let some why ← proofciUnsatisfiable ty then
               bad := Json.str s!"{← ppExpr ty} — {why}"
       let refl := body.isAppOfArity ``Eq 3 && body.appFn!.appArg! == body.appArg!
+      -- A call whose arguments name none of the binders is one fixed input:
+      -- `f 3 ⦃ … ⦄` checks that call alone, not `f` in general. Only calls
+      -- that actually apply `fn` to something count (a bare `f` is no call).
+      let calls := proofciApps body fn |>.filter fun e => !e.getAppArgs.isEmpty
+      let fixed := !calls.isEmpty && calls.all fun e => e.getAppArgs.all fun a => !a.hasFVar
       pure (body.getUsedConstants.contains fn, hyp, body.isConstOf ``True || refl,
-            proofciPostIgnoresResult body, bad)
-    (conclusion, hypothesis, trivial, ignores, vacuous) := r
+            proofciPostIgnoresResult body, bad, fixed)
+    (conclusion, hypothesis, trivial, ignores, vacuous, exampleOnly) := r
   | some _ => kind := "other"
   | none => pure ()
   let axioms ← if fnFound then collectAxioms fn else pure #[]
@@ -301,7 +317,7 @@ def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
     ("conclusion_mentions_function", Json.bool conclusion),
     ("hypothesis_mentions_function", Json.bool hypothesis),
     ("trivial_conclusion", Json.bool trivial), ("post_ignores_result", Json.bool ignores),
-    ("unsatisfiable_hypothesis", vacuous),
+    ("unsatisfiable_hypothesis", vacuous), ("example_only", Json.bool exampleOnly),
     ("models", Json.arr (used.map (fun n => Json.str n.toString)).toArray),
     ("function_axioms", Json.arr (axioms.map (fun a => Json.str a.toString)))]).compress)
 """
@@ -375,35 +391,62 @@ def proofciVacuity (thm : Name) (args : Array (TSyntax `term)) : MetaM Json := d
 """
 
 
-def vacuity(ws, checks):
-    """Whether each theorem's hypotheses hold of generated inputs.
-
-    `checks` is a list of `(theorem, vectors)`; a vector is a list of Lean
-    terms, one per argument of the statement. Returns {theorem: verdicts} or
-    None when the check file can't be built at all. Runs over trusted inputs
-    only: the contract and terms generated from the code's own types."""
-    lines, calls = [VACUITY_LEAN.strip(), ""], []
-    for i, (theorem, vectors) in enumerate((t, v) for t, vs in checks for v in vs):
+def _vacuity_run(ws, cases, name="Vacuity"):
+    """One Vacuity file for `cases` — a list of `(theorem, vector)` where a
+    vector is one argument list — run under `lake env lean`.
+    Returns ({case index: payload}, the sandbox result)."""
+    lines = [VACUITY_LEAN.strip(), ""]
+    for i, (theorem, vector) in enumerate(cases):
         binds = "\n".join(f"  let a{j} : TSyntax `term ← `({term})"
-                          for j, term in enumerate(vectors))
-        args = "#[" + ", ".join(f"a{j}" for j in range(len(vectors))) + "]"
+                          for j, term in enumerate(vector))
+        args = "#[" + ", ".join(f"a{j}" for j in range(len(vector))) + "]"
         lines.append(f"#eval! do\n{binds}\n"
                      f"  IO.println (\"{VACUITY_MARKER}{i} \" ++ "
                      f"(← proofciVacuity `{theorem} {args}).compress)")
-        calls.append(theorem)
-    (ws.root / "Vacuity.lean").write_text("\n".join(lines) + "\n")
-    result = _lake(ws, ["env", "lean", "Vacuity.lean"], timeout=300)
+    path = ws.root / f"{name}.lean"
+    path.write_text("\n".join(lines) + "\n")
+    result = _lake(ws, ["env", "lean", path.name], timeout=300)
     found = {}
     for line in result.output.splitlines():
         if line.startswith(VACUITY_MARKER):
             case, _, payload = line[len(VACUITY_MARKER):].partition(" ")
             found[int(case)] = json.loads(payload)
-    if result.status != 0 or len(found) != len(calls):
-        return None
+    return found, result
+
+
+def _vacuity_error(output):
+    """A Lean failure trimmed to what the report can carry."""
+    lines = [line for line in output.splitlines()
+             if line.strip() and not line.startswith(VACUITY_MARKER)]
+    return " ".join(" ".join(lines).split())[:400] or "no output"
+
+
+def vacuity(ws, checks):
+    """Whether each theorem's hypotheses hold of generated inputs.
+
+    `checks` is a list of `(theorem, vectors)`; a vector is a list of Lean
+    terms, one per argument of the statement. Runs over trusted inputs only:
+    the contract and terms generated from the code's own types.
+
+    Returns `(verdicts, errors)`: {theorem: [payload]} for the cases the check
+    judged, and {theorem: trimmed Lean output} for the ones it could not — one
+    failing theorem is retried alone so it takes down none of the others."""
+    cases = [(t, v) for t, vs in checks for v in vs]
+    found, _ = _vacuity_run(ws, cases)
+    missing = [i for i in range(len(cases)) if i not in found]
+    errors = {}
+    for theorem in sorted({cases[i][0] for i in missing}):
+        indices = [i for i in missing if cases[i][0] == theorem]
+        refound, rerun = _vacuity_run(ws, [cases[i] for i in indices], name="VacuitySingle")
+        for j, i in enumerate(indices):
+            if j in refound:
+                found[i] = refound[j]
+            else:
+                errors[theorem] = _vacuity_error(rerun.output)
     verdicts = {}
-    for theorem, (case, payload) in zip(calls, sorted(found.items())):
-        verdicts.setdefault(theorem, []).append(payload)
-    return verdicts
+    for i in sorted(found):
+        verdicts.setdefault(cases[i][0], []).append(found[i])
+    return verdicts, errors
 
 
 def audit(ws, checks, models=()):
