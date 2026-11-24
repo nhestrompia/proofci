@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +73,8 @@ class Report:
     downgrades: list = field(default_factory=list)  # TypeScript only: proved on the base branch, not proved now
     stale_accepts: list = field(default_factory=list)  # `accept_downgrades` entries that are no downgrade here
     first_adoption: bool = False  # the base checkout has no proofci.yaml at all: the change introduces ProofCI
+    escapes: list = field(default_factory=list)      # TypeScript only: verified guarantees a planted defect escaped
+    strength_required: bool = False                  # from the policy's `require_strength`: escapes block
 
     @property
     def passed(self):
@@ -79,7 +82,8 @@ class Report:
         policy_ok = not self.policy_changes or self.policy_source == "head"
         return (policy_ok and not self.invalid_contract and bool(required)
                 and all(o.status == VERIFIED for o in required)
-                and all(d["accepted"] for d in self.downgrades))
+                and all(d["accepted"] for d in self.downgrades)
+                and (not self.escapes or not self.strength_required))
 
     def to_json(self):
         return {
@@ -98,6 +102,8 @@ class Report:
             "downgrades": self.downgrades,
             "stale_accepts": self.stale_accepts,
             "first_adoption": self.first_adoption,
+            "escapes": self.escapes,
+            "require_strength": self.strength_required,
             "notes": self.notes,
             "timings_seconds": self.timings,
         }
@@ -133,6 +139,19 @@ def _tree_digest(checkout: Path, lean_dir: str, module: str):
         else:
             digest.update(str(path.relative_to(root)).encode() + b"\0<missing>\0")
     return digest.hexdigest()
+
+
+def mutation_suspects(verified, base_statements, head_statements):
+    """The guarantees the planted-defect sweep exercises. PROOFCI_MUTATION_FULL
+    sweeps everything; otherwise only statements that changed against the
+    trusted contract. A first adoption passes an empty base map, so every
+    verified guarantee counts as new and gets swept — line mutants and the
+    trivial implementations alike — with no env flag."""
+    if mutation.FULL:
+        return verified
+    return [o for o in verified
+            if base_statements.get(o.theorem, {}).get("statement")
+            != head_statements.get(o.theorem, {}).get("statement")]
 
 
 def policy_changes(base_checkout, base, head_checkout, head):
@@ -182,6 +201,8 @@ def policy_changes(base_checkout, base, head_checkout, head):
         added = ", ".join(f"`{f}`" for f in sorted(set(new["accept_downgrades"]) - set(old["accept_downgrades"])))
         removed = ", ".join(f"`{f}`" for f in sorted(set(old["accept_downgrades"]) - set(new["accept_downgrades"])))
         changes.append(f"`accept_downgrades` changed (added: {added or 'none'}; removed: {removed or 'none'})")
+    if old["require_strength"] != new["require_strength"]:
+        changes.append(f"`require_strength` changed from `{old['require_strength']}` to `{new['require_strength']}`")
     if _tree_digest(base_checkout, base.lean, "Contract") != _tree_digest(head_checkout, head.lean, "Contract"):
         changes.append(f"the contract `{head.contract}` changed")
     return changes
@@ -232,6 +253,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         active, policy_checkout = head, head_checkout
     else:
         active, policy_checkout = base, base_checkout
+    report.strength_required = getattr(active, "require_strength", False)
 
     outcomes = {}
     for target, guarantee in active.guarantees():
@@ -346,7 +368,9 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                     o.status, o.reason = UNSUPPORTED, reason
                 return report
             detail = {}
-            disagreements, notes = typescript.differential(head_checkout, active.crate, work, ws, extraction, detail=detail)
+            disagreements, notes = typescript.differential(
+                head_checkout, active.crate, work, ws, extraction, detail=detail,
+                literals=_literals(report.outcomes))
             report.notes += notes
             if disagreements:
                 report.disagreements = disagreements
@@ -554,22 +578,40 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             base_statements = ({} if report.first_adoption
                                else claims.theorems(_contract_text(base_checkout, base.lean)))
             head_statements = claims.theorems(_contract_text(head_checkout, active.lean))
-            suspects = verified if mutation.FULL else [o for o in verified
-                if base_statements.get(o.theorem, {}).get("statement")
-                != head_statements.get(o.theorem, {}).get("statement")]
-            escaped, planted = {}, 0
+            suspects = mutation_suspects(verified, base_statements, head_statements)
+            escaped, planted = {}, {}
             if suspects:
                 defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in suspects}
                 escaped, planted = mutation.check(ws, work, module_text, inputs, defs,
-                                                  PARALLEL_JUDGES, suspects, verified)
+                                                  PARALLEL_JUDGES, suspects, verified,
+                                                  sigs=extraction.signatures)
             for o in suspects:
+                if not inputs.get(o.function):
+                    o.strength.append(
+                        f"the mutation check could not exercise `{o.theorem}`: the comparison with "
+                        f"Node generated no inputs for `{o.function}`")
+                elif not planted.get(o.function):
+                    o.strength.append(
+                        f"the mutation check planted 0 defects in `{o.function}` (no mutation "
+                        f"operator matched the translated code), so `{o.theorem}` was not "
+                        "exercised against planted bugs")
+                short = o.function.split("::")[-1]
                 for m in escaped.get(o.theorem, []):
                     o.strength.append(
-                        f"`{o.theorem}` still verifies with a planted defect in `{o.function}` ({m}) "
-                        "that changes its observable behaviour; the statement may not rule out that "
-                        "behaviour — tighten it, or confirm this path is meant to be uncovered")
-            if planted:
-                report.notes.append(f"planted {planted} defects in the translated code to test the "
+                        f"`{o.theorem}` still verifies with a planted defect in `{o.function}`; "
+                        f"it would also pass if `{short}` {m['plain']} — tighten it, "
+                        "or confirm this path is meant to be uncovered")
+            report.escapes = [{"guarantee": f"{o.target}/{o.guarantee}", "theorem": o.theorem,
+                               "function": o.function,
+                               "accepts": [f"`{o.function.split('::')[-1]}` {m['plain']}"
+                                          for m in escaped[o.theorem]],
+                               "defects": [{"kind": m["kind"], "line": m["line"], "ts": m["ts"],
+                                            "src": m["src"], "desc": m["desc"]}
+                                           for m in escaped[o.theorem]]}
+                              for o in suspects if o.theorem in escaped]
+            total = sum(planted.values())
+            if total:
+                report.notes.append(f"planted {total} defects in the translated code to test the "
                                     "verified guarantees")
         report.timings["mutation"] = round(time.monotonic() - t0, 1)
     if active.language == "typescript":
@@ -580,6 +622,29 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                              "or the change broke what the guarantee says.")
     report.timings["total"] = round(time.monotonic() - started, 1)
     return report
+
+
+LITERAL_NUMBER = re.compile(r"(?<![\w.])(-?\d{1,15})(?![\w.])")
+LITERAL_STRING = re.compile(r'"([^"\\]{0,80})"')
+MAX_LITERALS = 16
+
+
+def _literals(outcomes):
+    """Numbers and strings named in each function's contract statements — the
+    literals a hypothesis may pin down (`offset = 20`, `query.tag = "a"`), fed
+    to the input generator so such hypotheses actually get exercised."""
+    literals = {}
+    for o in outcomes:
+        if not o.statement:
+            continue
+        entry = literals.setdefault(o.function, {"numbers": [], "strings": []})
+        for value in LITERAL_NUMBER.findall(o.statement):
+            if len(entry["numbers"]) < MAX_LITERALS and int(value) not in entry["numbers"]:
+                entry["numbers"].append(int(value))
+        for value in LITERAL_STRING.findall(o.statement):
+            if len(entry["strings"]) < MAX_LITERALS and value not in entry["strings"]:
+                entry["strings"].append(value)
+    return literals
 
 
 def _contract_text(checkout: Path, lean_dir: str):

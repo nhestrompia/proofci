@@ -212,10 +212,12 @@ not an adoption.
 
 A proved guarantee can still be weak: its entry under "What each guarantee says"
 gets a **strength:** line when its hypotheses hold on none of the generated
-inputs (probably vacuous), or when it still verifies against small defects
-planted in the translated code (it doesn't constrain the function; the line
-names the mutated line). These don't fail the check — they flag statements a
-human should look at before trusting the green. The hypothesis check is cheap and runs on every TypeScript verification;
+inputs (probably vacuous), when no defect could be planted in its function at
+all, or when it still verifies against small defects planted in the translated
+code (it doesn't constrain the function; the line names the TypeScript location and what the wrong implementation does).
+An escape is also named in the verdict, and `require_strength: true` in
+`proofci.yaml` makes it block — see [TypeScript](typescript.md). The
+hypothesis check is cheap and runs on every TypeScript verification;
 the planted-defect check runs only on guarantees whose statement is new or
 changed in the pull request (set `PROOFCI_MUTATION_FULL=1` to sweep every
 verified guarantee).

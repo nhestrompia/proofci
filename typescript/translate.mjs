@@ -217,6 +217,24 @@ export class Translator {
     return error;
   }
 
+  // `-- src:<file>:<line>` — a Lean comment pinning the emitted lines to the
+  // TypeScript they came from. The strength report maps a planted defect's
+  // generated-line number back through these markers to name the real code
+  // a weak guarantee would also accept. Package files map too: a weak
+  // guarantee on a package function points at where it is used from.
+  sourceMark(node) {
+    // Synthetic nodes (e.g. a `forEach` callback wrapped in a statement) carry
+    // no text range; walk up to one that does.
+    while (node.pos < 0 && node.parent) node = node.parent;
+    if (node.pos < 0) return "";
+    const file = node.getSourceFile();
+    const { line } = file.getLineAndCharacterOfPosition(node.getStart(file));
+    // A path goes into a Lean line comment — a line break in it would end the
+    // comment and let a filename inject code into the module.
+    const name = relative(this.root, file.fileName).replace(/[\r\n\u2028\u2029]/g, " ");
+    return `-- src:${name}:${line + 1}`;
+  }
+
   // ---------------------------------------------------------------- files
 
   // What the runtime would load must be what is translated, and nothing in
@@ -1064,7 +1082,7 @@ export class Translator {
     const statements = ts.isBlock(fn.body) ? [...fn.body.statements] : [ts.factory.createReturnStatement(fn.body)];
     const body = [...prologue, ...(ts.isBlock(fn.body) ? scope.block(statements, flow, env) : scope.returning(fn.body, flow, env))];
     const monad = isAsync ? `Proofci.Effects.Eff ${result}` : `Result ${result}`;
-    const lines = [`def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
+    const lines = [this.sourceMark(fn), `def ${lean} ${[...generics, ...params].join(" ")} : ${monad} := do`, ...body.map(l => `  ${l}`)];
     if (entry.recursive) lines.push("partial_fixpoint");
     this.current.pop();
     entry.pending = false;
@@ -1758,6 +1776,12 @@ export class Scope {
   // plain `let` inside a loop body, and `step*` removes these for free.
   block(statements, flow, env) {
     if (!statements.length) return flow.fall(env);
+    const mark = this.t.sourceMark(statements[0]);
+    const lines = this.blockEmission(statements, flow, env);
+    return mark ? [mark, ...lines] : lines;
+  }
+
+  blockEmission(statements, flow, env) {
     const [first, ...rest] = statements;
     if (ts.isBlock(first)) {
       // Inner declarations go out of scope, which Lean's shadowing can't express

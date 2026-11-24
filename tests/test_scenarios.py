@@ -565,6 +565,15 @@ def run_scenario(name, out_dir=None):
                   if g.get("warnings") or g.get("strength")}
         if warned != {"fees/zero-amount"}:
             problems.append(f"expected a contract warning on fees/zero-amount only, got {warned}")
+    for wanted in options.get("stdout", []):
+        if wanted not in done.stdout:
+            problems.append(f"stdout missing {wanted!r}")
+    escapes = [l for l in done.stdout.splitlines()
+               if "strength:" in l or "also pass" in l]
+    for banned in options.get("stdout_not", []):
+        for line in escapes:
+            if banned in line:
+                problems.append(f"escape line should not contain {banned!r}: {line}")
     for key, wanted in options.get("warnings", {}).items():
         got = [w for g in data["guarantees"] if f"{g['target']}/{g['guarantee']}" == key
                for w in g.get("warnings", []) + g.get("strength", [])]
@@ -583,6 +592,91 @@ def run_scenario(name, out_dir=None):
 TS_LEDGER = "src/ledger.ts"
 TS_GUARANTEES = ("fees/capped", "transfer/conservation", "transfer/rejects-overdraft", "totals/exact")
 TS_FEE, TS_CONSERVES, TS_OVERDRAFT, TS_SUM = TS_GUARANTEES
+
+
+def ts_weak_guarantees(head):
+    # The two shapes the pilots let through unflagged: a subset guarantee an
+    # identity `filter` already satisfies, and a permission guarantee that
+    # only constrains the denied case.
+    with open(head / TS_LEDGER, "a") as source:
+        source.write(
+            "\nexport function filterGlobalPermissions(perms: string[], aGlobalPermissions: string[]): string[] {\n"
+            "  return perms.filter(p => aGlobalPermissions.includes(p));\n"
+            "}\n\n"
+            "export function canViewLink(allowed: boolean): boolean {\n"
+            "  return allowed;\n"
+            "}\n")
+    with open(head / "proofci.yaml", "a") as manifest:
+        manifest.write(
+            "  - id: perms\n"
+            "    function: src/ledger.ts::filterGlobalPermissions\n"
+            "    guarantees:\n"
+            "      - id: subset\n"
+            "        theorem: filterGlobal_subset\n"
+            "  - id: view\n"
+            "    function: src/ledger.ts::canViewLink\n"
+            "    guarantees:\n"
+            "      - id: denies\n"
+            "        theorem: canViewLink_denies\n")
+    contract_addition = (
+        "\n/-- Every permission kept is one of the inputs. -/\n"
+        "theorem filterGlobal_subset (perms allowed : List Js.Str) :\n"
+        "    filterGlobalPermissions perms allowed ⦃ r => ∀ p ∈ r, p ∈ perms ⦄ := by sorry\n\n"
+        "/-- A view that is not allowed is denied. -/\n"
+        "theorem canViewLink_denies (a : Bool) :\n"
+        "    canViewLink a ⦃ r => a = false → r = false ⦄ := by sorry\n")
+    proof_addition = (
+        "\ntheorem filterGlobal_subset (perms allowed : List Js.Str) :\n"
+        "    filterGlobalPermissions perms allowed ⦃ r => ∀ p ∈ r, p ∈ perms ⦄ := by\n"
+        "  unfold filterGlobalPermissions\n"
+        "  first\n"
+        "    | (apply WP.spec_bind (Pₘ := fun kept => ∀ p ∈ kept, p ∈ perms)\n"
+        "       · exact Js.spec_filter_mem _ _\n"
+        "       · intro kept h\n"
+        "         simp only [WP.spec_ok]\n"
+        "         exact h)\n"
+        "    | (simp only [WP.spec_ok]\n"
+        "       intro p hp\n"
+        "       first\n"
+        "         | exact hp\n"
+        "         | simp at hp)\n\n"
+        "theorem canViewLink_denies (a : Bool) :\n"
+        "    canViewLink a ⦃ r => a = false → r = false ⦄ := by\n"
+        "  unfold canViewLink\n"
+        "  simp only [WP.spec_ok]\n"
+        "  intro h\n"
+        "  first\n"
+        "    | exact h\n"
+        "    | trivial\n"
+        "    | rfl\n")
+    with open(head / "proofci/Contract.lean", "a") as contract:
+        contract.write(contract_addition)
+    with open(head / "proofci/Proofs.lean", "a") as proofs:
+        proofs.write(proof_addition)
+
+
+ts_weak_guarantees.also_base = ts_weak_guarantees
+
+
+def ts_require_strength(base):
+    # The protected policy makes escapes block. Stays a policy: set on the base.
+    ts_weak_guarantees(base)
+    edit(base / "proofci.yaml", "version: 1\n", "version: 1\nrequire_strength: true\n")
+
+
+def ts_weak_guarantees_under_strength(head):
+    ts_weak_guarantees(head)
+
+
+ts_weak_guarantees_under_strength.also_base = ts_require_strength
+
+
+def ts_relaxes_strength(head):
+    ts_weak_guarantees(head)
+    edit(head / "proofci.yaml", "version: 1\n", "version: 1\nrequire_strength: false\n")
+
+
+ts_relaxes_strength.also_base = ts_require_strength
 
 
 def ts_module_throws_when_loaded(head):
@@ -777,6 +871,28 @@ def ts_vacuous_postcondition(head):
 
 
 ts_vacuous_postcondition.also_base = unconstrained_to_contract
+
+
+def trivial_result_contract(checkout):
+    # Both transfer guarantees accept `Result.ok none`: the conservation
+    # postcondition only pins `to`, and the overdraft proof never looks at
+    # the function — so a transfer that refuses everything satisfies them.
+    unconstrained_to_contract(checkout)
+
+
+def ts_trivial_implementation(head):
+    unconstrained_to_contract(head)
+    # The proof states the theorem verbatim, so it must match the new contract.
+    edit(head / "proofci/Proofs.lean",
+         "b.from.val + b.to.val = a.from.val + a.to.val ∧ 0 ≤ b.from.val",
+         "a.to.val - amount.val ≤ b.to.val")
+    # `rw [if_pos]` only works while `transfer` keeps its `if` — a proof that
+    # doesn't look at the function's shape accepts the trivial `ok none` too.
+    edit(head / "proofci/Proofs.lean",
+         "  rw [if_pos (Or.inr h)]", "  step*")
+
+
+ts_trivial_implementation.also_base = trivial_result_contract
 
 
 # --- the proved-guarantee ratchet: a proved function must not silently lose its bridge
@@ -1128,6 +1244,14 @@ SCENARIOS.update({
         "warnings": {"transfer/conservation": "still verifies",
                      "transfer/rejects-overdraft": "still verifies"},
         "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
+    # `Result.ok none` — a transfer that refuses everything — still satisfies
+    # both weakened guarantees; the escape names the behaviour it accepts.
+    "ts-trivial-implementation": (ts_trivial_implementation, ts_results(), 0, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "warnings": {"transfer/conservation": "always returned `null`",
+                     "transfer/rejects-overdraft": "always returned `null`"},
+        "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"},
+        "stdout_not": ["Js.", "Result.", "none"]}),
     # The ratchet: the guarantee was going to fail anyway, but the report also names the downgrade.
     "ts-proved-function-rewritten-off-the-bridge": (ts_sum_bridged_away, {**ts_results(), TS_SUM: U}, 1, {
         "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
@@ -1149,6 +1273,26 @@ SCENARIOS.update({
     "ts-proved-downgrade-after-dep-change": (ts_dep_changed_and_code_touched, {**ts_results(), TS_OVERDRAFT: U}, 1, {
         "env": RARE, "functions": {**BR_ALL_PROVED, BR_TRANSFER: "tested"},
         "downgrades": [{"function": BR_TRANSFER, "was": "unknown", "now": "tested", "accepted": False}]}),
+    # The pilot shapes: the subset guarantee is satisfied by an identity filter and
+    # the one-sided permission by constant false, so each lists an escape.
+    "ts-weak-guarantees": (ts_weak_guarantees, {**ts_results(), "perms/subset": V, "view/denies": V}, 0, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "warnings": {"perms/subset": "returned `perms` unchanged",
+                     "view/denies": "always returned `false`"},
+        "stdout_not": ["Js.", "Result.", "none"]}),
+    # Under `require_strength` in the protected policy the same escapes block, and
+    # the verdict names the guarantee and what it would also accept.
+    "ts-require-strength-blocks": (ts_weak_guarantees_under_strength,
+        {**ts_results(), "perms/subset": V, "view/denies": V}, 1, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "stdout": ["`view/denies`", "it would also pass if", "require_strength` is set"]}),
+    # A pull request can't relax `require_strength` for itself: the change is
+    # reported and the escape still blocks under the base policy.
+    "ts-require-strength-relaxed": (ts_relaxes_strength,
+        {**ts_results(), "perms/subset": V, "view/denies": V}, 1, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "policy_changes": ["`require_strength` changed"],
+        "stdout": ["let a planted bug through"]}),
 })
 
 

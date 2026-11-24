@@ -94,6 +94,10 @@ class Manifest:
     # accepted. Listing one here is a policy change, so a pull request can only make use of it
     # after the change itself is approved (see check.py).
     accept_downgrades: tuple = ()
+    # TypeScript only. A verified guarantee that lets a planted defect through is normally a
+    # warning; true makes it block the pull request. It is policy: a pull request can't relax
+    # it for itself.
+    require_strength: bool = False
 
     def bridge_required(self, function):
         return self.require_bridge is True or (isinstance(self.require_bridge, tuple) and function in self.require_bridge)
@@ -126,6 +130,7 @@ class Manifest:
             "effects": {e.id: e.entry() for e in self.effects},
             "require_bridge": list(self.require_bridge) if isinstance(self.require_bridge, tuple) else self.require_bridge,
             "accept_downgrades": list(self.accept_downgrades),
+            "require_strength": self.require_strength,
         }
 
 
@@ -241,6 +246,14 @@ def _require_bridge(value, language, functions):
     return tuple(sorted(set(value)))
 
 
+def _require_strength(value, language):
+    if not isinstance(value, bool):
+        raise ManifestError("require_strength must be true or false")
+    if value and language != "typescript":
+        raise ManifestError("require_strength is only available for TypeScript")
+    return value
+
+
 def _accept_downgrades(value, language, functions):
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
         raise ManifestError("accept_downgrades must be a list of target functions")
@@ -260,7 +273,7 @@ def parse(data: bytes) -> Manifest:
     except (UnicodeDecodeError, yaml.YAMLError) as error:
         raise ManifestError(f"manifest is not valid YAML: {error}") from None
     _keys(raw, ("version", "language", "crate", "package", "lean", "targets", "policy", "assumes", "effects",
-                "require_bridge", "accept_downgrades"), ("version", "targets"), "manifest")
+                "require_bridge", "accept_downgrades", "require_strength"), ("version", "targets"), "manifest")
     if raw["version"] != 1:
         raise ManifestError("only manifest version 1 is supported")
     language = raw.get("language", "rust")
@@ -323,4 +336,5 @@ def parse(data: bytes) -> Manifest:
     return Manifest(crate, lean, tuple(targets), approvers, language, _assumes(raw.get("assumes", []), language),
                     _effects(raw.get("effects", []), language),
                     _require_bridge(raw.get("require_bridge", False), language, functions),
-                    _accept_downgrades(raw.get("accept_downgrades", []), language, functions))
+                    _accept_downgrades(raw.get("accept_downgrades", []), language, functions),
+                    _require_strength(raw.get("require_strength", False), language))

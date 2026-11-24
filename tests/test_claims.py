@@ -188,6 +188,33 @@ class ClaimTests(unittest.TestCase):
         text = summary.markdown(r.to_json())
         self.assertIn("`transfer` was proved on the base branch and is not now", text)
 
+    def test_verdict_names_an_unknown_base_downgrade(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], downgrades=[
+            {"function": "transfer", "was": "unknown", "now": "tested", "accepted": False, "reason": ""}])
+        text = summary.markdown(r.to_json())
+        self.assertIn("`transfer` may have been proved on the base branch", text)
+        self.assertIn("the base could not be checked", text)
+
+    def test_verdict_says_passed_but_names_weak_guarantees(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], escapes=[
+            {"guarantee": "t/g", "theorem": "fee_capped", "function": "m::f", "mutants": ["eq-to-ne"]}])
+        text = summary.markdown(r.to_json())
+        self.assertIn("**Result: passed**", text)
+        self.assertIn("1 verified guarantee let a planted bug through (`t/g`)", text)
+
+    def test_require_strength_blocks_on_an_escape(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], strength_required=True, escapes=[
+            {"guarantee": "t/g", "theorem": "fee_capped", "function": "m::f", "mutants": ["eq-to-ne"],
+             "accepts": ["`f` always returned `0`"]}])
+        self.assertFalse(r.passed)
+        text = summary.markdown(r.to_json())
+        self.assertIn("**Result: blocked**", text)
+        self.assertIn("`t/g`) let a planted bug through — `require_strength` is set", text)
+        self.assertIn("it would also pass if `f` always returned `0`", text)
+
     def test_verdict_notes_stale_accepts(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
         r = check.Report(outcomes=[o], stale_accepts=["oldFn"])
@@ -211,6 +238,12 @@ class ClaimTests(unittest.TestCase):
         self.assertIn("fee_bar", ts)
         self.assertIn("Js.Dbl", ts["fee"]["statement"])
         self.assertNotIn("Js.Dbl", ts["fee_bar"]["statement"])
+
+    def test_literals_keep_the_sign_of_negative_hypothesis_bounds(self):
+        o = check.Outcome("t", "g", "m::f", "offset_pinned", True, check.VERIFIED)
+        o.statement = "f offset ⦃ r => h : offset.val = -424242 → r.val ≤ 5 ⦄"
+        self.assertIn(-424242, check._literals([o])["m::f"]["numbers"])
+        self.assertIn(5, check._literals([o])["m::f"]["numbers"])
 
 
 if __name__ == "__main__":

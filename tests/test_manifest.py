@@ -196,6 +196,14 @@ targets:
                             .replace(b"src/fees.ts::calculateFee", b"ledger::calculate_fee")
                             + b"accept_downgrades:\n  - ledger::calculate_fee\n", "only available for TypeScript")
 
+    def test_require_strength(self):
+        self.assertEqual(manifest.parse(self.TS_SIMPLE).require_strength, False)
+        self.assertTrue(manifest.parse(self.TS_SIMPLE + b"require_strength: true\n").require_strength)
+        self.assertRejected(self.TS_SIMPLE + b'require_strength: "yes"\n', "must be true or false")
+        self.assertRejected(self.TS_SIMPLE.replace(b"language: typescript\n", b"")
+                            .replace(b"src/fees.ts::calculateFee", b"ledger::calculate_fee")
+                            + b"require_strength: true\n", "only available for TypeScript")
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 
@@ -269,6 +277,10 @@ targets:""")
                          ["the contract `proofci/Contract.lean` changed"])
         self.assertEqual(self.changes(None), ["proofci.yaml was removed or is invalid in the pull request"])
         self.assertIn("`policy.approvers` changed", self.changes(GOOD + b"policy:\n  approvers: [mallory]\n"))
+        base_ts = manifest.parse(ManifestTests.TS_SIMPLE)
+        (self.head / "proofci" / "Contract.lean").write_text("theorem fee_capped : True := sorry\n")
+        self.assertEqual(self.compare(base_ts, ManifestTests.TS_SIMPLE + b"require_strength: true\n"),
+                         ["`require_strength` changed from `False` to `True`"])
 
 
 if __name__ == "__main__":
