@@ -528,9 +528,10 @@ _TEST_FILE = re.compile(r"[._-](test|spec|stories|e2e)\.[cm]?tsx?$")
 
 def _package_json(path: Path):
     try:
-        return json.loads(path.read_text(errors="replace"))
+        parsed = json.loads(path.read_text(errors="replace"))
     except (OSError, json.JSONDecodeError):
         return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 _REFERENCE = re.compile(r"""(?x)

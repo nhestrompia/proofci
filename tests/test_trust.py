@@ -83,6 +83,11 @@ class UncalledTests(unittest.TestCase):
         self.write("src/app.ts", "import './live';\n")
         self.assertEqual(self.uncalled("src/live.ts::live"), [])
 
+    def test_a_non_object_package_json_is_ignored(self):
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("tools/package.json", "[]\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), ["src/live.ts::live"])
+
 
 class FunctionWarningTests(unittest.TestCase):
     """`_function_warnings` explains why a target could not be exercised."""
