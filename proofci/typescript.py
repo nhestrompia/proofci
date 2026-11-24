@@ -114,11 +114,23 @@ def stage(checkout: Path, dest: Path, exclude=None):
     itself."""
     excluded = Path(exclude).resolve() if exclude else None
 
+    def is_excluded(path):
+        if excluded is None:
+            return False
+        resolved = path.resolve()
+        if excluded in (resolved, *resolved.parents):
+            return True
+        try:
+            # A bind mount makes the same directory appear under another path
+            # (the vendor dir is mounted inside the checkout in Docker).
+            return path.samefile(excluded)
+        except OSError:
+            return False
+
     def skip(directory, names):
         found = {name for name in names if name in SKIPPED or name in CONFIG_FILES or name in CONFIG_DIRS}
         if excluded is not None:
-            found |= {name for name in names
-                      if excluded in (Path(directory, name).resolve(), *Path(directory, name).resolve().parents)}
+            found |= {name for name in names if is_excluded(Path(directory, name))}
         return found
 
     shutil.copytree(checkout, dest, symlinks=True, ignore=skip)

@@ -182,11 +182,25 @@ def _copy_package(src: Path, dest: Path, budget, exclude=None):
     `exclude` (e.g. the vendor output) is left out so a vendored directory
     inside the repo can't be copied into itself."""
     excluded = Path(exclude).resolve() if exclude else None
+
+    def is_excluded(path):
+        if excluded is None:
+            return False
+        resolved = path.resolve()
+        if excluded in (resolved, *resolved.parents):
+            return True
+        try:
+            # A bind mount makes the same directory appear under another path
+            # (the vendor dir is mounted inside the checkout in Docker).
+            return path.samefile(excluded)
+        except OSError:
+            return False
+
     for path in sorted(src.rglob("*")):
         rel = path.relative_to(src)
         if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts):
             continue
-        if excluded is not None and excluded in (path.resolve(), *path.resolve().parents):
+        if is_excluded(path):
             continue
         if any((src / Path(*rel.parts[:i]) / "Cargo.toml").is_file() for i in range(1, len(rel.parts))):
             continue  # inside a nested package, which is staged separately if needed
