@@ -293,3 +293,27 @@ export function t(): number { return 1; }
   assert.deepEqual(reasons, {});
   assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("internal"));
 });
+
+test("static class initialization touching a kept name runs", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+class C { static n = TABLE.push(1); }
+export function t(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("static n"));
+});
+
+test("a computed class member name touching a kept name runs", () => {
+  const dir = project({
+    "a.ts": `const KEYS = { m: "seen" };
+class C { [KEYS.m]() { return 1; } }
+export function t(): string { return KEYS.m; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("[KEYS.m]"));
+});

@@ -256,7 +256,7 @@ function isReference(node) {
   if ((ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isVariableDeclaration(parent)
     || ts.isFunctionExpression(parent) || ts.isClassExpression(parent)) && parent.name === node) return false;
   if ((ts.isMethodDeclaration(parent) || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)
-    || ts.isMethodSignature?.(parent)) && parent.name === node) return false;
+    || ts.isPropertyDeclaration(parent) || ts.isMethodSignature?.(parent)) && parent.name === node) return false;
   if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) return false;
   if (ts.isImportClause(parent) || ts.isNamespaceImport(parent) || ts.isImportCall?.(parent)) return false;
   return true;
@@ -298,13 +298,19 @@ function dependencies(statement, eagerOnly = false) {
       return node;
     }
   };
-  // Function and method bodies (and class field initializers) run lazily — they only
-  // count when the whole statement's init-time effect is asked for, not here.
+  // Function and method bodies (and instance class field initializers) run lazily —
+  // they only count when the whole statement's init-time effect is asked for. Static
+  // field initializers, static blocks and computed member names DO run at class
+  // definition, so they stay eager.
+  const isStatic = node => ts.getModifiers?.(node)?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
   const lazy = node => ts.isFunctionLike(node) || ts.isMethodDeclaration(node)
     || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
-    || ts.isPropertyDeclaration(node);
+    || (ts.isPropertyDeclaration(node) && !isStatic(node));
   const walk = (node, bound) => {
-    if (eagerOnly && lazy(node)) return;
+    if (eagerOnly && lazy(node)) {
+      if (node.name && ts.isComputedPropertyName(node.name)) walk(node.name, bound);
+      return;
+    }
     // A callback's parameter shadows a module name only inside the callback: bindings apply
     // per scope, not to the whole statement.
     if (SCOPED(node)) bound = new Set([...bound, ...localBindings(node)]);
