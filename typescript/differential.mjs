@@ -303,6 +303,20 @@ function dependencies(statement, eagerOnly = false) {
   // field initializers, static blocks and computed member names DO run at class
   // definition, so they stay eager.
   const isStatic = node => ts.getModifiers?.(node)?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
+  // A module-level function or class only runs when invoked: callee position
+  // (`f()`, `new C()`, `f`...``, through parens), invoked through a member
+  // (`init.call(...)`), or passed into another call (`forEach(init)`), which may
+  // run it at load. A bare property read (`Handler.name`) does not.
+  const calledBy = node => {
+    let inner = node, p = node.parent;
+    while (ts.isParenthesizedExpression(p)) { inner = p; p = p.parent; }
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === inner) return true;
+    if (ts.isTaggedTemplateExpression?.(p) && p.tag === inner) return true;
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.arguments?.includes(inner)) return true;
+    if (ts.isPropertyAccessExpression(p) && p.expression === inner
+        && ts.isCallExpression(p.parent) && p.parent.expression === p) return true;
+    return false;
+  };
   const lazy = node => ts.isFunctionLike(node) || ts.isMethodDeclaration(node)
     || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
     || (ts.isPropertyDeclaration(node) && !isStatic(node));
@@ -324,8 +338,7 @@ function dependencies(statement, eagerOnly = false) {
     }
     if (ts.isIdentifier(node) && isReference(node) && !bound.has(node.text)) {
       const p = node.parent;
-      if ((ts.isCallExpression(p) || ts.isNewExpression(p) || ts.isTaggedTemplateExpression?.(p))
-          && (p.expression === node || p.tag === node)) calls.add(node.text);
+      if (calledBy(node)) calls.add(node.text);
       if ((ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken,
           ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.SlashEqualsToken].includes(p.operatorToken.kind) && lhs(p.left) === node)
         || ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(p.operator))) {

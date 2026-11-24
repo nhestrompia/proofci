@@ -408,3 +408,18 @@ export function f(): number { return TABLE.length; }
   assert.deepEqual(reasons, {});
   assert.ok(!readFileSync(join(dir, "out/a.mjs"), "utf8").includes("class Handler"));
 });
+
+test("indirect invocations still count as calls: (init)(), init.call, forEach(init)", () => {
+  for (const site of ["(init)();", "init.call(undefined);", "[0].forEach(init);"]) {
+    const dir = project({
+      "a.ts": `const TABLE: number[] = [];
+function init(): void { TABLE.push(1); }
+${site}
+export function f(): number { return TABLE.length; }
+`,
+    });
+    const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+    assert.deepEqual(reasons, {}, site);
+    assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("function init"), site);
+  }
+});
