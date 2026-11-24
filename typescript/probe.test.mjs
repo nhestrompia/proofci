@@ -97,3 +97,11 @@ test("every refusal carries a documented code", () => {
   assert.equal(typeof bad.code, "string");
   assert.match(bad.code, /^[a-z0-9-]+$/);
 });
+
+test("a refusal naming a variable still has a stable code", () => {
+  const { functions } = run(
+    "export function bad(log: number[]): number { log.push(1); return log.length; }\n");
+  const bad = functions.find(f => f.function.endsWith("::bad"));
+  assert.equal(bad.translated, false);
+  assert.equal(bad.code, "in-place-mutation");
+});

@@ -406,6 +406,12 @@ export function refusalCode(reason) {
   if (/must write out their types|add .*:(?: parameter|return) types/.test(text)) return "missing-types";
   if (/null check/.test(text)) return "null-check";
   if (/\?\.|\?\?/.test(text)) return "optional-chain";
+  // Reasons that name a variable or member map to stable codes — renaming the
+  // parameter must not move the same refusal into another bucket.
+  if (/is changed in place/.test(text)) return "in-place-mutation";
+  if (/is used from both safe-integer and double code/.test(text)) return "mixed-number-modes";
+  if (/is not assigned on every path/.test(text)) return "unassigned-on-path";
+  if (/returns nothing/.test(text)) return "returns-nothing";
   const construct = /^`(\.?\w+)` (?:is not supported yet|is only supported|returns nothing|cannot|can't|is changed|is used)/.exec(text)?.[1];
   if (construct) return slug(construct.replace(/^\./, "method-"));
   if (/not supported yet/.test(text)) {
