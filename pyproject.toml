@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proofci"
+version = "0.1.0"
+description = "Formal verification gates for pull requests: guarantees proved about a Lean view of Rust and TypeScript code"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+proofci = "proofci.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["proofci*"]
+
+[tool.setuptools.package-data]
+proofci = ["lean/*.lean"]

@@ -14,6 +14,7 @@ shares none of this cached state.
 
 import hashlib
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -22,7 +23,8 @@ from . import claims, extract, lean, typescript
 from .check import ConfigError, _contract_text, lean_function, load_manifest
 
 
-def _digest(paths):
+def _digest(paths, exclude=()):
+    excluded = tuple(str(Path(e).resolve()) for e in exclude)
     h = hashlib.sha256()
     for root in paths:
         root = Path(root)
@@ -30,6 +32,8 @@ def _digest(paths):
         for p in files:
             if any(part in ("target", ".lake", ".git") for part in p.parts):
                 continue
+            if excluded and str(p).startswith(excluded):
+                continue  # generated output (the exported views), not an input
             h.update(str(p).encode() + b"\0" + p.read_bytes() + b"\0")
     return h.hexdigest()
 
@@ -56,9 +60,40 @@ def _report(output, limit=60000):
 
 
 def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=False, out=print):
+    # The work dir is often a named Docker volume or a host bind mount shared
+    # with another user; create everything world-writable so root ownership
+    # inside the container doesn't lock the host side out.
+    saved_umask = os.umask(0)
+    try:
+        return _run(repo, work, vendor, judge, show, as_json, out)
+    finally:
+        os.umask(saved_umask)
+
+
+def _export_view(repo: Path, manifest, ws_root: Path, module: str, say):
+    """Copy the emitted Lean view next to the contract, where a person or an
+    agent can read it without entering the work dir/volume. Best-effort: a
+    read-only repo keeps the view only under `<work>/lean/`."""
+    view = ws_root / f"{module}.lean"
+    views = repo / manifest.lean / "views"
+    try:
+        if view.is_file() and os.access(repo / manifest.lean, os.W_OK):
+            views.mkdir(exist_ok=True)
+            shutil.copy2(view, views / f"{module}.lean")
+            os.chmod(views / f"{module}.lean", 0o666)
+            say(f"the emitted Lean view is at {views / f'{module}.lean'}")
+    except OSError:
+        pass
+
+
+def _run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=False, out=print):
     repo = repo.resolve()
     manifest = load_manifest(repo)
     work.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(work, 0o777)
+    except OSError:
+        pass
     state_file = work / "state.json"
     state = json.loads(state_file.read_text()) if state_file.exists() else {}
     functions = sorted({t.function for t in manifest.targets})
@@ -73,7 +108,8 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=Fa
         return status
 
     t0 = time.monotonic()
-    crate_key = (_digest([repo / manifest.crate]) + json.dumps(functions)
+    crate_key = (_digest([repo / manifest.crate], exclude=[repo / manifest.lean / "views"])
+                 + json.dumps(functions)
                  + json.dumps([manifest.assumes, [e.entry() for e in manifest.effects]]))
     if vendor and (Path(vendor) / typescript.INDEX).is_file():
         crate_key += (Path(vendor) / typescript.INDEX).read_text()
@@ -116,6 +152,7 @@ def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=Fa
                     stale.unlink()
             lean._copy_lean_tree(repo / manifest.lean, module, ws_root, required=module == "Contract")
     state_file.write_text(json.dumps(state))
+    _export_view(repo, manifest, ws_root, state["module"], say)
     if show:
         say((ws_root / f"{state['module']}.lean").read_text())
 

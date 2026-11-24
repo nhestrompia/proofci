@@ -161,10 +161,19 @@ def check_lockfile(path: Path, manager: str):
         urls += re.findall(r"tarball:\s*['\"]?([^\s,}'\"]+)", text)
         if re.search(r"type:\s*git|repo:\s|directory:\s", text):
             problems.append("a git or local dependency")
+        if re.search(r"link:", text):
+            raise Unsupported("pnpm-lock.yaml uses `link:` workspace dependencies, which pnpm resolves "
+                              "through project files the installer is not allowed to run; vendor the "
+                              "workspace packages and pass --vendor instead")
     else:
         if "__metadata:" in text:
+            extra = (" Its `link:`/`workspace:` dependencies resolve inside the repo but the lockfile "
+                     "itself requires the project's own Yarn to install."
+                     if re.search(r"@link:|@workspace:", text) else "")
             raise Unsupported("this is a Yarn Berry lockfile (yarn 2 or later), which can run project code while "
-                              "installing; ProofCI installs with npm, pnpm or Yarn 1 only")
+                              f"installing; ProofCI installs with npm, pnpm or Yarn 1 only.{extra} "
+                              "Vendor the dependencies (`proofci fetch` from a package-lock.json, pnpm-lock.yaml "
+                              "or Yarn 1 lockfile) and pass --vendor")
         urls += re.findall(r'^\s*resolved\s+"?([^"\s]+)', text, re.M)
     for url in urls:
         host = urlparse(url).hostname

@@ -80,14 +80,35 @@ record each so the next adopter starts where you finished. Keep
 ```
 
 Fields: `function` (file::name), `construct` (short name of what blocked you),
-`code` (the stable refusal code — copy it verbatim from the `code` field of
-the function's `scan --json` entry; `other` when it has none), `refusal` (the message or Lean error), `workaround` (what you did),
+`code` (see below), `refusal` (the message or Lean error), `workaround` (what you did),
 `minutes` (time spent, integer), `resolved` (true/false — a stuck bridge or an
 unsupported function you abandoned is `false`). Add a line the moment something
 blocks or surprises you, not at the end.
 
+`code` is a stable, documented name — copy a refusal's `code` field verbatim
+from `scan --json` output, or use `other` when it has none. For everything
+that is not a translator refusal, pick from this fixed list (codes are an
+interface: they're added but never renamed — don't invent your own):
+
+| Code | When |
+|---|---|
+| `setup-cli` | invoking the CLI itself: packaging, PYTHONPATH, a flag the CLI rejects |
+| `setup-env` | the environment fights you: docker volume ownership, a missing sandbox tool |
+| `setup-deps` | dependency install/fetch fails (lockfile format, workspace `link:`, private registry) |
+| `scan-crash` | a scan aborts on one file or function instead of reporting it |
+| `contract-shape` | the contract checker rejects a statement shape |
+| `proof-bind` | bind/spec friction: `Bind.bind` vs `Std.bind`, `WP.spec_bind`, missing `Js.*` step lemmas |
+| `proof-tactic` | other Lean dead-ends: `simp`/`split`/`cases`/`omega`, unsolved metavariables |
+| `proof-view` | the emitted view is hard to reason about (opaque defs, `_proof_` numerals) |
+| `bridge-stuck` | a bridge proof times out or comes back STUCK |
+| `bridge-refusal` | bridge generation refuses or crashes |
+| `node-crash` | the Node comparison crashes, runs out of memory, or times out |
+| `report-gap` | the report misleads or omits something a reader needs |
+| `docs-gap` | the skill or other docs were wrong or missing the needed step |
+
 `proofci gaps <file> [<file> ...]` aggregates these logs (one argument per repo)
 into a table ranked by total minutes lost; `--json` prints the same rows as
-JSON for cross-pilot tooling. Rows group by `code` when set, else by normalized
-construct text. Run it before choosing targets: constructs ranked high are the
-ones to design around first.
+JSON for cross-pilot tooling. Rows group by a known `code` when set; `other`,
+empty and unrecognized codes group by normalized `construct` text instead, and
+the table shows how many distinct repos each row spans. Run it before choosing
+targets: constructs ranked high are the ones to design around first.

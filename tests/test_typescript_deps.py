@@ -160,6 +160,15 @@ class LockfileTests(Repo):
         with self.assertRaises(Unsupported):
             typescript.check_lockfile(ok, "pnpm")
 
+    def test_pnpm_link_deps_get_a_specific_message(self):
+        lock = write(self.repo / "pnpm-lock.yaml",
+                     "importers:\n  .:\n    dependencies:\n      mylib:\n        specifier: link:../mylib\n"
+                     "        version: link:../mylib\n")
+        with self.assertRaises(Unsupported) as caught:
+            typescript.check_lockfile(lock, "pnpm")
+        self.assertIn("link:", str(caught.exception))
+        self.assertIn("--vendor", str(caught.exception))
+
     def test_yarn_lock(self):
         lock = write(self.repo / "yarn.lock", f'left-pad@1.3.0:\n  version "1.3.0"\n  resolved "{REGISTRY}#abc"\n')
         typescript.check_lockfile(lock, "yarn")
@@ -172,6 +181,15 @@ class LockfileTests(Repo):
         with self.assertRaises(Unsupported) as caught:
             typescript.check_lockfile(lock, "yarn")
         self.assertIn("Yarn Berry", str(caught.exception))
+        self.assertIn("Vendor", str(caught.exception))
+
+    def test_yarn_berry_link_deps_get_a_specific_message(self):
+        lock = write(self.repo / "yarn.lock",
+                     '__metadata:\n  version: 8\n"mylib@link:packages/mylib":\n'
+                     '  resolution: "mylib@link:packages/mylib"\n')
+        with self.assertRaises(Unsupported) as caught:
+            typescript.check_lockfile(lock, "yarn")
+        self.assertIn("link:", str(caught.exception))
 
 
 class InstallTests(Repo):
