@@ -401,10 +401,12 @@ export function withHint(message, context) {
 // Named types that keep their own `type-<name>` code. Any other named type —
 // an adopter's class, interface or library object — maps to `type-named`, so
 // `class Db` and `class User` share one bucket.
+// Entries are in slugged form (what `slug()` produces), so `RegExp` is
+// "reg-exp" and `ArrayBuffer` is "array-buffer".
 const NAMED_TYPES = new Set([
-  "any", "unknown", "date", "map", "set", "promise", "regexp", "error",
+  "any", "unknown", "date", "map", "set", "promise", "reg-exp", "error",
   "bigint", "symbol", "object", "function", "tuple", "union", "record",
-  "weakmap", "weakset", "arraybuffer", "json",
+  "weak-map", "weak-set", "array-buffer", "json",
 ]);
 
 // Codes are a public interface: they are never renamed or repurposed, only
