@@ -291,7 +291,7 @@ const SCOPED = node => ts.isBlock(node) || ts.isFunctionLike(node) || ts.isCatch
   || ts.isForStatement(node) || ts.isForInOrOfStatement(node);
 
 function dependencies(statement, eagerOnly = false) {
-  const needs = new Set(), writes = new Set();
+  const needs = new Set(), writes = new Set(), calls = new Set();
   const lhs = node => {
     for (;;) {
       if (ts.isParenthesizedExpression(node)) { node = node.expression; continue; }
@@ -324,6 +324,8 @@ function dependencies(statement, eagerOnly = false) {
     }
     if (ts.isIdentifier(node) && isReference(node) && !bound.has(node.text)) {
       const p = node.parent;
+      if ((ts.isCallExpression(p) || ts.isNewExpression(p) || ts.isTaggedTemplateExpression?.(p))
+          && (p.expression === node || p.tag === node)) calls.add(node.text);
       if ((ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken,
           ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.SlashEqualsToken].includes(p.operatorToken.kind) && lhs(p.left) === node)
         || ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(p.operator))) {
@@ -339,7 +341,7 @@ function dependencies(statement, eagerOnly = false) {
   // the alias is kept but `x`'s declaration is dropped the module cannot load.
   if (ts.isExportDeclaration(statement) && statement.exportClause && !statement.moduleSpecifier)
     for (const el of statement.exportClause.elements) needs.add((el.propertyName ?? el.name).text);
-  return { needs, writes };
+  return { needs, writes, calls };
 }
 
 function importedNames(statement) {
@@ -412,14 +414,22 @@ function isolate(statements, wanted) {
             && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))));
         if (fn) for (const n of bound[i]) callable.set(n, i);
       }
+      // Only callee positions run a callable — a property read like `Handler.name`
+      // or passing `init` as a value does not, so expansion starts from `calls`.
       const expand = seed => {
         const out = new Set(seed);
+        const done = new Set(); // names already expanded through a callable
         const pending = [...out];
         while (pending.length) {
-          const i = callable.get(pending.pop());
+          const n = pending.pop();
+          if (done.has(n)) continue;
+          done.add(n);
+          const i = callable.get(n);
           if (i === undefined) continue;
-          for (const m of [...deps[i].needs, ...deps[i].writes])
-            if (!out.has(m)) { out.add(m); pending.push(m); }
+          for (const m of [...deps[i].needs, ...deps[i].writes, ...deps[i].calls]) {
+            out.add(m);
+            if (!done.has(m)) pending.push(m);
+          }
         }
         return out;
       };
@@ -427,9 +437,9 @@ function isolate(statements, wanted) {
         if (keep[i]) continue;
         // A statement that binds names only counts if its init-time expressions touch a
         // kept name — a never-called function body reading it does not run at load.
-        const touched = bound[i].size ? (() => { const d = dependencies(statements[i], true); return [...d.needs, ...d.writes]; })()
-          : [...deps[i].needs, ...deps[i].writes];
-        if (![...expand(touched)].some(n => kept.has(n))) continue;
+        const d = bound[i].size ? dependencies(statements[i], true) : deps[i];
+        const touched = [...d.needs, ...d.writes];
+        if (![...expand(d.calls), ...touched].some(n => kept.has(n))) continue;
         keep[i] = true;
         bound[i].forEach(n => kept.add(n));
         for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);

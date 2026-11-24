@@ -395,3 +395,16 @@ export function f(): number { return TABLE.length; }
   const emitted = readFileSync(join(dir, "out/a.mjs"), "utf8");
   assert.ok(emitted.includes("init()"), emitted);
 });
+
+test("a property read of a module callable does not expand its body", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+class Handler { static { throw new Error("init") } m(): number { return TABLE[0]; } }
+const label = Handler.name;
+export function f(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(!readFileSync(join(dir, "out/a.mjs"), "utf8").includes("class Handler"));
+});
