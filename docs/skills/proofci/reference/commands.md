@@ -42,9 +42,9 @@ reports `first_adoption: true` for this; no `--base` flag is needed.
 `PROOFCI_BRIDGE_BUDGET`, `PROOFCI_MUTATION_FULL`, `PROOFCI_MUTANTS`,
 `PROOFCI_MUTATION_BUDGET`, `PROOFCI_PARALLEL_JUDGES`, `PROOFCI_NODE_HEAP`) pass
 through to the container; no other environment is. `PROOFCI_NODE_HEAP` is a
-number of megabytes and becomes Node's `--max-old-space-size` for the
-Node-comparison stage (large files can exceed the default ~4 GB heap); it is
-the only Node flag the check accepts.
+number of megabytes (at most 16384) and becomes Node's `--max-old-space-size`
+for the Node-comparison stage (large files can exceed the default ~4 GB heap);
+it is the only Node flag the check accepts.
 
 Gotchas from the pilots:
 

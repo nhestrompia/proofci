@@ -215,7 +215,11 @@ export default stub;
 // outside the package root) is normalized to a path inside `out`, or imports and stand-ins
 // would be written and referenced outside it.
 const module_ = file => file.replace(/\.tsx?$/, ".mjs").split("/")
-  .filter(part => part !== "." && part !== "").map(part => part === ".." ? "__up" : part).join("/");
+  .filter(part => part !== "." && part !== "")
+  // `..` becomes `__up` and a literal `__up*` doubles its prefix, so two different
+  // source paths can never collide and nothing escapes the output directory.
+  .map(part => part === ".." ? "__up" : part.startsWith("__up") ? `__up${part}` : part)
+  .join("/");
 
 // The names a top-level statement binds, so a run can keep only the ones its targets need.
 function boundNames(statement) {
@@ -234,6 +238,9 @@ function boundNames(statement) {
     else clause.namedBindings?.elements.forEach(e => names.add(e.name.text));
   }
   if (ts.isExportAssignment(statement)) names.add("default");
+  // `export {x}`/`export {x as pub}` bind the public names; `export *` binds nothing known.
+  if (ts.isExportDeclaration(statement) && statement.exportClause)
+    for (const el of statement.exportClause.elements) names.add(el.name.text);
   return names;
 }
 
@@ -244,7 +251,7 @@ function isReference(node) {
   if (!parent) return true;
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
   if ((ts.isPropertyAssignment(parent) || ts.isEnumMember(parent)) && parent.name === node) return false;
-  if (ts.isBindingElement(parent) || ts.isImportSpecifier(parent)) return false;
+  if (ts.isBindingElement(parent) || ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent)) return false;
   if (ts.isParameter(parent)) return parent.name !== node; // a default like `n = LIMIT` still reads it
   if ((ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isVariableDeclaration(parent)
     || ts.isFunctionExpression(parent) || ts.isClassExpression(parent)) && parent.name === node) return false;
@@ -344,30 +351,38 @@ function isolate(statements, wanted) {
   const deps = statements.map(dependencies);
   const keep = statements.map(() => false);
   const seen = new Set();
+  const kept = new Set();
   const queue = [...wanted];
   while (queue.length) {
     const name = queue.pop();
-    if (seen.has(name)) continue;
-    seen.add(name);
-    if (!statements.some((_, i) => bound[i].has(name))) {
-      if (!GLOBALS.has(name))
-        return { keep, reason: `${JSON.stringify(name)} is needed but is not declared at the module level or a known global` };
-      continue;
-    }
-    for (const i of statements.keys()) {
-      if (bound[i].has(name) && !keep[i]) {
-        keep[i] = true;
-        for (const need of deps[i].needs) queue.push(need);
+    if (!seen.has(name)) {
+      seen.add(name);
+      if (!statements.some((_, i) => bound[i].has(name))) {
+        if (!GLOBALS.has(name))
+          return { keep, reason: `${JSON.stringify(name)} is needed but is not declared at the module level or a known global` };
+        continue;
+      }
+      for (const i of statements.keys()) {
+        if (bound[i].has(name) && !keep[i]) {
+          keep[i] = true;
+          bound[i].forEach(n => kept.add(n));
+          for (const need of deps[i].needs) queue.push(need);
+        }
       }
     }
-  }
-  // A dropped statement that writes a kept `let`/`var` changes what the target sees.
-  const kept = new Set();
-  statements.forEach((_, i) => { if (keep[i]) bound[i].forEach(n => kept.add(n)); });
-  for (const i of statements.keys()) {
-    if (keep[i] || bound[i].size) continue;
-    for (const name of deps[i].writes) {
-      if (kept.has(name)) return { keep, reason: `other top-level code writes \`${name}\`, which the target reads: it cannot be isolated` };
+    if (!queue.length) {
+      // A dropped statement that mentions a kept name — a read, a call through it, a
+      // property write — can change what the target sees (`TABLE.push(1)`,
+      // `Object.freeze(CONFIG)`, `LIMITS.max = 5`, `registry.set(k, v)`). It runs in
+      // real JavaScript, so it runs here too; if keeping it crashes the run the
+      // import error is reported, never silently dropped.
+      for (const i of statements.keys()) {
+        if (keep[i]) continue;
+        if (![...deps[i].needs, ...deps[i].writes].some(n => kept.has(n))) continue;
+        keep[i] = true;
+        bound[i].forEach(n => kept.add(n));
+        for (const need of deps[i].needs) queue.push(need);
+      }
     }
   }
   return { keep, reason: null };
@@ -421,19 +436,24 @@ export function compile(root, files, imports, out, effects = [], needs = {}) {
   // Seed each file's set from its own targets, then grow it by what kept statements in other
   // files import from this one: a helper imported by a target elsewhere must not be dropped.
   const wanted = new Map(Object.entries(needs).map(([f, names]) => [f, new Set(names)]));
-  const importNeeds = statement => {
-    // The names a kept `import`/`export ... from` reads from its resolved module.
+  const importNeeds = (statement, required) => {
+    // The names a kept `import`/`export ... from` reads from its resolved module — only the
+    // ones actually required here, so an unused sibling binding can't pull a crashing
+    // initializer back into the exporting module.
+    const pairs = []; // [local/public name, source-module name]
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause;
-      if (!clause) return { names: [], all: false };
-      if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) return { names: [], all: true };
-      const names = [];
-      if (clause.name) names.push("default");
-      clause.namedBindings?.elements.forEach(el => names.push((el.propertyName ?? el.name).text));
-      return { names, all: false };
+      if (!clause) return [];
+      if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) return { all: true };
+      if (clause.name) pairs.push([clause.name.text, "default"]);
+      clause.namedBindings?.elements.forEach(el => pairs.push([el.name.text, (el.propertyName ?? el.name).text]));
+    } else {
+      // `export {x} from`/`export {x as pub} from`: the public name is read here, the source
+      // name (propertyName when present) is what the other module declares.
+      if (!statement.exportClause) return { all: true }; // export *
+      statement.exportClause.elements.forEach(el => pairs.push([el.name.text, (el.propertyName ?? el.name).text]));
     }
-    if (!statement.exportClause) return { names: [], all: true }; // export *
-    return { names: statement.exportClause.elements.map(el => el.name.text), all: false };
+    return { names: pairs.filter(([local]) => required.has(local)).map(([, remote]) => remote), all: false };
   };
   for (let grew = true; grew;) {
     grew = false;
@@ -442,12 +462,17 @@ export function compile(root, files, imports, out, effects = [], needs = {}) {
       const parsed = parsedOf(file);
       const { keep, reason } = isolate([...parsed.statements], [...want]);
       if (reason) { reasons[file] = reason; continue; }
+      // Names this file requires: its wanted set plus whatever kept statements read.
+      const required = new Set(want);
+      parsed.statements.forEach((s, i) => {
+        if (keep[i]) dependencies(s).needs.forEach(n => required.add(n));
+      });
       for (const [i, statement] of parsed.statements.entries()) {
         if (!keep[i] || !statement.moduleSpecifier) continue;
         const resolved = imports[file]?.[statement.moduleSpecifier.text];
         const target = resolved && relative(realRoot, resolved);
         if (!target || !reached.has(target) || !wanted.has(target)) continue;
-        const { names, all } = importNeeds(statement);
+        const { names, all } = importNeeds(statement, required);
         const add = all ? [...exported.keys()].filter(n => exported.get(n) === target) : names;
         for (const n of add) if (!wanted.get(target).has(n)) { wanted.get(target).add(n); grew = true; }
       }

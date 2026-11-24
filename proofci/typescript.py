@@ -475,7 +475,7 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     # PROOFCI_NODE_HEAP (megabytes) is the only Node flag the comparison may take; anything
     # else NODE_OPTIONS could carry never reaches the sandbox.
     heap = os.environ.get("PROOFCI_NODE_HEAP") or ""
-    node_args = [f"--max-old-space-size={int(heap)}"] if heap.isdigit() and int(heap) > 0 else []
+    node_args = [f"--max-old-space-size={int(heap)}"] if heap.isdigit() and 0 < int(heap) <= 16384 else []
     node = sandbox.run(["node", *node_args, str(program), str(config)], readable=[checkout, program.parent],
                        binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)
     if node.status != 0:
