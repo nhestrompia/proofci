@@ -938,7 +938,7 @@ export class Translator {
 
   number(value, node) {
     if (Number.isSafeInteger(value) && !this.doubles) {
-      return `(Js.Num.mk (${value}) (of_decide_eq_true rfl) (of_decide_eq_true rfl))`;
+      return `(Js.lit (${value}))`;
     }
     if (!this.doubles) throw this.fail(node, `the number ${value} is not a safe integer`);
     return `(Js.Dbl.lit ${bitsOf(value)})`;

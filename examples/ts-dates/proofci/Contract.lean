@@ -15,7 +15,7 @@ theorem day_of_year_range (year dayOfYear : Js.Num) :
 
 /-- Hour 24 is accepted only as exactly 24:00:00 (end of day). -/
 theorem midnight_24_only (minutes seconds : Js.Num) :
-    validateTime (Js.Num.mk 24 (of_decide_eq_true rfl) (of_decide_eq_true rfl)) minutes seconds ⦃ r =>
+    validateTime (Js.lit (24)) minutes seconds ⦃ r =>
       r = true ↔ (minutes.val = 0 ∧ seconds.val = 0) ⦄ := by sorry
 
 /-- An accepted time is a real time of day: at most 24:00:00, minutes and seconds below 60. -/
