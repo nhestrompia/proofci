@@ -177,11 +177,16 @@ def _strip_dev(manifest: dict):
     return manifest
 
 
-def _copy_package(src: Path, dest: Path, budget):
-    """Copy a package directory (sources and data files) without nested packages."""
+def _copy_package(src: Path, dest: Path, budget, exclude=None):
+    """Copy a package directory (sources and data files) without nested packages.
+    `exclude` (e.g. the vendor output) is left out so a vendored directory
+    inside the repo can't be copied into itself."""
+    excluded = Path(exclude).resolve() if exclude else None
     for path in sorted(src.rglob("*")):
         rel = path.relative_to(src)
         if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts):
+            continue
+        if excluded is not None and excluded in (path.resolve(), *path.resolve().parents):
             continue
         if any((src / Path(*rel.parts[:i]) / "Cargo.toml").is_file() for i in range(1, len(rel.parts))):
             continue  # inside a nested package, which is staged separately if needed
@@ -198,9 +203,10 @@ def _copy_package(src: Path, dest: Path, budget):
         shutil.copyfile(path, target)
 
 
-def stage(checkout: Path, crate_rel: str, dest: Path) -> Staged:
+def stage(checkout: Path, crate_rel: str, dest: Path, exclude=None) -> Staged:
     """Copy the target package, its path dependencies and its workspace
-    manifest into `dest`, without dev-dependencies or unrelated members."""
+    manifest into `dest`, without dev-dependencies or unrelated members.
+    `exclude` (e.g. the vendor output) is left out of the copy."""
     checkout = checkout.resolve()
     package_dir = _inside(checkout, checkout / crate_rel, "the crate")
     manifest = _read_toml(package_dir / "Cargo.toml")
@@ -251,7 +257,7 @@ def stage(checkout: Path, crate_rel: str, dest: Path) -> Staged:
         rel = directory.relative_to(root)
         out_dir = dest / rel
         out_dir.mkdir(parents=True, exist_ok=True)
-        _copy_package(directory, out_dir, budget)
+        _copy_package(directory, out_dir, budget, exclude=exclude)
         if directory != root or not workspace_dir:
             (out_dir / "Cargo.toml").write_text(toml_dumps(_strip_dev(data)))
         if rel != Path("."):
@@ -294,7 +300,7 @@ def fetch(checkout: Path, crate_rel: str, vendor_dir: Path, work: Path):
     The only step with network access. `cargo vendor` resolves, downloads and
     checksums sources; it does not compile or run them.
     """
-    staged = stage(checkout, crate_rel, work / "fetch")
+    staged = stage(checkout, crate_rel, work / "fetch", exclude=vendor_dir)
     vendor_dir.mkdir(parents=True, exist_ok=True)
     if not staged.has_registry_deps:
         return staged
@@ -313,7 +319,7 @@ def fetch(checkout: Path, crate_rel: str, vendor_dir: Path, work: Path):
 
 def extract(checkout: Path, crate_rel: str, work: Path, start_from=(), vendor_dir=None,
             opaque=()) -> Extraction:
-    staged = stage(checkout, crate_rel, work / "crate")
+    staged = stage(checkout, crate_rel, work / "crate", exclude=vendor_dir)
     module = lean_module_name(staged.crate_name)
     out = work / "extract"
     out.mkdir()

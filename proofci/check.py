@@ -71,6 +71,7 @@ class Report:
     disagreements: list = field(default_factory=list)  # TypeScript only: inputs where Node and the Lean view differ
     downgrades: list = field(default_factory=list)  # TypeScript only: proved on the base branch, not proved now
     stale_accepts: list = field(default_factory=list)  # `accept_downgrades` entries that are no downgrade here
+    first_adoption: bool = False  # the base checkout has no proofci.yaml at all: the change introduces ProofCI
 
     @property
     def passed(self):
@@ -96,6 +97,7 @@ class Report:
                                for status in (bridge.PROVED, bridge.TESTED, bridge.FAILED)},
             "downgrades": self.downgrades,
             "stale_accepts": self.stale_accepts,
+            "first_adoption": self.first_adoption,
             "notes": self.notes,
             "timings_seconds": self.timings,
         }
@@ -106,6 +108,17 @@ def load_manifest(checkout: Path):
     if not path.is_file() or path.is_symlink():
         raise ConfigError(f"{manifest_mod.MANIFEST_NAME} not found in {checkout}")
     return manifest_mod.parse(path.read_bytes())
+
+
+def _manifest_or_none(checkout: Path):
+    """The checkout's manifest, or None when there is genuinely no file: no
+    regular file, no symlink, nothing. Anything present but unreadable or
+    invalid (a symlink, a directory, bad YAML) still raises, so a pull request
+    cannot pose as a first adoption by corrupting the policy's file."""
+    path = checkout / manifest_mod.MANIFEST_NAME
+    if path.exists() or path.is_symlink():
+        return load_manifest(checkout)
+    return None
 
 
 def _tree_digest(checkout: Path, lean_dir: str, module: str):
@@ -178,15 +191,38 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
           bridge_timeout=None, bridge_budget=None):
     started = time.monotonic()
     report = Report(policy_source=policy)
-    base = load_manifest(base_checkout)
+    base = _manifest_or_none(base_checkout)
     try:
         head = load_manifest(head_checkout)
     except (ConfigError, manifest_mod.ManifestError):
         head = None
-    report.policy_changes = policy_changes(base_checkout, base, head_checkout, head)
-    report.policy_approvers = base.approvers
-    report.language = base.language
-    if policy == "head":
+    report.first_adoption = base is None
+    if report.first_adoption:
+        # First adoption: the protected branch has no proofci.yaml at all, so
+        # there is no policy to protect. The candidate's manifest is used and
+        # every target and guarantee counts as new -- the same checks an
+        # approved policy change runs (a /-- claim on every guarantee, the
+        # mutation/strength sweep) apply to all of them. The run is reported
+        # as a policy change, so it blocks until a maintainer approves the
+        # whole contract, and re-running with policy="head" after approval is
+        # what accepts it. This stays fail-closed: it only exists when the
+        # base has no manifest file at all, so it cannot be reached from a
+        # repository that already adopted ProofCI (deleting or renaming the
+        # manifest in the pull request is reported as a policy change, and a
+        # base symlink or unreadable file is an error, not an adoption).
+        if head is None:
+            raise ConfigError(f"{manifest_mod.MANIFEST_NAME} not found in {head_checkout}")
+        report.policy_changes = [
+            "first adoption: this pull request introduces `proofci.yaml` and the contract — "
+            "every guarantee is new and the whole contract needs approval"]
+        report.policy_approvers = head.approvers
+        report.language = head.language
+        base = manifest_mod.Manifest("", "proofci", ())
+    else:
+        report.policy_changes = policy_changes(base_checkout, base, head_checkout, head)
+        report.policy_approvers = base.approvers
+        report.language = base.language
+    if policy == "head" or report.first_adoption:
         if head is None:
             raise ConfigError("the candidate has no valid proofci.yaml")
         active, policy_checkout = head, head_checkout
@@ -210,11 +246,12 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             o.warnings.append(f"the contract gives `{o.theorem}` no `/--` doc comment, so the report "
                               "cannot say in plain words what it claims")
 
-    if policy == "head":
-        # An approved policy change is the only moment a claim can appear, change or
-        # disappear: every new guarantee must state one, and an existing claim may
-        # not be dropped. A theorem that never had one keeps working but is warned
-        # about above -- the report shows where the claim is missing.
+    if policy == "head" or report.first_adoption:
+        # An approved policy change -- and a first adoption, where every
+        # guarantee is new -- is the only moment a claim can appear, change or
+        # disappear: every new guarantee must state one, and an existing claim
+        # may not be dropped. A theorem that never had one keeps working but is
+        # warned about above -- the report shows where the claim is missing.
         base_theorems = {f"{t.id}/{g.id}": g.theorem for t, g in base.guarantees()}
         base_stated = claims.theorems(_contract_text(base_checkout, base.lean))
         for o in report.outcomes:
@@ -713,7 +750,10 @@ def _ratchet(report, base_checkout, head_checkout, base, active, work, functions
 
 def fetch(base_checkout: Path, head_checkout: Path, vendor_dir: Path, policy="base"):
     """Vendor the candidate's crates.io dependencies (the step with network)."""
-    active = load_manifest(head_checkout if policy == "head" else base_checkout)
+    active = (_manifest_or_none(head_checkout) if policy == "head"
+              else _manifest_or_none(base_checkout) or _manifest_or_none(head_checkout))
+    if active is None:
+        raise ConfigError(f"{manifest_mod.MANIFEST_NAME} not found in {head_checkout}")
     if active.language == "typescript":
         # Package declarations are installed for the type checker; no package code runs.
         with tempfile.TemporaryDirectory(prefix="proofci-fetch-", dir=vendor_dir) as tmp:

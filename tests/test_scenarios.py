@@ -636,6 +636,29 @@ def ts_cast_hides_a_type(head):
     edit(head / TS_LEDGER, "amount <= 0 ||", "(amount as any) <= 0 ||")
 
 
+def ts_drop_manifest(checkout):
+    (checkout / "proofci.yaml").unlink()
+
+
+def ts_keeps_its_manifest(head):
+    # A first adoption: the pull request adds proofci.yaml to a base that has
+    # none yet, so the base loses it and the candidate keeps the example's.
+    pass
+
+
+ts_keeps_its_manifest.also_base = ts_drop_manifest
+
+
+def ts_removes_the_manifest(head):
+    ts_drop_manifest(head)
+
+
+def ts_symlinks_the_manifest(head):
+    manifest = head / "proofci.yaml"
+    manifest.unlink()
+    manifest.symlink_to("/etc/hostname")
+
+
 def ts_return_type_not_written(head):
     edit(head / TS_LEDGER, "export function sumAmounts(amounts: readonly number[]): number {",
          "export function sumAmounts(amounts: readonly number[]) {")
@@ -899,6 +922,17 @@ SCENARIOS.update({
     "ts-fractional-fee": (ts_fractional_fee, dict.fromkeys(TS_GUARANTEES, S), 1),
     "ts-cast-hides-a-type": (ts_cast_hides_a_type, {**ts_results(), TS_CONSERVES: X, TS_OVERDRAFT: X}, 1),
     "ts-return-type-not-written": (ts_return_type_not_written, {**ts_results(), TS_SUM: X}, 1),
+    # First adoption: no proofci.yaml on the base, so the candidate's manifest is used and
+    # every guarantee counts as new. The run blocks as a policy change until approval; the
+    # approved run (policy=head) passes. Deleting the manifest or swapping it for a symlink
+    # is a policy change, not an adoption.
+    "ts-first-adoption": (ts_keeps_its_manifest, ts_results(), 1, {"policy_changes": ["first adoption"]}),
+    "ts-first-adoption-approved": (ts_keeps_its_manifest, ts_results(), 0,
+                                   {"policy": "head", "policy_changes": ["first adoption"]}),
+    "ts-pr-removes-the-manifest": (ts_removes_the_manifest, ts_results(), 1,
+                                   {"policy_changes": ["removed or is invalid"]}),
+    "ts-pr-symlinks-the-manifest": (ts_symlinks_the_manifest, ts_results(), 1,
+                                    {"policy_changes": ["removed or is invalid"]}),
     # Recursive records and unions tagged by `kind`, and the functions that walk them, are bridged by induction.
     # Binary64 functions: exact arithmetic, NaN and -0, all bridged to `proved`.
     "ts-dbl-baseline": (None, dbl_results(), 0, {**DBL_BRIDGE, "summary": {"proved": 3, "tested": 0, "failed": 0}}),

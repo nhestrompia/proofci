@@ -25,6 +25,22 @@ class StructuredErrorTests(unittest.TestCase):
             {"file": "Proofs.lean", "line": 12, "column": 4, "message": "unsolved goals"},
             {"file": "Model.lean", "line": 9, "column": 0, "message": "unknown constant `x`"}])
 
+    def test_messages_keep_their_continuation_lines(self):
+        # `dev --json` used to truncate each error at its first line while
+        # `dev --show` printed the goal and details Lean indents under it.
+        text = ("error: Proofs.lean:12:4: unsolved goals\n"
+                "  case h\n"
+                "  ⊢ withdraw balance amount = ok none\n"
+                "\n"
+                "error: Proofs.lean:20:1: error: type mismatch\n"
+                "  amount\n"
+                "warning: something else\n")
+        self.assertEqual(lean.structured_errors(text), [
+            {"file": "Proofs.lean", "line": 12, "column": 4,
+             "message": "unsolved goals\n  case h\n  ⊢ withdraw balance amount = ok none"},
+            {"file": "Proofs.lean", "line": 20, "column": 1,
+             "message": "type mismatch\n  amount"}])
+
     def test_report_json_carries_errors_and_disagreements(self):
         o = check.Outcome("t", "g", "a.ts::f", "g", True, check.UNPROVEN,
                           reason="the proof does not check:\nerror: Proofs.lean:4:2: type mismatch")

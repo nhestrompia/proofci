@@ -105,13 +105,21 @@ def declares_dependencies(checkout: Path, package_rel: str):
     return any(data.get(key) for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"))
 
 
-def stage(checkout: Path, dest: Path):
+def stage(checkout: Path, dest: Path, exclude=None):
     """A private copy of the checkout without Git data, installed packages or
     package manager settings. Package managers and the translator may write
-    here; the checkout stays untouched."""
+    here; the checkout stays untouched. `exclude` is a directory (the vendor
+    output) that must not be copied along: vendored packages sit inside the
+    repo on some setups, and copying them back in would copy the repo into
+    itself."""
+    excluded = Path(exclude).resolve() if exclude else None
 
     def skip(directory, names):
-        return {name for name in names if name in SKIPPED or name in CONFIG_FILES or name in CONFIG_DIRS}
+        found = {name for name in names if name in SKIPPED or name in CONFIG_FILES or name in CONFIG_DIRS}
+        if excluded is not None:
+            found |= {name for name in names
+                      if excluded in (Path(directory, name).resolve(), *Path(directory, name).resolve().parents)}
+        return found
 
     shutil.copytree(checkout, dest, symlinks=True, ignore=skip)
     return dest
@@ -255,7 +263,7 @@ def install(checkout: Path, package_rel: str, vendor_dir: Path, work: Path):
         # `check` still runs and says why packages are missing.
         (vendor_dir / INDEX).write_text(json.dumps({"lockfile": name, "manager": manager, "modules": [], "error": str(problem)}))
         raise
-    staged = stage(checkout, work / "install")
+    staged = stage(checkout, work / "install", exclude=vendor_dir)
     cwd = staged / directory.relative_to(checkout.resolve())
     skipped = drop_foreign_packages(cwd) if manager == "npm" else []
     cache = work / "install-cache"
@@ -289,7 +297,7 @@ def prepare(checkout: Path, work: Path, vendor_dir=None):
     index = Path(vendor_dir) / INDEX if vendor_dir else None
     if index is None or not index.is_file():
         return checkout, []
-    staged = stage(checkout, work / "code")
+    staged = stage(checkout, work / "code", exclude=vendor_dir)
     binds = []
     for relative in json.loads(index.read_text())["modules"]:
         source = Path(vendor_dir) / MODULES / relative / "node_modules"

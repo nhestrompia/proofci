@@ -1,5 +1,6 @@
 *
 !proofci
+!action/seccomp.json
 !toolchain/prune.py
 !toolchain/package-managers/package.json
 !toolchain/package-managers/package-lock.json

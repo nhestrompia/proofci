@@ -4108,7 +4108,7 @@ export function findDeclaration(translator, target) {
   throw new Unsupported(`\`${functionName}\` is not a top-level function in ${path}`);
 }
 
-export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes, assumes, effects }) {
+export function translate({ root, module, targets, paths, repository, policyRoot, requireTypes, assumes, effects, stubs = true }) {
   const resolved = policyRoot ? protectedPaths(policyRoot, repository) : paths;
   const translator = new Translator(root, targets, resolved, repository, assumes, effects);
   translator.requireTypes = Boolean(requireTypes);
@@ -4161,7 +4161,10 @@ export function translate({ root, module, targets, paths, repository, policyRoot
       translator.leanNames = snapshot.leanNames;
       translator.effectOps = snapshot.effectOps;
       translator.anonymous = snapshot.anonymous;
-      try {
+      // The stub keeps the contract elaborating when another function fails.
+      // A probe (stubs: false) lists refusals instead, so a stub that can't be
+      // written is no reason to hide the failure behind a fatal.
+      if (stubs) try {
         if (declaration) names[target] = translator.stub(declaration);
       } catch (stubError) {
         if (!(stubError instanceof Unsupported)) throw stubError;

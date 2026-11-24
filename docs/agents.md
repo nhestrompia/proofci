@@ -38,14 +38,36 @@ Translates every exported function in the package and prints:
     { "function": "src/ledger.ts::transfer", "translated": true },
     { "function": "src/util.ts::hash", "translated": false,
       "reason": "src/util.ts:3: `any` is not supported yet",
-      "hint": "write the real type" }
-  ]
+      "hint": "write the real type",
+      "code": "type-any" }
+  ],
+  "summary": { "total": 2, "translated": 1, "refused": 1,
+               "by_code": { "type-any": 1 } }
 }
 ```
 
+Every exported function gets an entry: it either translates or is refused.
 `reason` is the unsupported construct with its file and line; `hint` is the
 "How to fix" line the report shows (from `typescript/hints.mjs`), and is absent
-when there is no suggested rewrite. A fatal translator failure exits 2.
+when there is no suggested rewrite. A refusal only blocks the functions that
+reach the unsupported construct — an unsupported type or file never hides the
+functions that don't use it.
+
+`code` is a stable, machine-readable name for the refusal, defined in
+`typescript/hints.mjs` (`type-<name>` for an unsupported type, `compile-error`,
+`outside-package`, `missing-types`, `null-check`, `optional-chain`, a kebab-case
+construct name such as `typeof-expression`, or `other`). Codes are an
+interface: they are added but never renamed, so `summary.by_code` can count
+missing features across repositories.
+
+## `report.json` additions
+
+`check`/`local` also report `first_adoption`: `true` when the base branch has
+no `proofci.yaml` at all — the pull request introduces ProofCI. The candidate's
+manifest is used, every guarantee counts as new (the /-- doc-comment rule and
+the planted-defect sweep apply to all of them), and the run is a policy change:
+it blocks until a maintainer approves the whole contract. `policy.approvers`
+in the new manifest names who may approve.
 
 ## `proofci local` — CI on your machine
 
@@ -67,7 +89,10 @@ so a machine without the toolchain can still list functions.
 
 The report goes to stdout, the human-readable summary to stderr. Exit codes:
 `0` verified, `1` a guarantee failed, `2` the run errored. An error or a crash
-never prints a passing report.
+never prints a passing report. `PROOFCI_*` tuning variables the check honours
+(`PROOFCI_BRIDGE_TIMEOUT`, `PROOFCI_BRIDGE_BUDGET`, `PROOFCI_MUTATION_FULL`,
+`PROOFCI_MUTANTS`, `PROOFCI_MUTATION_BUDGET`, `PROOFCI_PARALLEL_JUDGES`) are
+passed through to the container; no other environment is.
 
 ## `report.json` (version 1)
 
