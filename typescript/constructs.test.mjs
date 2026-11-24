@@ -33,7 +33,7 @@ for (const entry of table.supported) {
     // just absent from the failures.
     const lean = result.names["a.ts::f"];
     assert.ok(lean, `no Lean name for a.ts::f\nin\n${entry.source}`);
-    assert.match(result.source, new RegExp(`def ${lean.replace(".", "\\.")}\\b`),
+    assert.match(result.source, new RegExp(`def ${lean.replaceAll(".", "\\.")}\\b`),
       `no 'def ${lean}' in the generated Lean for "${entry.construct}"`);
   });
 }
