@@ -404,7 +404,12 @@ const GLOBALS = new Set(["undefined", "NaN", "Infinity", "globalThis", "argument
   "BigInt64Array", "BigUint64Array", "SharedArrayBuffer", "Atomics", "FinalizationRegistry",
   "Buffer", "process", "require", "exports", "module", "__dirname", "__filename", "URL",
   "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal", "Event",
-  "EventTarget", "crypto", "performance", "localStorage", "global"]);
+  "EventTarget", "crypto", "performance", "localStorage", "global",
+  // Browser globals — real references crash in Node exactly like real JavaScript, but a
+  // `typeof window !== "undefined"` guard must still evaluate (to false) rather than
+  // undeclare the whole module.
+  "window", "document", "self", "navigator", "location", "history", "indexedDB",
+  "customElements", "HTMLElement", "Worker", "requestAnimationFrame", "cancelAnimationFrame"]);
 
 function isolate(statements, wanted) {
   const bound = statements.map(boundNames);

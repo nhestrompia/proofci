@@ -449,3 +449,13 @@ export function g(): number { return 2; }
   assert.ok(!out.includes("unused"), "the lazy throw's function must be dropped");
   assert.ok(!out.includes("caught"), "the swallowed throw has no effect and is dropped");
 });
+
+test("a typeof-window-guarded throw evaluates its guard and stays out of the way", () => {
+  const dir = project({
+    "a.ts": `export function f(): number { return 1; }
+if (typeof window !== "undefined") throw new Error("browser only");
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+});
