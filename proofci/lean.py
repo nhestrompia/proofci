@@ -301,10 +301,21 @@ def proofciAudit (thm fn : Name) (models : List Name) : MetaM Unit := do
       -- A call whose arguments name none of the binders is one fixed input:
       -- `f 3 ⦃ … ⦄` checks that call alone, not `f` in general. Only calls
       -- that actually apply `fn` to something count (a bare `f` is no call).
+      -- Variables bound inside the statement (an inner `∀`/`∃`) show as loose
+      -- bound variables — they quantify too. Parameters of `fn` typed
+      -- `World.Oracle`/`World.Hist` are async plumbing, not inputs: a bound
+      -- oracle or history argument does not make a fixed input general.
+      let worldParam : Array Bool := ← match env.find? fn with
+        | some info => forallTelescope info.type fun ps _ => ps.mapM fun p => do
+          let head := (← inferType p).getAppFn.constName?.map Name.toString |>.getD ""
+          pure (head.endsWith "World.Oracle" || head.endsWith "World.Hist")
+        | none => pure #[]
       let calls := proofciApps body fn |>.filter fun e => !e.getAppArgs.isEmpty
-      let fixed := !calls.isEmpty && calls.all fun e => e.getAppArgs.all fun a => !a.hasFVar
+      let fixed ← calls.allM fun e => do
+        (e.getAppArgs.mapIdx fun i a => (i, a)).allM fun (i, a) =>
+          pure (worldParam[i]? == some true || (!a.hasFVar && !a.hasLooseBVars))
       pure (body.getUsedConstants.contains fn, hyp, body.isConstOf ``True || refl,
-            proofciPostIgnoresResult body, bad, fixed)
+            proofciPostIgnoresResult body, bad, !calls.isEmpty && fixed)
     (conclusion, hypothesis, trivial, ignores, vacuous, exampleOnly) := r
   | some _ => kind := "other"
   | none => pure ()
