@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { generator } from "./differential.mjs";
@@ -24,4 +24,50 @@ test("generator injects hypothesis literals into matching kinds", () => {
 test("generator emits empty arrays sometimes", () => {
   const type = { kind: "array", item: { kind: "number" } };
   assert.ok(hits([...Array(40).keys()], type).some(v => v.length === 0));
+});
+
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compile } from "./differential.mjs";
+
+const root = mkdtempSync(join(tmpdir(), "differential-"));
+after(() => rmSync(root, { recursive: true, force: true }));
+let cases_ = 0;
+const project = files => {
+  const dir = join(root, `p${cases_++}`);
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(join(dir, path.split("/").slice(0, -1).join("/")), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  }
+  return dir;
+};
+
+test("compile emits only the statements the targets reach", () => {
+  const dir = project({ "a.ts": `class Boom { constructor() { throw new Error("unrelated") } }
+const boom = new Boom();
+const STEP = 3;
+function helper(a: number): number { return a + STEP; }
+export function f(a: number): number { return helper(a); }
+export function unrelated(): unknown { return boom; }
+` });
+  const out = join(dir, "out");
+  const reasons = compile(dir, ["a.ts"], {}, out, [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+  const emitted = readFileSync(join(out, "a.mjs"), "utf8");
+  assert.ok(!emitted.includes("Boom"), emitted);
+  assert.ok(emitted.includes("helper"));
+});
+
+test("compile fails closed when what a target needs is not there or is written elsewhere", () => {
+  const dir = project({
+    "missing.ts": "export function f(): number { return neverDeclared(); }\n",
+    "shared.ts": `let s = 0;
+s = 1;
+export function f(): number { return s; }
+` });
+  const reasons = compile(dir, ["missing.ts", "shared.ts"], {}, join(dir, "out"), [],
+    { "missing.ts": ["f"], "shared.ts": ["f"] });
+  assert.match(reasons["missing.ts"], /neverDeclared.*not declared/);
+  assert.match(reasons["shared.ts"], /writes `s`/);
 });

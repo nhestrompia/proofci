@@ -472,7 +472,11 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
         "imports": extraction.imports, "effects": extraction.effect_list or [],
         "literals": literals or {}}))
     program = support_dir() / "differential.mjs"
-    node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
+    # PROOFCI_NODE_HEAP (megabytes) is the only Node flag the comparison may take; anything
+    # else NODE_OPTIONS could carry never reaches the sandbox.
+    heap = os.environ.get("PROOFCI_NODE_HEAP") or ""
+    node_args = [f"--max-old-space-size={int(heap)}"] if heap.isdigit() and int(heap) > 0 else []
+    node = sandbox.run(["node", *node_args, str(program), str(config)], readable=[checkout, program.parent],
                        binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)
     if node.status != 0:
         detail["differ"] = sorted(signatures)

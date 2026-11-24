@@ -75,7 +75,10 @@ function splitTop(text, sep) {
   return parts.map(p => p.trim());
 }
 const unparen = t => { t = t.trim(); while (t.startsWith("(") && t.endsWith(")")) { let d = 0, whole = true; for (let i = 0; i < t.length - 1; i++) { if (t[i] === "(") d++; if (t[i] === ")") d--; if (d === 0) { whole = false; break; } } if (!whole) break; t = t.slice(1, -1).trim(); } return t; };
-const base = n => n.replace(/[«»]/g, "").replace(/_\d+$/, "");
+// Strips the translator's version suffixes: `start_1` (plain) and `end_v1` (quoted bases)
+// both name the Core variable `start`/`end`. Like `_1`, a source name ending `_v1` is taken as
+// a version suffix too.
+const base = n => n.replace(/[«»]/g, "").replace(/_v?\d+$/, "");
 const pathOf = (root, i, n) => n === 1 ? root : (i === n - 1 ? root + ".2".repeat(i) : root + ".2".repeat(i) + ".1");
 
 function viewLoops(text) {
@@ -139,20 +142,23 @@ def ${K}_Zr ${tv} (r : ${beta}) (v : Val) (s : St) : Prop := ${zr}`;
   const tail = `
   (focus (intro s5 hf hz; ${isSum ? `(rcases res with b1 | ${rPat(carried.length)}); exact False.elim hz; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; (try (unfold Todo at hk; simp only at hk; have hk3 : Todo _ _ := hk; clear hk)); crun` : `${after}; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; crun`}))
   (focus (intro v s6 hpre hz; ${kr}))))`;
-  if (!isFor) return `${defs}
-macro_rules | \`(tactic| c_while) => \`(tactic| (
+  // Each loop contributes one alternative to the file's single `first`-combined `c_while`/`c_for`
+  // macro. Separate `macro_rules` for the same syntax do not backtrack: the first one that applies
+  // commits, and `step_while`/`step_for` unify the loop function from `hl`, so a rule for another
+  // loop applies cleanly and then fails deep inside its focuses. Alternatives inside one `first`
+  // do backtrack, so a rule that fails downstream falls through to the loop that owns the site.
+  if (!isFor) return { defs, kind: "while", alt: `(
   v_keep; intro res hl hk
   apply step_while (R := ${K}_R) (Zb := ${K}_Zb) (Zr := ${K}_Zr) (W := ${W}) hl
   (focus (l_conj))
-  (focus (intro st s3 y hf hR hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; have hfr : Fr s3 s3 ${W} := Fr.refl _ _; have hb0 : Base s3.heap s3 := List.prefix_refl _; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))${tail}`;
-  return `${defs}
-macro_rules | \`(tactic| c_for) => \`(tactic| (
+  (focus (intro st s3 y hf hR hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; have hfr : Fr s3 s3 ${W} := Fr.refl _ _; have hb0 : Base s3.heap s3 := List.prefix_refl _; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))${tail}` };
+  return { defs, kind: "for", alt: `(
   v_keep; intro res hl hk
   apply step_for (mk := ${mk}) (R := ${K}_R) (Zb := ${K}_Zb) (Zr := ${K}_Zr) (W := ${W})${a0} hl
   sim
   (focus (intro s2 he; carry he; clear he; l_conj))
   (focus (intro ${pattern(vars.length)} s3 y hf hR hb; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); dsimp only at hb; vsplit hb; all_goals (refine ⟨_, rfl, ?_⟩; dsimp only [${K}_Zb]; l_conj)))
-  (focus (intro q rest ${pattern(vars.length) === "_" ? "_" : "st"} s3 w y hf hR hw hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; apply enter; intro s4 hu he2 hh; have hvq := V.mk' (α := ${T}) he2 hh hw; have hb0 := base_of hh; have hfr : Fr s3 s4 ${W} := Fr.upd (Fr.refl _ _) hu (by decide); carry hu; clear hu he2 hh; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))${tail}`;
+  (focus (intro q rest ${pattern(vars.length) === "_" ? "_" : "st"} s3 w y hf hR hw hb; ${vars.length ? `rcases st with ${pattern(vars.length)}` : "skip"}; dsimp only [${K}_R] at hR; (try casesm* _ ∧ _); clear_todo; carry hf; clear hf; apply enter; intro s4 hu he2 hh; have hvq := V.mk' (α := ${T}) he2 hh hw; have hb0 := base_of hh; have hfr : Fr s3 s4 ${W} := Fr.upd (Fr.refl _ _) hu (by decide); carry hu; clear hu he2 hh; dsimp only at hb; have hk2 : Todo _ _ := hb; clear hb; crun))${tail}` };
 }
 
 export function enumRules(e) {
@@ -621,7 +627,11 @@ macro_rules | \`(tactic| prog_lookup) => \`(tactic| exact ${n}_prog)`).join("\n"
     const vl = viewLoops(defText), ml = loopMeta.filter(l => l.key === key).sort((a, b) => a.idx - b.idx);
     if (vl.length !== ml.length) throw new Error(`loops don't line up: ${vl.length} in the view, ${ml.length} in Core`);
     const tv0 = binders([...sig.params, sig.result]);
-    const loopText = vl.map((l, i) => loopRules(l, ml[i], leanType(sig.result), tv0)).join("\n");
+    const loopParts = vl.map((l, i) => loopRules(l, ml[i], leanType(sig.result), tv0));
+    const loopText = loopParts.map(p => p.defs).join("\n") + ["while", "for"].map(k => {
+      const alts = loopParts.filter(p => p.kind === k).map(p => p.alt);
+      return alts.length ? `\nmacro_rules | \`(tactic| c_${k}) => \`(tactic| (first${alts.map(a => `\n  | ${a}`).join("")}))` : "";
+    }).join("");
     const P = sig.params.map((_, i) => `p${i}`), Vs = sig.params.map((_, i) => `v${i}`);
     const typed = sig.params.map((t, i) => `{p${i} : ${plain(t)}}`).join(" ");
     const reps = sig.params.map((t, i) => `(h${i} : rep (α := ${leanType(t)}) h p${i} v${i})`).join(" ");

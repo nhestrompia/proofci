@@ -407,12 +407,32 @@ export function lower(root, targets, { paths, eff } = {}) {
         return `.prim .recCopy [${E(e.properties[0].expression)}]`;
       }
       if (ts.isObjectLiteralExpression(e)) {
-        const fields = e.properties.map(p => {
-          if (ts.isShorthandPropertyAssignment(p)) return `(${lean(p.name.text)}, .var ${lean(scope.get(checker.getShorthandAssignmentValueSymbol(p)))})`;
-          if (ts.isPropertyAssignment(p)) return `(${lean(p.name.text)}, ${E(p.initializer)})`;
+        // A leading `{ ...r, k: v }` spread: on a dict it is a copy plus key sets; on a declared
+        // record the view keeps the declared fields (`{ r with k := v }`), so spell them out and
+        // read each untouched one back off the base.
+        const [first, ...rest] = e.properties;
+        const spread = first && ts.isSpreadAssignment(first) ? first : null;
+        if (!spread && e.properties.some(ts.isSpreadAssignment)) throw new Error("a spread must come first");
+        const own = p => {
+          if (ts.isShorthandPropertyAssignment(p)) return [p.name.text, `.var ${lean(scope.get(checker.getShorthandAssignmentValueSymbol(p)))}`];
+          if (ts.isPropertyAssignment(p)) return [p.name.text, E(p.initializer)];
           throw new Error("object shape");
-        });
-        return `.record [${fields.join(", ")}]`;
+        };
+        if (spread) {
+          const t = checker.getApparentType(checker.getTypeAtLocation(spread.expression));
+          if (checker.getIndexInfoOfType(t, ts.IndexKind.String)) {
+            return rest.reduce((expr, p) => {
+              if (ts.isSpreadAssignment(p)) throw new Error("a second spread is not supported");
+              const [name, value] = own(p);
+              return `.prim .recPut [${expr}, .lit (.str ${UNITS(name)}), ${value}]`;
+            }, `.prim .recCopy [${E(spread.expression)}]`);
+          }
+          const overridden = new Set(rest.map(p => p.name?.text).filter(Boolean));
+          const fields = checker.getPropertiesOfType(t).filter(prop => !overridden.has(prop.name))
+            .map(prop => `(${lean(prop.name)}, .field (${E(spread.expression)}) ${lean(prop.name)})`);
+          return `.record [${fields.concat(rest.map(p => { const [k, v] = own(p); return `(${lean(k)}, ${v})`; })).join(", ")}]`;
+        }
+        return `.record [${e.properties.map(p => { const [k, v] = own(p); return `(${lean(k)}, ${v})`; }).join(", ")}]`;
       }
       if (ts.isArrayLiteralExpression(e)) {
         if (!e.elements.some(ts.isSpreadElement)) return `.array [${e.elements.map(E).join(", ")}]`;

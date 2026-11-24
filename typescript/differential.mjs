@@ -5,7 +5,7 @@
 // Usage: node differential.mjs <config.json>
 //   config: { root, out, module, signatures, files, imports, cases }
 
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, posix, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -211,7 +211,98 @@ const STAND_IN = `const stub = new Proxy(function () {}, {
 export default stub;
 `;
 
-const module_ = file => file.replace(/\.tsx?$/, ".mjs");
+// A file's emitted module path: `../other-pkg/x.ts` (a file a workspace package resolved
+// outside the package root) is normalized to a path inside `out`, or imports and stand-ins
+// would be written and referenced outside it.
+const module_ = file => file.replace(/\.tsx?$/, ".mjs").split("/").filter(part => part !== "..").join("/");
+
+// The names a top-level statement binds, so a run can keep only the ones its targets need.
+function boundNames(statement) {
+  const names = new Set();
+  const bind = pattern => {
+    if (ts.isIdentifier(pattern)) names.add(pattern.text);
+    else if (ts.isBindingElement(pattern)) bind(pattern.name);
+    else if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) pattern.elements.forEach(bind);
+  };
+  if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) names.add(statement.name.text);
+  if (ts.isVariableStatement(statement)) statement.declarationList.declarations.forEach(d => bind(d.name));
+  if (ts.isImportDeclaration(statement) && statement.importClause) {
+    const clause = statement.importClause;
+    if (clause.name) names.add(clause.name.text);
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) names.add(clause.namedBindings.name.text);
+    else clause.namedBindings?.elements.forEach(e => names.add(e.name.text));
+  }
+  if (ts.isExportAssignment(statement)) names.add("default");
+  return names;
+}
+
+// Whether an identifier occurrence names a value the module level provides, rather than a
+// property key, a label, a declaration's own name or a binding position.
+function isReference(node) {
+  const parent = node.parent;
+  if (!parent) return true;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+  if ((ts.isPropertyAssignment(parent) || ts.isEnumMember(parent)) && parent.name === node) return false;
+  if (ts.isBindingElement(parent) || ts.isParameter(parent) || ts.isImportSpecifier(parent)) return false;
+  if ((ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isVariableDeclaration(parent)
+    || ts.isFunctionExpression(parent) || ts.isClassExpression(parent)) && parent.name === node) return false;
+  if ((ts.isMethodDeclaration(parent) || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)
+    || ts.isMethodSignature?.(parent)) && parent.name === node) return false;
+  if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) return false;
+  if (ts.isImportClause(parent) || ts.isNamespaceImport(parent) || ts.isImportCall?.(parent)) return false;
+  return true;
+}
+
+// The names bound inside `root` that hide a module-level one. Over-approximating is safe (it
+// only keeps a little more), missing one is not — every binding form a transpiled module holds
+// must be covered.
+function localBindings(root) {
+  const bound = new Set();
+  const bind = pattern => {
+    if (!pattern) return;
+    if (ts.isIdentifier(pattern)) bound.add(pattern.text);
+    else if (ts.isBindingElement(pattern)) bind(pattern.name);
+    else if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) pattern.elements.forEach(el => bind(el.name ?? el));
+  };
+  const walk = node => {
+    if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) bound.add(node.name.text);
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) bound.add(node.name.text);
+    if (ts.isVariableDeclaration(node)) bind(node.name);
+    if (ts.isParameter(node)) bind(node.name);
+    if (ts.isCatchClause(node) && node.variableDeclaration) bind(node.variableDeclaration.name);
+    if (ts.isBindingElement(node)) bind(node.name);
+    ts.forEachChild(node, walk);
+  };
+  walk(root);
+  return bound;
+}
+
+// The module-level names a statement needs, and the module-level names it writes.
+function dependencies(statement) {
+  const bound = localBindings(statement);
+  const needs = new Set(), writes = new Set();
+  const lhs = node => {
+    for (;;) {
+      if (ts.isParenthesizedExpression(node)) { node = node.expression; continue; }
+      return node;
+    }
+  };
+  const walk = node => {
+    if (ts.isIdentifier(node) && isReference(node) && !bound.has(node.text)) {
+      const p = node.parent;
+      if ((ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken,
+          ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.SlashEqualsToken].includes(p.operatorToken.kind) && lhs(p.left) === node)
+        || ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(p.operator))) {
+        writes.add(node.text);
+      } else {
+        needs.add(node.text);
+      }
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(statement);
+  return { needs, writes };
+}
 
 function importedNames(statement) {
   const names = new Set();
@@ -223,10 +314,62 @@ function importedNames(statement) {
   return [...names];
 }
 
+// Statements whose names `wanted` reaches through the same module: the target function and the
+// declarations it transitively uses. Everything else (other functions, classes, one-off setup
+// statements) is left out, so a construct the target doesn't call can't crash the run.
+// Returns { keep, reason }: when the needed set writes to a name another statement also writes,
+// the run can't be isolated without changing what the target sees, and that is a hard reason.
+const GLOBALS = new Set(["undefined", "NaN", "Infinity", "globalThis", "arguments", "Math", "JSON",
+  "Object", "Array", "Number", "String", "Boolean", "BigInt", "Map", "Set", "Promise", "Error",
+  "TypeError", "RangeError", "SyntaxError", "EvalError", "URIError", "AggregateError", "RegExp",
+  "Symbol", "Date", "Reflect", "Proxy", "WeakMap", "WeakSet", "WeakRef", "Intl", "console",
+  "queueMicrotask", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "structuredClone",
+  "fetch", "atob", "btoa", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI",
+  "parseInt", "parseFloat", "isNaN", "isFinite", "ArrayBuffer", "DataView", "Uint8Array", "Int8Array",
+  "Uint16Array", "Int16Array", "Uint32Array", "Int32Array", "Float32Array", "Float64Array",
+  "BigInt64Array", "BigUint64Array", "SharedArrayBuffer", "Atomics", "FinalizationRegistry",
+  "Buffer", "process", "require", "exports", "module", "__dirname", "__filename", "URL",
+  "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal", "Event",
+  "EventTarget", "crypto", "performance", "localStorage", "global"]);
+
+function isolate(statements, wanted) {
+  const bound = statements.map(boundNames);
+  const deps = statements.map(dependencies);
+  const keep = statements.map(() => false);
+  const seen = new Set();
+  const queue = [...wanted];
+  while (queue.length) {
+    const name = queue.pop();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (!statements.some((_, i) => bound[i].has(name))) {
+      if (!GLOBALS.has(name))
+        return { keep, reason: `${JSON.stringify(name)} is needed but is not declared at the module level or a known global` };
+      continue;
+    }
+    for (const i of statements.keys()) {
+      if (bound[i].has(name) && !keep[i]) {
+        keep[i] = true;
+        for (const need of deps[i].needs) queue.push(need);
+      }
+    }
+  }
+  // A dropped statement that writes a kept `let`/`var` changes what the target sees.
+  const kept = new Set();
+  statements.forEach((_, i) => { if (keep[i]) bound[i].forEach(n => kept.add(n)); });
+  for (const i of statements.keys()) {
+    if (keep[i] || bound[i].size) continue;
+    for (const name of deps[i].writes) {
+      if (kept.has(name)) return { keep, reason: `other top-level code writes \`${name}\`, which the target reads: it cannot be isolated` };
+    }
+  }
+  return { keep, reason: null };
+}
+
 // Files reached by a target run for real. Anything else they import is replaced,
 // so the comparison runs only code that was translated, and doesn't depend on
 // packages being installed.
-export function compile(root, files, imports, out, effects = []) {
+export function compile(root, files, imports, out, effects = [], needs = {}) {
   const realRoot = realpathSync(root);
   // An outside call is replaced by a stand-in that asks the test's world, wherever it is declared.
   const byName = new Map(effects.map(e => [e.call.split("::").at(-1), e]));
@@ -245,6 +388,7 @@ export function compile(root, files, imports, out, effects = []) {
     }
   }
   let stubs = 0;
+  const reasons = {};
   for (const file of files) {
     let js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
@@ -261,7 +405,26 @@ export function compile(root, files, imports, out, effects = []) {
         js = `${js.slice(0, statement.getStart(found))}${asksWorld(fn, e)}${js.slice(statement.end)}`;
       }
     }
-    const parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+    let parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+    // Emit only what this file's targets reach: a construct they don't need (a class the
+    // runtime can't evaluate, one-off setup code) can't crash the run.
+    const wanted = needs[file] ?? [];
+    if (wanted.length) {
+      const { keep, reason } = isolate([...parsed.statements], wanted);
+      if (reason) { reasons[file] = reason; continue; }
+      const kept = new Set();
+      parsed.statements.forEach((s, i) => { if (keep[i]) boundNames(s).forEach(n => kept.add(n)); });
+      const needed = new Set(wanted);
+      // An export that names a dropped binding makes the module fail to load, so only exports
+      // of kept names stay; `export *` hides its names and never stays.
+      const exportNeeded = s => {
+        if (ts.isExportAssignment(s)) return needed.has("default");
+        if (!ts.isExportDeclaration(s) || !s.exportClause) return false;
+        return s.exportClause.elements.some(el => s.moduleSpecifier ? needed.has(el.name.text) : kept.has((el.propertyName ?? el.name).text));
+      };
+      js = [...parsed.statements].filter((s, i) => keep[i] || exportNeeded(s)).map(s => s.getText(parsed)).join("\n");
+      parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+    }
     const path = join(out, module_(file));
     mkdirSync(dirname(path), { recursive: true });
     let rewritten = js;
@@ -287,6 +450,7 @@ export function compile(root, files, imports, out, effects = []) {
     }
     writeFileSync(path, rewritten);
   }
+  return reasons;
 }
 
 // A small deterministic generator for the world's behaviour: delays and which calls are rejected.
@@ -399,21 +563,40 @@ export async function differential({ root, out, module, signatures, files, impor
   const named = effects.filter(e => e.call.includes("::"));
   const names = named.map(e => e.call.split("::").at(-1));
   const ambiguous = new Set(names.filter((n, i) => names.indexOf(n) !== i));
-  compile(root, files, imports, compiled, named.filter(e => !ambiguous.has(e.call.split("::").at(-1))));
-  const lines = [`import ${module}`, ...(signatures && Object.values(signatures).some(s => s.async) ? ["import ProofciAsync"] : []),
-    "open Aeneas Aeneas.Std Result", ""];
+  // Per file, the names runs need: each module emits only the targets' transitive dependencies.
+  const needs = {};
+  for (const signature of Object.values(signatures)) (needs[signature.file] ??= []).push(signature.name);
+  const isolated = compile(root, files, imports, compiled, named.filter(e => !ambiguous.has(e.call.split("::").at(-1))), needs);
+  const leanOut = openSync(join(out, "Differential.lean"), "w");
+  const emit = line => writeSync(leanOut, line + "\n");
+  [`import ${module}`, ...(signatures && Object.values(signatures).some(s => s.async) ? ["import ProofciAsync"] : []),
+    "open Aeneas Aeneas.Std Result", ""].forEach(emit);
+  const witnessOut = openSync(join(out, "inputs.json"), "w");
+  writeSync(witnessOut, "{");
+  let openTarget = null;
+  const witness = (target, args) => {
+    if (openTarget !== target) {
+      writeSync(witnessOut, `${openTarget === null ? "" : "],"}${JSON.stringify(target)}:[`);
+      openTarget = target;
+    } else writeSync(witnessOut, ",");
+    writeSync(witnessOut, JSON.stringify(args));
+  };
   const skipped = [];
   const labels = [];
-  const witness = {};   // arg terms per target for the contract-witness check
   let seed = 1;
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
+    if (isolated[signature.file]) { skipped.push(`${target}: ${isolated[signature.file]}`); continue; }
     // A generic function is run at `number` for each type parameter, when its bound allows that.
     const generics = [];
     JSON.stringify(signature, (k, v) => { if (k === "declared") return undefined; if (v?.kind === "generic") generics.push(v); return v; });
     if (generics.some(g => !g.numbers)) { skipped.push(`${target}: generic with a bound that \`number\` doesn't meet`); continue; }
     const typeArgs = [...new Set(generics.map(g => g.lean))].map(g => `(${g} := Js.Num) `).join("");
-    const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
+    // Only the target's dependencies were emitted; if the module still fails to load, that is
+    // this target's failure, not everyone's.
+    const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))))
+      .catch(error => { skipped.push(`${target}: the module could not be run: ${error?.message ?? error}`); return null; });
+    if (!loaded) continue;
     const fn = loaded[signature.name];
     const value = generator(seed++, literals[target] ?? {});
     if (signature.async) {
@@ -431,9 +614,9 @@ export async function differential({ root, out, module, signatures, files, impor
         const args = signature.params.map((type, i) => term(type, inputs[i]));
         const run = replay(trace, effects);
         labels.push(`${target} ${show(inputs)}`);
-        if (args.includes(undefined) || !run) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
-        (witness[target] ??= []).push(args);
-        lines.push(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
+        if (args.includes(undefined) || !run) { emit(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+        witness(target, args);
+        emit(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
           + `${expected === undefined ? "none" : `(some ${expected})`} ${run.trace}`);
       }
       continue;
@@ -448,15 +631,15 @@ export async function differential({ root, out, module, signatures, files, impor
       }
       const args = signature.params.map((type, i) => term(type, inputs[i]));
       labels.push(`${target} ${show(inputs)}`);
-      if (args.includes(undefined)) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
-      (witness[target] ??= []).push(args);
-      lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
+      if (args.includes(undefined)) { emit(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+      witness(target, args);
+      emit(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
         + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
   }
-  writeFileSync(join(out, "Differential.lean"), `${lines.join("\n")}\n`);
+  writeSync(witnessOut, `${openTarget === null ? "" : "]"}}`);
+  closeSync(leanOut); closeSync(witnessOut);
   writeFileSync(join(out, "cases.json"), JSON.stringify(labels));
-  writeFileSync(join(out, "inputs.json"), JSON.stringify(witness));
   return { skipped };
 }
 

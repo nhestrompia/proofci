@@ -44,5 +44,7 @@ claims, and how far each function's translation is trusted.
 - Hypotheses are rendered verbatim (`hlen : xs.length ≤ 9007199254740991`) —
   they read cryptic; the doc comment should translate them to English ("list
   shorter than JS's safe-integer max").
-- `the bridge theorem did not check: STUCK` gives no reason and no next step —
-  it names the tactics' limits OR a wrong view, and can't say which.
+- `the bridge theorem did not check: STUCK` still means either the tactics'
+  limits or a wrong view — but the reason now names the construct the proof
+  was working on (e.g. `a \`while\` loop`, with the Core source), the same in
+  `report.json`, so the rewrite to try starts there.

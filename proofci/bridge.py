@@ -53,6 +53,34 @@ AXIOMS = re.compile(r"^'([^']+)' (?:depends on axioms: \[([^\]]*)\]|does not dep
 THEOREMS = re.compile(r"^#print axioms (\S+)$", re.M)
 ERROR = re.compile(r"^\S+:\d+:\d+: error:? ?(.*)$", re.M)
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# `crun` marks each step on stderr (PROOFCI_STEP <kind> <snippet>); the last one before a STUCK
+# or a timeout names the construct the proof was working on.
+STEP = re.compile(r"^PROOFCI_STEP (\S+)(?:\s+(.*))?$", re.M)
+
+STEP_KINDS = {
+    "Core.Stmt.whileL": "a `while` loop",
+    "Core.Stmt.forOf": "a `for` loop",
+    "Core.Stmt.ite": "a conditional",
+    "Core.Stmt.set": "an assignment",
+    "Core.Stmt.expr": "an expression",
+    "Core.Stmt.ret": "the return",
+    "Core.Stmt.throw": "a `throw`",
+    "Core.Stmt.brk": "a `break`",
+    "Core.Stmt.cont": "a `continue`",
+    "Core.Stmt.call": "a call",
+    "nil": "the end of a statement list",
+}
+
+
+def _stuck_at(output):
+    """The construct the last crun step was working on, in words, or None."""
+    marks = STEP.findall(ANSI.sub("", output))
+    if not marks:
+        return None
+    kind, snippet = marks[-1]
+    phrase = STEP_KINDS.get(kind, f"a `{kind.rsplit('.', 1)[-1]}` statement")
+    snippet = (snippet or "").strip().splitlines()[0][:100].strip()
+    return f"{phrase} (Core source: `{snippet}`)" if snippet else phrase
 
 
 @dataclass
@@ -112,13 +140,19 @@ def classify(lean_status, output, timed_out, theorems, timeout):
     on nothing beyond the standard axioms. Anything else is `tested`: see the module docstring
     for why a failed proof is not `failed`."""
     if timed_out:
-        return TESTED, f"the bridge proof did not finish in {timeout} seconds"
+        where = _stuck_at(output)
+        return TESTED, (f"the bridge proof did not finish in {timeout} seconds"
+                        + (f"; it was last working on {where}" if where else ""))
     text = ANSI.sub("", output)
     if lean_status in (137, -9):
         return TESTED, "the bridge proof ran out of memory"
     reported = {name: (axioms or "") for name, axioms in AXIOMS.findall(text)}
     if lean_status != 0:
-        return TESTED, "the bridge theorem did not check: " + _message(text)
+        reason = _message(text)
+        where = _stuck_at(output)
+        if where and "STUCK" in reason.upper():
+            reason += f"; it was last working on {where}"
+        return TESTED, "the bridge theorem did not check: " + reason
     if not theorems:
         return TESTED, "the bridge file states no theorem"
     for name in theorems:

@@ -78,7 +78,9 @@ and `Js.Dbl.toRat_eq`. `decide`/`norm_num` fail on `Rat` in `F64` statements —
 
 "The bridge theorem did not check: STUCK" = the auto-generated faithfulness
 proof hit its 120 s cap (or an uncovered form); the function reports
-`tested, not proved`. It gives no diagnostic. Fixes that worked:
+`tested, not proved`. The reason names the construct the proof was working on
+(`it was last working on a \`while\` loop (...)`), which points at the statement
+to reshape. Fixes that worked:
 
 - `filter().includes().map()` over literal lists → rewrite as `switch` on the
   inductive (proved in ~5 s).

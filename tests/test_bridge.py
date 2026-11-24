@@ -63,6 +63,16 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(self.classify(124, "", timed_out=True), (bridge.TESTED, "the bridge proof did not finish in 120 seconds"))
         self.assertIn("memory", self.classify(137, "")[1])
 
+    def test_stuck_and_timeout_name_the_construct_the_proof_was_working_on(self):
+        marked = "PROOFCI_STEP Core.Stmt.whileL Core.Stmt.whileL test (…) s\n" + STUCK
+        status, reason = self.classify(1, marked)
+        self.assertEqual(status, bridge.TESTED)
+        self.assertIn("a `while` loop", reason)
+        status, reason = self.classify(124, "PROOFCI_STEP Core.Stmt.forOf Core.Stmt.forOf\n", timed_out=True)
+        self.assertEqual(status, bridge.TESTED)
+        self.assertIn("did not finish", reason)
+        self.assertIn("a `for` loop", reason)
+
     def test_nothing_is_ever_failed_from_lean_output(self):
         for status in (0, 1, 2, 124, 137):
             for output in ("", STUCK, OK, "error: unsolved goals\n⊢ False\n", "declaration uses 'sorry'"):

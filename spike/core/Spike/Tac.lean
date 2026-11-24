@@ -601,6 +601,9 @@ elab "crun_go" : tactic => withMainContext do
   let kind ← if cs.isAppOf ``List.nil then pure `nil else do
     let c ← whnfD (cs.getArg! 1)
     pure c.getAppFn.constName!
+  -- Marks progress on stderr; the bridge reports the last one seen when a check gets stuck
+  -- or times out, so the report names the construct instead of a bare STUCK.
+  IO.eprintln s!"PROOFCI_STEP {kind} {(toString (← ppExpr cs)).take 120}"
   let pending ← todoHead
   let branch ← match pending with
     | some (m, _) => isBranch m
@@ -658,12 +661,12 @@ elab "crun_go" : tactic => withMainContext do
       if let some (m, _) ← todoHead then
         if ← isBranch m then evalTactic split; return
     let report ← match kind with
-      | ``Stmt.set => `(tactic| (apply step_set; first | sim | fail "STUCK"))
-      | ``Stmt.expr => `(tactic| (apply step_expr; first | sim | fail "STUCK"))
-      | ``Stmt.ret => `(tactic| (apply step_ret; post; assumption; first | sim | fail "STUCK"))
-      | _ => `(tactic| (apply step_ite; first | simb | fail "STUCK"))
+      | ``Stmt.set => `(tactic| (apply step_set; first | sim | fail "STUCK at an assignment: no step matched its right side"))
+      | ``Stmt.expr => `(tactic| (apply step_expr; first | sim | fail "STUCK at a statement: no step matched this expression"))
+      | ``Stmt.ret => `(tactic| (apply step_ret; post; assumption; first | sim | fail "STUCK at the return: the returned value did not match"))
+      | _ => `(tactic| (apply step_ite; first | simb | fail "STUCK at a conditional: no step matched its test"))
     evalTactic report
-    throwError "STUCK"
+    throwError "STUCK: the tactics could not step this {kind}"
   | n => throwError "STUCK on statement {n}"
 
 macro_rules | `(tactic| crun) => `(tactic| crun_go)
