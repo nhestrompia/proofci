@@ -223,9 +223,16 @@ export class Translator {
   // a weak guarantee would also accept. Package files map too: a weak
   // guarantee on a package function points at where it is used from.
   sourceMark(node) {
+    // Synthetic nodes (e.g. a `forEach` callback wrapped in a statement) carry
+    // no text range; walk up to one that does.
+    while (node.pos < 0 && node.parent) node = node.parent;
+    if (node.pos < 0) return "";
     const file = node.getSourceFile();
     const { line } = file.getLineAndCharacterOfPosition(node.getStart(file));
-    return `-- src:${relative(this.root, file.fileName)}:${line + 1}`;
+    // A path goes into a Lean line comment — a line break in it would end the
+    // comment and let a filename inject code into the module.
+    const name = relative(this.root, file.fileName).replace(/[\r\n\u2028\u2029]/g, " ");
+    return `-- src:${name}:${line + 1}`;
   }
 
   // ---------------------------------------------------------------- files

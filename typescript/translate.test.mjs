@@ -423,6 +423,8 @@ test("module-level values are computed once", () => {
 
 test("forEach is a loop, and return only ends one call", () => {
   emits("export function f(xs: number[]) { let s = 0; xs.forEach(x => { s += x; }); return s; }", "Aeneas.Std.loop");
+  // an expression-bodied callback is wrapped in a synthetic statement, which has no source position
+  emits("export function f(xs: number[]) { let s = 0; xs.forEach(x => (s += x)); return s; }", "Aeneas.Std.loop");
   emits("export function f(xs: number[]) { let s = 0; xs.forEach(x => { s += 1; if (x > 0) return; s += x; }); return s; }", ".cont (tmp2, s_2)");
   rejects("export function f() { const a = [1]; a.forEach(x => { a.push(x); }); return a; }", /looping over/);
 });
