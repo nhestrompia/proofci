@@ -141,6 +141,19 @@ def _tree_digest(checkout: Path, lean_dir: str, module: str):
     return digest.hexdigest()
 
 
+def mutation_suspects(verified, base_statements, head_statements):
+    """The guarantees the planted-defect sweep exercises. PROOFCI_MUTATION_FULL
+    sweeps everything; otherwise only statements that changed against the
+    trusted contract. A first adoption passes an empty base map, so every
+    verified guarantee counts as new and gets swept — line mutants and the
+    trivial implementations alike — with no env flag."""
+    if mutation.FULL:
+        return verified
+    return [o for o in verified
+            if base_statements.get(o.theorem, {}).get("statement")
+            != head_statements.get(o.theorem, {}).get("statement")]
+
+
 def policy_changes(base_checkout, base, head_checkout, head):
     """Human-readable list of differences between the base and head policy."""
     if head is None:
@@ -565,9 +578,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             base_statements = ({} if report.first_adoption
                                else claims.theorems(_contract_text(base_checkout, base.lean)))
             head_statements = claims.theorems(_contract_text(head_checkout, active.lean))
-            suspects = verified if mutation.FULL else [o for o in verified
-                if base_statements.get(o.theorem, {}).get("statement")
-                != head_statements.get(o.theorem, {}).get("statement")]
+            suspects = mutation_suspects(verified, base_statements, head_statements)
             escaped, planted = {}, {}
             if suspects:
                 defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in suspects}

@@ -487,7 +487,7 @@ test("self-recursion becomes a fixpoint, and mutual recursion one mutual block o
     function h(n: number): number { return n <= 0 ? 1 : g(n - 1); }
     export function f(n: number): number { return n <= 0 ? 2 : g(n - 1) + h(n - 1); }`);
   assert.deepEqual(mutual.failures, {}, mutual.source);
-  assert.match(mutual.source, /mutual\n\ndef a\.g [^]*?partial_fixpoint\n\ndef a\.h [^]*?partial_fixpoint\n\ndef a\.f [^]*?partial_fixpoint\n\nend/);
+  assert.match(mutual.source, /mutual\n\n( *-- src:[^\n]*\n|\n)*def a\.g [^]*?partial_fixpoint\n( *-- src:[^\n]*\n|\n)*def a\.h [^]*?partial_fixpoint\n( *-- src:[^\n]*\n|\n)*def a\.f [^]*?partial_fixpoint\n\nend/);
   assert.ok(!mutual.source.includes("_root_.a.g"), mutual.source);
 });
 
@@ -664,7 +664,7 @@ function items(xs: J[], i: number): number { return i >= xs.length ? 0 : sum(xs[
 `);
   const result = translate({ root: repo, module: "M", targets: ["a.ts::sum"] });
   assert.deepEqual(result.failures, {}, result.source);
-  assert.match(result.source, /\nmutual\n\ndef a\.items [^]*\ndef a\.sum [^]*\nend\n/);
+  assert.match(result.source, /\nmutual\n( *-- src:[^\n]*\n|\n)*def a\.items [^]*\n( *-- src:[^\n]*\n|\n)*def a\.sum [^]*\nend\n/);
   const out = join(dir, "mutual-args-out");
   mkdirSync(out);
   await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 30 });

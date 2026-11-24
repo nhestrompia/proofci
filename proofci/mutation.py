@@ -227,6 +227,8 @@ def plant(text, name, limit=MAX_MUTANTS):
         if len(mutants) >= limit:
             break
         for i in range(*block):
+            if lines[i].lstrip().startswith("--"):
+                continue  # `-- src:` source-map comments, not code
             if re.search(pattern, lines[i]):
                 mutated = lines[:]
                 mutated[i] = re.sub(pattern, replacement, lines[i], count=1)
@@ -234,7 +236,7 @@ def plant(text, name, limit=MAX_MUTANTS):
                 break
     # Several kinds can produce the same text (e.g. `.val < ` and ` < ` on the
     # same spot); keep one of each.
-    seen, unique = set(), []
+    seen, unique = {text}, []
     for mutant in mutants:
         if mutant[3] not in seen:
             seen.add(mutant[3])
@@ -252,11 +254,33 @@ def plant(text, name, limit=MAX_MUTANTS):
 TS_OP = {"add": "`+`", "sub": "`-`", "mul": "`*`", "div": "`/`", "rem": "`%`",
          "min": "`Math.min`", "max": "`Math.max`"}
 
+SRC_MARK = re.compile(r"^\s*-- src:(\S+):(\d+)")
 
-def describe(kind, line, src, original):
+
+def source_map(module_text):
+    """Lean line -> `tsfile:line`, from the `-- src:` markers the translator
+    emits before each def and each statement. A mutation on generated line N
+    maps to the nearest marker at or above N."""
+    marks = {}
+    for i, text in enumerate(module_text.splitlines()):
+        m = SRC_MARK.match(text)
+        if m:
+            marks[i + 1] = f"{m.group(1)}:{m.group(2)}"
+    return marks
+
+
+def ts_at(marks, line):
+    """The TS `file:line` a generated line maps back to, or None."""
+    nearest = max((mark for mark in marks if mark <= line), default=0)
+    return marks.get(nearest) if nearest else None
+
+
+def describe(kind, line, src, original, ts=None):
     """One plain fragment completing `if <function> ...`: what a function the
     guarantee would also accept does. `src` is the mutated line, `original` the
-    line it replaced on generated line `line`."""
+    line it replaced on generated line `line`; `ts` is the TypeScript
+    `file:line` that generated line maps back to."""
+    where = f"on {ts}" if ts else ""
     if kind == "trivial-arg":
         arg = src.removeprefix("Result.ok ").strip()
         return f"returned `{arg}` unchanged"
@@ -268,20 +292,22 @@ def describe(kind, line, src, original):
         kept = src.rsplit(" ", 1)[-1]
         return f"returned `{kept}` without filtering it"
     if kind in ("negate-branch", "negate-decide"):
-        return f"the condition on generated line {line} were negated"
+        return f"the condition {where} were negated" if where else "the condition were negated"
     if kind.startswith(("js-", "dbl-", "bdiv-", "brem-")):
         pair = kind.split("-to-")
         if pair[0] in ("bdiv", "brem"):
             return f"used `{'%' if pair[0] == 'bdiv' else '/'}` on the bigint where it uses `{'/' if pair[0] == 'bdiv' else '%'}`"
         op_from = pair[0].removeprefix("js-").removeprefix("dbl-")
-        return f"computed {TS_OP.get(pair[1], pair[1])} where it computes {TS_OP.get(op_from, op_from)}"
+        tail = f" {where} where" if where else " where"
+        return f"computed {TS_OP.get(pair[1], pair[1])}{tail} it computes {TS_OP.get(op_from, op_from)}"
     if kind == "f64-op":
-        return f"`{src.strip()}` replaced `{original.strip()}` on generated line {line}"
+        return f"`{src.strip()}` replaced `{original.strip()}` {where}".strip()
     if kind in ("num-literal", "int-literal", "dbl-literal"):
-        return f"the literal on generated line {line} were off by one"
+        return f"the literal {where} were off by one" if where else "a literal were off by one"
     if kind == "some-to-none":
         return "returned `none`"
-    return f"generated line {line} read `{src}` instead of `{original}`"
+    return f"{where} read `{src}` instead of `{original}`" if where \
+        else f"read `{src}` instead of `{original}`"
 
 
 OUT_MARKER = "PROOFCI_MUTANT_OUT "
@@ -385,7 +411,11 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
         out = _eval_outputs(copy, calls[f], mutant, min(120, max(30, int(left))))
         if out is None:
             return ("unknown", f)
-        if all(out.get(k) == original.get(offset + k) for k in range(len(calls[f]))):
+        # A behavioural mutant that changes no sampled output is skipped; a
+        # trivial implementation is judged anyway — its still verifying is
+        # itself the evidence the guarantee constrains little.
+        if (all(out.get(k) == original.get(offset + k) for k in range(len(calls[f])))
+                and not kind.startswith("trivial-")):
             return None  # equivalent mutant: changes no observable behaviour
         done = lean._lake(copy, ["build", "Proofs"], timeout=max(30, int(left)))
         failed = set() if done.status == 0 else _failed_declarations(copy.root, done.output)
@@ -410,10 +440,15 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
                       if f == o.function and not failed]
         if conclusive:
             lines = module_text.splitlines()
+            marks = source_map(module_text)
             escaped[o.theorem] = [
                 {"kind": kind, "line": line, "src": src,
-                 "desc": f"{kind} at `{o.function}` line {line}: `{src}`",
+                 "ts": ts_at(marks, line),
+                 "desc": (f"{kind} at `{o.function}`"
+                          + (f" on {ts_at(marks, line)}" if ts_at(marks, line) else "")
+                          + f": `{src}`"),
                  "plain": describe(kind, line, src,
-                                   lines[line - 1].strip() if line <= len(lines) else src)}
+                                   lines[line - 1].strip() if line <= len(lines) else src,
+                                   ts=ts_at(marks, line))}
                 for kind, line, src in conclusive]
     return escaped, {f: len(m) for f, m in pending.items()}

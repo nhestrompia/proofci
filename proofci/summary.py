@@ -128,10 +128,13 @@ def _verdict(report):
     if not required:
         reasons.append("the policy lists no required guarantees")
     if weak:
+        accepts = {e["guarantee"]: e["accepts"] for e in report.get("escapes") or []}
+        accepted = "; ".join(a for g in weak for a in accepts.get(g, [])[:1])
         plural = len(weak) > 1
         reasons.append(f"{len(weak)} verified guarantee{'s' if plural else ''} "
                        f"({', '.join(f'`{g}`' for g in weak)}) let a planted bug through"
-                       + (" — `require_strength` is set" if report.get("require_strength") else ""))
+                       + (" — `require_strength` is set" if report.get("require_strength") else "")
+                       + (f"; it would also pass if {accepted}" if accepted else ""))
     proved = [d["function"] for d in report.get("downgrades") or []
               if not d["accepted"] and d["was"] == "proved"]
     unknown = [d["function"] for d in report.get("downgrades") or []

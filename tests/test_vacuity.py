@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from proofci import lean, mutation, sandbox
+from proofci import check, lean, mutation, sandbox
 
 VIEW = """\
 import Foo
@@ -128,6 +128,26 @@ class TsPlantTest(unittest.TestCase):
                          "returned `xs` without filtering it")
         self.assertEqual(mutation.describe("js-add-to-sub", 3, "x", "y"),
                          "computed `-` where it computes `+`")
+
+    def test_describe_names_the_typescript_source_not_the_lean_line(self):
+        marks = mutation.source_map("-- src:src/lib/x.ts:12\ndef f := do\n  -- src:src/lib/x.ts:14\n  a\n  b\n")
+        self.assertEqual(mutation.ts_at(marks, 4), "src/lib/x.ts:14")
+        self.assertEqual(mutation.ts_at(marks, 2), "src/lib/x.ts:12")
+        self.assertEqual(mutation.describe("negate-branch", 4, "if ¬(x) then", "if x then",
+                                          ts=mutation.ts_at(marks, 4)),
+                         "the condition on src/lib/x.ts:14 were negated")
+        self.assertEqual(mutation.describe("num-literal", 4, "x", "y",
+                                          ts=mutation.ts_at(marks, 4)),
+                         "the literal on src/lib/x.ts:14 were off by one")
+        # No map: the operator change is described without any line number.
+        self.assertEqual(mutation.describe("negate-branch", 4, "if ¬(x) then", "if x then"),
+                         "the condition were negated")
+
+    def test_src_comments_are_not_mutation_targets(self):
+        text = "-- src:src/x.ts:12\ndef f (a : Js.Num) : Result Js.Num := do\n  -- src:src/x.ts:13\n  if a.val < 4 then\n    Result.ok a\n  else\n    Result.ok a\n"
+        lines = text.splitlines(keepends=True)
+        kinds = [k for k, line, src, _ in mutation.plant(text, "f")]
+        self.assertTrue(all("src:" not in s for _, _, s, _ in mutation.plant(text, "f")))
 
     def run_check(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -349,6 +369,22 @@ class UnknownMutantsTest(unittest.TestCase):
             sandbox.Result(1, "error: Proofs.lean:3:8: failed\nerror: Proofs.lean:7:8: failed", False),
             [suspect], [suspect])
         self.assertEqual(escaped, {})
+
+
+class SuspectsTest(unittest.TestCase):
+    def test_first_adoption_sweeps_every_guarantee(self):
+        # An empty base map (first adoption) makes every statement "new", so
+        # all verified guarantees get the sweep — line mutants and the
+        # trivial implementations — without PROOFCI_MUTATION_FULL.
+        outcomes = [SimpleNamespace(theorem="t1"), SimpleNamespace(theorem="t2")]
+        head = {"t1": {"statement": "s1"}, "t2": {"statement": "s2"}}
+        self.assertEqual(check.mutation_suspects(outcomes, {}, head), outcomes)
+
+    def test_unchanged_statements_are_not_swept(self):
+        outcomes = [SimpleNamespace(theorem="t1"), SimpleNamespace(theorem="t2")]
+        base = {"t1": {"statement": "same"}, "t2": {"statement": "same"}}
+        head = {"t1": {"statement": "same"}, "t2": {"statement": "changed"}}
+        self.assertEqual(check.mutation_suspects(outcomes, base, head), [outcomes[1]])
 
 
 if __name__ == "__main__":

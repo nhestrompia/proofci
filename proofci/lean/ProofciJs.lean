@@ -367,6 +367,40 @@ end Monotone
 
 @[simp] theorem map_nil {α β} (f : α → Result β) : map f [] = ok [] := rfl
 @[simp] theorem filter_nil {α} (f : α → Result Bool) : filter f [] = ok [] := rfl
+
+/-- Every element `filter` keeps when its predicate always succeeds
+    was already in the list it read. -/
+theorem spec_filter_mem {α} (g : α → Bool) (xs : List α) :
+    WP.spec (filter (fun x => ok (g x)) xs) (fun r => ∀ y ∈ r, y ∈ xs) := by
+  induction xs with
+  | nil =>
+    simp only [filter, WP.spec_ok]
+    intro y hy
+    exact hy
+  | cons x rest ih =>
+    simp only [filter]
+    apply WP.spec_bind
+      (Pₘ := fun (keep : Bool) =>
+        WP.spec (Aeneas.Std.bind (filter (fun x => ok (g x)) rest)
+          (fun ys => ok (if keep then x :: ys else ys)))
+          (fun r => ∀ y ∈ r, y ∈ x :: rest))
+    · rw [WP.spec_ok]
+      apply WP.spec_bind (Pₘ := fun ys => ∀ y ∈ (if g x then x :: ys else ys), y ∈ x :: rest)
+      · apply WP.spec_mono ih
+        intro ys ihys y hy
+        simp only [List.mem_cons]
+        cases hgc : g x <;> simp [hgc, List.mem_cons] at hy
+        · exact Or.inr (ihys y hy)
+        · cases hy with
+          | inl e => exact Or.inl e
+          | inr hmem => exact Or.inr (ihys y hmem)
+      · intro ys ihys
+        rw [WP.spec_ok]
+        exact ihys
+    · intro keep h
+      exact h
+
+
 @[simp] theorem reduce_nil {α β} (f : β → α → Result β) (acc : β) : reduce f acc [] = ok acc := rfl
 
 @[step] theorem len_spec {α} (xs : List α) (h : xs.length ≤ 9007199254740991) :
