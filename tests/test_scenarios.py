@@ -1012,9 +1012,16 @@ SCENARIOS.update({
     # Rare mutants: each plants a wrong operation gated on a value no Node
     # sample hits, so only the bridge can catch it — the function becomes
     # `tested` with no Node disagreement (summary failed stays 0).
+    # The gate lands mid-function in the largest fixture, so `crun` needs close
+    # to a minute to refute the view — on a loaded CI runner that crosses the
+    # 120-second bridge cap and the verdict degrades from "did not check" to
+    # "did not finish", which then fails closed on the base comparison. The
+    # theorem can never check, so a larger cap only buys the tactic the time it
+    # needs; it cannot change the verdict.
     "ts-dbl-rare-mutant-add": (None, shelf_results(), 0, {
         "example": TS_DBL_SHELF_EXAMPLE,
-        "env": dbl_mut("dbl_rare_add"), "functions": {DBL_SHELF: "tested"},
+        "env": {**dbl_mut("dbl_rare_add"), "PROOFCI_BRIDGE_TIMEOUT": "300"},
+        "functions": {DBL_SHELF: "tested"},
         "function_reasons": {DBL_SHELF: "did not check"},
         "summary": {"proved": 0, "tested": 1, "failed": 0}}),
     "ts-dbl-rare-mutant-sub": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U, DBL_NAN: U}, 1, {
