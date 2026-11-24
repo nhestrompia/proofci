@@ -57,6 +57,7 @@ class Outcome:
     statement: str = None           # the contract theorem's statement, in one line
     hypotheses: list = None         # named hypotheses of the contract theorem: what it only holds under
     scope: str = None               # "example" when the statement applies the function to fixed arguments only
+    infrastructure: bool = False    # the guarantee is unjudged because tooling failed, not because of the code
 
 
 @dataclass
@@ -384,7 +385,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 reason = ("the comparison with Node did not run — a ProofCI infrastructure "
                           f"failure, not a disagreement: {infra}")
                 for o in pending:
-                    o.status, o.reason = UNSUPPORTED, reason
+                    o.status, o.reason, o.infrastructure = UNSUPPORTED, reason, True
                 report.functions = [bridge.FunctionStatus(f, bridge.FAILED, reason,
                                                           warnings=func_warnings.get(f, []))
                                     for f in functions if f not in failures]
@@ -490,10 +491,6 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                                   "so it only restates facts about the inputs")
             if item.get("example_only"):
                 o.scope = "example"
-                o.strength.append(
-                    f"`{o.theorem}` checks one fixed input only: it applies `{o.function}` to literal "
-                    "arguments, so it says nothing about other inputs — read it as an example, "
-                    "not the general case")
         for status in report.functions:
             per_function = [o for o in report.outcomes if o.function == status.function]
             if per_function and all(o.scope == "example" for o in per_function):

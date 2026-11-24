@@ -457,19 +457,23 @@ def uncalled(checkout: Path, package_rel: str, functions):
     the subset of `functions` (`file.ts::name`, package-relative) with no
     importer: static, and conservative — relative specifiers are resolved over
     the whole checkout, bare specifiers only through each package's published
-    name, re-exports are followed, and any doubt means no warning."""
+    name, re-exports are followed, a reference in the target's own file counts,
+    published entry points are shipped code, and any doubt means no warning."""
     root = checkout.resolve()
     package_root = package_rel.strip("/")
     sources = {}   # normalized repo-relative extensionless path -> Path
     refs = {}      # source key -> (text, [(resolved key, reexport, names, ns_alias)])
     packages = {}  # published package name -> repo-relative dir (monorepo neighbours)
+    entries = set()  # module keys a package.json names as a published entry
+    def skipped(rel):
+        return any(p in _SKIP_DIRS or p.startswith(".") for p in rel.parts)
     for path in sorted(p for ext in ("*.ts", "*.tsx", "*.mts", "*.cts") for p in root.rglob(ext)):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
         if rel.name.endswith(".d.ts") or _TEST_FILE.search(rel.name):
             continue
-        if any(p in _SKIP_DIRS for p in rel.parts):
+        if skipped(rel):
             continue
         key = str(rel.with_suffix(""))
         sources[key] = path
@@ -480,16 +484,30 @@ def uncalled(checkout: Path, package_rel: str, functions):
         refs[key] = (text, _references(text))
     for path in sorted(root.rglob("package.json")):
         rel = path.relative_to(root)
-        if any(p in _SKIP_DIRS for p in rel.parts):
+        if skipped(rel):
             continue
-        name = _package_json(path).get("name")
+        manifest = _package_json(path)
+        name = manifest.get("name")
         if isinstance(name, str) and name:
             packages[name] = "" if str(rel.parent) == "." else str(rel.parent)
+        pkg_dir = rel.parent
+        for entry in _entry_points(manifest):
+            point = os.path.normpath(str(pkg_dir / entry))
+            for ext in _EXTS:
+                if point.endswith(ext):
+                    point = point[: -len(ext)]
+            if point in sources:
+                entries.add(point)
     resolved = {
         key: (text, [
             (frozenset(_resolve(spec, Path(key).parent, root, packages)), reexport, names, ns)
             for spec, reexport, names, ns in items])
         for key, (text, items) in refs.items()}
+    referenced_by = {}  # module key -> [files that import or re-export it]
+    for key, (text, items) in resolved.items():
+        for mods, reexport, names, ns in items:
+            for mod in mods:
+                referenced_by.setdefault(mod, []).append(key)
     uncalled = []
     for function in functions:
         file_part, _, name = function.rpartition("::")
@@ -499,14 +517,22 @@ def uncalled(checkout: Path, package_rel: str, functions):
                 target_key = target_key[: -len(ext)]
         if target_key not in sources:
             continue
+        # The package's published entry (or a `src/index`/`index` barrel the
+        # convention makes one) is shipped code even when nothing in the repo
+        # imports it, and a reference to `name` in its own file — the original
+        # delegating to an extracted core — is a use too.
+        if (target_key in entries or target_key.rsplit("/", 1)[-1] == "index"
+                or _uses_in_own_file(refs[target_key][0], name)):
+            continue
         providers = {target_key}
         users = set()
-        changed = True
-        while changed:   # re-exports make another file provide the same name
-            changed = False
-            for key, (text, items) in resolved.items():
-                if key == target_key or key in users:
+        queue = [target_key]
+        while queue:   # re-exports make another file provide the same name
+            mod_key = queue.pop()
+            for key in {k for mod in (mod_key, mod_key + "/index") for k in referenced_by.get(mod, [])}:
+                if key in users or key == target_key:
                     continue
+                text, items = resolved[key]
                 for mods, reexport, names, ns in items:
                     if not any(mod in providers or mod + "/index" in providers for mod in mods):
                         continue
@@ -516,13 +542,41 @@ def uncalled(checkout: Path, package_rel: str, functions):
                     users.add(key)
                     if reexport and key not in providers:
                         providers.add(key)
-                        changed = True
+                        queue.append(key)
+                    break
         if not users:
             uncalled.append(function)
     return uncalled
 
 
-_SKIP_DIRS = {"node_modules", ".git", "proofci", "__tests__", "__mocks__", "test", "tests", "spec", "e2e"}
+_SKIP_DIRS = {"node_modules", ".git", "proofci", "__tests__", "__mocks__", "test", "tests", "spec", "e2e",
+              "dist", "build"}
+_ENTRY_FIELDS = ("main", "module", "types", "typings", "source")
+
+
+def _entry_points(manifest):
+    """Repo-relative published entry paths a package.json names."""
+    found = [manifest.get(field) for field in _ENTRY_FIELDS]
+    exports = manifest.get("exports")
+    todo = [exports] if isinstance(exports, (dict, list)) else [exports]
+    while todo:
+        item = todo.pop()
+        if isinstance(item, dict):
+            todo.extend(item.values())
+        elif isinstance(item, list):
+            todo.extend(item)
+        elif isinstance(item, str) and item.startswith("."):
+            found.append(item)
+    return [entry for entry in found if isinstance(entry, str) and entry.startswith(".")]
+
+
+def _uses_in_own_file(text, name):
+    """`name` is referenced in its own file outside its declaration — the
+    original delegating to an extracted core counts as a use."""
+    stripped = re.sub(rf"(?:async\s+)?(?:function\*?|const|let|var|class)\s+{re.escape(name)}\b",
+                      "", text)
+    stripped = re.sub(r"\bexport\s*\{[^}]*\}", "", stripped)
+    return bool(re.search(rf"\b{re.escape(name)}\b", stripped))
 _TEST_FILE = re.compile(r"[._-](test|spec|stories|e2e)\.[cm]?tsx?$")
 
 

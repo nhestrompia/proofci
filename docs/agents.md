@@ -134,7 +134,7 @@ The object `check` and `local` print (`base` is added by `local` only):
 | `passed` | `true` only when every guarantee verified and every bridge check passed |
 | `base` | The commit `local` checked out as the trusted base |
 | `language`, `policy_source`, `policy_changes`, `policy_approvers` | As in CI |
-| `guarantees[]` | `target`, `guarantee`, `function`, `theorem`, `status` (`VERIFIED`, `UNPROVEN`, `UNSUPPORTED`, `CONTRACT_STALE`, `ERROR`), `reason`, `hint`, `bridge`, `claim`, `previous_claim`, `statement`, `hypotheses`, `scope` (`example` when the statement checks only literal inputs), `warnings`, `errors` (structured Lean errors, see below) |
+| `guarantees[]` | `target`, `guarantee`, `function`, `theorem`, `status` (`VERIFIED`, `UNPROVEN`, `UNSUPPORTED`, `CONTRACT_STALE`, `ERROR`), `reason`, `hint`, `bridge`, `claim`, `previous_claim`, `statement`, `hypotheses`, `scope` (`example` when the statement checks only literal inputs), `infrastructure` (`true` when the guarantee is unjudged because tooling failed — Node crashed or timed out — shown in the report as an infrastructure failure, still failing closed), `warnings`, `errors` (structured Lean errors, see below) |
 | `invalid_contract` | `true` when an approved contract is missing a required `/--` doc comment; blocks like a failed guarantee |
 | `downgrades[]` | Functions proved on the base branch but not proved now; an entry the policy's `accept_downgrades` didn't accept blocks the run |
 | `stale_accepts[]` | `accept_downgrades` entries that name no downgrade here |

@@ -703,6 +703,34 @@ def ts_example_scope(head):
 ts_example_scope.also_base = ts_example_scope
 
 
+def ts_dbl_nested_scope(head):
+    # A variable bound inside the statement (the inner `∀`) reaches the call,
+    # so `menu_nested_general` is still a general guarantee; the call inside a
+    # conjunction takes only literals, so `menu_nested_fixed` is an example.
+    edit(head / "proofci.yaml",
+         "      - id: nan-propagates\n        theorem: nan_propagates\n",
+         "      - id: nan-propagates\n        theorem: nan_propagates\n"
+         "      - id: nested-general\n"
+         "        theorem: menu_nested_general\n"
+         "      - id: nested-fixed\n"
+         "        theorem: menu_nested_fixed\n")
+    theorems = (
+        "\n/-- `q` is bound inside the statement: still general. -/\n"
+        "theorem menu_nested_general (price : Js.Dbl) :\n"
+        "    ∀ q : Js.Dbl, totalWithTax price q (dbl!\"0\") (dbl!\"0\") ⦃ _ => True ⦄ := by sorry\n"
+        "\n/-- The call inside a conjunction still takes literals only. -/\n"
+        "theorem menu_nested_fixed :\n"
+        "    (∀ q : Js.Dbl, q = q) ∧\n"
+        "      totalWithTax (dbl!\"1\") (dbl!\"2\") (dbl!\"0\") (dbl!\"0\") ⦃ _ => True ⦄ := by sorry\n")
+    with open(head / "proofci/Contract.lean", "a") as contract:
+        contract.write(theorems)
+    with open(head / "proofci/Proofs.lean", "a") as proofs:
+        proofs.write(theorems)
+
+
+ts_dbl_nested_scope.also_base = ts_dbl_nested_scope
+
+
 def ts_requires_general(base):
     edit(base / "proofci.yaml", "version: 1\n", "version: 1\nrequire_general: true\n")
 
@@ -1371,11 +1399,18 @@ SCENARIOS.update({
     # policy change), it blocks the pull request.
     "ts-dbl-require-general-blocks": (ts_example_scope, dbl_results(), 1, {
         "scopes": {"total/menu-price": "example"},
-        "warnings": {"total/menu-price": "checks one fixed input only"},
         "stdout": ["`require_general` is set", "checks one fixed input only"]}),
     # A pull request can't relax `require_general` for itself.
     "ts-dbl-require-general-relaxed": (ts_relaxes_general, dbl_results(), 1, {
         "policy_changes": ["`require_general` changed"]}),
+    # `menu_price_exact` is an example; `menu_nested_general`'s bound `q`
+    # keeps it general; `menu_nested_fixed`'s literal call is an example even
+    # inside a conjunction.
+    "ts-dbl-example-scope": (ts_dbl_nested_scope,
+        {**dbl_results(), "total/nested-general": U, "total/nested-fixed": U}, 1, {
+        "scopes": {"total/menu-price": "example",
+                   "total/nested-general": None,
+                   "total/nested-fixed": "example"}}),
     # An exported function nothing imports: the proved guarantees cover dead code.
     "ts-dead-target": (ts_dead_target, {**ts_results(), "dead/zero": U}, 1, {
         "function_warnings": {"src/dead.ts::dead": "nothing in the repository calls"}}),

@@ -69,13 +69,20 @@ def _reason(g):
     return lines
 
 
+def _status(g):
+    """How a guarantee's status reads in the report: an unjudged guarantee
+    caused by a tool failure is an infrastructure failure, not unsupported
+    code."""
+    return "infrastructure failure" if g.get("infrastructure") else g["status"]
+
+
 def _claims(report):
     """Per guarantee: the claim in plain words, what it rests on, and -- when an
     approved change reworded it -- the claim it replaces."""
     lines = ["", "### What each guarantee says", ""]
     for g in report["guarantees"]:
         claim = g.get("claim") or "*(the contract gives this theorem no `/--` doc comment)*"
-        lines.append(f"- {ICON.get(g['status'], '')} `{g['target']}/{g['guarantee']}` — **{g['status']}**: {claim}")
+        lines.append(f"- {ICON.get(g['status'], '')} `{g['target']}/{g['guarantee']}` — **{_status(g)}**: {claim}")
         if g.get("previous_claim") is not None and g["previous_claim"] != claim:
             lines.append(f"  - before this change it claimed: {g['previous_claim'] or '*(nothing)*'}")
         if g.get("scope") == "example":
@@ -198,7 +205,7 @@ def markdown(report):
     for g in report["guarantees"]:
         lines.append(
             f"| {ICON.get(g['status'], '')} | `{g['target']}/{g['guarantee']}` | `{g['function']}` | "
-            f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {g['status']} |")
+            f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {_status(g)} |")
     lines += _claims(report)
     lines += _functions(report)
     lines += _downgrades(report)
@@ -209,7 +216,7 @@ def markdown(report):
     elif details:
         lines += ["", "### Details", ""]
         for g in details:
-            lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {g['status']}</summary>")
+            lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {_status(g)}</summary>")
             if g.get("statement"):
                 lines += ["", "The protected statement:", "", "```lean", g["statement"], "```"]
             lines += [""] + _reason(g) + ["", "</details>"]

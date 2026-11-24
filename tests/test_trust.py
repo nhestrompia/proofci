@@ -88,6 +88,37 @@ class UncalledTests(unittest.TestCase):
         self.write("tools/package.json", "[]\n")
         self.assertEqual(self.uncalled("src/live.ts::live"), ["src/live.ts::live"])
 
+    def test_a_same_file_caller_counts(self):
+        # The original delegating to an extracted core in the same file.
+        self.write("src/schedule.ts",
+                   "export function isSlotEquivalentCore(a, b) { return a - b === 0; }\n"
+                   "export function isSlotEquivalent(a, b) { return isSlotEquivalentCore(a, b); }\n")
+        self.assertEqual(self.uncalled("src/schedule.ts::isSlotEquivalentCore"), [])
+
+    def test_a_use_on_the_declaration_line_of_another_function_counts(self):
+        self.write("src/helper.ts",
+                   "function helper(x) { return x - x; }\n"
+                   "export function useHelper(x) { return helper(x); }\n")
+        self.assertEqual(self.uncalled("src/helper.ts::helper"), [])
+
+    def test_a_package_entry_point_is_shipped(self):
+        self.write("src/main.ts", "export function live() { return 2; }\n")
+        self.write("package.json", '{"name": "lib", "main": "./src/main.ts"}\n')
+        self.assertEqual(self.uncalled("src/main.ts::live"), [])
+
+    def test_the_src_index_barrel_is_shipped(self):
+        self.write("src/index.ts", "export function live() { return 2; }\n")
+        self.assertEqual(self.uncalled("src/index.ts::live"), [])
+
+    def test_vendored_dot_directories_are_skipped_and_fast(self):
+        import time
+        for i in range(1500):
+            self.write(f".repos/vendor/pkg/f{i}.ts", f"export function f{i}() {{ return {i}; }}\n")
+        self.write("src/dead.ts", "export function dead() { return 0; }\n")
+        started = time.monotonic()
+        self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
+        self.assertLess(time.monotonic() - started, 10)
+
 
 class FunctionWarningTests(unittest.TestCase):
     """`_function_warnings` explains why a target could not be exercised."""

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -402,7 +403,7 @@ def proofciVacuity (thm : Name) (args : Array (TSyntax `term)) : MetaM Json := d
 """
 
 
-def _vacuity_run(ws, cases, name="Vacuity"):
+def _vacuity_run(ws, cases, name="Vacuity", timeout=300):
     """One Vacuity file for `cases` — a list of `(theorem, vector)` where a
     vector is one argument list — run under `lake env lean`.
     Returns ({case index: payload}, the sandbox result)."""
@@ -416,7 +417,7 @@ def _vacuity_run(ws, cases, name="Vacuity"):
                      f"(← proofciVacuity `{theorem} {args}).compress)")
     path = ws.root / f"{name}.lean"
     path.write_text("\n".join(lines) + "\n")
-    result = _lake(ws, ["env", "lean", path.name], timeout=300)
+    result = _lake(ws, ["env", "lean", path.name], timeout=timeout)
     found = {}
     for line in result.output.splitlines():
         if line.startswith(VACUITY_MARKER):
@@ -430,6 +431,9 @@ def _vacuity_error(output):
     lines = [line for line in output.splitlines()
              if line.strip() and not line.startswith(VACUITY_MARKER)]
     return " ".join(" ".join(lines).split())[:400] or "no output"
+
+
+VACUITY_RETRY_BUDGET = 300   # total seconds the per-theorem retries may add
 
 
 def vacuity(ws, checks):
@@ -446,9 +450,15 @@ def vacuity(ws, checks):
     found, _ = _vacuity_run(ws, cases)
     missing = [i for i in range(len(cases)) if i not in found]
     errors = {}
+    deadline = time.monotonic() + VACUITY_RETRY_BUDGET
     for theorem in sorted({cases[i][0] for i in missing}):
         indices = [i for i in missing if cases[i][0] == theorem]
-        refound, rerun = _vacuity_run(ws, [cases[i] for i in indices], name="VacuitySingle")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            errors[theorem] = "the per-theorem retry budget was spent"
+            continue
+        refound, rerun = _vacuity_run(ws, [cases[i] for i in indices], name="VacuitySingle",
+                                      timeout=min(300, int(remaining)))
         for j, i in enumerate(indices):
             if j in refound:
                 found[i] = refound[j]
