@@ -35,16 +35,19 @@ Breaking the 508 down by which phase of the plan below covers it (a function
 
 | covered after… | exports | share of 1,285 |
 |---|---|---|
-| phase 1 (`R = never`, no `tryPromise`) | 451 | 35% |
+| phase 1 (`R = never`, no `tryPromise`) | 289 | 22% |
 | + phase 2 (services) | 484 | 38% |
 | + phase 3 (`tryPromise`/`promise`) | 508 | 40% |
 
+("Needs services" counts `yield* ServiceTag` — bare like `ServerConfig` and
+qualified like `Mac.Mac`/`FileSystem.FileSystem` — plus `Effect.service`/
+`provide*` calls. Services are the common case: the phase-1-only share drops
+from 35% to 22% once qualified tag yields are counted.)
+
 `Effect.fn("n")(gen, combinator…)` — the v4 idiom where combinators ride as
-extra arguments to the curried call — appears **0** times in t3code: the
-codebase passes combinators by piping the result instead (`Effect.fn(...)`
-`(gen).pipe(Effect.catchTag…)`, or the `.pipe` chain inside `make`/`fromKey`).
-The subset already covers that shape via `.pipe`; the curried-combinator form
-is a parse-time equivalence when it shows up.
+extra arguments to the curried call — appears **458** times (mostly a trailing
+`Effect.provide(layer)`); it is the same parse as `.pipe` applied after `fn`,
+so it is in phase 1's surface.
 
 Construct frequency (call sites):
 
@@ -78,21 +81,22 @@ Construct frequency (call sites):
 
 **Parameter and return types.** `typeof X.Type`/`X.Encoded` shows up ~2,650
 times in the corpus, mostly in Schema-class and type-alias declarations.
-Resolving the parameter/return annotations of every exported function through
-the TypeScript checker (`docs/research/schema-types-survey.mjs`, effect
-4.1.5's own `dist` types symlinked as `node_modules/effect`): of 16,378
-annotation sites, 52 resolve to a Schema-derived type (a class extending
-`Schema.*`, or an alias of `typeof X.Type`/`Schema.*`), and they resolve to
-**structural records ~65%** (readonly record types with optional fields),
-**Schema.Class / TaggedError instances ~23%**, **literal unions**, and a small
-tail of `Schema.Schema<A,I,R>` values and unresolved generics (~12%). So
-Schema-derived data lands on shapes the translator already handles — records,
-literal unions, optional fields — and translating Schema-*typed values* needs
-none of phase 5; only `decode`/`encode`/`is` *calls* depend on it. Brands
-(`Schema.brand`, 19 sites in the tree) are the notable non-structural case:
-a branded `string` is an intersection, either a newtype in the Lean view or
-refused. The 52-site figure is the annotations themselves; the alias form
-means the *reach* of Schema types is wider than the sites suggest.
+Resolving the parameter/return annotations of every exported function
+(including `Effect.fn`/`fnUntraced` generator bodies) through the TypeScript
+checker (`docs/research/schema-types-survey.mjs`, effect 4.1.5's own `dist`
+types symlinked as `node_modules/effect`): of 17,415 annotation sites, 399
+resolve to a Schema-derived type (a class extending `Schema.*`, an alias of
+`typeof X.Type`/`Schema.*`, or a `Schema.brand` alias). Of those: **~90% land
+on structural shapes** — 226 readonly records with optional fields, 102 unions
+of records/tagged classes (the `ServerAuthError = A | B` style), 31 literal
+unions; **~10% don't** — 12 `Schema.Class`/`TaggedError` instances (model as
+record + tag), 10 `Schema.Schema<A,I,R>`/callable types, 8 primitive aliases,
+5 brand intersections, 5 unresolved generics. So Schema-derived data lands on
+shapes the translator already handles — records, literal unions, optional
+fields — and translating Schema-*typed values* needs none of phase 5; only
+`decode`/`encode`/`is` *calls* depend on it. Brands (`Schema.brand`) are the
+notable non-structural case: a branded `string` is an intersection (or a bare
+primitive once resolved), either a newtype in the Lean view or refused.
 
 ## 2. The smallest subset that fits the existing model
 
@@ -389,9 +393,10 @@ code, interruption semantics.
   guarantees on code that inspects defects stay out; the `failed`/`rejected`
   split keeps the model honest but means some recovery code is refused.
 - **Services are the real work:** the 40% headline assumes services are
-  declarable as effect entries; service *methods* that return `Effect`s of
-  `Effect`s, or generics, will push some of the 508 out — measure again after
-  phase 2 with the checker resolving `R`.
+  declarable as effect entries; 195 of the 508 need them (484 vs 289 after
+  phase 1), and service *methods* that return `Effect`s of `Effect`s, or
+  generics, will push some out — measure again after phase 2 with the
+  checker resolving `R`.
 - **`R` inference:** the survey is syntactic; a real implementation needs the
   type checker to know when `R ≠ never` — service usage must be found via
   `yield* Tag`/`Effect.service`, not just the annotation.

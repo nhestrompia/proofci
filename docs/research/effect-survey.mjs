@@ -143,9 +143,17 @@ function scanCalls(n, qualify) {
   const calls = new Set();
   const refs = new Set();
   const scan = (m) => {
-    if (ts.isYieldExpression(m) && m.expression && ts.isIdentifier(m.expression)
-        && /^[A-Z]/.test(m.expression.text)) {
-      refs.add("effect.serviceTagYield");
+    if (ts.isYieldExpression(m) && m.expression) {
+      const y = m.expression;
+      if (ts.isIdentifier(y) && /^[A-Z]/.test(y.text)) {
+        refs.add("effect.serviceTagYield");
+      } else if (ts.isPropertyAccessExpression(y) && /^[A-Z]/.test(y.name.text)) {
+        // `yield* Mac.Mac` / `yield* Digest.Digest`: a service tag reached
+        // through a module namespace. Excluded: members that resolve to an
+        // Effect API (qualify starts with "Effect.") — those are values.
+        const yq = qualify(propName(y) ?? "");
+        if (yq === null || !yq.startsWith("Effect.")) refs.add("effect.serviceTagYield");
+      }
     }
     if (ts.isCallExpression(m)) {
       const path = propName(m.expression);
@@ -293,14 +301,6 @@ function surveyFile(path, sf) {
       if (q) {
         bump(memberCounts, q, 1);
         usedByFile.add(q);
-        if (ts.isCallExpression(n.expression)) {
-          // `Effect.fn("n")(gen, combinator…)`: the curried outer call's
-          // callee is `Effect.fn("n")`; >1 argument means combinators ride
-          // along (catchTag/withSpan/…).
-          const innerPath = propName(n.expression.expression);
-          const iq = innerPath && qualify(innerPath);
-          if ((iq === "Effect.fn" || iq === "Effect.fnUntraced") && n.arguments.length > 1) fnWithPipeArgs++;
-        }
         if (q === "Effect.gen") {
           // count yield* inside the generator argument
           const g = n.arguments[0];
@@ -315,6 +315,14 @@ function surveyFile(path, sf) {
         }
       } else if (path === "pipe" || (bindings.has("pipe") && ts.isIdentifier(expr) && expr.text === "pipe")) {
         bump(construct, "pipe_free_call", 1);
+      }
+      // `Effect.fn("n")(gen, combinator…)`: the outer call's callee is itself
+      // a call (`Effect.fn("n")`), so it never produces a qualified `q` —
+      // detect it by resolving the *inner* callee.
+      if (ts.isCallExpression(expr)) {
+        const innerPath = propName(expr.expression);
+        const iq = innerPath && qualify(innerPath);
+        if ((iq === "Effect.fn" || iq === "Effect.fnUntraced") && n.arguments.length > 1) fnWithPipeArgs++;
       }
     }
     // yield* outside gen bodies still counts as Effect generator syntax

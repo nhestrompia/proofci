@@ -98,9 +98,43 @@ function declIsSchemaDerived(decl) {
 
 function annotationIsSchemaDerived(node) {
   if (/\btypeof\s+\w+\.(Type|Encoded)\b|\bSchema\.(Type|Struct|Class|Union|Literal|optional|brand|TaggedError|TaggedStruct|declare|fromBrand|Schema)\b/.test(node.getText())) return true;
+  // Check the annotation's own symbol first: a primitive alias like
+  // `type UserId = Schema.brand<string, "UserId">` resolves to a normalized
+  // type that no longer carries the alias declaration, so the name's
+  // declaration must be inspected directly (and the same for type refs inside
+  // generics and qualified names).
+  const refCheck = (m) => {
+    if (ts.isTypeReferenceNode(m)) {
+      const name = ts.isQualifiedName(m.typeName) ? m.typeName.right : m.typeName;
+      if (ts.isIdentifier(name)) {
+        const sym = checker.getSymbolAtLocation(name);
+        if (sym?.declarations?.some(declIsSchemaDerived)) return true;
+      }
+    }
+    let found = false;
+    ts.forEachChild(m, c => { if (!found && refCheck(c)) found = true; });
+    return found;
+  };
+  if (refCheck(node)) return true;
   const t = checker.getTypeAtLocation(node);
   const syms = [t.symbol, t.aliasSymbol].filter(Boolean);
   return syms.some(s => (s.declarations ?? []).some(declIsSchemaDerived));
+}
+
+// Is this function the generator body of an exported
+// `const f = Effect.fn(...)(function* …)` / `Effect.fnUntraced(...)`?
+function insideExportedEffectFn(n) {
+  let p = n.parent;
+  while (p && ts.isCallExpression(p)) p = p.parent;
+  if (!p || !ts.isVariableDeclaration(p) || !p.initializer) return false;
+  let init = p.initializer;
+  while (ts.isCallExpression(init)) init = init.expression;
+  const text = init.getText();
+  if (!/^Effect\.(fn|fnUntraced)$/.test(text)) return false;
+  let v = p.parent;
+  while (v && (ts.isVariableDeclaration(v) || ts.isVariableDeclarationList(v))) v = v.parent;
+  return Boolean(v && ts.isVariableStatement(v)
+    && v.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword));
 }
 
 let schemaSites = 0, totalSites = 0;
@@ -111,6 +145,7 @@ for (const f of files) {
     const isFn = ts.isFunctionDeclaration(n) || ts.isArrowFunction(n)
       || ts.isFunctionExpression(n) || ts.isMethodDeclaration(n);
     if (isFn && (n.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
+        || insideExportedEffectFn(n)
         || (n.parent && ts.isVariableDeclaration(n.parent)
             && n.parent.parent?.parent?.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)))) {
       const nodes = [...(n.parameters ?? []).map(p => p.type), n.type].filter(Boolean);
