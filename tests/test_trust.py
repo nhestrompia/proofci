@@ -119,6 +119,29 @@ class UncalledTests(unittest.TestCase):
         self.assertEqual(self.uncalled("src/experimental/index.ts::live"),
                          ["src/experimental/index.ts::live"])
 
+    def test_a_package_root_index_is_shipped(self):
+        self.write("pkg/package.json", '{"name": "lib"}\n')
+        self.write("pkg/index.ts", "export function live() { return 2; }\n")
+        self.assertEqual(self.uncalled("pkg/index.ts::live"), [])
+
+    def test_a_brace_in_a_string_does_not_hide_the_caller(self):
+        self.write("src/fmt.ts",
+                   "export function open() { return \"{\"; }\n"
+                   "export function use() { return open() + \"}\"; }\n")
+        self.assertEqual(self.uncalled("src/fmt.ts::open"), [])
+
+    def test_an_arrow_name_starting_with_class_counts_its_callers(self):
+        self.write("src/classify.ts",
+                   "const classify = (x) => x;\n"
+                   "export function use(x) { return classify(x); }\n")
+        self.assertEqual(self.uncalled("src/classify.ts::classify"), [])
+
+    def test_a_caller_on_the_declaration_line_of_another_arrow_counts(self):
+        self.write("src/helpers.ts",
+                   "const first = () => target();\n"
+                   "const target = () => 0;\n")
+        self.assertEqual(self.uncalled("src/helpers.ts::target"), [])
+
     def test_an_authored_src_build_directory_counts(self):
         self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
         self.write("src/live.ts", "export function live() { return 2; }\n")

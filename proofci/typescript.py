@@ -474,6 +474,7 @@ def uncalled(checkout: Path, package_rel: str, functions):
     # `dist`/`build` directly under a package root hold generated output — skip
     # them, but never a source dir that merely shares the name (`src/build`).
     build_dirs = {str(d / name) for d, _ in manifests for name in ("dist", "build")}
+    package_dirs = {str(d) for d, _ in manifests}  # npm's default entry is <pkg>/index
     def skipped(rel):
         return (any(p in _SKIP_DIRS or p.startswith(".") for p in rel.parts)
                 or any(str(d) in build_dirs for d in rel.parents))
@@ -529,12 +530,15 @@ def uncalled(checkout: Path, package_rel: str, functions):
                 target_key = target_key[: -len(ext)]
         if target_key not in sources:
             continue
-        # The package's published entry (or its conventional `src/index`
+        # The package's published entry (or its conventional `index`/`src/index`
         # barrel) is shipped code even when nothing in the repo imports it,
         # and a reference to `name` in its own file — the original delegating
         # to an extracted core — is a use too.
         if (target_key in entries or target_key == "src/index"
                 or target_key.endswith("/src/index")
+                or (target_key.rsplit("/", 1)[-1] == "index"
+                    and (target_key.rsplit("/", 1)[0] if "/" in target_key else ".")
+                    in package_dirs)
                 or _uses_in_own_file(refs[target_key][0], name)):
             continue
         providers = {target_key}
@@ -587,29 +591,52 @@ def _uses_in_own_file(text, name):
     original delegating to an extracted core counts as a use; a recursive
     call inside `name` itself does not."""
     text = re.sub(r"\bexport\s*\{[^}]*\}", "", text)
-    decl = re.search(rf"(?:async\s+)?(?:function\*?|const|let|var|class)\s+{re.escape(name)}\b", text)
-    if decl is None:
-        return bool(re.search(rf"\b{re.escape(name)}\b", text))
-    text = text[: decl.start()] + text[_decl_end(text, decl):]
-    return bool(re.search(rf"\b{re.escape(name)}\b", text))
+    pattern = re.compile(rf"(?:async\s+)?(?:function\*?|const|let|var|class)\s+{re.escape(name)}\b")
+    while True:
+        decl = pattern.search(text)
+        if decl is None:
+            return bool(re.search(rf"\b{re.escape(name)}\b", text))
+        text = text[: decl.start()] + text[_decl_end(text, decl):]
 
 
 def _decl_end(text, decl):
     """The index just past the declaration starting at `decl`: the body's
-    closing brace for a function or class, the line's end otherwise."""
-    kind = decl.group(0)
-    if "function" in kind or "class" in kind:
-        body = text.find("{", decl.end())
-        if body != -1:
-            depth = 0
-            for i in range(body, len(text)):
-                depth += text[i] == "{"
-                depth -= text[i] == "}"
-                if depth == 0:
-                    return i + 1
+    closing brace for a function or class (counted outside strings and
+    comments), or the keyword itself — an arrow body may call `name` again,
+    so a `const`/`let`/`var` body's self-reference stays conservative."""
+    if not re.match(r"(?:async\s+)?(?:function\*?|class)\b", decl.group(0)):
         return decl.end()
-    end = text.find("\n", decl.end())
-    return end if end != -1 else len(text)
+    body = text.find("{", decl.end())
+    if body == -1:
+        return decl.end()
+    i, depth, string, comment = body, 0, None, None
+    while i < len(text):
+        c = text[i]
+        if comment == "//":
+            if c == "\n":
+                comment = None
+        elif comment == "/*":
+            if c == "*" and text[i + 1:i + 2] == "/":
+                comment, i = None, i + 1
+        elif string:
+            if c == "\\":
+                i += 1
+            elif c == string:
+                string = None
+        elif c in "'\"`":
+            string = c
+        elif c == "/" and text[i + 1:i + 2] == "/":
+            comment, i = "//", i + 1
+        elif c == "/" and text[i + 1:i + 2] == "*":
+            comment, i = "/*", i + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return decl.end()
 _TEST_FILE = re.compile(r"[._-](test|spec|stories|e2e)\.[cm]?tsx?$")
 
 
