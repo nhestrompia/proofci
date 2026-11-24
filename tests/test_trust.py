@@ -110,6 +110,21 @@ class UncalledTests(unittest.TestCase):
         self.write("src/index.ts", "export function live() { return 2; }\n")
         self.assertEqual(self.uncalled("src/index.ts::live"), [])
 
+    def test_a_recursive_call_is_not_a_use(self):
+        self.write("src/dead.ts", "export function dead() { return dead(); }\n")
+        self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
+
+    def test_a_nested_index_file_is_no_entry_point(self):
+        self.write("src/experimental/index.ts", "export function live() { return 2; }\n")
+        self.assertEqual(self.uncalled("src/experimental/index.ts::live"),
+                         ["src/experimental/index.ts::live"])
+
+    def test_an_authored_src_build_directory_counts(self):
+        self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
+        self.write("src/live.ts", "export function live() { return 2; }\n")
+        self.write("src/build/tools.ts", "import { live } from '../live';\nexport const x = live();\n")
+        self.assertEqual(self.uncalled("src/live.ts::live"), [])
+
     def test_vendored_dot_directories_are_skipped_and_fast(self):
         import time
         for i in range(1500):
