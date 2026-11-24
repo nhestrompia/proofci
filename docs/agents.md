@@ -79,13 +79,16 @@ reach the unsupported construct — an unsupported type or file never hides the
 functions that don't use it.
 
 `code` is a stable, machine-readable name for the refusal, defined in
-`typescript/hints.mjs` (`type-<name>` for an unsupported type, `compile-error`,
+`typescript/hints.mjs` (`type-<name>` for an unsupported built-in or well-known
+type, `type-named` for any adopter-named type, `compile-error`,
 `outside-package`, `missing-types`, `null-check`, `optional-chain`,
 `in-place-mutation`, `mixed-number-modes`, `unassigned-on-path`,
 `returns-nothing`, a kebab-case construct name such as `typeof-expression`,
-or `other`). Codes never name a variable or member, so a rename can't move a
-refusal between buckets. Codes are an interface: they are added but never
-renamed, so `summary.by_code` can count missing features across repositories.
+a fixed-string code such as `rest-parameters` or `module-level-mutable`,
+or `other`). Codes never name a variable, member or user type, so a rename
+can't move a refusal between buckets. Codes are an interface: they are added
+but never renamed, so `summary.by_code` can count missing features across
+repositories.
 
 ## `report.json` additions
 

@@ -136,7 +136,7 @@
       "workaround": "replace the enum with a string-literal union (`type T = \"a\" | \"b\"`) and compare with the strings",
       "source": "enum Color { Red, Blue } export function f(c: Color): number { return c === Color.Red ? 1 : 0; }",
       "reason": "module-level `let` or `var`",
-      "code": "other"
+      "code": "module-level-mutable"
     },
     {
       "construct": "missing parameter type (implicit `any`)",
@@ -150,7 +150,7 @@
       "workaround": "guard with `!== undefined` then index plainly (`v !== undefined ? v[key] : ...`)",
       "source": "export function f(r: Record<string, number> | undefined, k: string): number { return r?.[k] ?? 0; }",
       "reason": "`[]` is only supported on arrays",
-      "code": "other"
+      "code": "index-non-array"
     },
     {
       "construct": "`in` operator on an interface",
@@ -171,21 +171,21 @@
       "workaround": "rename the member to a Lean-safe ASCII name (letters, digits, `_`)",
       "source": "type Op = \"IN\" | \"NOT IN\"; export function f(o: Op): number { return o === \"IN\" ? 1 : 0; }",
       "reason": "has no Lean spelling",
-      "code": "other"
+      "code": "no-lean-spelling"
     },
     {
       "construct": "class or library object parameter",
       "workaround": "pass the plain fields the function needs in an interface instead of the instance",
       "source": "class Db { get(): number { return 1; } } export function f(db: Db): number { return db.get(); }",
       "reason": "is not supported yet",
-      "code": "type-db"
+      "code": "type-named"
     },
     {
       "construct": "rest parameters",
       "workaround": "take an array parameter instead",
       "source": "export function f(...xs: number[]): number { return xs.length; }",
       "reason": "rest parameters are not supported",
-      "code": "unsupported-rest-parameters-are-not-supported-yet"
+      "code": "rest-parameters"
     },
     {
       "construct": "tuple type",
@@ -199,42 +199,42 @@
       "workaround": "keep only plain fields in the interface",
       "source": "interface A { x: number; g(): void } export function f(a: A): number { return a.x; }",
       "reason": "is not a plain field",
-      "code": "other"
+      "code": "not-plain-field"
     },
     {
       "construct": "JSON.parse / JSON.stringify",
       "workaround": "parse at the boundary and pass typed values in; `JSON` has no model",
       "source": "export function f(s: string): number { return JSON.parse(s).length; }",
       "reason": "isn't to a function the translator can see",
-      "code": "other"
+      "code": "unknown-callee"
     },
     {
       "construct": "console.* inside the function",
       "workaround": "remove the logging from the function a guarantee reaches",
       "source": "export function f(a: number): number { console.log(a); return a; }",
       "reason": "isn't to a function the translator can see",
-      "code": "other"
+      "code": "unknown-callee"
     },
     {
       "construct": "Math.pow / Math.round-unsupported members",
       "workaround": "inline literal arithmetic (e.g. `quota * 8 / 10` for `Math.ceil(quota * 0.8)`)",
       "source": "export function f(a: number): number { return Math.pow(a, 2); }",
       "reason": "`Math.pow` is not supported",
-      "code": "other"
+      "code": "math-member"
     },
     {
       "construct": "index into a `Record<string, V>` module constant (const-map lookup)",
       "workaround": "inline the literal where it is read, or replace the lookup with a `switch` that returns per-case literals",
       "source": "const M: Record<string, number> = { a: 1, b: 2 }; export function f(k: string): number { return M[k] ?? 0; }",
       "reason": "only built empty",
-      "code": "other"
+      "code": "record-literal"
     },
     {
       "construct": "`NoInfer<T>` and other inference-marker / schema-derived types (`z.infer` aliases)",
       "workaround": "write the resolved type out by hand",
       "source": "export function f<T>(x: T, y: NoInfer<T>): number { return 1; }",
       "reason": "NoInfer<T>` is not supported",
-      "code": "type-no-infer"
+      "code": "type-named"
     }
   ]
 }

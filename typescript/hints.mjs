@@ -380,9 +380,13 @@ export function withHint(message, context) {
 // same unsupported feature codes the same way in every repo. Treat them as an
 // interface: add new codes, never rename or repurpose existing ones.
 //
-//   type-<name>          an unsupported type (`type-any`, `type-date`,
-//                        `type-promise`, `type-function`, `type-union`,
-//                        `type-tuple`, `type-record`, a library type's name)
+//   type-<name>          an unsupported built-in or well-known library type —
+//                        only the names in NAMED_TYPES below (`type-any`,
+//                        `type-date`, `type-promise`, `type-function`,
+//                        `type-union`, `type-tuple`, `type-record`, ...)
+//   type-named           any other named type: a class, interface or library
+//                        object whose name would leak a repo identifier into
+//                        the bucket
 //   compile-error        TypeScript itself rejects the file
 //   outside-package      code the translated package does not own
 //   missing-types        parameter or return types not written out
@@ -390,7 +394,36 @@ export function withHint(message, context) {
 //   optional-chain       `?.` or `??` chains
 //   <construct>          a `` `X` is not supported yet`` refusal, X in kebab
 //                        case (`typeof-expression`, `for-of`, `async`)
+//   <fixed-string>       refusals the translator emits verbatim, listed in
+//                        FIXED_STRING_CODES below
 //   other                anything else; the reason text carries the detail
+
+// Named types that keep their own `type-<name>` code. Any other named type —
+// an adopter's class, interface or library object — maps to `type-named`, so
+// `class Db` and `class User` share one bucket.
+const NAMED_TYPES = new Set([
+  "any", "unknown", "date", "map", "set", "promise", "regexp", "error",
+  "bigint", "symbol", "object", "function", "tuple", "union", "record",
+  "weakmap", "weakset", "arraybuffer", "json",
+]);
+
+// Codes are a public interface: they are never renamed or repurposed, only
+// added — `proofci gaps` ranks them across repositories. Every refusal the
+// translator emits as a fixed string (no user identifier inside) gets an
+// explicit entry here, matched on a distinctive substring of the reason's
+// first line; add new refusals to this list rather than letting them fall
+// through to the text-slug or `other` fallbacks.
+const FIXED_STRING_CODES = [
+  [/rest parameters are not supported/, "rest-parameters"],
+  [/reading a module-level `let` or `var`/, "module-level-mutable"],
+  [/`\[\]` is only supported on arrays/, "index-non-array"],
+  [/has no Lean spelling yet/, "no-lean-spelling"],
+  [/is not a plain field/, "not-plain-field"],
+  [/isn't to a function the translator can see/, "unknown-callee"],
+  [/`Math\.\w+` is not supported/, "math-member"],
+  [/record of dynamic keys is only built empty/, "record-literal"],
+];
+
 export function refusalCode(reason) {
   const text = reason.split("\n")[0].replace(/^\S*:\d+: /, "");
   const type = /^the type `([^`]+)` is not supported yet/s.exec(text)?.[1];
@@ -399,7 +432,8 @@ export function refusalCode(reason) {
     if (head.includes("=>")) return "type-function";
     if (head.includes(" | ")) return "type-union";
     if (head.startsWith("[")) return "type-tuple";
-    return "type-" + slug(head.replace(/<.*$/s, ""));
+    const name = slug(head.replace(/<.*$/s, ""));
+    return NAMED_TYPES.has(name) ? `type-${name}` : "type-named";
   }
   if (/TypeScript error:/.test(text)) return "compile-error";
   if (/outside the translated package/.test(text)) return "outside-package";
@@ -414,6 +448,9 @@ export function refusalCode(reason) {
   if (/returns nothing/.test(text)) return "returns-nothing";
   const construct = /^`(\.?\w+)` (?:is not supported yet|is only supported|returns nothing|cannot|can't|is changed|is used)/.exec(text)?.[1];
   if (construct) return slug(construct.replace(/^\./, "method-"));
+  for (const [pattern, code] of FIXED_STRING_CODES) {
+    if (pattern.test(text)) return code;
+  }
   if (/not supported yet/.test(text)) {
     const code = "unsupported-" + slug(text.replace(/`[^`]*`/g, "_").replace(/\d+/g, "N")
       .replace(/-is-not-supported-yet$/, "")).slice(0, 60).replace(/-+$/g, "");

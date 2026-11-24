@@ -98,6 +98,16 @@ test("every refusal carries a documented code", () => {
   assert.match(bad.code, /^[a-z0-9-]+$/);
 });
 
+test("renaming the class or parameter does not change the code", () => {
+  const variants = [
+    "export function bad(db: Db): number { return db.get(); }\nclass Db { get(): number { return 1; } }",
+    "export function bad(conn: ConnectionPool): number { return conn.get(); }\nclass ConnectionPool { get(): number { return 1; } }",
+  ];
+  const codes = variants.map(source =>
+    run(source).functions.find(f => f.function.endsWith("::bad")).code);
+  assert.deepEqual(codes, ["type-named", "type-named"]);
+});
+
 test("a refusal naming a variable still has a stable code", () => {
   const { functions } = run(
     "export function bad(log: number[]): number { log.push(1); return log.length; }\n");
