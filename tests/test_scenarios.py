@@ -501,6 +501,11 @@ def function_problems(data, options):
     for function, wanted in options.get("function_reasons", {}).items():
         if wanted not in got.get(function, {}).get("reason", ""):
             problems.append(f"the reason for {function} should mention {wanted!r}: {got.get(function)}")
+    for function, wanted in options.get("function_warnings", {}).items():
+        warns = [w for f in data.get("functions", []) if f["function"] == function
+                 for w in f.get("warnings", [])]
+        if not any(wanted in w for w in warns):
+            problems.append(f"expected a function warning matching {wanted!r} on {function}: {warns}")
     if "summary" in options and data.get("bridge_summary") != options["summary"]:
         problems.append(f"bridge summary {data.get('bridge_summary')} != {options['summary']}")
     for change in options.get("policy_changes", []):
@@ -579,6 +584,10 @@ def run_scenario(name, out_dir=None):
                for w in g.get("warnings", []) + g.get("strength", [])]
         if not any(wanted in w for w in got):
             problems.append(f"expected a warning matching {wanted!r} on {key}: {got}")
+    for key, scope in options.get("scopes", {}).items():
+        got = [g.get("scope") for g in data["guarantees"] if f"{g['target']}/{g['guarantee']}" == key]
+        if got != [scope]:
+            problems.append(f"scope of {key}: {got}, expected {scope!r}")
     if "only_warnings" in options:
         warned = {f"{g['target']}/{g['guarantee']}" for g in data["guarantees"]
                   if g.get("warnings") or g.get("strength")}
@@ -682,6 +691,98 @@ ts_relaxes_strength.also_base = ts_require_strength
 def ts_module_throws_when_loaded(head):
     text = (head / "src/ledger.ts").read_text()
     (head / "src/ledger.ts").write_text(text + '\nthrow new Error("not in this environment");\n')
+
+
+def ts_example_scope(head):
+    # `menu_price_exact` applies `totalWithTax` to literal arguments only: an
+    # example, not a general guarantee. Both sides keep the policy so the run
+    # blocks on the scope itself, not a policy change.
+    edit(head / "proofci.yaml", "version: 1\n", "version: 1\nrequire_general: true\n")
+
+
+ts_example_scope.also_base = ts_example_scope
+
+
+def ts_dbl_nested_scope(head):
+    # A variable bound inside the statement (the inner `∀`) reaches the call,
+    # so `menu_nested_general` is still a general guarantee; the call inside a
+    # conjunction takes only literals, so `menu_nested_fixed` is an example.
+    edit(head / "proofci.yaml",
+         "      - id: nan-propagates\n        theorem: nan_propagates\n",
+         "      - id: nan-propagates\n        theorem: nan_propagates\n"
+         "      - id: nested-general\n"
+         "        theorem: menu_nested_general\n"
+         "      - id: nested-fixed\n"
+         "        theorem: menu_nested_fixed\n")
+    theorems = (
+        "\n/-- `q` is bound inside the statement: still general. -/\n"
+        "theorem menu_nested_general (price : Js.Dbl) :\n"
+        "    ∀ q : Js.Dbl, totalWithTax price q (dbl!\"0\") (dbl!\"0\") ⦃ _ => True ⦄ := by sorry\n"
+        "\n/-- The call inside a conjunction still takes literals only. -/\n"
+        "theorem menu_nested_fixed :\n"
+        "    (∀ q : Js.Dbl, q = q) ∧\n"
+        "      totalWithTax (dbl!\"1\") (dbl!\"2\") (dbl!\"0\") (dbl!\"0\") ⦃ _ => True ⦄ := by sorry\n")
+    with open(head / "proofci/Contract.lean", "a") as contract:
+        contract.write(theorems)
+    with open(head / "proofci/Proofs.lean", "a") as proofs:
+        proofs.write(theorems)
+
+
+ts_dbl_nested_scope.also_base = ts_dbl_nested_scope
+
+
+def ts_requires_general(base):
+    edit(base / "proofci.yaml", "version: 1\n", "version: 1\nrequire_general: true\n")
+
+
+def ts_relaxes_general(head):
+    edit(head / "proofci.yaml", "version: 1\n", "version: 1\nrequire_general: false\n")
+
+
+ts_relaxes_general.also_base = ts_requires_general
+
+
+def ts_dead_target(head):
+    # An exported function nothing imports: the proved copy covers dead code.
+    (head / "src/dead.ts").write_text(
+        "export function dead(x: number): number { return x - x; }\n")
+    with open(head / "proofci.yaml", "a") as manifest:
+        manifest.write(
+            "  - id: dead\n"
+            "    function: src/dead.ts::dead\n"
+            "    guarantees:\n"
+            "      - id: zero\n"
+            "        theorem: dead_zero\n")
+    with open(head / "proofci/Contract.lean", "a") as contract:
+        contract.write("\nopen src.dead\n\n/-- dead always returns 0. -/\n"
+                       "theorem dead_zero (x : Js.Num) : dead x ⦃ r => r.val = 0 ⦄ := by sorry\n")
+    with open(head / "proofci/Proofs.lean", "a") as proofs:
+        proofs.write("\nopen src.dead\n\ntheorem dead_zero (x : Js.Num) :\n    dead x ⦃ r => r.val = 0 ⦄ := by sorry\n")
+
+
+ts_dead_target.also_base = ts_dead_target
+
+
+def ts_unexported_target(head):
+    # A non-exported target: the comparison with Node generates no inputs.
+    (head / "src/helper.ts").write_text(
+        "function helper(x: number): number { return x - x; }\n"
+        "export function useHelper(x: number): number { return helper(x); }\n")
+    with open(head / "proofci.yaml", "a") as manifest:
+        manifest.write(
+            "  - id: helper\n"
+            "    function: src/helper.ts::helper\n"
+            "    guarantees:\n"
+            "      - id: zero\n"
+            "        theorem: helper_zero\n")
+    with open(head / "proofci/Contract.lean", "a") as contract:
+        contract.write("\nopen src.helper\n\n/-- helper always returns 0. -/\n"
+                       "theorem helper_zero (x : Js.Num) : helper x ⦃ r => r.val = 0 ⦄ := by sorry\n")
+    with open(head / "proofci/Proofs.lean", "a") as proofs:
+        proofs.write("\nopen src.helper\n\ntheorem helper_zero (x : Js.Num) :\n    helper x ⦃ r => r.val = 0 ⦄ := by sorry\n")
+
+
+ts_unexported_target.also_base = ts_unexported_target
 
 
 def ts_results():
@@ -1295,6 +1396,29 @@ SCENARIOS.update({
         "env": {"PROOFCI_MUTATION_FULL": "1"},
         "policy_changes": ["`require_strength` changed"],
         "stdout": ["let a planted bug through"]}),
+    # `menu_price_exact` applies `totalWithTax` to literal arguments only: it is
+    # labelled `example` and, under `require_general` on both sides (so no
+    # policy change), it blocks the pull request.
+    "ts-dbl-require-general-blocks": (ts_example_scope, dbl_results(), 1, {
+        "scopes": {"total/menu-price": "example"},
+        "stdout": ["`require_general` is set", "checks one fixed input only"]}),
+    # A pull request can't relax `require_general` for itself.
+    "ts-dbl-require-general-relaxed": (ts_relaxes_general, dbl_results(), 1, {
+        "policy_changes": ["`require_general` changed"]}),
+    # `menu_price_exact` is an example; `menu_nested_general`'s bound `q`
+    # keeps it general; `menu_nested_fixed`'s literal call is an example even
+    # inside a conjunction.
+    "ts-dbl-example-scope": (ts_dbl_nested_scope,
+        {**dbl_results(), "total/nested-general": U, "total/nested-fixed": U}, 1, {
+        "scopes": {"total/menu-price": "example",
+                   "total/nested-general": None,
+                   "total/nested-fixed": "example"}}),
+    # An exported function nothing imports: the proved guarantees cover dead code.
+    "ts-dead-target": (ts_dead_target, {**ts_results(), "dead/zero": U}, 1, {
+        "function_warnings": {"src/dead.ts::dead": "nothing in the repository calls"}}),
+    # A non-exported target: Node generates no inputs, the report says why.
+    "ts-unexported-target": (ts_unexported_target, {**ts_results(), "helper/zero": U}, 1, {
+        "function_warnings": {"src/helper.ts::helper": "is not exported"}}),
 })
 
 
@@ -1341,7 +1465,7 @@ TS_REASONS = {
     "ts-import-for-side-effects": "side effects",
     "ts-declaration-file-lies": "no source",
     "ts-function-removed": "not a top-level function",
-    "ts-module-throws-when-loaded": "the comparison with Node did not run",
+    "ts-module-throws-when-loaded": "infrastructure failure",
     "ts-mutates-callers-array": "shared with the caller",
     "ts-alias-hides-a-write": "passed around or stored",
 }
