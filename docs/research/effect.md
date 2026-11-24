@@ -21,11 +21,11 @@ functions/consts were classified:
 
 | | count |
 |---|---|
-| exported functions returning an Effect | 1,304 |
-| exported functions not returning an Effect | 13,664 |
-| Effect-returning exports using **only** the core subset below | **510 (39%)** |
+| exported functions returning an Effect | 1,285 |
+| exported functions not returning an Effect | 13,683 |
+| Effect-returning exports using **only** the core subset below | **508 (40%)** |
 
-(The 1,304 counts free functions and `export const f = Effect.fn(...)(...)`;
+(The 1,285 counts free functions and `export const f = Effect.fn(...)(...)`;
 methods of exported `Context.Service` classes are not counted, so the true
 number of Effect entry points is larger.)
 
@@ -289,9 +289,9 @@ code, interruption semantics.
 - **`catchCause`/defect inspection is common (252 `catchCause` + Cause ops):**
   guarantees on code that inspects defects stay out; the `failed`/`rejected`
   split keeps the model honest but means some recovery code is refused.
-- **Services are the real work:** the 39% headline assumes services are
+- **Services are the real work:** the 40% headline assumes services are
   declarable as effect entries; service *methods* that return `Effect`s of
-  `Effect`s, or generics, will push some of the 510 out — measure again after
+  `Effect`s, or generics, will push some of the 508 out — measure again after
   phase 2 with the checker resolving `R`.
 - **`R` inference:** the survey is syntactic; a real implementation needs the
   type checker to know when `R ≠ never` — service usage must be found via

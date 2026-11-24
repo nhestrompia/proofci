@@ -115,18 +115,23 @@ function makeQualify(bindings) {
     if (!b) return null;
     const rest = path.slice(head.length + 1);
     if (!rest) return `${b.moduleName}.${b.imported}`;
-    if (b.moduleName === "effect" && /^[A-Z]/.test(rest)) return rest;
+    // `fx.Effect.gen` through the `effect` barrel resolves to the `Effect`
+    // namespace; a named import (`{ Schema }`) keeps its own prefix instead.
+    if (b.imported === "*" && b.moduleName === "effect" && /^[A-Z]/.test(rest)) return rest;
     const ns = /^[A-Z]/.test(b.imported) ? b.imported : b.moduleName;
     return `${ns}.${rest}`;
   };
 }
 
-// Qualified names referenced inside `n`: calls AND bare references, so
-// `.pipe(Effect.scoped)` is caught even though `Effect.scoped` is never called.
-// A call to `Effect.all`/`Effect.forEach` carrying a `concurrency` option is
-// reported as "Effect.concurrent" — deliberately outside CORE.
+// Qualified names referenced inside `n`, split into `calls` (call-expression
+// callees) and `refs` (all references, calls included) — `.pipe(Effect.scoped)`
+// is caught even though `Effect.scoped` is never called, while a bare
+// `values.map(Effect.succeed)` reference does not make the export
+// Effect-returning. A call to `Effect.all`/`Effect.forEach` carrying a
+// `concurrency` option is reported as "Effect.concurrent" — outside CORE.
 function scanCalls(n, qualify) {
-  const inner = new Set();
+  const calls = new Set();
+  const refs = new Set();
   const scan = (m) => {
     if (ts.isCallExpression(m)) {
       const path = propName(m.expression);
@@ -134,7 +139,8 @@ function scanCalls(n, qualify) {
       if (q) {
         const concurrent = (q === "Effect.all" || q === "Effect.forEach")
           && m.arguments.slice(1).some(a => a.getText().includes("concurrency"));
-        inner.add(concurrent ? "Effect.concurrent" : q);
+        calls.add(concurrent ? "Effect.concurrent" : q);
+        refs.add(concurrent ? "Effect.concurrent" : q);
       }
     } else if (ts.isPropertyAccessExpression(m) || ts.isIdentifier(m)) {
       // skip the head identifier of a property access (`Effect` in `Effect.gen`) —
@@ -145,13 +151,13 @@ function scanCalls(n, qualify) {
       } else {
         const path = propName(m);
         const q = path && qualify(path);
-        if (q) inner.add(q);
+        if (q) refs.add(q);
       }
     }
     ts.forEachChild(m, scan);
   };
   scan(n);
-  return inner;
+  return { calls, refs };
 }
 
 // 2. exported functions: pure vs Effect-returning.
@@ -161,21 +167,26 @@ function scanCalls(n, qualify) {
 // function we also record whether every Effect.* call inside it is in CORE.
 function countExports(path, sf, bindings) {
   const qualify = makeQualify(bindings);
-  const classify = (n, label, inner) => {
+  const classify = (n, label, { calls, refs }) => {
     fnStats.exportedTotal++;
     const ret = ts.isFunctionLike(n) ? returnMentionsEffect(n) : undefined;
-    // References now include type positions (`Effect.Effect`, `Effect.fn.Return`),
+    // References include type positions (`Effect.Effect`, `Effect.fn.Return`),
     // which must not decide Effect-ness or subset coverage.
     const NON_API = /^(Effect\.Effect|Effect\.(fn|fnUntraced)\.Return|Effect\.Service)$/;
-    const apis = [...inner].filter(q => q.startsWith("Effect.") && !NON_API.test(q));
-    const buildsEffect = apis.length > 0 || inner.has("pipe") || inner.has("Function.pipe");
+    const isApi = (q) => q.startsWith("Effect.") && !NON_API.test(q);
+    const callApis = [...calls].filter(isApi);
+    const refApis = [...refs].filter(isApi);
+    // "Returns an Effect" means the body *builds* one: an Effect.* call (or the
+    // annotation) — a bare reference like `values.map(Effect.succeed)` and a
+    // pure `pipe(...)` pipeline don't count.
+    const buildsEffect = callApis.length > 0;
     if (ret === true || (ret !== false && buildsEffect)) {
       fnStats.exportedEffect++;
-      // Covered by the core subset only when every Effect.* call is in CORE and
-      // the function touches none of the runtime-state / concurrency modules.
+      // Covered by the core subset only when every Effect.* reference is in CORE
+      // and the function touches none of the runtime-state / concurrency modules.
       const BLOCKED = /^(Ref|Deferred|Queue|Semaphore|Stream|Scope|Schedule|Fiber|Cause|Exit|SubscriptionRef|PubSub|Layer|Atom|reactivity)\./;
-      const blocked = [...inner].some(q => BLOCKED.test(q));
-      if (apis.length && apis.every(q => CORE.has(q)) && !blocked) fnStats.exportedEffectCoreOnly++;
+      const blocked = [...refs].some(q => BLOCKED.test(q));
+      if (refApis.length && refApis.every(q => CORE.has(q)) && !blocked) fnStats.exportedEffectCoreOnly++;
       fnStats.effectFnsDetail.push(label);
     } else {
       fnStats.exportedPure++;
