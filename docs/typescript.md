@@ -86,6 +86,21 @@ The default is `false`. A guarantee whose function got no generated inputs, or
 into which no defect could be planted, is flagged too — the report says which
 happened, per guarantee.
 
+**Example-only guarantees.** A guarantee whose statement applies the target
+only to literal arguments (no bound variable reaches the target's arguments)
+is labelled `scope: example` in the report — "checks one fixed input only".
+It is a warning, not a failure: it verifies only the listed input. To make
+such guarantees block the pull request, set in `proofci.yaml`:
+
+```yaml
+require_general: true
+```
+
+It is policy, like `require_bridge`: the pull request's own value is ignored,
+and any change to it is reported as a policy change that waits for approval.
+The default is `false`. A function whose guarantees are all examples is
+called out under its name in the report.
+
 **Proved on the base stays proved.** Independently of `require_bridge`, the check re-derives each
 function's bridge status on the base branch with the same toolchain: a function that was `proved`
 there and is anything less in the pull request (`tested`, `failed`, `unsupported`, or gone) is a

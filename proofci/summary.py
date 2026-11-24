@@ -26,6 +26,9 @@ def _functions(report):
         why = (f["reason"] or "").replace("|", "\\|").replace("\n", " ")[:300]
         seconds = "" if f.get("seconds") is None else f["seconds"]
         lines.append(f"| {BRIDGE_ICON[f['status']]} | `{f['function']}` | {BRIDGE_WORDS[f['status']]} | {why} | {seconds} |")
+    for f in functions:
+        for w in f.get("warnings") or []:
+            lines.append(f"> ⚠️ {w}")
     if count["tested"]:
         lines += ["", "**Tested, not proved** means the guarantee holds of the Lean view, and that the view matches what "
                   "JavaScript does has been tested on generated inputs but not proved for that function. A repository can "
@@ -66,15 +69,24 @@ def _reason(g):
     return lines
 
 
+def _status(g):
+    """How a guarantee's status reads in the report: an unjudged guarantee
+    caused by a tool failure is an infrastructure failure, not unsupported
+    code."""
+    return "infrastructure failure" if g.get("infrastructure") else g["status"]
+
+
 def _claims(report):
     """Per guarantee: the claim in plain words, what it rests on, and -- when an
     approved change reworded it -- the claim it replaces."""
     lines = ["", "### What each guarantee says", ""]
     for g in report["guarantees"]:
         claim = g.get("claim") or "*(the contract gives this theorem no `/--` doc comment)*"
-        lines.append(f"- {ICON.get(g['status'], '')} `{g['target']}/{g['guarantee']}` — **{g['status']}**: {claim}")
+        lines.append(f"- {ICON.get(g['status'], '')} `{g['target']}/{g['guarantee']}` — **{_status(g)}**: {claim}")
         if g.get("previous_claim") is not None and g["previous_claim"] != claim:
             lines.append(f"  - before this change it claimed: {g['previous_claim'] or '*(nothing)*'}")
+        if g.get("scope") == "example":
+            lines.append("  - scope: **example** — checks one fixed input only, not the general case")
         rests = []
         if g.get("hypotheses"):
             rests.append("it holds only when " + ", ".join(f"`{h}`" for h in g["hypotheses"]))
@@ -110,6 +122,13 @@ def _verdict(report):
             verdict += (f" But {len(weak)} verified guarantee{'s' if plural else ''} let a planted bug "
                         f"through ({', '.join(f'`{g}`' for g in weak)}): see the strength notes — "
                         "set `require_strength` in `proofci.yaml` to block on this.")
+        example = [g for g in report["guarantees"] if g.get("scope") == "example"]
+        if example:
+            plural = len(example) > 1
+            verdict += (f" {len(example)} guarantee{'s' if plural else ''} "
+                        f"({', '.join(f'`{g['target']}/{g['guarantee']}`' for g in example)}) check "
+                        "one fixed input only: see the scope labels — set `require_general` in "
+                        "`proofci.yaml` to block on this.")
         stale = report.get("stale_accepts") or []
         if stale:
             verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
@@ -128,13 +147,16 @@ def _verdict(report):
     if not required:
         reasons.append("the policy lists no required guarantees")
     if weak:
-        accepts = {e["guarantee"]: e.get("accepts") or [] for e in report.get("escapes") or []}
-        accepted = "; ".join(a for g in weak for a in accepts.get(g, [])[:1])
         plural = len(weak) > 1
         reasons.append(f"{len(weak)} verified guarantee{'s' if plural else ''} "
                        f"({', '.join(f'`{g}`' for g in weak)}) let a planted bug through"
-                       + (" — `require_strength` is set" if report.get("require_strength") else "")
-                       + (f"; it would also pass if {accepted}" if accepted else ""))
+                       + (" — `require_strength` is set" if report.get("require_strength") else ""))
+    example = [g for g in report["guarantees"] if g.get("scope") == "example"]
+    if example and report.get("require_general"):
+        plural = len(example) > 1
+        reasons.append(f"{len(example)} guarantee{'s' if plural else ''} "
+                       f"({', '.join(f'`{g['target']}/{g['guarantee']}`' for g in example)}) check "
+                       "one fixed input only — `require_general` is set")
     proved = [d["function"] for d in report.get("downgrades") or []
               if not d["accepted"] and d["was"] == "proved"]
     unknown = [d["function"] for d in report.get("downgrades") or []
@@ -183,7 +205,7 @@ def markdown(report):
     for g in report["guarantees"]:
         lines.append(
             f"| {ICON.get(g['status'], '')} | `{g['target']}/{g['guarantee']}` | `{g['function']}` | "
-            f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {g['status']} |")
+            f"`{g['theorem']}` | {'yes' if g['required'] else 'no'} | {_status(g)} |")
     lines += _claims(report)
     lines += _functions(report)
     lines += _downgrades(report)
@@ -194,7 +216,7 @@ def markdown(report):
     elif details:
         lines += ["", "### Details", ""]
         for g in details:
-            lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {g['status']}</summary>")
+            lines.append(f"<details><summary><code>{g['target']}/{g['guarantee']}</code>: {_status(g)}</summary>")
             if g.get("statement"):
                 lines += ["", "The protected statement:", "", "```lean", g["statement"], "```"]
             lines += [""] + _reason(g) + ["", "</details>"]

@@ -74,6 +74,14 @@ writing code.
 
 ## Hygiene
 
+- Write **general, quantified guarantees**: the statement must apply the target
+  to universally bound variables (`(x : Js.Num)`, `f x ⦃ … ⦄`), not only to
+  literals. A guarantee whose every application of the target takes literal
+  arguments — `theorem t : f (js!"a.ts") ⦃ r => r = false ⦄` — is labelled
+  `scope: example` in the report ("checks one fixed input only") and blocks
+  when the policy sets `require_general: true`. A fixed-input case is fine as a
+  *supplement* to a quantified guarantee, never as the only statement of a
+  behaviour.
 - A `/-- ... -/` doc comment on every contract theorem is **required** — it is
   the claim the report shows a human. Missing/dropped comments are
   `contract-stale` and block like a failed guarantee.
@@ -86,4 +94,9 @@ writing code.
 - Safe-integer bounds: `Js.len`-using functions need `xs.length ≤ 2^53-1` (=
   `9007199254740991`) hypotheses. `Js.Dbl` contracts need `x.f.isFin = true`
   guards and `toRatD` reasoning — see proving.md.
+- When you extract a pure core to satisfy the subset, the original code must
+  **call** the extracted function — refactor by delegation, never a parallel
+  copy. A copy nothing imports is dead code: ProofCI warns `nothing in the
+  repository calls …` next to the target, and the guarantees cover nothing the
+  repository ships.
 - Never weaken a contract or the policy (`proofci.yaml`) to pass a check.

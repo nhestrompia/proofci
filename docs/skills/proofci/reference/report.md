@@ -34,6 +34,23 @@ claims, and how far each function's translation is trusted.
   including the `∃`-restatement the checker itself forces for relational
   properties. The doc-comment claim beside each theorem is what keeps it
   honest; a statement can satisfy the checker vacuously otherwise.
+- `scope: example` (`checks one fixed input only`) labels a guarantee whose
+  statement applies the target only to literal arguments — it pins down that
+  one input, not the general case. A warning, not a failure, unless
+  `require_general: true` is set; a function whose guarantees are ALL examples
+  is called out under its name.
+- Function warnings sit next to each target: `nothing in the repository calls
+  f; these guarantees don't cover shipped code` means no other source file
+  imports the function (a proved parallel copy of shipped code does not count),
+  and `f is not exported — Node generates no inputs` means the differential
+  comparison had nothing to exercise.
+- `the comparison with Node did not run — a ProofCI infrastructure failure,
+  not a disagreement: <output tail>` means Node crashed, OOM'd or timed out.
+  It still blocks (fail closed), but it is a tooling problem to report, not a
+  verdict on the code.
+- `the hypothesis-witness check could not run for <theorem>` names the
+  theorem(s) the check failed on and carries the trimmed Lean error; other
+  theorems are still checked individually.
 - `downgrades`: a function proved on the base that is anything less now blocks
   (fail closed). On a first adoption (`first_adoption: true`) there is no base
   contract, so every guarantee counts as new and the run blocks until a
