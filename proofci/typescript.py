@@ -586,7 +586,9 @@ def _entry_points(manifest):
             todo.extend(item)
         elif isinstance(item, str) and item.startswith("."):
             found.append(item)
-    return [entry for entry in found if isinstance(entry, str) and entry.startswith(".")]
+    return [entry for entry in found if isinstance(entry, str)
+            and (entry.startswith(".") or "/" in entry
+                 or re.search(r"\.[cm]?[jt]sx?$", entry))]
 
 
 def _sanitize(text):
@@ -619,29 +621,49 @@ def _sanitize(text):
         blank(i, j)
         return j
 
-    def value_expected(i):
+    def word_before(j):
+        k = j
+        while k >= 0 and (out[k].isalnum() or out[k] in "_$"):
+            k -= 1
+        return "".join(out[k + 1:j + 1])
+
+    def value_expected(i, for_regex=False):
         # A literal can only open where a value may start; after a value,
         # `/` is division and a quote is JSX text or a stray apostrophe.
+        # Reads `out` so blanked comments and literals don't fool the scan.
         j = i - 1
-        while j >= 0 and text[j] in " \t\r\n":
+        while j >= 0 and out[j] in " \t\r\n":
             j -= 1
         if j < 0:
             return True
-        if text[j] in "=(:,[!&|?{};+-*%<>^~":
-            if text[j] in "+-" and text[j - 1:j] == text[j]:
+        if out[j] in "=(:,[!&|?{};+-*%<>^~":
+            if out[j] in "+-" and out[j - 1:j] == out[j]:
                 return False   # postfix ++/--
-            if text[j] == "!" and j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_$)]"):
-                return False   # TypeScript's non-null `!`
+            if out[j] == "!":
+                # TypeScript's non-null `!` follows a value; a unary `!`
+                # follows an operator or a keyword like `return`.
+                k = j - 1
+                while k >= 0 and out[k] in " \t\r\n":
+                    k -= 1
+                if k < 0:
+                    return True
+                if out[k] in ")]}\"'`":
+                    return False
+                if out[k] in "=(:,[!&|?{};+-*%<>^~":
+                    return True
+                return word_before(k) in ("return", "if", "while", "for",
+                                          "case", "typeof", "in", "of", "new",
+                                          "delete", "void", "throw", "yield",
+                                          "await", "do", "else")
             return True
-        if text[j] in ")]}\"'`":
+        if out[j] in ")]}\"'`":
             return False
-        k = j
-        while k >= 0 and (text[k].isalnum() or text[k] in "_$"):
-            k -= 1
-        word = text[k + 1:j + 1]
-        return word in ("return", "typeof", "instanceof", "in", "of", "new",
-                        "delete", "void", "throw", "yield", "await", "case",
-                        "do", "else", "from")
+        words = ("return", "typeof", "instanceof", "in", "of", "new",
+                 "delete", "void", "throw", "yield", "await", "case",
+                 "do", "else")
+        # `from` precedes a string in an import, but is often a variable
+        # name — never evidence for a regex.
+        return word_before(j) in (words + (() if for_regex else ("from",)))
 
     in_template, interp, i = False, [], 0
     while i < n:
@@ -676,7 +698,7 @@ def _sanitize(text):
             blank(i, i + 1)
             in_template = True
             i += 1
-        elif c == "/" and value_expected(i):
+        elif c == "/" and value_expected(i, for_regex=True):
             i = literal_end(i, "/")
         elif c == "{":
             if interp:

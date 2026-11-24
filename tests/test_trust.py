@@ -194,6 +194,29 @@ class UncalledTests(unittest.TestCase):
         self.write("pkg/index.ts", "export function dead() { return 0; }\n")
         self.assertEqual(self.uncalled("pkg/index.ts::dead"), ["pkg/index.ts::dead"])
 
+    def test_a_main_without_dot_slash_is_an_entry(self):
+        self.write("pkg/package.json", '{"name": "lib", "main": "index.js"}\n')
+        self.write("pkg/index.ts", "export function live() { return 2; }\n")
+        self.assertEqual(self.uncalled("pkg/index.ts::live"), [])
+
+    def test_a_string_after_a_block_comment_opens(self):
+        self.write("src/s.ts",
+                   "export function dead() { return 0; }\n"
+                   "export function use() { /* c */ return 'q' + dead(); }\n")
+        self.assertEqual(self.uncalled("src/s.ts::dead"), [])
+
+    def test_a_variable_named_from_divides(self):
+        self.write("src/sc.ts",
+                   "export function scale(x) { return x * 2; }\n"
+                   "export function use(from) { return from / scale(2); }\n")
+        self.assertEqual(self.uncalled("src/sc.ts::scale"), [])
+
+    def test_a_negated_regex_is_no_use(self):
+        self.write("src/dead.ts",
+                   "export function dead() { return 0; }\n"
+                   "export function use(x) { return !/dead/.test(x); }\n")
+        self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
+
     def test_an_authored_src_build_directory_counts(self):
         self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
         self.write("src/live.ts", "export function live() { return 2; }\n")
