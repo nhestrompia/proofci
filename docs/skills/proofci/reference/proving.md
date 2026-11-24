@@ -59,12 +59,12 @@ lemmas and their side conditions:
 |---|---|---|---|
 | `Js.add`/`sub`/`mul`/`div` | `add_spec`/`sub_spec`/`mul_spec`/`div_spec` | `r.val = x.val ∘ y.val` | operand bounds in range |
 | `Js.truncDiv` | `truncDiv_spec` | `r.val = x.val / y.val` | `y.val ≠ 0` |
-| `Js.map` | `map_spec` | `r = List.map g xs` | `∀ x ∈ xs, f x ⦃ _ = g x ⦄` |
-| `Js.filter` | `filter_spec` | `r = List.filter p xs` | `∀ x ∈ xs, f x ⦃ _ = p x ⦄` |
-| `Js.some_` | `some_spec` | `r = xs.any p` | per-element `f x ⦃ _ = p x ⦄` |
-| `Js.every` | `every_spec` | `r = xs.all p` | per-element `f x ⦃ _ = p x ⦄` |
-| `Js.find` | `find_spec` | `r = xs.find? p` | per-element `f x ⦃ _ = p x ⦄` |
-| `Js.reduce` | `reduce_spec` / `reduce_spec_inv` | `r = xs.foldl g acc` | per-element `f a x ⦃ _ = g a x ⦄` |
+| `Js.map` | `map_spec` | `ys = xs.map g` | `∀ x ∈ xs, f x = ok (g x)` |
+| `Js.filter` | `filter_spec` | `ys = xs.filter p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.some_` | `some_spec` | `r = xs.any p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.every` | `every_spec` | `r = xs.all p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.find` | `find_spec` | `r = xs.find? p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.reduce` | `reduce_spec` | `r = xs.foldl g acc` | `∀ a, ∀ x ∈ xs, f a x = ok (g a x)` |
 | `Js.indexOf` | `indexOf_val` | `r.val = ↑(idxOf? …).getD 0` | `xs.length ≤ 2^53-1` |
 | `Js.len` | `len_spec` | `r.val = ↑xs.length` | `xs.length ≤ 2^53-1` |
 | `Js.strIndexOf` | `strIndexOf_spec` | `r.val = match find? …` | `s.length ≤ 2^53-1` |
@@ -73,6 +73,13 @@ lemmas and their side conditions:
 | `Js.reTest` | `reTest_spec` | `r = m.isSome` | `reOk` witness + `reSearch` outcome |
 | `Js.includes` | `includes_eq`/`includes_iff` | `simp` equations | — |
 | `Js.startsWith` | `startsWith_eq` (`@[simp]`) | `pre.isPrefixOf s` | — |
+
+For `Js.slice`/`sliceFrom`/`trim`/`split` there are *bounds* lemmas rather
+than spec lemmas — `slice_length_le`, `sliceFrom_length_le`, `trim_length_le`
+(`(trim s).length ≤ s.length`), `split_length_le` (`(split s sep).length ≤
+s.length + 1`), `slice_mem` (elements of a slice are in `xs`), and
+`find?_le_length`/`strIndexOf_spec` for `indexOf`. No spec/equational lemmas
+yet for `slice`/`trim`/`split`/`endsWith` results themselves.
 
 Still without step lemmas: `Js.recGet`, `Js.setHas`, `Js.strIncludes`,
 `Js.endsWith`, `Js.unwrap <nonliteral>`. Workarounds that proved out:
@@ -85,18 +92,22 @@ Still without step lemmas: `Js.recGet`, `Js.setHas`, `Js.strIncludes`,
 
 ### Callback premises (`map`/`filter`/`some_`/`every`/`find`/`reduce`)
 
-`step*` reduces each callback premise to a per-element goal — no `funext`
-needed. Discharge them uniformly after `step*`:
+Each `@[step]` spec takes `∀ x ∈ xs, f x = ok (g x)` — member-bounded on
+purpose, since emitted callbacks often only succeed for elements of `xs`
+(bounded `Js.add` under the theorem's hypotheses; see the `x + 1` example in
+`Spike/PilotGaps.lean`). The `∀ x` versions stay as `*_spec'` corollaries.
+Premise goals discharge pointwise — no `funext`:
 
 ```lean
   step*
   all_goals first
-    | (intro x; rfl)          -- `cb x = ok (p x)` when cb's body IS `p`
-    | exact fun v => decide (v.val > 0)   -- constant/discard-callback lemmas
+    | (intro x _hx; rfl)    -- `cb x = ok (p x)` when cb's body IS `p`
+    | skip                  -- goals a previous `first` alternative already left
 ```
 
-For a fold use `Js.reduce_spec_inv` (elementwise invariant) — `f4` in
-`spike/core/Spike/PilotGaps.lean` is the worked example.
+For a fold's invariant post, `Js.reduce_spec_inv` is a *named* lemma (not
+`@[step]` — its `inv` is a metavariable `step*` can't instantiate); use
+`apply Js.reduce_spec_inv` as in `f4` of `PilotGaps.lean`.
 
 ### `let x ← if c then a else b` binds
 

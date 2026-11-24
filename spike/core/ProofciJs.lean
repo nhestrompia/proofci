@@ -420,83 +420,146 @@ end Monotone
 @[simp] theorem reduce_nil {α β} (f : β → α → Result β) (acc : β) : reduce f acc [] = ok acc := rfl
 
 /-! Equational forms for the higher-order combinators. The premise is
-    per-element (`∀ x, f x = ok (g x)`), so a proof can rewrite the callback
-    pointwise — `intro x; simp [cb]` — instead of proving a function equality
-    with `funext` on the emitted `do`-block lambda. -/
+    per-element on the list's members (`∀ x ∈ xs, f x = ok (g x)`): emitted
+    callbacks often only succeed for elements of `xs` (bounded `Js.add`
+    etc. under the theorem's hypotheses), so `step*` needs the member-bounded
+    form — the `∀ x` versions stay as corollaries. Either way a proof
+    discharges the premise pointwise (`intro x hx; simp [cb]`) instead of
+    proving a function equality with `funext` on the emitted `do`-block
+    lambda. -/
+
+theorem map_eq_mem {α β} {f : α → Result β} {g : α → β} {xs : List α}
+    (hf : ∀ x ∈ xs, f x = ok (g x)) : map f xs = ok (xs.map g) := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    simp only [map, hf x List.mem_cons_self,
+      ih (fun y hy => hf y (List.mem_cons_of_mem _ hy)), Std.bind_ok, List.map_cons]
 
 theorem map_eq {α β} {f : α → Result β} {g : α → β}
-    (hf : ∀ x, f x = ok (g x)) : ∀ xs : List α, map f xs = ok (xs.map g) := by
-  intro xs; induction xs with
-  | nil => rfl
-  | cons x rest ih => simp only [map, hf x, ih, Std.bind_ok, List.map_cons]
+    (hf : ∀ x, f x = ok (g x)) : ∀ xs : List α, map f xs = ok (xs.map g) :=
+  fun _ => map_eq_mem (fun x _ => hf x)
 
 @[step] theorem map_spec {α β} {f : α → Result β} {g : α → β} {xs : List α}
-    (hf : ∀ x, f x = ok (g x)) : map f xs ⦃ ys => ys = xs.map g ⦄ := by
-  rw [map_eq hf]; simp [WP.spec_ok]
+    (hf : ∀ x ∈ xs, f x = ok (g x)) : map f xs ⦃ ys => ys = xs.map g ⦄ := by
+  rw [map_eq_mem hf]; simp [WP.spec_ok]
+
+theorem map_spec' {α β} {f : α → Result β} {g : α → β} {xs : List α}
+    (hf : ∀ x, f x = ok (g x)) : map f xs ⦃ ys => ys = xs.map g ⦄ :=
+  map_spec (fun x _ => hf x)
+
+theorem filter_eq_mem {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : filter f xs = ok (xs.filter p) := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [filter, hf x List.mem_cons_self, Std.bind_ok, h,
+      ih (fun y hy => hf y (List.mem_cons_of_mem _ hy))]
 
 theorem filter_eq {α} {f : α → Result Bool} {p : α → Bool}
-    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, filter f xs = ok (xs.filter p) := by
-  intro xs; induction xs with
-  | nil => rfl
-  | cons x rest ih =>
-    cases h : p x <;> simp [filter, hf x, ih, Std.bind_ok, h]
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, filter f xs = ok (xs.filter p) :=
+  fun _ => filter_eq_mem (fun x _ => hf x)
 
 @[step] theorem filter_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
-    (hf : ∀ x, f x = ok (p x)) : filter f xs ⦃ ys => ys = xs.filter p ⦄ := by
-  rw [filter_eq hf]; simp [WP.spec_ok]
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : filter f xs ⦃ ys => ys = xs.filter p ⦄ := by
+  rw [filter_eq_mem hf]; simp [WP.spec_ok]
+
+theorem filter_spec' {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : filter f xs ⦃ ys => ys = xs.filter p ⦄ :=
+  filter_spec (fun x _ => hf x)
+
+theorem some_eq_mem {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : some_ f xs = ok (xs.any p) := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [some_, hf x List.mem_cons_self, Std.bind_ok, h,
+      ih (fun y hy => hf y (List.mem_cons_of_mem _ hy))]
 
 theorem some_eq {α} {f : α → Result Bool} {p : α → Bool}
-    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, some_ f xs = ok (xs.any p) := by
-  intro xs; induction xs with
-  | nil => rfl
-  | cons x rest ih =>
-    cases h : p x <;> simp [some_, hf x, ih, Std.bind_ok, h]
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, some_ f xs = ok (xs.any p) :=
+  fun _ => some_eq_mem (fun x _ => hf x)
 
 @[step] theorem some_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
-    (hf : ∀ x, f x = ok (p x)) : some_ f xs ⦃ r => r = xs.any p ⦄ := by
-  rw [some_eq hf]; simp [WP.spec_ok]
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : some_ f xs ⦃ r => r = xs.any p ⦄ := by
+  rw [some_eq_mem hf]; simp [WP.spec_ok]
+
+theorem some_spec' {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : some_ f xs ⦃ r => r = xs.any p ⦄ :=
+  some_spec (fun x _ => hf x)
+
+theorem every_eq_mem {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : every f xs = ok (xs.all p) := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [every, hf x List.mem_cons_self, Std.bind_ok, h,
+      ih (fun y hy => hf y (List.mem_cons_of_mem _ hy))]
 
 theorem every_eq {α} {f : α → Result Bool} {p : α → Bool}
-    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, every f xs = ok (xs.all p) := by
-  intro xs; induction xs with
-  | nil => rfl
-  | cons x rest ih =>
-    cases h : p x <;> simp [every, hf x, ih, Std.bind_ok, h]
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, every f xs = ok (xs.all p) :=
+  fun _ => every_eq_mem (fun x _ => hf x)
 
 @[step] theorem every_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
-    (hf : ∀ x, f x = ok (p x)) : every f xs ⦃ r => r = xs.all p ⦄ := by
-  rw [every_eq hf]; simp [WP.spec_ok]
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : every f xs ⦃ r => r = xs.all p ⦄ := by
+  rw [every_eq_mem hf]; simp [WP.spec_ok]
 
-theorem find_eq {α} {f : α → Result Bool} {p : α → Bool}
-    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, find f xs = ok (xs.find? p) := by
-  intro xs; induction xs with
+theorem every_spec' {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : every f xs ⦃ r => r = xs.all p ⦄ :=
+  every_spec (fun x _ => hf x)
+
+theorem find_eq_mem {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : find f xs = ok (xs.find? p) := by
+  induction xs with
   | nil => rfl
   | cons x rest ih =>
-    cases h : p x <;> simp [find, hf x, ih, Std.bind_ok, h]
+    cases h : p x <;> simp [find, hf x List.mem_cons_self, Std.bind_ok, h,
+      ih (fun y hy => hf y (List.mem_cons_of_mem _ hy))]
+
+theorem find_eq {α} {f : α → Result Bool} {p : α → Bool}
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, find f xs = ok (xs.find? p) :=
+  fun _ => find_eq_mem (fun x _ => hf x)
 
 @[step] theorem find_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
-    (hf : ∀ x, f x = ok (p x)) : find f xs ⦃ r => r = xs.find? p ⦄ := by
-  rw [find_eq hf]; simp [WP.spec_ok]
+    (hf : ∀ x ∈ xs, f x = ok (p x)) : find f xs ⦃ r => r = xs.find? p ⦄ := by
+  rw [find_eq_mem hf]; simp [WP.spec_ok]
+
+theorem find_spec' {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : find f xs ⦃ r => r = xs.find? p ⦄ :=
+  find_spec (fun x _ => hf x)
 
 /-- Folding a function that ignores its argument returns the accumulator. -/
 @[simp] theorem foldl_const {α β : Type _} (acc : β) (xs : List α) :
     xs.foldl (fun a _ => a) acc = acc := by
   induction xs generalizing acc <;> simp_all [List.foldl]
 
-theorem reduce_eq {α β} {f : β → α → Result β} {g : β → α → β}
-    (hf : ∀ a x, f a x = ok (g a x)) : ∀ (acc : β) (xs : List α), reduce f acc xs = ok (xs.foldl g acc) := by
-  intro acc xs; induction xs generalizing acc with
+theorem reduce_eq_mem {α β} {f : β → α → Result β} {g : β → α → β} {xs : List α}
+    (hf : ∀ a, ∀ x ∈ xs, f a x = ok (g a x)) :
+    ∀ (acc : β), reduce f acc xs = ok (xs.foldl g acc) := by
+  intro acc; induction xs generalizing acc with
   | nil => rfl
   | cons x rest ih =>
-    simp only [reduce, hf acc x, ih (g acc x), Std.bind_ok, List.foldl_cons]
+    simp only [reduce, hf acc x List.mem_cons_self, Std.bind_ok, List.foldl_cons]
+    rw [ih (fun a y hy => hf a y (List.mem_cons_of_mem _ hy))]
+
+theorem reduce_eq {α β} {f : β → α → Result β} {g : β → α → β}
+    (hf : ∀ a x, f a x = ok (g a x)) : ∀ (acc : β) (xs : List α), reduce f acc xs = ok (xs.foldl g acc) :=
+  fun acc _ => reduce_eq_mem (fun a x _ => hf a x) acc
 
 @[step] theorem reduce_spec {α β} {f : β → α → Result β} {g : β → α → β} {acc : β} {xs : List α}
-    (hf : ∀ a x, f a x = ok (g a x)) : reduce f acc xs ⦃ r => r = xs.foldl g acc ⦄ := by
-  rw [reduce_eq hf]; simp [WP.spec_ok]
+    (hf : ∀ a, ∀ x ∈ xs, f a x = ok (g a x)) : reduce f acc xs ⦃ r => r = xs.foldl g acc ⦄ := by
+  rw [reduce_eq_mem hf]; simp [WP.spec_ok]
+
+theorem reduce_spec' {α β} {f : β → α → Result β} {g : β → α → β} {acc : β} {xs : List α}
+    (hf : ∀ a x, f a x = ok (g a x)) : reduce f acc xs ⦃ r => r = xs.foldl g acc ⦄ :=
+  reduce_spec (fun a x _ => hf a x)
 
 /-- The fold-invariant form of `reduce`: when every step preserves `inv`, the
-    result satisfies `inv`. This is the loop-invariant pattern for folds. -/
-@[step] theorem reduce_spec_inv {α β} {f : β → α → Result β} {inv : β → Prop}
+    result satisfies `inv`. This is the loop-invariant pattern for folds.
+    Deliberately not `@[step]`: `inv` is a metavariable, so `step*` would pick
+    this over `reduce_spec` and leave unsolvable `inv ?m` goals. Use it with
+    `apply Js.reduce_spec_inv` (see `Spike/PilotGaps.lean`). -/
+theorem reduce_spec_inv {α β} {f : β → α → Result β} {inv : β → Prop}
     {acc : β} {xs : List α}
     (h0 : inv acc) (hf : ∀ a x, inv a → f a x ⦃ r => inv r ⦄) :
     reduce f acc xs ⦃ r => inv r ⦄ := by
@@ -1083,6 +1146,12 @@ def lit (v : Int) : Num :=
     (lit v).val = if -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then v else 0 := by
   simp only [lit]
   split <;> rfl
+
+/-- `mk v` and `ok (lit v)` agree in range — lets a proof describe the pure
+    callback `g` of the `map`-family lemmas with `Js.lit`. -/
+theorem mk_eq_lit (v : Int) (h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991) :
+    mk v = ok (lit v) := by
+  simp [mk, lit, h]
 
 /-- Compares the model with what Node computed. `expected` is `none` when Node
     produced something other than a value of the declared type. The model may

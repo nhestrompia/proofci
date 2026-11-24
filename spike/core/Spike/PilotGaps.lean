@@ -56,14 +56,27 @@ example (xs : List Js.Num) : f3 xs ⦃ r => r = (xs.filter (fun v => v.val > 0))
   unfold f3
   step*
   all_goals first
-    | (intro x; rfl)
+    | (intro x _hx; rfl)
     | exact fun v => decide (v.val > 0)
     | skip
   rw [ys_post]
   apply Js.some_spec
-  intro x; rfl
+  intro x _hx; rfl
 
--- every + reduce (fold-invariant form `reduce_spec_inv`)
+-- member-bounded callbacks: `Js.add v (Js.lit 1)` only succeeds on elements
+-- of `xs` (the `∀ x ∈ xs` premise of `map_spec` — a `∀ x` version is too
+-- strong for bounded ops). `g` is written with `Js.lit` via `mk_eq_lit`.
+example (xs : List Js.Num) (hb : ∀ x ∈ xs, x.val < 100) :
+    Js.map (fun v => Js.add v (Js.lit 1)) xs ⦃ ys =>
+      ys = xs.map (fun v => Js.lit (v.val + 1)) ⦄ := by
+  apply Js.map_spec
+  intro x hx
+  simp only [Js.add, Js.lit_val]
+  exact Js.mk_eq_lit _ (by have hxb := hb x hx; have hxlo := x.lo; omega)
+
+-- every + reduce (fold-invariant form `reduce_spec_inv`, applied by name —
+-- it is deliberately not `@[step]` so `step*` can't pick it and leave `inv ?m`)
+
 def f4 (xs : List Js.Num) : Result Js.Num := do
   let _ ← Js.every (fun v => ok (v.val ≥ 0)) xs
   Js.reduce (fun a _v => ok a) (Js.lit 0) xs
@@ -73,7 +86,7 @@ example (xs : List Js.Num) :
   unfold f4
   step*
   all_goals first
-    | (intro x; rfl)
+    | (intro x _hx; rfl)
     | exact fun v => decide (v.val ≥ 0)
     | skip
   apply Js.reduce_spec_inv
@@ -92,7 +105,7 @@ example (xs : List Js.Num) (hl : xs.length ≤ 9007199254740991) :
   unfold f5
   step*
   all_goals first
-    | (intro x; rfl)
+    | (intro x _hx; rfl)
     | exact fun v => decide (v.val = 4)
     | skip
   step*
