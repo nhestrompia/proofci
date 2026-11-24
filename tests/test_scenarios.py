@@ -1241,9 +1241,7 @@ SCENARIOS.update({
         "functions": {DBL_SHELF: "tested"},
         "function_reasons": {DBL_SHELF: "did not check"},
         "summary": {"proved": 0, "tested": 1, "failed": 0}}),
-    # nan-propagates is sub/add-insensitive (NaN short-circuits before the
-    # mutated expression), so with the Js.add/sub step lemmas it verifies.
-    "ts-dbl-rare-mutant-sub": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U}, 1, {
+    "ts-dbl-rare-mutant-sub": (None, {**dbl_results(), DBL_TOTAL: U, DBL_WHOLE: U, DBL_MENU: U, DBL_NAN: U}, 1, {
         "env": dbl_mut("dbl_rare_sub"), "functions": {TS_DBL + "::totalWithTax": "tested"},
         "function_reasons": {TS_DBL + "::totalWithTax": "did not check"},
         "summary": {"proved": 2, "tested": 1, "failed": 0}}),
