@@ -568,6 +568,12 @@ def run_scenario(name, out_dir=None):
     for wanted in options.get("stdout", []):
         if wanted not in done.stdout:
             problems.append(f"stdout missing {wanted!r}")
+    escapes = [l for l in done.stdout.splitlines()
+               if "strength:" in l or "also pass" in l]
+    for banned in options.get("stdout_not", []):
+        for line in escapes:
+            if banned in line:
+                problems.append(f"escape line should not contain {banned!r}: {line}")
     for key, wanted in options.get("warnings", {}).items():
         got = [w for g in data["guarantees"] if f"{g['target']}/{g['guarantee']}" == key
                for w in g.get("warnings", []) + g.get("strength", [])]
@@ -1235,9 +1241,10 @@ SCENARIOS.update({
     # both weakened guarantees; the escape names the behaviour it accepts.
     "ts-trivial-implementation": (ts_trivial_implementation, ts_results(), 0, {
         "env": {"PROOFCI_MUTATION_FULL": "1"},
-        "warnings": {"transfer/conservation": "always returned `none`",
-                     "transfer/rejects-overdraft": "always returned `none`"},
-        "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
+        "warnings": {"transfer/conservation": "always returned `null`",
+                     "transfer/rejects-overdraft": "always returned `null`"},
+        "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"},
+        "stdout_not": ["Js.", "Result.", "none"]}),
     # The ratchet: the guarantee was going to fail anyway, but the report also names the downgrade.
     "ts-proved-function-rewritten-off-the-bridge": (ts_sum_bridged_away, {**ts_results(), TS_SUM: U}, 1, {
         "downgrades": [{"function": BR_SUM, "was": "proved", "now": "tested", "accepted": False}]}),
@@ -1264,7 +1271,8 @@ SCENARIOS.update({
     "ts-weak-guarantees": (ts_weak_guarantees, {**ts_results(), "perms/subset": V, "view/denies": V}, 0, {
         "env": {"PROOFCI_MUTATION_FULL": "1"},
         "warnings": {"perms/subset": "returned `perms` unchanged",
-                     "view/denies": "always returned `false`"}}),
+                     "view/denies": "always returned `false`"},
+        "stdout_not": ["Js.", "Result.", "none"]}),
     # Under `require_strength` in the protected policy the same escapes block, and
     # the verdict names the guarantee and what it would also accept.
     "ts-require-strength-blocks": (ts_weak_guarantees_under_strength,

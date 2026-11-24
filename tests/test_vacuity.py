@@ -130,13 +130,36 @@ class TsPlantTest(unittest.TestCase):
         kinds = {k for k, _, _, _ in mutation.plant(view, "same")}
         self.assertNotIn("trivial-arg", kinds)
 
+    def test_describe_never_shows_generated_lean(self):
+        banned = ("Js.", "Result.", "≠", "≤", "≥", "∧", "∨", "¬", " : ", "none", "some")
+        srcs = {"num-literal": "Js.Num.mk (21)", "int-literal": "(21 : Int)",
+                "dbl-literal": "Js.Dbl.lit 0x15", "f64-op": "Core.F64.ceil",
+                "filter-keeps-all": "let tmp1 ← Result.ok perms",
+                "trivial-arg": "Result.ok perms"}
+        originals = {"num-literal": "Js.Num.mk (20)", "int-literal": "(20 : Int)",
+                     "dbl-literal": "Js.Dbl.lit 0x14", "f64-op": "Core.F64.floor"}
+        kinds = list(mutation.KINDS) + ["filter-keeps-all", "trivial-arg", "trivial-fail"]
+        for kind in kinds:
+            out = mutation.describe(kind, 4, srcs.get(kind, "x"), originals.get(kind, "x"),
+                                    ts="src/x.ts:4")
+            for word in banned:
+                self.assertNotIn(word, out, f"{kind}: {out}")
+        for constant in ("Result.ok (Js.Num.mk (0) (of_decide_eq_true rfl) (of_decide_eq_true rfl))",
+                         "Result.ok ([] : Js.Str)", 'Result.ok ""', "Result.ok []",
+                         "Result.ok (0 : Int)", "Result.ok true", "Result.ok false",
+                         "Result.ok none", "Proofci.Effects.Eff.pure false"):
+            for sig in (None, {"result": {"nothing": "null"}}, {"result": {"nothing": "undefined"}}):
+                out = mutation.describe("trivial-constant", 4, constant, "", ts="src/x.ts:4", sig=sig)
+                for word in banned:
+                    self.assertNotIn(word, out, f"{constant}: {out}")
+
     def test_describe_states_the_accepted_behaviour(self):
         self.assertEqual(mutation.describe("trivial-arg", 2, "Result.ok perms", ""),
                          "returned `perms` unchanged")
         self.assertEqual(mutation.describe("filter-keeps-all", 5, "let t ← Result.ok xs", ""),
                          "returned `xs` without filtering it")
         self.assertEqual(mutation.describe("js-add-to-sub", 3, "x", "y"),
-                         "computed `-` where it computes `+`")
+                         "used `-` where the code uses `+`")
 
     def test_describe_names_the_typescript_source_not_the_lean_line(self):
         marks = mutation.source_map("-- src:src/lib/x.ts:12\ndef f := do\n  -- src:src/lib/x.ts:14\n  a\n  b\n")
@@ -144,10 +167,10 @@ class TsPlantTest(unittest.TestCase):
         self.assertEqual(mutation.ts_at(marks, 2), "src/lib/x.ts:12")
         self.assertEqual(mutation.describe("negate-branch", 4, "if ¬(x) then", "if x then",
                                           ts=mutation.ts_at(marks, 4)),
-                         "the condition on src/lib/x.ts:14 were negated")
-        self.assertEqual(mutation.describe("num-literal", 4, "x", "y",
+                         "the `if` on src/lib/x.ts line 14 were negated")
+        self.assertEqual(mutation.describe("num-literal", 4, "Js.Num.mk (21)", "Js.Num.mk (20)",
                                           ts=mutation.ts_at(marks, 4)),
-                         "the literal on src/lib/x.ts:14 were off by one")
+                         "`20` on src/lib/x.ts line 14 were `21`")
         # No map: the operator change is described without any line number.
         self.assertEqual(mutation.describe("negate-branch", 4, "if ¬(x) then", "if x then"),
                          "the condition were negated")

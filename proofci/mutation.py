@@ -283,39 +283,113 @@ def ts_at(marks, line):
     return marks.get(nearest) if nearest else None
 
 
-def describe(kind, line, src, original, ts=None):
-    """One plain fragment completing `if <function> ...`: what a function the
-    guarantee would also accept does. `src` is the mutated line, `original` the
-    line it replaced on generated line `line`; `ts` is the TypeScript
-    `file:line` that generated line maps back to."""
-    where = f"on {ts}" if ts else ""
+def _ts_literal(line):
+    """The TypeScript literal a Lean expression in `line` stands for."""
+    for pattern, render in (
+            (r"Js\.Num\.mk \((-?\d+)\)", lambda m: m.group(1)),
+            (r"\((-?\d+) : Int\)", lambda m: f"{m.group(1)}n"),
+            (r"Js\.Dbl\.lit 0x([0-9a-fA-F]+)", lambda m: str(int(m.group(1), 16))),
+            (r"\[\] : Js\.Str", lambda m: '""')):
+        found = re.search(pattern, line)
+        if found:
+            return render(found)
+    return None
+
+
+def _ts_value(expr, sig=None):
+    """A planted return value as the TypeScript the reviewer reads. `sig` is
+    the function's signature entry — its `result.nothing` says whether `none`
+    means `null` or `undefined`. None when the value can't be named."""
+    expr = re.sub(r"^(?:Result\.ok|(?:Proofci\.Effects\.)?Eff\.pure)\s+", "", expr.strip()).strip()
+    if expr == "none":
+        nothing = ((sig or {}).get("result") or {}).get("nothing")
+        return nothing if nothing in ("null", "undefined") else None
+    if expr in ("true", "false", '""', "[]"):
+        return expr
+    if re.fullmatch(r"[A-Za-z_$][\w$]*", expr):
+        return expr
+    return _ts_literal(expr)
+
+
+def _loc(ts):
+    """`src/ledger.ts:16` -> `src/ledger.ts line 16`, the report's phrasing."""
+    if not ts:
+        return ""
+    file, _, n = ts.rpartition(":")
+    return f"{file} line {n}"
+
+
+# Mutation kinds phrased as the TypeScript operators they swap: kind ->
+# (what the mutant uses, what the code uses).
+_SWAPPED = {
+    "lt-to-le": ("<=", "<"), "le-to-lt": ("<", "<="),
+    "gt-to-ge": (">=", ">"), "ge-to-gt": (">", ">="),
+    "lt-to-le-lean": ("<=", "<"), "le-to-lt-lean": ("<", "<="),
+    "gt-to-ge-lean": (">=", ">"), "ge-to-gt-lean": (">", ">="),
+    "add-to-sub": ("-", "+"), "sub-to-add": ("+", "-"),
+    "eq-to-ne": ("!==", "==="), "eq-to-ne-lean": ("!==", "==="),
+    "ne-to-eq-lean": ("===", "!=="),
+    "and-to-or": ("||", "&&"), "and-to-or-lean": ("||", "&&"),
+    "or-to-and": ("&&", "||"), "or-to-and-lean": ("&&", "||"),
+}
+
+
+def describe(kind, line, src, original, ts=None, sig=None):
+    """One plain fragment completing `if <function> ...`, in the TypeScript
+    the reviewer reads — never generated Lean. `src` is the mutated line,
+    `original` the line it replaced on generated line `line`; `ts` is the
+    TypeScript `file:line` that generated line maps back to and `sig` the
+    function's declared signature for telling `null` and `undefined` apart."""
+    loc = _loc(ts)
+    on = f" on {loc}" if loc else ""
+    at = f" ({loc})" if loc else ""
     if kind == "trivial-arg":
         arg = src.removeprefix("Result.ok ").strip()
         return f"returned `{arg}` unchanged"
     if kind == "trivial-constant":
-        return f"always returned `{src.removeprefix('Result.ok ').strip()}`"
+        value = _ts_value(src, sig)
+        if value is None:
+            return "always returned no value (`null`/`undefined`)"
+        return f"always returned `{value}`"
     if kind == "trivial-fail":
-        return "always failed"
+        return "always threw"
     if kind == "filter-keeps-all":
         kept = src.rsplit(" ", 1)[-1]
         return f"returned `{kept}` without filtering it"
-    if kind in ("negate-branch", "negate-decide"):
-        return f"the condition {where} were negated" if where else "the condition were negated"
-    if kind.startswith(("js-", "dbl-", "bdiv-", "brem-")):
+    if kind == "negate-branch":
+        return f"the `if`{on} were negated" if on else "the condition were negated"
+    if kind == "negate-decide":
+        return f"the condition{on} were negated" if on else "the condition were negated"
+    if kind in ("true-to-false", "false-to-true"):
+        new, old = ("false", "true") if kind == "true-to-false" else ("true", "false")
+        return f"returned `{new}`{at} where the code returns `{old}`"
+    if kind in _SWAPPED:
+        new, old = _SWAPPED[kind]
+        return f"used `{new}`{at} where the code uses `{old}`"
+    if "-to-" in kind and kind.startswith(("js-", "dbl-", "bdiv-", "brem-")):
         pair = kind.split("-to-")
         if pair[0] in ("bdiv", "brem"):
-            return f"used `{'%' if pair[0] == 'bdiv' else '/'}` on the bigint where it uses `{'/' if pair[0] == 'bdiv' else '%'}`"
+            return (f"used `{'%' if pair[0] == 'bdiv' else '/'}`{at} on the bigint "
+                    f"where the code uses `{'/' if pair[0] == 'bdiv' else '%'}`")
         op_from = pair[0].removeprefix("js-").removeprefix("dbl-")
-        tail = f" {where} where" if where else " where"
-        return f"computed {TS_OP.get(pair[1], pair[1])}{tail} it computes {TS_OP.get(op_from, op_from)}"
+        return (f"used {TS_OP.get(pair[1], pair[1])}{at} where the code uses "
+                f"{TS_OP.get(op_from, op_from)}")
     if kind == "f64-op":
-        return f"`{src.strip()}` replaced `{original.strip()}` {where}".strip()
-    if kind in ("num-literal", "int-literal", "dbl-literal"):
-        return f"the literal {where} were off by one" if where else "a literal were off by one"
-    if kind == "some-to-none":
-        return "returned `none`"
-    return f"{where} read `{src}` instead of `{original}`" if where \
-        else f"read `{src}` instead of `{original}`"
+        new = re.search(r"Core\.F64\.(\w+)", src)
+        old = re.search(r"Core\.F64\.(\w+)", original)
+        if new and old:
+            return f"used `Math.{new.group(1)}`{at} where the code uses `Math.{old.group(1)}`"
+    elif kind in ("num-literal", "int-literal", "dbl-literal"):
+        old_v, new_v = _ts_literal(original), _ts_literal(src)
+        if old_v and new_v:
+            return f"`{old_v}`{on} were `{new_v}`" if on else f"a literal `{old_v}` were `{new_v}`"
+        return f"a literal{on} were off by one" if on else "a literal were off by one"
+    elif kind == "some-to-none":
+        value = _ts_value("none", sig)
+        return (f"returned `{value}` instead of a value" if value
+                else "returned no value (`null`/`undefined`)")
+    return (f"a small change to the code{on} still passes" if on
+            else "a small change to the code still passes")
 
 
 OUT_MARKER = "PROOFCI_MUTANT_OUT "
@@ -373,7 +447,7 @@ def _failed_declarations(root, output):
     return failed
 
 
-def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
+def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes, sigs=None):
     """`inputs`: {function: [arg terms]} from the comparison with Node;
     `names`: {function: lean def name}; `candidates`: the guarantees under
     test; `all_outcomes`: every verified guarantee (a mutant is rejected when
@@ -457,6 +531,7 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
                           + f": `{src}`"),
                  "plain": describe(kind, line, src,
                                    lines[line - 1].strip() if line <= len(lines) else src,
-                                   ts=ts_at(marks, line))}
+                                   ts=ts_at(marks, line),
+                                   sig=(sigs or {}).get(o.function))}
                 for kind, line, src in conclusive]
     return escaped, {f: len(m) for f, m in pending.items()}

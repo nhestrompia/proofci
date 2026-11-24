@@ -583,7 +583,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             if suspects:
                 defs = {o.function: lean_names.get(o.function, lean_function(o.function)) for o in suspects}
                 escaped, planted = mutation.check(ws, work, module_text, inputs, defs,
-                                                  PARALLEL_JUDGES, suspects, verified)
+                                                  PARALLEL_JUDGES, suspects, verified,
+                                                  sigs=extraction.signatures)
             for o in suspects:
                 if not inputs.get(o.function):
                     o.strength.append(
@@ -597,13 +598,16 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 short = o.function.split("::")[-1]
                 for m in escaped.get(o.theorem, []):
                     o.strength.append(
-                        f"`{o.theorem}` still verifies with a planted defect in `{o.function}` "
-                        f"({m['desc']}); it would also pass if `{short}` {m['plain']} — tighten it, "
+                        f"`{o.theorem}` still verifies with a planted defect in `{o.function}`; "
+                        f"it would also pass if `{short}` {m['plain']} — tighten it, "
                         "or confirm this path is meant to be uncovered")
             report.escapes = [{"guarantee": f"{o.target}/{o.guarantee}", "theorem": o.theorem,
                                "function": o.function,
                                "accepts": [f"`{o.function.split('::')[-1]}` {m['plain']}"
-                                          for m in escaped[o.theorem]]}
+                                          for m in escaped[o.theorem]],
+                               "defects": [{"kind": m["kind"], "line": m["line"], "ts": m["ts"],
+                                            "src": m["src"], "desc": m["desc"]}
+                                           for m in escaped[o.theorem]]}
                               for o in suspects if o.theorem in escaped]
             total = sum(planted.values())
             if total:

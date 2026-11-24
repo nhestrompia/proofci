@@ -214,7 +214,7 @@ A proved guarantee can still be weak: its entry under "What each guarantee says"
 gets a **strength:** line when its hypotheses hold on none of the generated
 inputs (probably vacuous), when no defect could be planted in its function at
 all, or when it still verifies against small defects planted in the translated
-code (it doesn't constrain the function; the line names the mutated line).
+code (it doesn't constrain the function; the line names the TypeScript location and what the wrong implementation does).
 An escape is also named in the verdict, and `require_strength: true` in
 `proofci.yaml` makes it block — see [TypeScript](typescript.md). The
 hypothesis check is cheap and runs on every TypeScript verification;
