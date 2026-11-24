@@ -159,6 +159,36 @@ class UncalledTests(unittest.TestCase):
         self.write("src/dead.ts", "export const dead = () => \"dead\";\n")
         self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
 
+    def test_a_self_call_inside_a_template_is_still_dead(self):
+        self.write("src/log.ts",
+                   "export function dead() { return `hit ${dead()}`; }\n")
+        self.assertEqual(self.uncalled("src/log.ts::dead"), ["src/log.ts::dead"])
+
+    def test_an_interpolated_call_counts(self):
+        self.write("src/log.ts",
+                   "export function tag(x) { return `hit ${x}`; }\n"
+                   "export function use() { return tag(dead()); }\n"
+                   "export function dead() { return 0; }\n")
+        self.assertEqual(self.uncalled("src/log.ts::dead"), [])
+
+    def test_division_after_postfix_operators_is_no_regex(self):
+        self.write("src/c.ts",
+                   "export function half(x) { return x / 2; }\n"
+                   "export function use(n) { n++; return half(n) / n; }\n")
+        self.assertEqual(self.uncalled("src/c.ts::half"), [])
+
+    def test_a_slash_inside_a_regex_class_does_not_end_it(self):
+        self.write("src/r.ts",
+                   "export function r(s) { return /[/']/.test(s); }\n"
+                   "export function use() { return r('a'); }\n")
+        self.assertEqual(self.uncalled("src/r.ts::r"), [])
+
+    def test_a_jsx_apostrophe_is_no_string(self):
+        self.write("src/page.tsx",
+                   "export function label() { return \"ok\"; }\n"
+                   "export function P() { return <p>don't {label()}</p>; }\n")
+        self.assertEqual(self.uncalled("src/page.tsx::label"), [])
+
     def test_a_root_index_with_another_entry_is_no_default(self):
         self.write("pkg/package.json", '{"name": "lib", "main": "./lib/m.js"}\n')
         self.write("pkg/index.ts", "export function dead() { return 0; }\n")

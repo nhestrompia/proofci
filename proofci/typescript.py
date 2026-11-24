@@ -476,7 +476,8 @@ def uncalled(checkout: Path, package_rel: str, functions):
     build_dirs = {str(d / name) for d, _ in manifests for name in ("dist", "build")}
     # npm's default entry is <pkg>/index — only when the manifest names no
     # entry of its own.
-    entryless_dirs = {str(d) for d, m in manifests if not _entry_points(m)}
+    entryless_dirs = {str(d) for d, m in manifests
+                      if not (m.get("main") or m.get("exports"))}
     def skipped(rel):
         return (any(p in _SKIP_DIRS or p.startswith(".") for p in rel.parts)
                 or any(str(d) in build_dirs for d in rel.parents))
@@ -601,27 +602,36 @@ def _sanitize(text):
                 out[k] = " "
 
     def literal_end(i, quote):
-        j = i + 1
+        j, in_class = i + 1, False   # a regex's [...] class may hold a `/`
         while j < n:
-            if text[j] == "\\":
+            c = text[j]
+            if c == "\\":
                 j += 2
                 continue
-            if text[j] == quote or (quote == "/" and text[j] == "\n"):
+            if quote == "/" and c == "[":
+                in_class = True
+            elif quote == "/" and c == "]":
+                in_class = False
+            elif (c == quote and not in_class) or (quote == "/" and c == "\n"):
                 break
             j += 1
         j = min(j + 1, n)
         blank(i, j)
         return j
 
-    def regex_opens(i):
-        # A `/` starts a regex when the previous token can't end an
-        # expression; after a value it is division.
+    def value_expected(i):
+        # A literal can only open where a value may start; after a value,
+        # `/` is division and a quote is JSX text or a stray apostrophe.
         j = i - 1
         while j >= 0 and text[j] in " \t\r\n":
             j -= 1
         if j < 0:
             return True
         if text[j] in "=(:,[!&|?{};+-*%<>^~":
+            if text[j] in "+-" and text[j - 1:j] == text[j]:
+                return False   # postfix ++/--
+            if text[j] == "!" and j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_$)]"):
+                return False   # TypeScript's non-null `!`
             return True
         if text[j] in ")]}\"'`":
             return False
@@ -631,7 +641,7 @@ def _sanitize(text):
         word = text[k + 1:j + 1]
         return word in ("return", "typeof", "instanceof", "in", "of", "new",
                         "delete", "void", "throw", "yield", "await", "case",
-                        "do", "else")
+                        "do", "else", "from")
 
     in_template, interp, i = False, [], 0
     while i < n:
@@ -660,13 +670,13 @@ def _sanitize(text):
             j = text.find("*/", i + 2)
             blank(i, n if j == -1 else j + 2)
             i = n if j == -1 else j + 2
-        elif c in "'\"":
+        elif c in "'\"" and value_expected(i):
             i = literal_end(i, c)
         elif c == "`":
             blank(i, i + 1)
             in_template = True
             i += 1
-        elif c == "/" and regex_opens(i):
+        elif c == "/" and value_expected(i):
             i = literal_end(i, "/")
         elif c == "{":
             if interp:
@@ -677,6 +687,7 @@ def _sanitize(text):
                 if interp[-1] == 0:
                     interp.pop()
                     in_template = True
+                    blank(i, i + 1)   # the interpolation's closing brace
                 else:
                     interp[-1] -= 1
             i += 1
