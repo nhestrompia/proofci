@@ -311,9 +311,17 @@ function dependencies(statement, eagerOnly = false) {
       if (node.name && ts.isComputedPropertyName(node.name)) walk(node.name, bound);
       return;
     }
-    // A callback's parameter shadows a module name only inside the callback: bindings apply
-    // per scope, not to the whole statement.
-    if (SCOPED(node)) bound = new Set([...bound, ...localBindings(node)]);
+    // A class's own name is in scope inside its body (self-references never need an
+    // outer declaration of the same name).
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name)
+      bound = new Set([...bound, node.name.text]);
+    // A computed member name is evaluated in the scope enclosing the member — the
+    // member's own parameters and bindings are not yet in scope — so walk it first.
+    let skipName = false;
+    if (SCOPED(node)) {
+      if (node.name && ts.isComputedPropertyName(node.name)) { walk(node.name, bound); skipName = true; }
+      bound = new Set([...bound, ...localBindings(node)]);
+    }
     if (ts.isIdentifier(node) && isReference(node) && !bound.has(node.text)) {
       const p = node.parent;
       if ((ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken,
@@ -324,7 +332,7 @@ function dependencies(statement, eagerOnly = false) {
         needs.add(node.text);
       }
     }
-    ts.forEachChild(node, child => walk(child, bound));
+    ts.forEachChild(node, child => { if (!(skipName && child === node.name)) walk(child, bound); });
   };
   walk(statement, new Set());
   // `export {x}`/`export {x as pub}` (no module specifier) reads the local `x`: if
@@ -381,7 +389,9 @@ function isolate(statements, wanted) {
           if (bound[i].has(name) && !keep[i]) {
             keep[i] = true;
             bound[i].forEach(n => kept.add(n));
-            for (const need of deps[i].needs) queue.push(need);
+            // A write needs the name's declaration too: strict-mode assignment to a
+            // dropped binding throws.
+            for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
           }
         }
       }
@@ -401,7 +411,7 @@ function isolate(statements, wanted) {
         if (!touched.some(n => kept.has(n))) continue;
         keep[i] = true;
         bound[i].forEach(n => kept.add(n));
-        for (const need of deps[i].needs) queue.push(need);
+        for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
       }
     }
   }

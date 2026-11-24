@@ -317,3 +317,40 @@ export function t(): string { return KEYS.m; }
   assert.deepEqual(reasons, {});
   assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("[KEYS.m]"));
 });
+
+test("a static initializer that writes a module variable keeps its declaration", () => {
+  const dir = project({
+    "a.ts": `let MOD: number;
+const TABLE: number[] = [];
+class C { static x = (TABLE.push(1), MOD = 7); }
+export function t(): number { return TABLE.length + MOD; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("let MOD"));
+});
+
+test("a computed method name is evaluated in the enclosing scope, not the method's", () => {
+  const dir = project({
+    "a.ts": `const x = "m";
+class C { [x](x: number) { return x; } }
+export function t(): string { return x; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("const x"));
+});
+
+test("a class's own name inside its body never means an outer declaration", () => {
+  const dir = project({
+    "a.ts": `const C = class C { static s = C.y; static y = 1; };
+const TABLE: number[] = [];
+export function t(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(!readFileSync(join(dir, "out/a.mjs"), "utf8").includes("class C"));
+});
