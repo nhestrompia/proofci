@@ -2,16 +2,17 @@
 
 ## Invocation
 
-There is no installable `proofci` binary. Run it from a ProofCI checkout:
+There is no installable `proofci` binary yet. Run it from a ProofCI checkout:
 
 ```sh
 CHECKOUT=/path/to/proofci
 PYTHONPATH=$CHECKOUT python3 -P -m proofci <command> ...
 ```
 
-`-P` matters: a repo that has a `proofci/` contract directory would otherwise
-shadow the package. On a host without `bwrap`, run everything inside the
-toolchain image instead (see "In the image" below).
+**Temporary invocation** — it exists only until `proofci` ships as a package.
+`-P` matters meanwhile: a repo that has a `proofci/` contract directory would
+otherwise shadow the package. On a host without `bwrap`, run everything inside
+the toolchain image instead (see "In the image" below).
 
 ## What works today
 
@@ -31,11 +32,11 @@ cd $CHECKOUT
 python3 -P -m proofci local --repo <dir> --image proofci-toolchain:dev --base HEAD
 ```
 
-`--base HEAD` is a temporary workaround: `local` reads `proofci.yaml` from the
+**Temporary workaround — `--base HEAD`**: `local` reads `proofci.yaml` from the
 base ref (merge-base with the remote default branch), which does not exist on a
 first adoption — without it you get `proofci.yaml not found in /base`, exit 2.
-This flag exists only until first adoption is handled; expect it to go away.
-`--policy head` does NOT fix it.
+It will be replaced by a first-adoption mode (work in progress); `--policy head`
+does NOT fix it.
 
 Gotchas from the pilots:
 

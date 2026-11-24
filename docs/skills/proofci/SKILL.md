@@ -87,5 +87,7 @@ unsupported function you abandoned is `false`). Add a line the moment something
 blocks or surprises you, not at the end.
 
 `proofci gaps <file> [<file> ...]` aggregates these logs (one argument per repo)
-into a table ranked by total minutes lost. Run it before choosing targets:
-constructs ranked high are the ones to design around first.
+into a table ranked by total minutes lost; `--json` prints the same rows as
+JSON for cross-pilot tooling. Rows group by `code` when set, else by normalized
+construct text. Run it before choosing targets: constructs ranked high are the
+ones to design around first.

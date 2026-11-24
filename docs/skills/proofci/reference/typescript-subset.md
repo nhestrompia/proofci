@@ -4,6 +4,11 @@ Verified against the translator; `constructs.json` has one tested snippet per
 row. Roughly 8% of real-world pure functions translate unchanged — plan on
 extracting and rewriting, not pointing at existing code.
 
+**"Supported" means the code translates to the Lean view — not that its proof
+or bridge succeeds.** Rows marked ⚠ bridge below translated in the pilots but
+their generated faithfulness proof often ended STUCK (→ `tested, not proved`).
+Design around them when a guarantee must reach `verified`.
+
 ## Supported (tested)
 
 - `number` (safe integers; fractions/`NaN`/`Infinity` flip the function to
@@ -11,11 +16,16 @@ extracting and rewriting, not pointing at existing code.
   `T | null`, `T | undefined`; interfaces with plain fields; string-literal
   unions; unions tagged by `kind`; arrays; `Map`/`Set` (limited method sets);
   `Record<string, V>` as a dynamic-key record (`r[k]`, `k in r`, `Object.keys`).
+  ⚠ bridge: record parameters often STUCK — pass the plain fields instead.
 - `if`/early return, `switch`, `for`, `for...of`, `while`, `break`, `continue`,
   `throw`, `try`/`catch`.
 - `??`, `?.`, `||`, `&&`; `===`/`!==` null/undefined narrowing.
+  ⚠ bridge: `?.` chains and optional fields often STUCK — prefer `=== null`
+  narrowing with named reads.
 - Arrays: `length`, `[i]`, `push` (on a fresh copy), `map`, `filter`, `reduce`,
   `find`, `some`, `every`, `slice`, `includes`, `indexOf`, `join` (strings only).
+  ⚠ bridge: `filter(...).includes().map()`-style chains often STUCK — rewrite
+  as `switch` on the inductive (proved in ~5 s vs the 120 s cap).
 - Strings: `length`, `[i]`, `slice`, `startsWith`, `includes`, `split`, `trim`,
   `replace` (string arg), templates, `toUpperCase`/`toLowerCase` (ASCII).
 - Numbers: `+ - * / %` (`/` only where the quotient is whole, else Dbl mode),

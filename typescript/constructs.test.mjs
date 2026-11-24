@@ -21,20 +21,31 @@ function outcome(source) {
   const root = join(dir, `p${count++}`);
   mkdirSync(root);
   writeFileSync(join(root, "a.ts"), source);
-  const result = translate({ root, module: "M", targets: ["a.ts::f"] });
-  return result.failures["a.ts::f"] ?? result.fatal;
+  return translate({ root, module: "M", targets: ["a.ts::f"] });
 }
 
 for (const entry of table.supported) {
   test(`skill table: "${entry.construct}" translates`, () => {
-    const reason = outcome(entry.source);
+    const result = outcome(entry.source);
+    const reason = result.failures["a.ts::f"] ?? result.fatal;
     assert.ok(!reason, `refused:\n${reason}\nin\n${entry.source}`);
+    // Translating is not enough: the function must actually be emitted, not
+    // just absent from the failures.
+    const lean = result.names["a.ts::f"];
+    assert.ok(lean, `no Lean name for a.ts::f\nin\n${entry.source}`);
+    assert.match(result.source, new RegExp(`def ${lean.replace(".", "\\.")}\\b`),
+      `no 'def ${lean}' in the generated Lean for "${entry.construct}"`);
   });
 }
 
 for (const entry of table.refused) {
   test(`skill table: "${entry.construct}" is refused`, () => {
-    const reason = outcome(entry.source);
+    const result = outcome(entry.source);
+    const reason = result.failures["a.ts::f"] ?? result.fatal;
     assert.ok(reason, `accepted:\n${entry.source}`);
+    // Refused for the *expected* reason: a typo or a different unsupported
+    // construct in the snippet must not silently satisfy this row.
+    assert.ok(reason.includes(entry.reason),
+      `expected refusal containing:\n${entry.reason}\ngot:\n${reason}`);
   });
 }

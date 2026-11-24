@@ -12,17 +12,27 @@ here instead of burning a 2.5-minute `local` run.
   with `r` satisfying `P` (also rules out panic/leaving the model). Strongest.
 - `f x = ok <expr>` — a spec equation; good for exact outputs
   (`f x = ok (if ... then decide P else ...)`).
-- `f x ≠ ok badval` — "never produces this result".
+- `f x ≠ ok badval` — "never produces this result". **Weak on its own**: an
+  always-`fail` implementation satisfies it. Pair it with a guarantee that `f`
+  returns `ok` on the valid inputs (see below).
 - `¬∃ r, f x = ok r ∧ P r` — "no returning result violates P" (valid limit).
+  Same caveat: an always-`fail` implementation satisfies it — pair it.
 - `f x = ok x → ∃ y, f y = ok r ∧ R x r` — relational properties need the
-  second call inside the conclusion (∃-witness).
+  second call inside the conclusion (∃-witness). Accepted, but the checker
+  warns the hypothesis mentions `f` — that warning is what a human reviews.
+- `f x ⦃ _ => True ⦄` — "always returns ok". Use it as the pairing partner of
+  every `≠`/`¬∃` guarantee: under the same hypotheses, assert the function
+  succeeds at all.
 
 ## Rejected
 
 - `∀ r, f x = ok r → P r` — `contract-stale`: "the conclusion does not mention
   `f`, so it would not constrain the implementation", plus a warning that a
-  hypothesis "may assume what it should prove". This is the only honest shape
-  for fallible callees, and it is rejected — restate as `≠`/`¬∃`/equation.
+  hypothesis "may assume what it should prove". The `∀` and the `→` telescope
+  into binders, so the checker's conclusion is just `P r` — `f` is gone. This
+  holds for *any* `→` after the `∀`: `∀ r, f x = ok r → (r = true ↔ …)` is
+  rejected the same way. Restate as `≠`/`¬∃`/equation, or put `↔` inside a
+  `⦃⦄` postcondition.
 - `f x = ok true → P` — same: `f` appears only in the hypothesis.
 
 ## `⦃⦄` is total correctness — the silent trap
@@ -30,7 +40,9 @@ here instead of burning a 2.5-minute `local` run.
 `WP.spec (fail e) p ↔ False`, so `f ⦃P⦄` asserts `f` *always returns ok*. For
 functions built on `Js.sub` (fails on overflow), `Js.reTest`/`Js.recGet` (can
 `fail`/`div`), a guaranteed-ok statement is simply false. "When it returns ok,
-P" cannot be stated as `f x = ok r → P` (rejected, above) — use `≠`/`¬∃`.
+P" cannot be stated as `f x = ok r → P` (rejected, above) — use `≠`/`¬∃`, and
+remember those hold for an always-fail implementation too: pair each with a
+second guarantee that `f` returns `ok` on the inputs it should handle.
 
 ## Literals in statements
 
@@ -41,18 +53,24 @@ which is usually clearer anyway. Strings are `js!"text"`, doubles `dbl!"12.99"`.
 
 ## Paired guarantees and the trivial-implementation check
 
-Guarantees come in pairs, one direction per side of the spec:
+Guarantees come in pairs, one direction per side of the spec — all in accepted
+shapes (checked against the contract checker):
 
 - Boolean decisions: `… ⦃ r => r = true ⦄` under the accept hypotheses **and**
-  `… ⦃ r => r = false ⦄` under the reject ones (or `∀ r, f x = ok r → (r = true ↔ …)`).
-- Filters/lookups: "kept/found exactly when" — both `P x → x ∈ result` and
-  `x ∈ result → P x`.
-- Parsers/decoders: "accepts every valid input" and "rejects every invalid
-  input" — a parser that rejects everything satisfies the first alone.
+  `… ⦃ r => r = false ⦄` under the reject ones (or the spec equations
+  `f x = ok true` / `f x = ok false`).
+- Filters/lookups: "kept/found exactly when" — one `⦃⦄` with `↔` inside the
+  postcondition: `f xs ⦃ r => ∀ x, x ∈ r ↔ P x ⦄`.
+- Parsers/decoders: `f s ⦃ _ => True ⦄` (or a `⦃⦄` result shape) under the
+  valid-input hypotheses for "accepts", and `¬∃ r, f s = ok r` under the
+  invalid-input hypotheses for "rejects" — the second alone is satisfied by a
+  parser that rejects everything.
 
 Then ask: does this also pass for a trivial implementation — `f x = x`, a
-constant, always `err`? If it does, the guarantee pins down nothing; add the
-missing direction or a bound before writing code.
+constant, always `err`? The `≠`/`¬∃` shapes always pass for `err`; the
+ok-guarantee pairing is what rules that out. If the answer is still yes, the
+guarantee pins down nothing — add the missing direction or a bound before
+writing code.
 
 ## Hygiene
 

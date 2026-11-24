@@ -39,7 +39,45 @@ def _read_entries(files):
     return entries
 
 
-def run(files):
+def _normalize(construct):
+    """The grouping key for free-text constructs: lowercase, whitespace collapsed,
+    so "typeof guard" and "typeof  guard" don't split into separate rows."""
+    return " ".join(str(construct).lower().split())
+
+
+def _grouped(entries):
+    """Rank entries by group: the stable refusal `code` when present, else the
+    normalized construct text. Returns rows sorted by minutes then count."""
+    groups = defaultdict(lambda: {"count": 0, "minutes": 0, "unresolved": 0,
+                                  "functions": set(), "texts": defaultdict(int)})
+    for entry in entries:
+        construct = entry.get("construct") or "(unclassified)"
+        code = (entry.get("code") or "").strip()
+        key = f"code:{code}" if code else f"construct:{_normalize(construct)}"
+        row = groups[key]
+        row["count"] += 1
+        try:
+            row["minutes"] += int(entry.get("minutes") or 0)
+        except (TypeError, ValueError):
+            pass
+        if not entry.get("resolved", False):
+            row["unresolved"] += 1
+        function = entry.get("function")
+        if function:
+            row["functions"].add(function)
+        row["texts"][str(construct)] += 1
+    rows = []
+    for key, row in groups.items():
+        # The most common construct text becomes the row's display name.
+        label = max(row["texts"].items(), key=lambda item: item[1])[0]
+        rows.append({"key": key, "construct": label, "count": row["count"],
+                     "minutes": row["minutes"], "unresolved": row["unresolved"],
+                     "functions": sorted(row["functions"])})
+    rows.sort(key=lambda r: (-r["minutes"], -r["count"], r["key"]))
+    return rows
+
+
+def run(files, as_json=False):
     """Print the ranked gap table for the given files; exit code."""
     if not files:
         files = [Path("proofci/gaps.jsonl")]
@@ -53,30 +91,19 @@ def run(files):
     if entries is None:
         return 2
 
-    ranked = defaultdict(lambda: {"count": 0, "minutes": 0, "unresolved": 0, "functions": set()})
-    for entry in entries:
-        key = entry.get("construct") or "(unclassified)"
-        row = ranked[key]
-        row["count"] += 1
-        try:
-            row["minutes"] += int(entry.get("minutes") or 0)
-        except (TypeError, ValueError):
-            pass
-        if not entry.get("resolved", False):
-            row["unresolved"] += 1
-        function = entry.get("function")
-        if function:
-            row["functions"].add(function)
+    rows = _grouped(entries)
+    if as_json:
+        print(json.dumps({"version": 1, "rows": rows}, indent=2))
+        return 0
 
     def cell(text):
         return str(text).replace("|", "\\|").replace("\n", " ")
 
-    rows = sorted(ranked.items(), key=lambda item: (-item[1]["minutes"], -item[1]["count"], item[0]))
     print("| Construct | Hits | Unresolved | Minutes | Examples |")
     print("|---|---:|---:|---:|---|")
-    for construct, row in rows:
-        examples = ", ".join(sorted(row["functions"])[:3])
-        print(f"| {cell(construct)} | {row['count']} | {row['unresolved']} | {row['minutes']} | {cell(examples)} |")
+    for row in rows:
+        examples = ", ".join(row["functions"][:3])
+        print(f"| {cell(row['construct'])} | {row['count']} | {row['unresolved']} | {row['minutes']} | {cell(examples)} |")
     missing = len(files) - len(existing)
     if missing:
         print(f"\n{missing} file(s) not found and skipped.", file=sys.stderr)

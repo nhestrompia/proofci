@@ -58,6 +58,27 @@ class GapsTest(unittest.TestCase):
             row = next(l for l in out.getvalue().splitlines() if "T \\| null" in l)
             self.assertEqual(row.count("|") - row.count("\\|"), 6)
 
+    def test_groups_normalized_and_by_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_log(tmp, [
+                {"function": "a.ts::f", "construct": "Typeof  Guard", "minutes": 2, "resolved": True},
+                {"function": "a.ts::g", "construct": "typeof guard", "minutes": 3, "resolved": True},
+                {"function": "b.ts::h", "construct": "Date type", "code": "E-TYPE", "minutes": 5, "resolved": True},
+                {"function": "b.ts::i", "construct": "Date", "code": "E-TYPE", "minutes": 1, "resolved": True},
+            ])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = gaps.run([path], as_json=True)
+            self.assertEqual(code, 0)
+            rows = json.loads(out.getvalue())["rows"]
+            self.assertEqual(len(rows), 2)
+            coded = next(r for r in rows if r["key"] == "code:E-TYPE")
+            self.assertEqual(coded["count"], 2)
+            self.assertEqual(coded["construct"], "Date type")  # most common text wins
+            normalized = next(r for r in rows if r["key"] == "construct:typeof guard")
+            self.assertEqual(normalized["count"], 2)
+            self.assertEqual(normalized["minutes"], 5)
+
     def test_bad_line_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "gaps.jsonl"

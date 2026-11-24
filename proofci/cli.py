@@ -67,11 +67,12 @@ def main(argv=None):
     g = sub.add_parser("gaps", help="aggregate proofci/gaps.jsonl logs from one or more repos into a ranked table")
     g.add_argument("files", nargs="*", type=Path,
                    help="gaps.jsonl files, one per repo (default: proofci/gaps.jsonl)")
+    g.add_argument("--json", action="store_true", help="print the ranked rows as JSON instead of a table")
     args = parser.parse_args(argv)
 
     if args.command == "gaps":
         from . import gaps
-        return gaps.run(args.files)
+        return gaps.run(args.files, as_json=args.json)
 
     if args.command == "local":
         from . import local
