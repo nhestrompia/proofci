@@ -142,6 +142,28 @@ class UncalledTests(unittest.TestCase):
                    "const target = () => 0;\n")
         self.assertEqual(self.uncalled("src/helpers.ts::target"), [])
 
+    def test_a_comment_naming_the_function_is_no_declaration(self):
+        self.write("src/f.ts",
+                   "// forwards through function f defined below\n"
+                   "export function use() { return f(); }\n"
+                   "export function f() { return 0; }\n")
+        self.assertEqual(self.uncalled("src/f.ts::f"), [])
+
+    def test_a_regex_with_a_quote_does_not_hide_the_caller(self):
+        self.write("src/g.ts",
+                   "export function g() { return /can't/.test(\"x\"); }\n"
+                   "export function use() { return g(); }\n")
+        self.assertEqual(self.uncalled("src/g.ts::g"), [])
+
+    def test_a_name_inside_a_string_is_no_use(self):
+        self.write("src/dead.ts", "export const dead = () => \"dead\";\n")
+        self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
+
+    def test_a_root_index_with_another_entry_is_no_default(self):
+        self.write("pkg/package.json", '{"name": "lib", "main": "./lib/m.js"}\n')
+        self.write("pkg/index.ts", "export function dead() { return 0; }\n")
+        self.assertEqual(self.uncalled("pkg/index.ts::dead"), ["pkg/index.ts::dead"])
+
     def test_an_authored_src_build_directory_counts(self):
         self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
         self.write("src/live.ts", "export function live() { return 2; }\n")

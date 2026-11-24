@@ -474,7 +474,9 @@ def uncalled(checkout: Path, package_rel: str, functions):
     # `dist`/`build` directly under a package root hold generated output — skip
     # them, but never a source dir that merely shares the name (`src/build`).
     build_dirs = {str(d / name) for d, _ in manifests for name in ("dist", "build")}
-    package_dirs = {str(d) for d, _ in manifests}  # npm's default entry is <pkg>/index
+    # npm's default entry is <pkg>/index — only when the manifest names no
+    # entry of its own.
+    entryless_dirs = {str(d) for d, m in manifests if not _entry_points(m)}
     def skipped(rel):
         return (any(p in _SKIP_DIRS or p.startswith(".") for p in rel.parts)
                 or any(str(d) in build_dirs for d in rel.parents))
@@ -538,7 +540,7 @@ def uncalled(checkout: Path, package_rel: str, functions):
                 or target_key.endswith("/src/index")
                 or (target_key.rsplit("/", 1)[-1] == "index"
                     and (target_key.rsplit("/", 1)[0] if "/" in target_key else ".")
-                    in package_dirs)
+                    in entryless_dirs)
                 or _uses_in_own_file(refs[target_key][0], name)):
             continue
         providers = {target_key}
@@ -586,11 +588,109 @@ def _entry_points(manifest):
     return [entry for entry in found if isinstance(entry, str) and entry.startswith(".")]
 
 
+def _sanitize(text):
+    """Comments, string and regex literals and the text of templates blanked
+    to spaces — lengths and newlines kept — so only code shapes remain. A
+    `${...}` interpolation's code stays visible."""
+    out = list(text)
+    n = len(text)
+
+    def blank(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    def literal_end(i, quote):
+        j = i + 1
+        while j < n:
+            if text[j] == "\\":
+                j += 2
+                continue
+            if text[j] == quote or (quote == "/" and text[j] == "\n"):
+                break
+            j += 1
+        j = min(j + 1, n)
+        blank(i, j)
+        return j
+
+    def regex_opens(i):
+        # A `/` starts a regex when the previous token can't end an
+        # expression; after a value it is division.
+        j = i - 1
+        while j >= 0 and text[j] in " \t\r\n":
+            j -= 1
+        if j < 0:
+            return True
+        if text[j] in "=(:,[!&|?{};+-*%<>^~":
+            return True
+        if text[j] in ")]}\"'`":
+            return False
+        k = j
+        while k >= 0 and (text[k].isalnum() or text[k] in "_$"):
+            k -= 1
+        word = text[k + 1:j + 1]
+        return word in ("return", "typeof", "instanceof", "in", "of", "new",
+                        "delete", "void", "throw", "yield", "await", "case",
+                        "do", "else")
+
+    in_template, interp, i = False, [], 0
+    while i < n:
+        c = text[i]
+        if in_template:
+            if c == "\\":
+                blank(i, i + 2)
+                i += 2
+            elif c == "`":
+                blank(i, i + 1)
+                in_template = False
+                i += 1
+            elif c == "$" and text[i + 1:i + 2] == "{":
+                blank(i, i + 2)
+                interp.append(0)
+                in_template = False
+                i += 2
+            else:
+                blank(i, i + 1)
+                i += 1
+        elif c == "/" and text[i + 1:i + 2] == "/":
+            j = text.find("\n", i)
+            blank(i, n if j == -1 else j)
+            i = n if j == -1 else j
+        elif c == "/" and text[i + 1:i + 2] == "*":
+            j = text.find("*/", i + 2)
+            blank(i, n if j == -1 else j + 2)
+            i = n if j == -1 else j + 2
+        elif c in "'\"":
+            i = literal_end(i, c)
+        elif c == "`":
+            blank(i, i + 1)
+            in_template = True
+            i += 1
+        elif c == "/" and regex_opens(i):
+            i = literal_end(i, "/")
+        elif c == "{":
+            if interp:
+                interp[-1] += 1
+            i += 1
+        elif c == "}":
+            if interp:
+                if interp[-1] == 0:
+                    interp.pop()
+                    in_template = True
+                else:
+                    interp[-1] -= 1
+            i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
 def _uses_in_own_file(text, name):
     """`name` is referenced in its own file outside its own body — the
     original delegating to an extracted core counts as a use; a recursive
-    call inside `name` itself does not."""
-    text = re.sub(r"\bexport\s*\{[^}]*\}", "", text)
+    call inside `name` itself, or the name inside a comment or string, does
+    not."""
+    text = re.sub(r"\bexport\s*\{[^}]*\}", "", _sanitize(text))
     pattern = re.compile(rf"(?:async\s+)?(?:function\*?|const|let|var|class)\s+{re.escape(name)}\b")
     while True:
         decl = pattern.search(text)
@@ -601,41 +701,21 @@ def _uses_in_own_file(text, name):
 
 def _decl_end(text, decl):
     """The index just past the declaration starting at `decl`: the body's
-    closing brace for a function or class (counted outside strings and
-    comments), or the keyword itself — an arrow body may call `name` again,
-    so a `const`/`let`/`var` body's self-reference stays conservative."""
+    closing brace for a function or class (the text is sanitized, so braces
+    in strings and comments are already blank), or the keyword itself — an
+    arrow body may call `name` again, so a `const`/`let`/`var` body's
+    self-reference stays conservative."""
     if not re.match(r"(?:async\s+)?(?:function\*?|class)\b", decl.group(0)):
         return decl.end()
     body = text.find("{", decl.end())
     if body == -1:
         return decl.end()
-    i, depth, string, comment = body, 0, None, None
-    while i < len(text):
-        c = text[i]
-        if comment == "//":
-            if c == "\n":
-                comment = None
-        elif comment == "/*":
-            if c == "*" and text[i + 1:i + 2] == "/":
-                comment, i = None, i + 1
-        elif string:
-            if c == "\\":
-                i += 1
-            elif c == string:
-                string = None
-        elif c in "'\"`":
-            string = c
-        elif c == "/" and text[i + 1:i + 2] == "/":
-            comment, i = "//", i + 1
-        elif c == "/" and text[i + 1:i + 2] == "*":
-            comment, i = "/*", i + 1
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return i + 1
-        i += 1
+    depth = 0
+    for i in range(body, len(text)):
+        depth += text[i] == "{"
+        depth -= text[i] == "}"
+        if depth == 0:
+            return i + 1
     return decl.end()
 _TEST_FILE = re.compile(r"[._-](test|spec|stories|e2e)\.[cm]?tsx?$")
 
