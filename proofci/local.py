@@ -43,9 +43,11 @@ def seccomp():
 
 
 # Environment the check honours; `local` passes only these through to the
-# container, mirroring the allowlist in action/run.py's bridge_limits.
+# container, mirroring the allowlist in action/run.py's bridge_limits. PROOFCI_NODE_HEAP
+# is the Node heap for the differential stage, in megabytes (--max-old-space-size).
 PASSTHROUGH_ENV = ("PROOFCI_BRIDGE_TIMEOUT", "PROOFCI_BRIDGE_BUDGET", "PROOFCI_MUTATION_FULL",
-                   "PROOFCI_MUTANTS", "PROOFCI_MUTATION_BUDGET", "PROOFCI_PARALLEL_JUDGES")
+                   "PROOFCI_MUTANTS", "PROOFCI_MUTATION_BUDGET", "PROOFCI_PARALLEL_JUDGES",
+                   "PROOFCI_NODE_HEAP")
 
 
 def env_opts():

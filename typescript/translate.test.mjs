@@ -1596,3 +1596,45 @@ test("library models: at, lastIndexOf, repeat, flat, flatMap and findIndex", () 
   rejects("export function f(a: number[]): number { return a.lastIndexOf(1, 2); }", /start index/);
   rejects("export function f(a: number[][][]): number[] { return a.flat(2); }", /without a depth/);
 });
+
+test("the Node comparison runs only what the target reaches", async () => {
+  const repo = join(dir, "isolate");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "a.ts"), `class Boom { constructor() { throw new Error("unrelated") } }
+const boom = new Boom();
+const STEP = 3;
+function helper(a: number): number { return a + STEP; }
+export function f(a: number): number { return helper(a); }
+export function unrelated(): unknown { return boom; }
+`);
+  const result = translate({ root: repo, module: "M", targets: ["a.ts::f"] });
+  assert.deepEqual(result.failures, {});
+  const out = join(dir, "isolate-out");
+  mkdirSync(out);
+  const { skipped } = await differential({ root: repo, out, module: "M", signatures: result.signatures, files: result.files, imports: result.imports, cases: 3 });
+  assert.deepEqual(skipped, []);
+  const replay = readFileSync(join(out, "Differential.lean"), "utf8");
+  assert.equal(replay.match(/#eval/g).length, 3);
+  const emitted = readFileSync(join(out, "js/a.mjs"), "utf8");
+  assert.ok(!emitted.includes("Boom"), emitted);
+  assert.ok(emitted.includes("helper"));
+});
+
+test("a workspace import outside the package resolves to a stand-in inside out/", async () => {
+  const repo = join(dir, "ws");
+  const sibling = join(dir, "ws-other");
+  mkdirSync(join(repo, "src"), { recursive: true });
+  mkdirSync(join(sibling, "lib"), { recursive: true });
+  writeFileSync(join(sibling, "lib/x.ts"), "export const SINCE = 7n;\n");
+  writeFileSync(join(repo, "src/a.ts"), `import { SINCE } from "../../ws-other/lib/x";
+export function f(a: bigint): bigint { return a + SINCE; }
+`);
+  const result = translate({ root: repo, module: "M", targets: ["src/a.ts::f"] });
+  const out = join(dir, "ws-out");
+  mkdirSync(out);
+  const files = result.files.filter(f => !f.includes("ws-other"));
+  await differential({ root: repo, out, module: "M", signatures: result.signatures, files, imports: result.imports, cases: 3 });
+  const emitted = readFileSync(join(out, "js/src/a.mjs"), "utf8");
+  assert.match(emitted, /from "\.\.\/__stand_in_\d+\.mjs"/);
+  assert.ok(!emitted.includes("differential/differential"), emitted);
+});

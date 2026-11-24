@@ -5,7 +5,7 @@
 // Usage: node differential.mjs <config.json>
 //   config: { root, out, module, signatures, files, imports, cases }
 
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, posix, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -211,7 +211,172 @@ const STAND_IN = `const stub = new Proxy(function () {}, {
 export default stub;
 `;
 
-const module_ = file => file.replace(/\.tsx?$/, ".mjs");
+// A file's emitted module path: `../other-pkg/x.ts` (a file a workspace package resolved
+// outside the package root) is normalized to a path inside `out`, or imports and stand-ins
+// would be written and referenced outside it.
+const module_ = file => file.replace(/\.tsx?$/, ".mjs").split("/")
+  .filter(part => part !== "." && part !== "")
+  // `..` becomes `__up` and a literal `__up*` doubles its prefix, so two different
+  // source paths can never collide and nothing escapes the output directory.
+  .map(part => part === ".." ? "__up" : part.startsWith("__up") ? `__up${part}` : part)
+  .join("/");
+
+// The names a top-level statement binds, so a run can keep only the ones its targets need.
+function boundNames(statement) {
+  const names = new Set();
+  const bind = pattern => {
+    if (ts.isIdentifier(pattern)) names.add(pattern.text);
+    else if (ts.isBindingElement(pattern)) bind(pattern.name);
+    else if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) pattern.elements.forEach(bind);
+  };
+  if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) names.add(statement.name.text);
+  if (ts.isVariableStatement(statement)) statement.declarationList.declarations.forEach(d => bind(d.name));
+  if (ts.isImportDeclaration(statement) && statement.importClause) {
+    const clause = statement.importClause;
+    if (clause.name) names.add(clause.name.text);
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) names.add(clause.namedBindings.name.text);
+    else clause.namedBindings?.elements.forEach(e => names.add(e.name.text));
+  }
+  if (ts.isExportAssignment(statement)) names.add("default");
+  // `export {x}`/`export {x as pub}` bind the public names; `export *` binds nothing known.
+  if (ts.isExportDeclaration(statement) && statement.exportClause)
+    for (const el of statement.exportClause.elements) names.add(el.name.text);
+  return names;
+}
+
+// Whether an identifier occurrence names a value the module level provides, rather than a
+// property key, a label, a declaration's own name or a binding position.
+function isReference(node) {
+  const parent = node.parent;
+  if (!parent) return true;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+  if ((ts.isPropertyAssignment(parent) || ts.isEnumMember(parent)) && parent.name === node) return false;
+  if (ts.isBindingElement(parent) || ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent)) return false;
+  if (ts.isParameter(parent)) return parent.name !== node; // a default like `n = LIMIT` still reads it
+  if ((ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isVariableDeclaration(parent)
+    || ts.isFunctionExpression(parent) || ts.isClassExpression(parent)) && parent.name === node) return false;
+  if ((ts.isMethodDeclaration(parent) || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)
+    || ts.isPropertyDeclaration(parent) || ts.isMethodSignature?.(parent)) && parent.name === node) return false;
+  if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) return false;
+  if (ts.isImportClause(parent) || ts.isNamespaceImport(parent) || ts.isImportCall?.(parent)) return false;
+  return true;
+}
+
+// The names bound inside `root` that hide a module-level one. Over-approximating is safe (it
+// only keeps a little more), missing one is not — every binding form a transpiled module holds
+// must be covered.
+function localBindings(root) {
+  const bound = new Set();
+  const bind = pattern => {
+    if (!pattern) return;
+    if (ts.isIdentifier(pattern)) bound.add(pattern.text);
+    else if (ts.isBindingElement(pattern)) bind(pattern.name);
+    else if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) pattern.elements.forEach(el => bind(el.name ?? el));
+  };
+  const walk = node => {
+    if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) bound.add(node.name.text);
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) bound.add(node.name.text);
+    if (ts.isVariableDeclaration(node)) bind(node.name);
+    if (ts.isParameter(node)) bind(node.name);
+    if (ts.isCatchClause(node) && node.variableDeclaration) bind(node.variableDeclaration.name);
+    if (ts.isBindingElement(node)) bind(node.name);
+    ts.forEachChild(node, walk);
+  };
+  walk(root);
+  return bound;
+}
+
+// The module-level names a statement needs, and the module-level names it writes.
+const SCOPED = node => ts.isBlock(node) || ts.isFunctionLike(node) || ts.isCatchClause(node)
+  || ts.isForStatement(node) || ts.isForInOrOfStatement(node);
+
+// Function and method bodies (and instance class field initializers) run lazily —
+// they only count when the whole statement's init-time effect is asked for. Static
+// field initializers, static blocks and computed member names DO run at class
+// definition, so they stay eager.
+const isStatic = node => ts.getModifiers?.(node)?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
+const lazy = node => ts.isFunctionLike(node) || ts.isMethodDeclaration(node)
+  || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
+  || (ts.isPropertyDeclaration(node) && !isStatic(node));
+
+// A `throw` that executes at module load aborts the whole module — no target can
+// run in real JavaScript. Throws inside lazy bodies don't run, and a `try`'s
+// `catch` swallows its block's, so only the catch/finally arms count there.
+function eagerThrow(statement) {
+  let found = false;
+  const walk = node => {
+    if (found || lazy(node)) return;
+    if (ts.isThrowStatement(node)) { found = true; return; }
+    if (ts.isTryStatement(node)) {
+      if (node.catchClause) walk(node.catchClause);
+      if (node.finallyBlock) walk(node.finallyBlock);
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(statement);
+  return found;
+}
+
+function dependencies(statement, eagerOnly = false) {
+  const needs = new Set(), writes = new Set(), calls = new Set();
+  const lhs = node => {
+    for (;;) {
+      if (ts.isParenthesizedExpression(node)) { node = node.expression; continue; }
+      return node;
+    }
+  };
+
+  // A module-level function or class only runs when invoked: callee position
+  // (`f()`, `new C()`, `f`...``, through parens), invoked through a member
+  // (`init.call(...)`), or passed into another call (`forEach(init)`), which may
+  // run it at load. A bare property read (`Handler.name`) does not.
+  const calledBy = node => {
+    let inner = node, p = node.parent;
+    while (ts.isParenthesizedExpression(p)) { inner = p; p = p.parent; }
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === inner) return true;
+    if (ts.isTaggedTemplateExpression?.(p) && p.tag === inner) return true;
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.arguments?.includes(inner)) return true;
+    if (ts.isPropertyAccessExpression(p) && p.expression === inner
+        && ts.isCallExpression(p.parent) && p.parent.expression === p) return true;
+    return false;
+  };
+  const walk = (node, bound) => {
+    if (eagerOnly && lazy(node)) {
+      if (node.name && ts.isComputedPropertyName(node.name)) walk(node.name, bound);
+      return;
+    }
+    // A class's own name is in scope inside its body (self-references never need an
+    // outer declaration of the same name).
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name)
+      bound = new Set([...bound, node.name.text]);
+    // A computed member name is evaluated in the scope enclosing the member — the
+    // member's own parameters and bindings are not yet in scope — so walk it first.
+    let skipName = false;
+    if (SCOPED(node)) {
+      if (node.name && ts.isComputedPropertyName(node.name)) { walk(node.name, bound); skipName = true; }
+      bound = new Set([...bound, ...localBindings(node)]);
+    }
+    if (ts.isIdentifier(node) && isReference(node) && !bound.has(node.text)) {
+      const p = node.parent;
+      if (calledBy(node)) calls.add(node.text);
+      if ((ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken,
+          ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.SlashEqualsToken].includes(p.operatorToken.kind) && lhs(p.left) === node)
+        || ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(p.operator))) {
+        writes.add(node.text);
+      } else {
+        needs.add(node.text);
+      }
+    }
+    ts.forEachChild(node, child => { if (!(skipName && child === node.name)) walk(child, bound); });
+  };
+  walk(statement, new Set());
+  // `export {x}`/`export {x as pub}` (no module specifier) reads the local `x`: if
+  // the alias is kept but `x`'s declaration is dropped the module cannot load.
+  if (ts.isExportDeclaration(statement) && statement.exportClause && !statement.moduleSpecifier)
+    for (const el of statement.exportClause.elements) needs.add((el.propertyName ?? el.name).text);
+  return { needs, writes, calls };
+}
 
 function importedNames(statement) {
   const names = new Set();
@@ -223,10 +388,119 @@ function importedNames(statement) {
   return [...names];
 }
 
+// Statements whose names `wanted` reaches through the same module: the target function and the
+// declarations it transitively uses. Everything else (other functions, classes, one-off setup
+// statements) is left out, so a construct the target doesn't call can't crash the run.
+// Returns { keep, reason }: when the needed set writes to a name another statement also writes,
+// the run can't be isolated without changing what the target sees, and that is a hard reason.
+const GLOBALS = new Set(["undefined", "NaN", "Infinity", "globalThis", "arguments", "Math", "JSON",
+  "Object", "Array", "Number", "String", "Boolean", "BigInt", "Map", "Set", "Promise", "Error",
+  "TypeError", "RangeError", "SyntaxError", "EvalError", "URIError", "AggregateError", "RegExp",
+  "Symbol", "Date", "Reflect", "Proxy", "WeakMap", "WeakSet", "WeakRef", "Intl", "console",
+  "queueMicrotask", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "structuredClone",
+  "fetch", "atob", "btoa", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI",
+  "parseInt", "parseFloat", "isNaN", "isFinite", "ArrayBuffer", "DataView", "Uint8Array", "Int8Array",
+  "Uint16Array", "Int16Array", "Uint32Array", "Int32Array", "Float32Array", "Float64Array",
+  "BigInt64Array", "BigUint64Array", "SharedArrayBuffer", "Atomics", "FinalizationRegistry",
+  "Buffer", "process", "require", "exports", "module", "__dirname", "__filename", "URL",
+  "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal", "Event",
+  "EventTarget", "crypto", "performance", "localStorage", "global",
+  // Browser globals — real references crash in Node exactly like real JavaScript, but a
+  // `typeof window !== "undefined"` guard must still evaluate (to false) rather than
+  // undeclare the whole module.
+  "window", "document", "self", "navigator", "location", "history", "indexedDB",
+  "customElements", "HTMLElement", "Worker", "requestAnimationFrame", "cancelAnimationFrame"]);
+
+function isolate(statements, wanted) {
+  const bound = statements.map(boundNames);
+  const deps = statements.map(s => dependencies(s));
+  const keep = statements.map(() => false);
+  const seen = new Set();
+  const kept = new Set();
+  const queue = [...wanted];
+  while (queue.length) {
+    const name = queue.pop();
+    if (!seen.has(name)) {
+      seen.add(name);
+      if (!statements.some((_, i) => bound[i].has(name))) {
+        if (!GLOBALS.has(name))
+          return { keep, reason: `${JSON.stringify(name)} is needed but is not declared at the module level or a known global` };
+      } else {
+        for (const i of statements.keys()) {
+          if (bound[i].has(name) && !keep[i]) {
+            keep[i] = true;
+            bound[i].forEach(n => kept.add(n));
+            // A write needs the name's declaration too: strict-mode assignment to a
+            // dropped binding throws.
+            for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
+          }
+        }
+      }
+    }
+    if (!queue.length) {
+      // A dropped statement that mentions a kept name — a read, a call through it, a
+      // property write — can change what the target sees (`TABLE.push(1)`,
+      // `Object.freeze(CONFIG)`, `LIMITS.max = 5`, `registry.set(k, v)`). It runs in
+      // real JavaScript, so it runs here too; if keeping it crashes the run the
+      // import error is reported, never silently dropped.
+      // A call to a module-level callable touches whatever that callable's body
+      // touches, transitively (`init()` mutating TABLE); imports and globals are
+      // not expanded, so a foreign `Schema.TaggedError(...)` still isolates.
+      const callable = new Map();
+      for (const [i, s] of statements.entries()) {
+        const fn = ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)
+          || (ts.isVariableStatement(s) && s.declarationList.declarations.some(d => d.initializer
+            && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))));
+        if (fn) for (const n of bound[i]) callable.set(n, i);
+      }
+      // Only callee positions run a callable — a property read like `Handler.name`
+      // or passing `init` as a value does not, so expansion starts from `calls`.
+      const expand = seed => {
+        const out = new Set(seed);
+        const done = new Set(); // names already expanded through a callable
+        const pending = [...out];
+        while (pending.length) {
+          const n = pending.pop();
+          if (done.has(n)) continue;
+          done.add(n);
+          const i = callable.get(n);
+          if (i === undefined) continue;
+          for (const m of [...deps[i].needs, ...deps[i].writes, ...deps[i].calls]) {
+            out.add(m);
+            if (!done.has(m)) pending.push(m);
+          }
+        }
+        return out;
+      };
+      for (const i of statements.keys()) {
+        if (keep[i]) continue;
+        // A `throw` executed at load aborts the module — it touches every target,
+        // so it is kept; the resulting load failure reports as an infrastructure
+        // failure, the honest result for a module that never initializes.
+        if (eagerThrow(statements[i])) {
+          keep[i] = true;
+          bound[i].forEach(n => kept.add(n));
+          for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
+          continue;
+        }
+        // A statement that binds names only counts if its init-time expressions touch a
+        // kept name — a never-called function body reading it does not run at load.
+        const d = bound[i].size ? dependencies(statements[i], true) : deps[i];
+        const touched = [...d.needs, ...d.writes];
+        if (![...expand(d.calls), ...touched].some(n => kept.has(n))) continue;
+        keep[i] = true;
+        bound[i].forEach(n => kept.add(n));
+        for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
+      }
+    }
+  }
+  return { keep, reason: null };
+}
+
 // Files reached by a target run for real. Anything else they import is replaced,
 // so the comparison runs only code that was translated, and doesn't depend on
 // packages being installed.
-export function compile(root, files, imports, out, effects = []) {
+export function compile(root, files, imports, out, effects = [], needs = {}) {
   const realRoot = realpathSync(root);
   // An outside call is replaced by a stand-in that asks the test's world, wherever it is declared.
   const byName = new Map(effects.map(e => [e.call.split("::").at(-1), e]));
@@ -245,23 +519,96 @@ export function compile(root, files, imports, out, effects = []) {
     }
   }
   let stubs = 0;
-  for (const file of files) {
-    let js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
-    }).outputText;
-    // A project function listed as an effect is never run: its declaration is replaced.
-    for (const e of effects) {
-      const [where, fn] = e.call.split("::");
-      if (where !== file) continue;
-      const found = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
-      for (const statement of [...found.statements].reverse()) {
-        const declared = ts.isFunctionDeclaration(statement) ? statement.name?.text
-          : ts.isVariableStatement(statement) ? statement.declarationList.declarations.map(d => d.name.getText())[0] : undefined;
-        if (declared !== fn) continue;
-        js = `${js.slice(0, statement.getStart(found))}${asksWorld(fn, e)}${js.slice(statement.end)}`;
+  const reasons = {};
+  const transpiled = new Map();
+  const parsedOf = file => {
+    if (!transpiled.has(file)) {
+      let js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
+      }).outputText;
+      // A project function listed as an effect is never run: its declaration is replaced.
+      for (const e of effects) {
+        const [where, fn] = e.call.split("::");
+        if (where !== file) continue;
+        const found = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+        for (const statement of [...found.statements].reverse()) {
+          const declared = ts.isFunctionDeclaration(statement) ? statement.name?.text
+            : ts.isVariableStatement(statement) ? statement.declarationList.declarations.map(d => d.name.getText())[0] : undefined;
+          if (declared !== fn) continue;
+          js = `${js.slice(0, statement.getStart(found))}${asksWorld(fn, e)}${js.slice(statement.end)}`;
+        }
+      }
+      transpiled.set(file, js);
+    }
+    return ts.createSourceFile("out.mjs", transpiled.get(file), ts.ScriptTarget.ES2022, true);
+  };
+  // Seed each file's set from its own targets, then grow it by what kept statements in other
+  // files import from this one: a helper imported by a target elsewhere must not be dropped.
+  const wanted = new Map(Object.entries(needs).map(([f, names]) => [f, new Set(names)]));
+  const importNeeds = (statement, required) => {
+    // The names a kept `import`/`export ... from` reads from its resolved module — only the
+    // ones actually required here, so an unused sibling binding can't pull a crashing
+    // initializer back into the exporting module.
+    const pairs = []; // [local/public name, source-module name]
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause) return [];
+      if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) return { all: true };
+      if (clause.name) pairs.push([clause.name.text, "default"]);
+      clause.namedBindings?.elements.forEach(el => pairs.push([el.name.text, (el.propertyName ?? el.name).text]));
+    } else {
+      // `export {x} from`/`export {x as pub} from`: the public name is read here, the source
+      // name (propertyName when present) is what the other module declares.
+      if (!statement.exportClause) return { all: true }; // export *
+      statement.exportClause.elements.forEach(el => pairs.push([el.name.text, (el.propertyName ?? el.name).text]));
+    }
+    return { names: pairs.filter(([local]) => required.has(local)).map(([, remote]) => remote), all: false };
+  };
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [file, want] of wanted) {
+      if (reasons[file]) continue;
+      const parsed = parsedOf(file);
+      const { keep, reason } = isolate([...parsed.statements], [...want]);
+      if (reason) { reasons[file] = reason; continue; }
+      // Names this file requires: its wanted set plus whatever kept statements read.
+      const required = new Set(want);
+      parsed.statements.forEach((s, i) => {
+        if (keep[i]) dependencies(s).needs.forEach(n => required.add(n));
+      });
+      for (const [i, statement] of parsed.statements.entries()) {
+        if (!keep[i] || !statement.moduleSpecifier) continue;
+        const resolved = imports[file]?.[statement.moduleSpecifier.text];
+        const target = resolved && relative(realRoot, resolved);
+        if (!target || !reached.has(target) || !wanted.has(target)) continue;
+        const { names, all } = importNeeds(statement, required);
+        const add = all ? [...exported.keys()].filter(n => exported.get(n) === target) : names;
+        for (const n of add) if (!wanted.get(target).has(n)) { wanted.get(target).add(n); grew = true; }
       }
     }
-    const parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+  }
+  for (const file of files) {
+    let parsed = parsedOf(file);
+    let js = transpiled.get(file);
+    // Emit only what this file's targets reach: a construct they don't need (a class the
+    // runtime can't evaluate, one-off setup code) can't crash the run.
+    const wantedNames = [...(wanted.get(file) ?? [])];
+    if (wantedNames.length) {
+      const { keep, reason } = isolate([...parsed.statements], wantedNames);
+      if (reason) { reasons[file] = reason; continue; }
+      const kept = new Set();
+      parsed.statements.forEach((s, i) => { if (keep[i]) boundNames(s).forEach(n => kept.add(n)); });
+      const needed = new Set(wantedNames);
+      // An export that names a dropped binding makes the module fail to load, so only exports
+      // of kept names stay; `export *` hides its names and never stays.
+      const exportNeeded = s => {
+        if (ts.isExportAssignment(s)) return needed.has("default");
+        if (!ts.isExportDeclaration(s) || !s.exportClause) return false;
+        return s.exportClause.elements.some(el => s.moduleSpecifier ? needed.has(el.name.text) : kept.has((el.propertyName ?? el.name).text));
+      };
+      js = [...parsed.statements].filter((s, i) => keep[i] || exportNeeded(s)).map(s => s.getText(parsed)).join("\n");
+      parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+    }
     const path = join(out, module_(file));
     mkdirSync(dirname(path), { recursive: true });
     let rewritten = js;
@@ -287,6 +634,7 @@ export function compile(root, files, imports, out, effects = []) {
     }
     writeFileSync(path, rewritten);
   }
+  return reasons;
 }
 
 // A small deterministic generator for the world's behaviour: delays and which calls are rejected.
@@ -399,21 +747,40 @@ export async function differential({ root, out, module, signatures, files, impor
   const named = effects.filter(e => e.call.includes("::"));
   const names = named.map(e => e.call.split("::").at(-1));
   const ambiguous = new Set(names.filter((n, i) => names.indexOf(n) !== i));
-  compile(root, files, imports, compiled, named.filter(e => !ambiguous.has(e.call.split("::").at(-1))));
-  const lines = [`import ${module}`, ...(signatures && Object.values(signatures).some(s => s.async) ? ["import ProofciAsync"] : []),
-    "open Aeneas Aeneas.Std Result", ""];
+  // Per file, the names runs need: each module emits only the targets' transitive dependencies.
+  const needs = {};
+  for (const signature of Object.values(signatures)) (needs[signature.file] ??= []).push(signature.name);
+  const isolated = compile(root, files, imports, compiled, named.filter(e => !ambiguous.has(e.call.split("::").at(-1))), needs);
+  const leanOut = openSync(join(out, "Differential.lean"), "w");
+  const emit = line => writeSync(leanOut, line + "\n");
+  [`import ${module}`, ...(signatures && Object.values(signatures).some(s => s.async) ? ["import ProofciAsync"] : []),
+    "open Aeneas Aeneas.Std Result", ""].forEach(emit);
+  const witnessOut = openSync(join(out, "inputs.json"), "w");
+  writeSync(witnessOut, "{");
+  let openTarget = null;
+  const witness = (target, args) => {
+    if (openTarget !== target) {
+      writeSync(witnessOut, `${openTarget === null ? "" : "],"}${JSON.stringify(target)}:[`);
+      openTarget = target;
+    } else writeSync(witnessOut, ",");
+    writeSync(witnessOut, JSON.stringify(args));
+  };
   const skipped = [];
   const labels = [];
-  const witness = {};   // arg terms per target for the contract-witness check
   let seed = 1;
   for (const [target, signature] of Object.entries(signatures)) {
     if (!signature.exported) { skipped.push(`${target}: not exported`); continue; }
+    if (isolated[signature.file]) { skipped.push(`${target}: ${isolated[signature.file]}`); continue; }
     // A generic function is run at `number` for each type parameter, when its bound allows that.
     const generics = [];
     JSON.stringify(signature, (k, v) => { if (k === "declared") return undefined; if (v?.kind === "generic") generics.push(v); return v; });
     if (generics.some(g => !g.numbers)) { skipped.push(`${target}: generic with a bound that \`number\` doesn't meet`); continue; }
     const typeArgs = [...new Set(generics.map(g => g.lean))].map(g => `(${g} := Js.Num) `).join("");
-    const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
+    // Only the target's dependencies were emitted; if the module still fails to load, that is
+    // this target's failure, not everyone's.
+    const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))))
+      .catch(error => { skipped.push(`${target}: the module could not be run: ${error?.message ?? error}`); return null; });
+    if (!loaded) continue;
     const fn = loaded[signature.name];
     const value = generator(seed++, literals[target] ?? {});
     if (signature.async) {
@@ -431,9 +798,9 @@ export async function differential({ root, out, module, signatures, files, impor
         const args = signature.params.map((type, i) => term(type, inputs[i]));
         const run = replay(trace, effects);
         labels.push(`${target} ${show(inputs)}`);
-        if (args.includes(undefined) || !run) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
-        (witness[target] ??= []).push(args);
-        lines.push(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
+        if (args.includes(undefined) || !run) { emit(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+        witness(target, args);
+        emit(`#eval Js.agreeAsync "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")} ${run.oracle} ([] : Proofci.Effects.world.Hist)) `
           + `${expected === undefined ? "none" : `(some ${expected})`} ${run.trace}`);
       }
       continue;
@@ -448,15 +815,15 @@ export async function differential({ root, out, module, signatures, files, impor
       }
       const args = signature.params.map((type, i) => term(type, inputs[i]));
       labels.push(`${target} ${show(inputs)}`);
-      if (args.includes(undefined)) { lines.push(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
-      (witness[target] ??= []).push(args);
-      lines.push(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
+      if (args.includes(undefined)) { emit(`#eval IO.println "PROOFCI_DIFF failed ${labels.length - 1}"`); continue; }
+      witness(target, args);
+      emit(`#eval Js.agree "${labels.length - 1}" (_root_.${signature.lean} ${typeArgs}${args.join(" ")}) `
         + (expected === undefined ? "none" : `(some ${expected})`) + ` ${threw}`);
     }
   }
-  writeFileSync(join(out, "Differential.lean"), `${lines.join("\n")}\n`);
+  writeSync(witnessOut, `${openTarget === null ? "" : "]"}}`);
+  closeSync(leanOut); closeSync(witnessOut);
   writeFileSync(join(out, "cases.json"), JSON.stringify(labels));
-  writeFileSync(join(out, "inputs.json"), JSON.stringify(witness));
   return { skipped };
 }
 
