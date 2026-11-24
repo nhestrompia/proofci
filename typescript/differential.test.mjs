@@ -244,3 +244,52 @@ export function gate(v: number): number { return v >= SINCE ? 1 : 0; }
   assert.ok(resolved.startsWith(join(dir, "out")), `import escapes out/: ${resolved}`);
   assert.equal(readFileSync(resolved, "utf8"), emitted);
 });
+
+test("a side-effect statement is kept even when the worklist ends on a global", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+TABLE.push(Math.max(1, 2));
+export function t(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  const emitted = readFileSync(join(dir, "out/a.mjs"), "utf8");
+  assert.ok(emitted.includes("push"), emitted);
+});
+
+test("a never-called function body cannot keep its reads alive", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+function unused(): string { return TABLE[0] + document.title; }
+export function t(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(!readFileSync(join(dir, "out/a.mjs"), "utf8").includes("unused"));
+});
+
+test("a kept import that feeds a local re-export still reaches the source module", () => {
+  const dir = project({
+    "b.ts": `export function helper(x: number): number { return x + 1; }`,
+    "a.ts": `import { helper } from "./b";
+export { helper };
+export function t(x: number): number { return helper(x); }
+` });
+  const reasons = compile(dir, ["a.ts", "b.ts"], { "a.ts": { "./b": join(dir, "b.ts") } }, join(dir, "out"), [],
+    { "a.ts": ["t"], "b.ts": ["helper"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/b.mjs"), "utf8").includes("helper"));
+});
+
+test("an export alias keeps the declaration it re-exports", () => {
+  const dir = project({
+    "a.ts": `function internal(): number { return 7; }
+export { internal as pub };
+export function t(): number { return 1; }
+` });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["t", "pub"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("internal"));
+});

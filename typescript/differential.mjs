@@ -290,7 +290,7 @@ function localBindings(root) {
 const SCOPED = node => ts.isBlock(node) || ts.isFunctionLike(node) || ts.isCatchClause(node)
   || ts.isForStatement(node) || ts.isForInOrOfStatement(node);
 
-function dependencies(statement) {
+function dependencies(statement, eagerOnly = false) {
   const needs = new Set(), writes = new Set();
   const lhs = node => {
     for (;;) {
@@ -298,7 +298,13 @@ function dependencies(statement) {
       return node;
     }
   };
+  // Function and method bodies (and class field initializers) run lazily — they only
+  // count when the whole statement's init-time effect is asked for, not here.
+  const lazy = node => ts.isFunctionLike(node) || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
+    || ts.isPropertyDeclaration(node);
   const walk = (node, bound) => {
+    if (eagerOnly && lazy(node)) return;
     // A callback's parameter shadows a module name only inside the callback: bindings apply
     // per scope, not to the whole statement.
     if (SCOPED(node)) bound = new Set([...bound, ...localBindings(node)]);
@@ -315,6 +321,10 @@ function dependencies(statement) {
     ts.forEachChild(node, child => walk(child, bound));
   };
   walk(statement, new Set());
+  // `export {x}`/`export {x as pub}` (no module specifier) reads the local `x`: if
+  // the alias is kept but `x`'s declaration is dropped the module cannot load.
+  if (ts.isExportDeclaration(statement) && statement.exportClause && !statement.moduleSpecifier)
+    for (const el of statement.exportClause.elements) needs.add((el.propertyName ?? el.name).text);
   return { needs, writes };
 }
 
@@ -348,7 +358,7 @@ const GLOBALS = new Set(["undefined", "NaN", "Infinity", "globalThis", "argument
 
 function isolate(statements, wanted) {
   const bound = statements.map(boundNames);
-  const deps = statements.map(dependencies);
+  const deps = statements.map(s => dependencies(s));
   const keep = statements.map(() => false);
   const seen = new Set();
   const kept = new Set();
@@ -360,13 +370,13 @@ function isolate(statements, wanted) {
       if (!statements.some((_, i) => bound[i].has(name))) {
         if (!GLOBALS.has(name))
           return { keep, reason: `${JSON.stringify(name)} is needed but is not declared at the module level or a known global` };
-        continue;
-      }
-      for (const i of statements.keys()) {
-        if (bound[i].has(name) && !keep[i]) {
-          keep[i] = true;
-          bound[i].forEach(n => kept.add(n));
-          for (const need of deps[i].needs) queue.push(need);
+      } else {
+        for (const i of statements.keys()) {
+          if (bound[i].has(name) && !keep[i]) {
+            keep[i] = true;
+            bound[i].forEach(n => kept.add(n));
+            for (const need of deps[i].needs) queue.push(need);
+          }
         }
       }
     }
@@ -378,7 +388,11 @@ function isolate(statements, wanted) {
       // import error is reported, never silently dropped.
       for (const i of statements.keys()) {
         if (keep[i]) continue;
-        if (![...deps[i].needs, ...deps[i].writes].some(n => kept.has(n))) continue;
+        // A statement that binds names only counts if its init-time expressions touch a
+        // kept name — a never-called function body reading it does not run at load.
+        const touched = bound[i].size ? (() => { const d = dependencies(statements[i], true); return [...d.needs, ...d.writes]; })()
+          : [...deps[i].needs, ...deps[i].writes];
+        if (!touched.some(n => kept.has(n))) continue;
         keep[i] = true;
         bound[i].forEach(n => kept.add(n));
         for (const need of deps[i].needs) queue.push(need);
