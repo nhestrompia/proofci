@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,15 +23,19 @@ MAX_CASES = 4000
 
 def support_dir():
     """Where the translator's companions (the comparison with Node) sit, whatever `PROOFCI_TRANSLATOR` says."""
-    installed = Path("/opt/proofci/typescript")
-    return installed if installed.exists() else Path(__file__).resolve().parent.parent / "typescript"
+    for candidate in (Path("/opt/proofci/typescript"),
+                      Path(__file__).resolve().parent.parent / "typescript",
+                      Path(sys.prefix) / "proofci-runtime" / "typescript"):
+        if candidate.exists():
+            return candidate
+    return Path(sys.prefix) / "proofci-runtime" / "typescript"
 
 
 def translator():
     """The translator sits beside its installed compiler. Tests that mount a
     checkout over the code still use the compiler from the image."""
     installed = Path("/opt/proofci/typescript/translate.mjs")
-    default = installed if installed.exists() else Path(__file__).resolve().parent.parent / "typescript" / "translate.mjs"
+    default = installed if installed.exists() else support_dir() / "translate.mjs"
     return Path(os.environ.get("PROOFCI_TRANSLATOR", default))
 
 

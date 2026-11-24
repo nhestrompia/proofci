@@ -17,3 +17,10 @@ include = ["proofci*"]
 
 [tool.setuptools.package-data]
 proofci = ["lean/*.lean"]
+
+# Runtime resources the code looks up next to the checkout land under
+# <sys.prefix>/proofci-runtime/ in an installed environment.
+[tool.setuptools.data-files]
+"proofci-runtime/typescript" = ["typescript/*.mjs"]
+"proofci-runtime/action" = ["action/seccomp.json"]
+"proofci-runtime/spike/core" = ["spike/core/*.lean"]
