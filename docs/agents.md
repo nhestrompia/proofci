@@ -18,13 +18,38 @@ in a repository, paste the block below into that repository's `AGENTS.md`:
   to a human approver.
 ```
 
+## The agent skill
+
+[`skills/proofci/`](skills/proofci/SKILL.md) is an installable agent skill: the
+onboarding knowledge from pilot adoptions — the supported TypeScript subset,
+every common refusal with the smallest rewrite, the contract-checker's
+statement rules, proof patterns that worked, and a `proofci/gaps.jsonl` format
+for recording what the skill missed. To install it in a repository a coding
+agent works in, copy the directory to `.agents/skills/proofci/` (or your agent's
+skills path, e.g. `.devin/skills/proofci/`):
+
+```sh
+mkdir -p .agents/skills
+cp -r <proofci checkout>/docs/skills/proofci .agents/skills/proofci
+```
+
+`constructs.json` in the skill is the machine-readable version of the supported/
+refused construct table; `typescript/constructs.test.mjs` keeps it honest
+against the translator.
+
 ## Commands
 
 ```sh
 proofci scan --repo <dir> [--package <subdir>] [--vendor <dir>] [--work-dir <dir>]
 proofci local --repo <dir> [--base <ref>] [--policy base|head] [--image <tag>] [--scan] [--fetch]
 proofci dev  --repo <dir> --json
+proofci gaps [<gaps.jsonl> ...]
 ```
+
+`proofci gaps` aggregates the gap logs (`proofci/gaps.jsonl` in each adopting
+repository — one JSON object per refusal/workaround/stuck proof, see the skill)
+into a table ranked by time lost, so the constructs to design around (or fix
+next) are visible across repositories.
 
 ## `proofci scan` — the fast pass
 
