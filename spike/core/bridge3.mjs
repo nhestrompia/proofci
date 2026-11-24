@@ -141,7 +141,7 @@ def ${K}_Zr ${tv} (r : ${beta}) (v : Val) (s : St) : Prop := ${zr}`;
   const kr = isSum ? `(rcases res with b1 | _); (focus (dsimp only [${K}_Zr] at hz; have hk' := hk; unfold Todo at hk'; dsimp only at hk'; vsplit hk'; apply post_use hz hpre; post; assumption)); (focus (exact False.elim hz))` : "exact False.elim hz";
   const tail = `
   (focus (intro s5 hf hz; ${isSum ? `(rcases res with b1 | ${rPat(carried.length)}); exact False.elim hz; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; (try (unfold Todo at hk; simp only at hk; have hk3 : Todo _ _ := hk; clear hk)); crun` : `${after}; dsimp only [${K}_Zb] at hz; (try casesm* _ ∧ _); carry hf; clear hf; crun`}))
-  (focus (intro v s6 hpre hz; ${kr}))))`;
+  (focus (intro v s6 hpre hz; ${kr})))`;
   // Each loop contributes one alternative to the file's single `first`-combined `c_while`/`c_for`
   // macro. Separate `macro_rules` for the same syntax do not backtrack: the first one that applies
   // commits, and `step_while`/`step_for` unify the loop function from `hl`, so a rule for another

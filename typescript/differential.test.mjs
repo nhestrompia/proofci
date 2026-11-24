@@ -399,7 +399,7 @@ export function f(): number { return TABLE.length; }
 test("a property read of a module callable does not expand its body", () => {
   const dir = project({
     "a.ts": `const TABLE: number[] = [];
-class Handler { static { throw new Error("init") } m(): number { return TABLE[0]; } }
+class Handler { static { Math.random(); } m(): number { return TABLE[0]; } }
 const label = Handler.name;
 export function f(): number { return TABLE.length; }
 `,
@@ -422,4 +422,30 @@ export function f(): number { return TABLE.length; }
     assert.deepEqual(reasons, {}, site);
     assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("function init"), site);
   }
+});
+
+test("a top-level throw that aborts the module is kept", () => {
+  const dir = project({
+    "a.ts": `export function f(): number { return 1; }
+throw new Error("not in this environment");
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("throw new Error"), "the throw must be emitted");
+});
+
+test("a throw that stays lazy or is caught is still dropped", () => {
+  const dir = project({
+    "a.ts": `export function f(): number { return 1; }
+function unused(): void { throw new Error("lazy"); }
+try { throw new Error("caught"); } catch {}
+export function g(): number { return 2; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f", "g"] });
+  assert.deepEqual(reasons, {});
+  const out = readFileSync(join(dir, "out/a.mjs"), "utf8");
+  assert.ok(!out.includes("unused"), "the lazy throw's function must be dropped");
+  assert.ok(!out.includes("caught"), "the swallowed throw has no effect and is dropped");
 });

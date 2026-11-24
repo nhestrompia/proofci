@@ -290,6 +290,34 @@ function localBindings(root) {
 const SCOPED = node => ts.isBlock(node) || ts.isFunctionLike(node) || ts.isCatchClause(node)
   || ts.isForStatement(node) || ts.isForInOrOfStatement(node);
 
+// Function and method bodies (and instance class field initializers) run lazily —
+// they only count when the whole statement's init-time effect is asked for. Static
+// field initializers, static blocks and computed member names DO run at class
+// definition, so they stay eager.
+const isStatic = node => ts.getModifiers?.(node)?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
+const lazy = node => ts.isFunctionLike(node) || ts.isMethodDeclaration(node)
+  || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
+  || (ts.isPropertyDeclaration(node) && !isStatic(node));
+
+// A `throw` that executes at module load aborts the whole module — no target can
+// run in real JavaScript. Throws inside lazy bodies don't run, and a `try`'s
+// `catch` swallows its block's, so only the catch/finally arms count there.
+function eagerThrow(statement) {
+  let found = false;
+  const walk = node => {
+    if (found || lazy(node)) return;
+    if (ts.isThrowStatement(node)) { found = true; return; }
+    if (ts.isTryStatement(node)) {
+      if (node.catchClause) walk(node.catchClause);
+      if (node.finallyBlock) walk(node.finallyBlock);
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(statement);
+  return found;
+}
+
 function dependencies(statement, eagerOnly = false) {
   const needs = new Set(), writes = new Set(), calls = new Set();
   const lhs = node => {
@@ -298,11 +326,7 @@ function dependencies(statement, eagerOnly = false) {
       return node;
     }
   };
-  // Function and method bodies (and instance class field initializers) run lazily —
-  // they only count when the whole statement's init-time effect is asked for. Static
-  // field initializers, static blocks and computed member names DO run at class
-  // definition, so they stay eager.
-  const isStatic = node => ts.getModifiers?.(node)?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
+
   // A module-level function or class only runs when invoked: callee position
   // (`f()`, `new C()`, `f`...``, through parens), invoked through a member
   // (`init.call(...)`), or passed into another call (`forEach(init)`), which may
@@ -317,9 +341,6 @@ function dependencies(statement, eagerOnly = false) {
         && ts.isCallExpression(p.parent) && p.parent.expression === p) return true;
     return false;
   };
-  const lazy = node => ts.isFunctionLike(node) || ts.isMethodDeclaration(node)
-    || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
-    || (ts.isPropertyDeclaration(node) && !isStatic(node));
   const walk = (node, bound) => {
     if (eagerOnly && lazy(node)) {
       if (node.name && ts.isComputedPropertyName(node.name)) walk(node.name, bound);
@@ -448,6 +469,15 @@ function isolate(statements, wanted) {
       };
       for (const i of statements.keys()) {
         if (keep[i]) continue;
+        // A `throw` executed at load aborts the module — it touches every target,
+        // so it is kept; the resulting load failure reports as an infrastructure
+        // failure, the honest result for a module that never initializes.
+        if (eagerThrow(statements[i])) {
+          keep[i] = true;
+          bound[i].forEach(n => kept.add(n));
+          for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
+          continue;
+        }
         // A statement that binds names only counts if its init-time expressions touch a
         // kept name — a never-called function body reading it does not run at load.
         const d = bound[i].size ? dependencies(statements[i], true) : deps[i];

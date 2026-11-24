@@ -29,6 +29,39 @@ test("two loops emit one `first`-combined rule per loop kind, on real names", ()
   const stepWhile = text.match(/apply step_while/g) ?? [];
   assert.equal(stepWhile.length, 2, "both loops must be alternatives of the one `first`");
   assert.ok(!/"[a-zA-Z]+_v\d+"/.test(text), "a `_vN` name leaked into a heap key");
+  assertBalanced(text);
+});
+
+// The emitted macro text must parse: the `first`-combined rule wraps each loop's tactic in
+// parens, and each wrapper contributes its own close. (A spare `)` once closed the removed
+// outer `(tactic| (` and broke every loop's bridge.)
+const assertBalanced = text => {
+  const at = text.indexOf("macro_rules");
+  const end = text.indexOf("\ntheorem", at);
+  const seg = text.slice(at, end > at ? end : undefined);
+  let depth = 0;
+  for (const ch of seg) {
+    if (ch === "(") depth++;
+    else if (ch === ")") { depth--; assert.ok(depth >= 0, "extra `)` in emitted macro text"); }
+  }
+  assert.equal(depth, 0, "unclosed `(` in emitted macro text");
+};
+
+test("one loop emits a balanced `first`-combined rule", () => {
+  const root = join(dir, "pkg1");
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "package.json"), `{"name":"pkg1","version":"0.0.0"}`);
+  writeFileSync(join(root, "src/u.ts"), `export function total(xs: number[]): number {
+  let s = 0;
+  for (const x of xs) s += x;
+  return s;
+}
+`);
+  const { text } = generate(root, "src/u.ts::total", workspacePaths(root));
+  const rules = text.match(/^macro_rules \| `\(tactic\| c_for\)/gm) ?? [];
+  assert.equal(rules.length, 1, text.match(/macro_rules[^\n]*/g)?.join("\n"));
+  assert.equal((text.match(/apply step_for/g) ?? []).length, 1);
+  assertBalanced(text);
 });
 
 import { lower } from "../spike/core/lower.mjs";

@@ -968,6 +968,10 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     for item in left_out:
         function, _, why = item.partition(": ")
         detail["skipped"][function] = why
+    if left_out and all(t in detail["skipped"] for t in signatures):
+        # Every needed module failed to load — the comparison itself never ran.
+        # That is an infrastructure failure, not a disagreement.
+        return [], skipped, "no module the comparison needed could be loaded: " + "; ".join(left_out[:3])
     notes = skipped + [f"not compared with Node: {item}" for item in left_out]
     replay = sandbox.run(["lake", "env", "lean", str(out / "Differential.lean")], readable=[ws.root, out],
                          writable=[ws.root / ".lake"], cwd=ws.root, timeout=timeout)
