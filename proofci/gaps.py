@@ -45,6 +45,8 @@ REFUSAL_CODES = frozenset({
     "rest-parameters", "module-level-mutable", "index-non-array",
     "no-lean-spelling", "not-plain-field", "unknown-callee", "math-member",
     "record-literal", "translator-crash",
+    # Documented kebab-case construct codes (docs/skills/proofci/constructs.json)
+    "in", "typeof-expression",
 })
 REFUSAL_PREFIXES = ("type-", "unsupported-", "method-")
 
