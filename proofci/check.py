@@ -472,9 +472,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             elif item["kind"] != "theorem":
                 o.status, o.reason = CONTRACT_STALE, f"`{o.theorem}` is not a theorem in the contract"
             elif not item["conclusion_mentions_function"]:
-                o.status, o.reason = CONTRACT_STALE, (
-                    f"the conclusion of `{o.theorem}` does not mention `{o.function}`, "
-                    "so it would not constrain the implementation")
+                o.status, o.reason = CONTRACT_STALE, _no_conclusion_reason(o)
             elif set(item["function_axioms"]) - set(lean.PERMITTED_AXIOMS):
                 extra = sorted(set(item["function_axioms"]) - set(lean.PERMITTED_AXIOMS))
                 o.status, o.reason = UNSUPPORTED, (
@@ -675,6 +673,20 @@ def _literals(outcomes):
             if len(entry["strings"]) < MAX_LITERALS and value not in entry["strings"]:
                 entry["strings"].append(value)
     return literals
+
+
+def _no_conclusion_reason(o):
+    """Why `∀ r, f x = ok r → P r` is rejected and which shapes are accepted."""
+    return (f"the conclusion of `{o.theorem}` does not mention `{o.function}`, "
+            "so it would not constrain the implementation. A shape like "
+            f"`∀ r, {o.function} x = ok r → P r` puts the call in a hypothesis and the "
+            "`∀`/`→` telescope into binders — the conclusion is just `P r`. "
+            "State the guarantee so the function appears in the conclusion: "
+            f"`{o.function} x ⦃ r => P r ⦄` (total correctness), "
+            f"`{o.function} x = ok <expr>` (a spec equation), "
+            f"`¬∃ r, {o.function} x = ok r ∧ P r`, or `{o.function} x ≠ ok <bad>` "
+            "(the last two are satisfied by an always-fail implementation — "
+            "pair them with a guarantee that it returns ok)")
 
 
 def _contract_text(checkout: Path, lean_dir: str):

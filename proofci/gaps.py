@@ -13,6 +13,70 @@ from pathlib import Path
 
 FIELDS = ("function", "construct", "code", "refusal", "workaround", "minutes", "resolved")
 
+# Gap codes for everything the translator's refusal codes don't cover — proof,
+# bridge, setup and report problems. A fixed, documented set (also listed in
+# docs/skills/proofci/SKILL.md): like the refusal codes, these are an interface —
+# add new codes, never rename or repurpose existing ones.
+GAP_CODES = {
+    "setup-cli": "invoking the CLI itself: packaging, PYTHONPATH, a flag the CLI rejects",
+    "setup-env": "the environment fights you: docker volume ownership, a missing sandbox tool",
+    "setup-deps": "dependency install/fetch fails (lockfile format, workspace link:, private registry)",
+    "scan-crash": "a scan aborts on one file or function instead of reporting it",
+    "contract-shape": "the contract checker rejects a statement shape",
+    "proof-bind": "bind/spec friction: Bind.bind vs Std.bind, WP.spec_bind, missing Js.* step lemmas",
+    "proof-tactic": "other Lean dead-ends: simp/split/cases/omega, unsolvable metavariables",
+    "proof-view": "the emitted view is hard to reason about (opaque defs, _proof_ numerals)",
+    "bridge-stuck": "a bridge proof times out or comes back STUCK",
+    "bridge-refusal": "bridge generation refuses or crashes",
+    "node-crash": "the Node comparison crashes, runs out of memory, or times out",
+    "report-gap": "the report misleads or omits something a reader needs",
+    "docs-gap": "the skill or other docs were wrong or missing the needed step",
+}
+
+# Refusal codes the translator emits (typescript/hints.mjs): the named ones,
+# plus the `type-`, `unsupported-` and `method-` families and kebab-case
+# construct codes. A `code` not in this list and not in GAP_CODES was invented
+# by the agent — `proofci gaps` groups such entries by normalized construct
+# text instead of trusting the ad hoc name.
+REFUSAL_CODES = frozenset({
+    "compile-error", "outside-package", "missing-types", "null-check",
+    "optional-chain", "in-place-mutation", "mixed-number-modes",
+    "unassigned-on-path", "returns-nothing", "type-named",
+    "rest-parameters", "module-level-mutable", "index-non-array",
+    "no-lean-spelling", "not-plain-field", "unknown-callee", "math-member",
+    "record-literal", "translator-crash",
+    # Documented kebab-case construct codes (docs/skills/proofci/constructs.json)
+    "in", "typeof-expression",
+})
+REFUSAL_PREFIXES = ("type-", "unsupported-", "method-")
+
+
+def _code_key(code):
+    """The grouping code, or None when `code` should fall back to the
+    construct text: empty, `other`, or an invented code that matches neither
+    the refusal list nor the fixed gap codes."""
+    code = code.strip()
+    if not code or code == "other":
+        return None
+    if code in GAP_CODES or code in REFUSAL_CODES:
+        return code
+    if any(code.startswith(prefix) for prefix in REFUSAL_PREFIXES):
+        return code
+    return None
+
+
+def _repo_name(path):
+    """A display name for the repo a gap file came from: the directory holding
+    gaps.jsonl, or its parent when the log sits in `proofci/`. A differently
+    named log (e.g. one `t3code.jsonl` per repo in a shared directory) names
+    itself by its stem."""
+    if path.name != "gaps.jsonl":
+        return path.stem
+    name = path.resolve().parent.name
+    if name == "proofci":
+        name = path.resolve().parent.parent.name
+    return name or str(path)
+
 
 def _read_entries(files):
     entries = []
@@ -35,7 +99,7 @@ def _read_entries(files):
             if not isinstance(entry, dict):
                 print(f"proofci: {path}:{lineno}: not a JSON object", file=sys.stderr)
                 return None
-            entries.append(entry)
+            entries.append((_repo_name(path), entry))
     return entries
 
 
@@ -46,14 +110,16 @@ def _normalize(construct):
 
 
 def _grouped(entries):
-    """Rank entries by group: the stable refusal `code` when present, else the
-    normalized construct text. Returns rows sorted by minutes then count."""
+    """Rank entries by group: a known stable `code` when present, else the
+    normalized construct text (which is also where `other`, empty and invented
+    codes land). Returns rows sorted by minutes then count."""
     groups = defaultdict(lambda: {"count": 0, "minutes": 0, "unresolved": 0,
-                                  "functions": set(), "texts": defaultdict(int)})
-    for entry in entries:
+                                  "functions": set(), "repos": set(),
+                                  "texts": defaultdict(int)})
+    for repo, entry in entries:
         construct = entry.get("construct") or "(unclassified)"
-        code = (entry.get("code") or "").strip()
-        key = f"code:{code}" if code else f"construct:{_normalize(construct)}"
+        key = _code_key(str(entry.get("code") or ""))
+        key = f"code:{key}" if key else f"construct:{_normalize(construct)}"
         row = groups[key]
         row["count"] += 1
         try:
@@ -65,13 +131,17 @@ def _grouped(entries):
         function = entry.get("function")
         if function:
             row["functions"].add(function)
+        row["repos"].add(repo)
         row["texts"][str(construct)] += 1
     rows = []
     for key, row in groups.items():
-        # The most common construct text becomes the row's display name.
-        label = max(row["texts"].items(), key=lambda item: item[1])[0]
+        # Code groups are named by the code (stable across repos); construct
+        # groups show the most common construct spelling.
+        label = (key.split(":", 1)[1] if key.startswith("code:")
+                 else max(row["texts"].items(), key=lambda item: item[1])[0])
         rows.append({"key": key, "construct": label, "count": row["count"],
                      "minutes": row["minutes"], "unresolved": row["unresolved"],
+                     "repos": sorted(row["repos"]),
                      "functions": sorted(row["functions"])})
     rows.sort(key=lambda r: (-r["minutes"], -r["count"], r["key"]))
     return rows
@@ -103,9 +173,10 @@ def run(files, as_json=False):
     def cell(text):
         return str(text).replace("|", "\\|").replace("\n", " ")
 
-    print("| Construct | Hits | Unresolved | Minutes | Examples |")
-    print("|---|---:|---:|---:|---|")
+    print("| Construct | Repos | Hits | Unresolved | Minutes | Examples |")
+    print("|---|---:|---:|---:|---:|---|")
     for row in rows:
         examples = ", ".join(row["functions"][:3])
-        print(f"| {cell(row['construct'])} | {row['count']} | {row['unresolved']} | {row['minutes']} | {cell(examples)} |")
+        print(f"| {cell(row['construct'])} | {len(row['repos'])} | {row['count']} | "
+              f"{row['unresolved']} | {row['minutes']} | {cell(examples)} |")
     return 0

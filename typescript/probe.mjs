@@ -58,23 +58,58 @@ function targets(root, program) {
   return found.sort();
 }
 
-export function probe({ root, module, repository, assumes, effects }) {
+const options = (root, module, repository, assumes, effects) => ({
+  root, module: module ?? "Probe", repository: repository ?? root,
+  paths: workspacePaths(repository ?? root), requireTypes: true,
+  assumes: assumes ?? [], effects: effects ?? [],
+  // stubs: false — a probe lists refusals rather than keeping the contract
+  // elaborating, so a refusal is never upgraded to a fatal.
+  stubs: false });
+
+const crashReason = error =>
+  `translator crash: ${String(error?.message ?? error).split("\n")[0]}\n`
+  + "How to fix: this is a translator bug, not your code — please report it; "
+  + "the rest of the package still scans";
+
+export function probe({ root, module, repository, assumes, effects, translate: run = translate }) {
   const files = ts.sys.readDirectory(root, [".ts"], undefined, undefined);
   const program = ts.createProgram(files, { ...OPTIONS, paths: workspacePaths(repository ?? root) });
   const list = targets(root, program);
   let result;
   try {
-    // stubs: false — a probe lists refusals rather than keeping the contract
-    // elaborating, so a refusal is never upgraded to a fatal.
-    result = translate({ root, module: module ?? "Probe", targets: list, repository: repository ?? root,
-      paths: workspacePaths(repository ?? root), requireTypes: true, assumes: assumes ?? [], effects: effects ?? [],
-      stubs: false });
+    result = run({ ...options(root, module, repository, assumes, effects), targets: list });
   } catch (error) {
     // A refusal raised outside any one function's translation is about the
     // package itself (a file it can't read, a program-wide problem): every
     // function is refused with that reason instead of the scan failing.
-    if (!(error instanceof Unsupported)) throw error;
-    result = { module: module ?? "Probe", failures: Object.fromEntries(list.map(t => [t, error.message])) };
+    if (error instanceof Unsupported) {
+      result = { module: module ?? "Probe", failures: Object.fromEntries(list.map(t => [t, error.message])) };
+    } else {
+      // A crash (e.g. a TypeScript debug failure on one file's syntax) is not a
+      // refusal: retry file by file so the broken file is reported as refused
+      // with the `translator-crash` code and the rest of the scan still runs.
+      const byFile = new Map();
+      for (const target of list) {
+        const file = target.split("::")[0];
+        byFile.set(file, [...(byFile.get(file) ?? []), target]);
+      }
+      const failures = {};
+      for (const group of byFile.values()) {
+        try {
+          const single = run({ ...options(root, module, repository, assumes, effects), targets: group });
+          Object.assign(failures, single.failures);
+          // A fatal the group produced on its own belongs to this file.
+          if (single.fatal) for (const target of group) failures[target] ??= single.fatal;
+        } catch (again) {
+          if (again instanceof Unsupported) {
+            for (const target of group) failures[target] = again.message;
+          } else {
+            for (const target of group) failures[target] = crashReason(again);
+          }
+        }
+      }
+      result = { module: module ?? "Probe", failures };
+    }
   }
   const functions = list.map(function_ => ({
     function: function_,

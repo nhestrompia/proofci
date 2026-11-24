@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,8 @@ MAX_LEAN_FILES = 200
 JS_RUNTIME = Path(__file__).parent / "lean" / "ProofciJs.lean"
 ASYNC_RUNTIME = Path(__file__).parent / "lean" / "ProofciAsync.lean"
 F64_MODEL = Path(__file__).parent.parent / "spike" / "core" / "F64.lean"
+if not F64_MODEL.is_file():  # an installed wheel keeps it under sys.prefix
+    F64_MODEL = Path(sys.prefix) / "proofci-runtime" / "spike" / "core" / "F64.lean"
 
 
 class ContractError(Exception):
