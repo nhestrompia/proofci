@@ -217,6 +217,30 @@ class UncalledTests(unittest.TestCase):
                    "export function use(x) { return !/dead/.test(x); }\n")
         self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
 
+    def test_division_after_a_unary_string_is_no_regex(self):
+        self.write("src/sc.ts",
+                   "export function scale(x) { return x * 2; }\n"
+                   "export function use() { return +\"12\" / scale(2); }\n")
+        self.assertEqual(self.uncalled("src/sc.ts::scale"), [])
+
+    def test_a_regex_inside_an_interpolation_is_no_use(self):
+        self.write("src/dead.ts",
+                   "export function dead() { return 0; }\n"
+                   "export function use(x) { return `p${x}${/dead/.test(x)}`; }\n")
+        self.assertEqual(self.uncalled("src/dead.ts::dead"), ["src/dead.ts::dead"])
+
+    def test_a_non_null_property_divides(self):
+        self.write("src/sc.ts",
+                   "export function scale(x) { return x * 2; }\n"
+                   "export function use(rates) { return rates.yield! / scale(2); }\n")
+        self.assertEqual(self.uncalled("src/sc.ts::scale"), [])
+
+    def test_a_types_entry_is_no_runtime_entry(self):
+        self.write("pkg/package.json",
+                   '{"name": "lib", "main": "./lib/m.js", "types": "./index.d.ts"}\n')
+        self.write("pkg/index.ts", "export function dead() { return 0; }\n")
+        self.assertEqual(self.uncalled("pkg/index.ts::dead"), ["pkg/index.ts::dead"])
+
     def test_an_authored_src_build_directory_counts(self):
         self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
         self.write("src/live.ts", "export function live() { return 2; }\n")

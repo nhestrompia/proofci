@@ -570,7 +570,7 @@ def uncalled(checkout: Path, package_rel: str, functions):
 
 
 _SKIP_DIRS = {"node_modules", ".git", "proofci", "__tests__", "__mocks__", "test", "tests", "spec", "e2e"}
-_ENTRY_FIELDS = ("main", "module", "types", "typings", "source")
+_ENTRY_FIELDS = ("main", "module", "source")
 
 
 def _entry_points(manifest):
@@ -587,6 +587,7 @@ def _entry_points(manifest):
         elif isinstance(item, str) and item.startswith("."):
             found.append(item)
     return [entry for entry in found if isinstance(entry, str)
+            and not entry.endswith(".d.ts")
             and (entry.startswith(".") or "/" in entry
                  or re.search(r"\.[cm]?[jt]sx?$", entry))]
 
@@ -622,10 +623,13 @@ def _sanitize(text):
         return j
 
     def word_before(j):
+        """The word ending at `j` in the sanitized text, and the char before
+        it — a property name after `.` is no keyword."""
         k = j
         while k >= 0 and (out[k].isalnum() or out[k] in "_$"):
             k -= 1
-        return "".join(out[k + 1:j + 1])
+        word = "".join(out[k + 1:j + 1])
+        return "" if k >= 0 and out[k] == "." else word
 
     def value_expected(i, for_regex=False):
         # A literal can only open where a value may start; after a value,
@@ -636,6 +640,12 @@ def _sanitize(text):
             j -= 1
         if j < 0:
             return True
+        gap = re.sub(r"//[^\n]*|/\*.*?\*/", "", text[j + 1:i], flags=re.S)
+        if gap.strip():
+            # A literal, regex or template sat between them: the operand
+            # just ended, so `/` is division — unless the gap ends at a
+            # `${`, which re-enters code.
+            return gap.rstrip().endswith("${")
         if out[j] in "=(:,[!&|?{};+-*%<>^~":
             if out[j] in "+-" and out[j - 1:j] == out[j]:
                 return False   # postfix ++/--
