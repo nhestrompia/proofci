@@ -779,6 +779,28 @@ def ts_vacuous_postcondition(head):
 ts_vacuous_postcondition.also_base = unconstrained_to_contract
 
 
+def trivial_result_contract(checkout):
+    # Both transfer guarantees accept `Result.ok none`: the conservation
+    # postcondition only pins `to`, and the overdraft proof never looks at
+    # the function — so a transfer that refuses everything satisfies them.
+    unconstrained_to_contract(checkout)
+
+
+def ts_trivial_implementation(head):
+    unconstrained_to_contract(head)
+    # The proof states the theorem verbatim, so it must match the new contract.
+    edit(head / "proofci/Proofs.lean",
+         "b.from.val + b.to.val = a.from.val + a.to.val ∧ 0 ≤ b.from.val",
+         "a.to.val - amount.val ≤ b.to.val")
+    # `rw [if_pos]` only works while `transfer` keeps its `if` — a proof that
+    # doesn't look at the function's shape accepts the trivial `ok none` too.
+    edit(head / "proofci/Proofs.lean",
+         "  rw [if_pos (Or.inr h)]", "  step*")
+
+
+ts_trivial_implementation.also_base = trivial_result_contract
+
+
 # --- the proved-guarantee ratchet: a proved function must not silently lose its bridge
 
 def ts_sum_bridged_away(head):
@@ -1120,6 +1142,13 @@ SCENARIOS.update({
         "env": {"PROOFCI_MUTATION_FULL": "1"},
         "warnings": {"transfer/conservation": "still verifies",
                      "transfer/rejects-overdraft": "still verifies"},
+        "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
+    # `Result.ok none` — a transfer that refuses everything — still satisfies
+    # both weakened guarantees; the escape names the behaviour it accepts.
+    "ts-trivial-implementation": (ts_trivial_implementation, ts_results(), 0, {
+        "env": {"PROOFCI_MUTATION_FULL": "1"},
+        "warnings": {"transfer/conservation": "always returned `none`",
+                     "transfer/rejects-overdraft": "always returned `none`"},
         "only_warnings": {"transfer/conservation", "transfer/rejects-overdraft"}}),
     # The ratchet: the guarantee was going to fail anyway, but the report also names the downgrade.
     "ts-proved-function-rewritten-off-the-bridge": (ts_sum_bridged_away, {**ts_results(), TS_SUM: U}, 1, {

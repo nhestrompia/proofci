@@ -437,7 +437,8 @@ def probe(checkout: Path, package_rel: str, work: Path, assumes=(), effects=(), 
     return outcome
 
 
-def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=None, timeout=300, detail=None):
+def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, cases=None, timeout=300, detail=None,
+                 literals=None):
     """Compare the translated functions with Node on generated inputs.
 
     Returns (disagreements, notes). Only code that passed the translator's
@@ -468,7 +469,8 @@ def differential(checkout: Path, package_rel: str, work: Path, ws, extraction, c
     config.write_text(json.dumps({
         "root": str(checkout / package_rel), "out": str(out), "module": extraction.module, "cases": cases,
         "signatures": signatures, "files": extraction.files,
-        "imports": extraction.imports, "effects": extraction.effect_list or []}))
+        "imports": extraction.imports, "effects": extraction.effect_list or [],
+        "literals": literals or {}}))
     program = support_dir() / "differential.mjs"
     node = sandbox.run(["node", str(program), str(config)], readable=[checkout, program.parent],
                        binds=getattr(extraction, "binds", ()), writable=[out], cwd=out, timeout=60)

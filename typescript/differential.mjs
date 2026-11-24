@@ -37,7 +37,7 @@ const mustRecur = type => type.kind === "recursive"
 // How deep a recursive value is generated: below this, a recursive field is empty where it can be.
 const DEPTH = 3;
 
-export function generator(seed) {
+export function generator(seed, literals = {}) {
   let state = seed >>> 0;
   const next = () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -47,6 +47,10 @@ export function generator(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
   const pick = list => list[Math.floor(next() * list.length)];
+  // Literals the contract's hypotheses name: biased into the pools so a hypothesis
+  // like `offset = 20` or `query.tag = "a"` is actually exercised sometimes.
+  const numberLiterals = (literals.numbers ?? []).filter(Number.isSafeInteger);
+  const stringLiterals = (literals.strings ?? []).filter(s => typeof s === "string");
   const number = () => {
     const shape = next();
     if (shape < 0.45) return Math.floor(next() * 2001) - 1000;
@@ -66,18 +70,19 @@ export function generator(seed) {
   const deep = type => depth >= DEPTH && recurs(type);
   const value = type => {
     switch (type.kind) {
-      case "number": return number();
-      case "double": return dbl();
+      case "number": return numberLiterals.length && next() < 0.35 ? pick(numberLiterals) : number();
+      case "double": return numberLiterals.length && next() < 0.15 ? pick(numberLiterals) : dbl();
       case "boolean": return next() < 0.5;
       case "bigint": return BigInt(number()) * (next() < 0.2 ? 1000000007n : 1n);
       case "void": return undefined;
       case "generic": return number();
-      case "string": return next() < 0.5 ? pick(TEXTS) : Array.from({ length: Math.floor(next() * 9) }, () => pick(UNITS)).join("");
+      case "string": return stringLiterals.length && next() < 0.35 ? pick(stringLiterals)
+        : next() < 0.5 ? pick(TEXTS) : Array.from({ length: Math.floor(next() * 9) }, () => pick(UNITS)).join("");
       case "map": return new Map(Array.from({ length: Math.floor(next() * 5) }, () => [value(type.key), value(type.value)]));
       case "dict": return Object.fromEntries(Array.from({ length: Math.floor(next() * 5) }, () => [pick(KEYS), value(type.value)]));
       case "set": return new Set(Array.from({ length: Math.floor(next() * 5) }, () => value(type.item)));
-      case "array": return Array.from({ length: deep(type.item) ? 0 : Math.floor(next() * (depth ? 4 : 7)) }, () => value(type.item));
-      case "optional": return next() < 0.3 || deep(type.inner) ? (type.nothing === "null" ? null : undefined) : value(type.inner);
+      case "array": return Array.from({ length: deep(type.item) || next() < 0.15 ? 0 : Math.floor(next() * (depth ? 4 : 7)) }, () => value(type.item));
+      case "optional": return next() < 0.45 || deep(type.inner) ? (type.nothing === "null" ? null : undefined) : value(type.inner);
       case "recursive": {
         depth += 1;
         try { return value(defs.get(type.lean)); } finally { depth -= 1; }
@@ -388,7 +393,7 @@ function replay(trace, effects) {
   return { oracle, trace: trace_ };
 }
 
-export async function differential({ root, out, module, signatures, files, imports = {}, cases = 200, effects = [] }) {
+export async function differential({ root, out, module, signatures, files, imports = {}, cases = 200, effects = [], literals = {} }) {
   const compiled = join(out, "js");
   // A call on an object (`Class#method`) has no declaration to replace: the object is the stand-in.
   const named = effects.filter(e => e.call.includes("::"));
@@ -410,7 +415,7 @@ export async function differential({ root, out, module, signatures, files, impor
     const typeArgs = [...new Set(generics.map(g => g.lean))].map(g => `(${g} := Js.Num) `).join("");
     const loaded = await import(pathToFileURL(join(compiled, module_(signature.file))));
     const fn = loaded[signature.name];
-    const value = generator(seed++);
+    const value = generator(seed++, literals[target] ?? {});
     if (signature.async) {
       if ([...ambiguous].length) { skipped.push(`${target}: two effects have the same function name`); continue; }
       for (let index = 0; index < cases; index += 1) {

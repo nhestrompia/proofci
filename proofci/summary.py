@@ -93,12 +93,23 @@ def _claims(report):
     return lines
 
 
+def _weak(report):
+    """Verified guarantees that let a planted defect through."""
+    return [e["guarantee"] for e in report.get("escapes") or []]
+
+
 def _verdict(report):
     required = [g for g in report["guarantees"] if g["required"]]
+    weak = _weak(report)
     if report["passed"]:
         verdict = f"**Result: passed** — all {len(required)} required guarantees verified."
         if report.get("first_adoption"):
             verdict += " (First adoption approved.)"
+        if weak:
+            plural = len(weak) > 1
+            verdict += (f" But {len(weak)} verified guarantee{'s' if plural else ''} let a planted bug "
+                        f"through ({', '.join(f'`{g}`' for g in weak)}): see the strength notes — "
+                        "set `require_strength` in `proofci.yaml` to block on this.")
         stale = report.get("stale_accepts") or []
         if stale:
             verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
@@ -116,13 +127,26 @@ def _verdict(report):
         reasons.append(f"{bad} of {len(required)} required guarantees not verified")
     if not required:
         reasons.append("the policy lists no required guarantees")
-    downgraded = [d["function"] for d in report.get("downgrades") or [] if not d["accepted"]]
-    if downgraded:
-        plural = len(downgraded) > 1
-        reasons.append(" and ".join(f"`{f}`" for f in downgraded)
+    if weak:
+        plural = len(weak) > 1
+        reasons.append(f"{len(weak)} verified guarantee{'s' if plural else ''} "
+                       f"({', '.join(f'`{g}`' for g in weak)}) let a planted bug through"
+                       + (" — `require_strength` is set" if report.get("require_strength") else ""))
+    proved = [d["function"] for d in report.get("downgrades") or []
+              if not d["accepted"] and d["was"] == "proved"]
+    unknown = [d["function"] for d in report.get("downgrades") or []
+               if not d["accepted"] and d["was"] != "proved"]
+    if proved:
+        plural = len(proved) > 1
+        reasons.append(" and ".join(f"`{f}`" for f in proved)
                        + (" were" if plural else " was")
                        + " proved on the base branch and "
                        + ("are" if plural else "is") + " not now")
+    if unknown:
+        plural = len(unknown) > 1
+        reasons.append(" and ".join(f"`{f}`" for f in unknown)
+                       + " may have been proved on the base branch — the base could not be checked — and "
+                       + ("are" if plural else "is") + " not proved now")
     verdict = "**Result: blocked** — " + "; ".join(reasons) + "."
     stale = report.get("stale_accepts") or []
     if stale:

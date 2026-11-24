@@ -34,9 +34,10 @@ class PlantTest(unittest.TestCase):
             self.assertNotEqual(text, VIEW)
             self.assertIn(src, text)
         # the sibling def is untouched by every mutant
-        transfer_lines = VIEW.splitlines()[10:]
+        transfer_lines = VIEW.splitlines()[9:]
         for _, _, _, text in mutants:
-            self.assertEqual(text.splitlines()[10:], transfer_lines)
+            start = text.splitlines().index("def transfer (a : Accounts) (amount : Js.Num) : Result (Option Accounts) := do")
+            self.assertEqual(text.splitlines()[start:], transfer_lines)
 
     def test_kinds_and_lines(self):
         mutants = mutation.plant(VIEW, "transfer")
@@ -47,7 +48,135 @@ class PlantTest(unittest.TestCase):
         self.assertEqual(mutation.plant(VIEW, "missing"), [])
 
     def test_limit(self):
-        self.assertLessEqual(len(mutation.plant(VIEW, "transfer", limit=1)), 1)
+        # The limit caps line-level mutants; structural ones (result-shape,
+        # filter, trivial implementations) are always appended.
+        line_kinds = {k for k, _, _, _ in mutation.plant(VIEW, "transfer", limit=1)}
+        self.assertLessEqual(len(line_kinds - {"trivial-constant", "trivial-fail"}), 1)
+
+
+TS_VIEW = """\
+import ProofciJs
+open Aeneas Aeneas.Std Result
+
+def src.api.filterSubset (user : User) (perms : (List Perm)) : Result (List Perm) := do
+  let tmp1 ← Js.filter (fun (p : Perm) => do
+    let tmp2 ← Js.has user.perms p.name
+    Result.ok (decide (tmp2 = true))
+  ) perms
+  Result.ok tmp1
+
+def src.api.active (phase : Phase) : Result Bool := do
+  match phase.fromAge with
+  | none =>
+    Result.ok false
+  | some tmp3 =>
+    Result.ok (decide (tmp3.val ≤ 30))
+
+def src.api.permit (auth : Auth) (id : Js.Str) : Proofci.Effects.Eff Bool := do
+  if auth.user = none then
+    Result.ok false
+  else
+    Result.ok true
+"""
+
+
+class TsPlantTest(unittest.TestCase):
+    """Operators that hit TypeScript-generated Lean: `Js.*` calls, `decide`,
+    `match`/`if` branches, `some _` results, list results."""
+
+    def test_filter_that_drops_nothing(self):
+        mutants = mutation.plant(TS_VIEW, "src.api.filterSubset")
+        kinds = {k for k, _, _, _ in mutants}
+        self.assertIn("filter-keeps-all", kinds)
+        mutant = next(text for k, _, _, text in mutants if k == "filter-keeps-all")
+        self.assertIn("let tmp1 ← Result.ok perms", mutant)
+
+    def test_decide_if_and_option_operators(self):
+        kinds = {k for k, _, _, _ in mutation.plant(TS_VIEW, "src.api.active", limit=30)}
+        self.assertIn("negate-decide", kinds)
+
+    def test_trivial_implementations_come_from_the_signature(self):
+        mutants = mutation.plant(TS_VIEW, "src.api.filterSubset", limit=30)
+        kinds = {k for k, _, _, _ in mutants}
+        self.assertIn("trivial-arg", kinds)
+        self.assertIn("trivial-constant", kinds)
+        self.assertIn("trivial-fail", kinds)
+        arg = next(text for k, _, _, text in mutants if k == "trivial-arg")
+        # `perms` is the parameter of the result type `(List Perm)`
+        self.assertIn("Result.ok perms", arg)
+        self.assertIn("def src.api.filterSubset", arg)
+        self.assertNotIn("Js.filter", arg)
+
+    def test_trivial_constants_match_the_result_type(self):
+        terms = {(k, src) for k, _, src, _ in mutation.plant(TS_VIEW, "src.api.active", limit=30)}
+        self.assertIn(("trivial-constant", "true"), terms)
+        self.assertIn(("trivial-constant", "false"), terms)
+        texts = [t for k, _, _, t in mutation.plant(TS_VIEW, "src.api.active", limit=30)
+                 if k == "trivial-constant"]
+        self.assertIn("Result.ok true", texts[0])
+
+    def test_trivial_constants_for_an_effect_result(self):
+        terms = [(k, src, t) for k, _, src, t in
+                 mutation.plant(TS_VIEW, "src.api.permit", limit=30) if k == "trivial-constant"]
+        self.assertTrue(any("Proofci.Effects.Eff.pure false" in t for _, _, t in terms))
+        self.assertIn(("trivial-constant", "false"), [(k, s) for k, s, _ in terms])
+
+    def test_describe_states_the_accepted_behaviour(self):
+        self.assertEqual(mutation.describe("trivial-arg", 2, "Result.ok perms", ""),
+                         "returned `perms` unchanged")
+        self.assertEqual(mutation.describe("filter-keeps-all", 5, "let t ← Result.ok xs", ""),
+                         "returned `xs` without filtering it")
+        self.assertEqual(mutation.describe("js-add-to-sub", 3, "x", "y"),
+                         "computed `-` where it computes `+`")
+
+    def run_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Model.lean").write_text(TS_VIEW)
+            ws = SimpleNamespace(root=root, crate_module="Model")
+            o = SimpleNamespace(function="f", theorem="t")
+            seen = itertools.count()
+            def fake_eval(ws, calls, text, timeout):
+                return {0: "r0"} if next(seen) == 0 else {0: "r1"}
+            with patch.object(mutation, "_eval_outputs", fake_eval), \
+                 patch.object(lean, "clone", return_value=ws), \
+                 patch.object(lean, "_lake", return_value=sandbox.Result(0, "", False)):
+                return mutation.check(ws, root, TS_VIEW, {"f": [["x"]]},
+                                      {"f": "src.api.filterSubset"}, 1, [o], [o])
+
+    def test_check_planted_counts_per_function(self):
+        _, planted = self.run_check()
+        self.assertEqual(set(planted), {"f"})
+        self.assertGreater(planted["f"], 0)
+
+    def test_escape_entries_describe_the_accepted_behaviour(self):
+        escaped, _ = self.run_check()
+        kinds = {m["kind"] for m in escaped["t"]}
+        self.assertIn("trivial-arg", kinds)
+        plains = {m["plain"] for m in escaped["t"]}
+        self.assertIn("returned `perms` unchanged", plains)
+        self.assertTrue(all(m["desc"] and m["plain"] for m in escaped["t"]))
+
+    def test_a_rejected_mutant_does_not_hide_an_escape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Model.lean").write_text(TS_VIEW)
+            ws = SimpleNamespace(root=root, crate_module="Model")
+            o = SimpleNamespace(function="f", theorem="t")
+            seen = itertools.count()
+            def fake_eval(ws, calls, text, timeout):
+                return {0: "r0"} if next(seen) == 0 else {0: "r1"}
+            calls = {"n": 0}
+            def lake(ws, args, timeout=None):
+                # every second mutant module is rejected by the theorem
+                calls["n"] += 1
+                return sandbox.Result(0 if calls["n"] % 2 else 1, "", False)
+            with patch.object(mutation, "_eval_outputs", fake_eval), \
+                 patch.object(lean, "clone", return_value=ws), \
+                 patch.object(lean, "_lake", side_effect=lake):
+                escaped, _ = mutation.check(ws, root, TS_VIEW, {"f": [["x"]]},
+                                            {"f": "src.api.filterSubset"}, 1, [o], [o])
+        self.assertIn("t", escaped)
 
 
 class FailedDeclarationsTest(unittest.TestCase):

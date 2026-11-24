@@ -188,6 +188,31 @@ class ClaimTests(unittest.TestCase):
         text = summary.markdown(r.to_json())
         self.assertIn("`transfer` was proved on the base branch and is not now", text)
 
+    def test_verdict_names_an_unknown_base_downgrade(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], downgrades=[
+            {"function": "transfer", "was": "unknown", "now": "tested", "accepted": False, "reason": ""}])
+        text = summary.markdown(r.to_json())
+        self.assertIn("`transfer` may have been proved on the base branch", text)
+        self.assertIn("the base could not be checked", text)
+
+    def test_verdict_says_passed_but_names_weak_guarantees(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], escapes=[
+            {"guarantee": "t/g", "theorem": "fee_capped", "function": "m::f", "mutants": ["eq-to-ne"]}])
+        text = summary.markdown(r.to_json())
+        self.assertIn("**Result: passed**", text)
+        self.assertIn("1 verified guarantee let a planted bug through (`t/g`)", text)
+
+    def test_require_strength_blocks_on_an_escape(self):
+        o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
+        r = check.Report(outcomes=[o], strength_required=True, escapes=[
+            {"guarantee": "t/g", "theorem": "fee_capped", "function": "m::f", "mutants": ["eq-to-ne"]}])
+        self.assertFalse(r.passed)
+        text = summary.markdown(r.to_json())
+        self.assertIn("**Result: blocked**", text)
+        self.assertIn("`t/g`) let a planted bug through — `require_strength` is set", text)
+
     def test_verdict_notes_stale_accepts(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
         r = check.Report(outcomes=[o], stale_accepts=["oldFn"])
