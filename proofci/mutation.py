@@ -27,7 +27,11 @@ MAX_INPUTS = 40
 TOP_LEVEL = re.compile(r"^\S")
 
 def _num_literal_bump(match):
-    return f"{match.group(1)}{int(match.group(2)) + 1}{match.group(3)}"
+    # Stay inside the safe-integer range: `Js.lit` returns `default` (val 0)
+    # for out-of-bounds arguments, collapsing a +1 bump on MAX_SAFE to 0.
+    n = int(match.group(2))
+    bumped = n + 1 if n + 1 <= 9007199254740991 else n - 1
+    return f"{match.group(1)}{bumped}{match.group(3)}"
 
 
 def _dbl_literal_bump(match):

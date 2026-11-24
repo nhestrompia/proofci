@@ -14,7 +14,9 @@ for x in index:
     if r == "0" and "sorryAx" not in open(f"{src}/{n}.out").read():
         good.append(n)
 def numbump(m):
-    return f"Js.lit ({int(m.group(1)) + 1})"
+    # `Js.lit` yields `default` (val 0) out of range; bump down at MAX_SAFE.
+    n = int(m.group(1))
+    return f"Js.lit ({n + 1 if n + 1 <= 9007199254740991 else n - 1})"
 KINDS = {
     "lt-le": (r"\.val < ", ".val ≤ "),
     "le-lt": (r"\.val ≤ ", ".val < "),
