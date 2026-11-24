@@ -62,7 +62,9 @@ def _report(output, limit=60000):
 def run(repo: Path, work: Path, vendor=None, judge=False, show=False, as_json=False, out=print):
     # The work dir is often a named Docker volume or a host bind mount shared
     # with another user; create everything world-writable so root ownership
-    # inside the container doesn't lock the host side out.
+    # inside the container doesn't lock the host side out. Files `dev` writes
+    # into the repository itself (the exported views) keep normal permissions —
+    # `_export_view` chmods them back to 644/755.
     saved_umask = os.umask(0)
     try:
         return _run(repo, work, vendor, judge, show, as_json, out)
@@ -95,7 +97,11 @@ def _export_view(repo: Path, manifest, ws_root: Path, module: str, say):
             say(f"skipped exporting the Lean view: {dest} is not a generated file")
             return
         views.mkdir(exist_ok=True)
+        # `run` sets umask 0 for the shared work dir; repo files keep normal
+        # permissions.
+        os.chmod(views, 0o755)
         dest.write_text(VIEW_MARKER + view.read_text())
+        os.chmod(dest, 0o644)
         say(f"the emitted Lean view is at {dest}")
     except OSError:
         pass

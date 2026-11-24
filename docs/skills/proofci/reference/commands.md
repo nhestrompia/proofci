@@ -56,9 +56,10 @@ Gotchas from the pilots:
   it finds `seccomp.json` beside the package or at the image's install path.
 - `proofci fetch --out <dir>`: the vendor dir must be OUTSIDE the repo or the
   copy recurses forever. `chmod 777` the dir.
-- `--fetch` can't handle pnpm `link:` or Yarn 2+ (Berry) workspace deps —
-  vendoring is refused with a clear error; use a vendor dir or a
-  package-lock/pnpm-lock/Yarn 1 lockfile.
+- pnpm workspace `link:` deps resolve against the staged checkout and install
+  fine; a `link:` pointing outside the repo is refused. Yarn 2+ (Berry) still
+  can't be installed — produce a package-lock/pnpm-lock/Yarn 1 lockfile and
+  vendor it.
 - Only `local` takes `--image`. `scan`/`dev` on the host need `bwrap`.
 - Manifest requires ≥1 guarantee per target — a target listed only to test
   translation must be dropped or given a guarantee.

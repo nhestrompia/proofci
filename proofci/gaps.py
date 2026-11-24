@@ -67,7 +67,11 @@ def _code_key(code):
 
 def _repo_name(path):
     """A display name for the repo a gap file came from: the directory holding
-    gaps.jsonl, or its parent when the log sits in `proofci/`."""
+    gaps.jsonl, or its parent when the log sits in `proofci/`. A differently
+    named log (e.g. one `t3code.jsonl` per repo in a shared directory) names
+    itself by its stem."""
+    if path.name != "gaps.jsonl":
+        return path.stem
     name = path.resolve().parent.name
     if name == "proofci":
         name = path.resolve().parent.parent.name

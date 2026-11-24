@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -121,6 +122,19 @@ class GapsTest(unittest.TestCase):
             self.assertEqual(rows[0]["minutes"], 14)
             self.assertEqual(rows[0]["repos"], ["repo-a", "repo-b"])
 
+    def test_named_log_files_name_their_own_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = Path(tmp) / "t3code.jsonl"
+            b = Path(tmp) / "calcom.jsonl"
+            for path in (a, b):
+                path.write_text(json.dumps({"function": "*", "construct": "x",
+                                            "code": "setup-env", "minutes": 1}) + "\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(gaps.run([a, b], as_json=True), 0)
+            rows = json.loads(out.getvalue())["rows"]
+            self.assertEqual(rows[0]["repos"], ["calcom", "t3code"])
+
     def test_bad_line_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "gaps.jsonl"
@@ -130,6 +144,24 @@ class GapsTest(unittest.TestCase):
                 code = gaps.run([path])
             self.assertEqual(code, 2)
             self.assertIn("gaps.jsonl:1", err.getvalue())
+
+    def test_hints_mjs_codes_are_known(self):
+        """Every code `typescript/hints.mjs` can emit is a known refusal code
+        (or matches a refusal prefix), so REFUSAL_CODES can't silently drift."""
+        hints = (Path(__file__).resolve().parents[1] / "typescript" / "hints.mjs").read_text()
+        body = hints.split("export function refusalCode", 1)[1].split("\nfunction ", 1)[0]
+        codes = set(re.findall(r'"([a-z][a-z0-9-]+)"', body))
+        table = hints.split("FIXED_STRING_CODES = [", 1)[1].split("\n];", 1)[0]
+        codes |= set(re.findall(r',\s*"([a-z0-9-]+)"', table))
+        named = re.search(r"NAMED_TYPES = new Set\(\[([^\]]+)\]", hints).group(1)
+        codes |= {"type-" + s.strip().strip('"') for s in named.split(",") if s.strip()}
+
+        def known(code):
+            return (code in gaps.REFUSAL_CODES or code == "other"
+                    or code.rstrip("-") in gaps.REFUSAL_PREFIXES
+                    or any(code.startswith(p) for p in gaps.REFUSAL_PREFIXES))
+
+        self.assertEqual([c for c in sorted(codes) if not known(c)], [])
 
     def test_every_gap_code_is_documented_in_the_skill(self):
         skill = (Path(__file__).resolve().parents[1] / "docs/skills/proofci/SKILL.md").read_text()

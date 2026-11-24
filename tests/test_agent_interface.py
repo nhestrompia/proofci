@@ -212,6 +212,10 @@ class DevJsonTests(unittest.TestCase):
             (views / "Repo.lean").unlink()
             dev._export_view(root, mf, ws_root, "Repo", said.append)
             self.assertTrue((views / "Repo.lean").read_text().startswith(dev.VIEW_MARKER))
+            # Repo files keep normal permissions even though `dev` umask-0s the
+            # shared work dir.
+            self.assertEqual(views.stat().st_mode & 0o777, 0o755)
+            self.assertEqual((views / "Repo.lean").stat().st_mode & 0o777, 0o644)
 
     def test_guarantee_entries_carry_claim_and_hypotheses(self):
         from proofci import dev

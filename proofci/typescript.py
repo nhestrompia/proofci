@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
+import yaml
+
 from . import sandbox
 from .extract import Extraction, FetchError, Unsupported, lean_module_name
 
@@ -142,7 +144,36 @@ def stage(checkout: Path, dest: Path, exclude=None):
     return dest
 
 
-def check_lockfile(path: Path, manager: str):
+def _pnpm_links_outside(lockfile: Path, checkout: Path):
+    """`link:` workspace dependencies that resolve outside the staged checkout.
+
+    pnpm resolves `link:` entries in each importer relative to the importer's
+    directory; a link that stays inside the checkout installs fine from the
+    staged copy (formbricks, t3code and other pnpm workspaces all use them).
+    """
+    try:
+        # pnpm writes `---`-separated documents in one lockfile.
+        docs = [d for d in yaml.safe_load_all(lockfile.read_text(errors="replace")) if isinstance(d, dict)]
+    except yaml.YAMLError:
+        return ["<unparseable lockfile>"]
+    data = {}
+    for doc in docs:
+        if "importers" in doc:
+            data.setdefault("importers", {}).update(doc["importers"] or {})
+    root = checkout.resolve()
+    escaped = []
+    for importer, spec in (data.get("importers") or {}).items():
+        base = (lockfile.parent / importer).resolve()
+        for section in ("dependencies", "devDependencies", "optionalDependencies"):
+            for name, entry in ((spec or {}).get(section) or {}).items():
+                version = entry.get("version") if isinstance(entry, dict) else entry
+                if isinstance(version, str) and version.startswith("link:"):
+                    if not (base / version[len("link:"):]).resolve().is_relative_to(root):
+                        escaped.append(f"{name} ({version})")
+    return escaped
+
+
+def check_lockfile(path: Path, manager: str, checkout: Path | None = None):
     """Reject a lockfile that would make the installer contact anything but the
     public registry (a git repository, another host, a local path). The lock's
     integrity hashes then decide what the packages are."""
@@ -166,10 +197,11 @@ def check_lockfile(path: Path, manager: str):
         urls += re.findall(r"tarball:\s*['\"]?([^\s,}'\"]+)", text)
         if re.search(r"type:\s*git|repo:\s|directory:\s", text):
             problems.append("a git or local dependency")
-        if re.search(r"link:", text):
-            raise Unsupported("pnpm-lock.yaml uses `link:` workspace dependencies, which pnpm resolves "
-                              "through project files the installer is not allowed to run; vendor the "
-                              "workspace packages and pass --vendor instead")
+        escaped = _pnpm_links_outside(path, checkout or path.parent)
+        if escaped:
+            raise Unsupported("pnpm-lock.yaml has `link:` dependencies that resolve outside the "
+                              f"checkout ({', '.join(escaped[:3])}); the staged install cannot see "
+                              "them — vendor the packages and pass --vendor")
     else:
         if "__metadata:" in text:
             extra = (" Its `link:`/`workspace:` dependencies resolve inside the repo but the lockfile "
@@ -284,7 +316,7 @@ def install(checkout: Path, package_rel: str, vendor_dir: Path, work: Path):
         return None
     directory, name, manager = lock
     try:
-        check_lockfile(directory / name, manager)
+        check_lockfile(directory / name, manager, checkout=checkout)
     except Unsupported as problem:
         # `check` still runs and says why packages are missing.
         (vendor_dir / INDEX).write_text(json.dumps({"lockfile": name, "manager": manager, "modules": [], "error": str(problem)}))
