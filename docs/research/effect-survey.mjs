@@ -103,6 +103,99 @@ function returnMentionsEffect(fn) {
   return /\bEffect\b/.test(s) || /\bEffect\.Effect\b/.test(s);
 }
 
+// local name -> qualified "Module.member". Effect v4 style
+// `import { Effect } from "effect"` and `import { Schema } from "effect/Schema"`
+// both make `Effect`/`Schema` a namespace: `Effect.gen` reports as "Effect.gen".
+// `import * as fx from "effect"` reaches the same namespaces one level down:
+// `fx.Effect.gen` is "Effect.gen" too.
+function makeQualify(bindings) {
+  return (path) => {
+    const head = path.split(".")[0];
+    const b = bindings.get(head);
+    if (!b) return null;
+    const rest = path.slice(head.length + 1);
+    if (!rest) return `${b.moduleName}.${b.imported}`;
+    if (b.moduleName === "effect" && /^[A-Z]/.test(rest)) return rest;
+    const ns = /^[A-Z]/.test(b.imported) ? b.imported : b.moduleName;
+    return `${ns}.${rest}`;
+  };
+}
+
+// Qualified names referenced inside `n`: calls AND bare references, so
+// `.pipe(Effect.scoped)` is caught even though `Effect.scoped` is never called.
+// A call to `Effect.all`/`Effect.forEach` carrying a `concurrency` option is
+// reported as "Effect.concurrent" — deliberately outside CORE.
+function scanCalls(n, qualify) {
+  const inner = new Set();
+  const scan = (m) => {
+    if (ts.isCallExpression(m)) {
+      const path = propName(m.expression);
+      const q = path && qualify(path);
+      if (q) {
+        const concurrent = (q === "Effect.all" || q === "Effect.forEach")
+          && m.arguments.slice(1).some(a => a.getText().includes("concurrency"));
+        inner.add(concurrent ? "Effect.concurrent" : q);
+      }
+    } else if (ts.isPropertyAccessExpression(m) || ts.isIdentifier(m)) {
+      // skip the head identifier of a property access (`Effect` in `Effect.gen`) —
+      // the access itself is recorded as one name.
+      if (ts.isIdentifier(m) && m.parent && ts.isPropertyAccessExpression(m.parent)
+          && m.parent.expression === m) {
+        // fall through to children
+      } else {
+        const path = propName(m);
+        const q = path && qualify(path);
+        if (q) inner.add(q);
+      }
+    }
+    ts.forEachChild(m, scan);
+  };
+  scan(n);
+  return inner;
+}
+
+// 2. exported functions: pure vs Effect-returning.
+// An exported function counts as Effect-returning when its return type
+// mentions Effect, or (unannotated) its body builds an Effect value — either
+// way it lands in the same bucket for the survey. For each Effect-returning
+// function we also record whether every Effect.* call inside it is in CORE.
+function countExports(path, sf, bindings) {
+  const qualify = makeQualify(bindings);
+  const classify = (n, label, inner) => {
+    fnStats.exportedTotal++;
+    const ret = ts.isFunctionLike(n) ? returnMentionsEffect(n) : undefined;
+    // References now include type positions (`Effect.Effect`, `Effect.fn.Return`),
+    // which must not decide Effect-ness or subset coverage.
+    const NON_API = /^(Effect\.Effect|Effect\.(fn|fnUntraced)\.Return|Effect\.Service)$/;
+    const apis = [...inner].filter(q => q.startsWith("Effect.") && !NON_API.test(q));
+    const buildsEffect = apis.length > 0 || inner.has("pipe") || inner.has("Function.pipe");
+    if (ret === true || (ret !== false && buildsEffect)) {
+      fnStats.exportedEffect++;
+      // Covered by the core subset only when every Effect.* call is in CORE and
+      // the function touches none of the runtime-state / concurrency modules.
+      const BLOCKED = /^(Ref|Deferred|Queue|Semaphore|Stream|Scope|Schedule|Fiber|Cause|Exit|SubscriptionRef|PubSub|Layer|Atom|reactivity)\./;
+      const blocked = [...inner].some(q => BLOCKED.test(q));
+      if (apis.length && apis.every(q => CORE.has(q)) && !blocked) fnStats.exportedEffectCoreOnly++;
+      fnStats.effectFnsDetail.push(label);
+    } else {
+      fnStats.exportedPure++;
+    }
+  };
+  const fnVisit = (n) => {
+    const isFn = ts.isFunctionDeclaration(n) || ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isMethodDeclaration(n);
+    if (isFn && isExported(n) && (n.name || ts.isVariableDeclaration(n.parent))) {
+      classify(n, relative(root, path) + "::" + (n.name?.text ?? n.parent?.name?.text ?? "?"), scanCalls(n.body ?? n, qualify));
+    } else if (ts.isVariableDeclaration(n) && n.initializer && isExported(n)
+        && !ts.isArrowFunction(n.initializer) && !ts.isFunctionExpression(n.initializer)
+        && ts.isCallExpression(n.initializer)) {
+      // export const f = Effect.fn("f")(function* ...) / pipe(...)/Effect.gen(...)
+      classify(n, relative(root, path) + "::" + (n.name?.text ?? "?"), scanCalls(n.initializer, qualify));
+    }
+    ts.forEachChild(n, fnVisit);
+  };
+  fnVisit(sf);
+}
+
 function fileEffectCalls(file, sf, bindings) {
   // Collect the set of Effect.* APIs this file uses, to classify its functions.
   const used = new Set();
@@ -144,22 +237,14 @@ function surveyFile(path, sf) {
     }
   }
   bump(construct, "files", 1);
+  // Exported functions are counted for every file, importing or not: a file
+  // with no effect import contributes its exports to the non-Effect bucket.
+  countExports(path, sf, bindings);
   if (!importsEffect) return;
   bump(construct, "files_importing_effect", 1);
   files.importingEffect++;
 
-  // local name -> qualified "Module.member". Effect v4 style
-  // `import { Effect } from "effect"` and `import { Schema } from "effect/Schema"`
-  // both make `Effect`/`Schema` a namespace: `Effect.gen` reports as "Effect.gen".
-  const qualify = (path) => {
-    const head = path.split(".")[0];
-    const b = bindings.get(head);
-    if (!b) return null;
-    const rest = path.slice(head.length + 1);
-    if (!rest) return `${b.moduleName}.${b.imported}`;
-    const ns = /^[A-Z]/.test(b.imported) ? b.imported : b.moduleName;
-    return `${ns}.${rest}`;
-  };
+  const qualify = makeQualify(bindings);
 
   const usedByFile = new Set();
   const visit = (n) => {
@@ -206,54 +291,6 @@ function surveyFile(path, sf) {
   };
   visit(sf);
 
-  // 2. exported functions: pure vs Effect-returning.
-  // An exported function counts as Effect-returning when its return type
-  // mentions Effect, or (unannotated) its body builds an Effect value — either
-  // way it lands in the same bucket for the survey. For each Effect-returning
-  // function we also record whether every Effect.* call inside it is in CORE.
-  const scanCalls = (n) => {
-    const inner = new Set();
-    const scan = (m) => {
-      if (ts.isCallExpression(m)) {
-        const path = propName(m.expression);
-        const q = path && qualify(path);
-        if (q) inner.add(q);
-      }
-      ts.forEachChild(m, scan);
-    };
-    scan(n);
-    return inner;
-  };
-  const classify = (n, label, inner) => {
-    fnStats.exportedTotal++;
-    const ret = ts.isFunctionLike(n) ? returnMentionsEffect(n) : undefined;
-    const apis = [...inner].filter(q => q.startsWith("Effect."));
-    const buildsEffect = apis.length > 0 || inner.has("pipe");
-    if (ret === true || (ret !== false && buildsEffect)) {
-      fnStats.exportedEffect++;
-      // Covered by the core subset only when every Effect.* call is in CORE and
-      // the function touches none of the runtime-state / concurrency modules.
-      const BLOCKED = /^(Ref|Deferred|Queue|Semaphore|Stream|Scope|Schedule|Fiber|Cause|Exit|SubscriptionRef|PubSub|Layer|Atom|reactivity)\./;
-      const blocked = [...inner].some(q => BLOCKED.test(q));
-      if (apis.length && apis.every(q => CORE.has(q)) && !blocked) fnStats.exportedEffectCoreOnly++;
-      fnStats.effectFnsDetail.push(label);
-    } else {
-      fnStats.exportedPure++;
-    }
-  };
-  const fnVisit = (n) => {
-    const isFn = ts.isFunctionDeclaration(n) || ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isMethodDeclaration(n);
-    if (isFn && isExported(n) && (n.name || ts.isVariableDeclaration(n.parent))) {
-      classify(n, relative(root, path) + "::" + (n.name?.text ?? n.parent?.name?.text ?? "?"), scanCalls(n.body ?? n));
-    } else if (ts.isVariableDeclaration(n) && n.initializer && isExported(n)
-        && !ts.isArrowFunction(n.initializer) && !ts.isFunctionExpression(n.initializer)
-        && ts.isCallExpression(n.initializer)) {
-      // export const f = Effect.fn("f")(function* ...) / pipe(...)/Effect.gen(...)
-      classify(n, relative(root, path) + "::" + (n.name?.text ?? "?"), scanCalls(n.initializer));
-    }
-    ts.forEachChild(n, fnVisit);
-  };
-  fnVisit(sf);
 
   // 3. file-level core-subset classification: does the file use only CORE Effect.* APIs?
   const effectApis = [...usedByFile].filter(q => q.startsWith("Effect."));
