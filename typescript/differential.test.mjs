@@ -354,3 +354,44 @@ export function t(): number { return TABLE.length; }
   assert.deepEqual(reasons, {});
   assert.ok(!readFileSync(join(dir, "out/a.mjs"), "utf8").includes("class C"));
 });
+
+test("a call to a module function that mutates a kept name is kept", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+function init(): void { TABLE.push(1); }
+init();
+export function f(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("init()"));
+});
+
+test("a binding statement calling a module function that mutates a kept name is kept", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+function init(): number { TABLE.push(1); return 1; }
+const ready = init();
+export function f(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/a.mjs"), "utf8").includes("init()"));
+});
+
+test("transitive: init -> fill -> TABLE.push is kept", () => {
+  const dir = project({
+    "a.ts": `const TABLE: number[] = [];
+function fill(): void { TABLE.push(1); }
+function init(): void { fill(); }
+init();
+export function f(): number { return TABLE.length; }
+`,
+  });
+  const reasons = compile(dir, ["a.ts"], {}, join(dir, "out"), [], { "a.ts": ["f"] });
+  assert.deepEqual(reasons, {});
+  const emitted = readFileSync(join(dir, "out/a.mjs"), "utf8");
+  assert.ok(emitted.includes("init()"), emitted);
+});

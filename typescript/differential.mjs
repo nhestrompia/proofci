@@ -402,13 +402,34 @@ function isolate(statements, wanted) {
       // `Object.freeze(CONFIG)`, `LIMITS.max = 5`, `registry.set(k, v)`). It runs in
       // real JavaScript, so it runs here too; if keeping it crashes the run the
       // import error is reported, never silently dropped.
+      // A call to a module-level callable touches whatever that callable's body
+      // touches, transitively (`init()` mutating TABLE); imports and globals are
+      // not expanded, so a foreign `Schema.TaggedError(...)` still isolates.
+      const callable = new Map();
+      for (const [i, s] of statements.entries()) {
+        const fn = ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)
+          || (ts.isVariableStatement(s) && s.declarationList.declarations.some(d => d.initializer
+            && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))));
+        if (fn) for (const n of bound[i]) callable.set(n, i);
+      }
+      const expand = seed => {
+        const out = new Set(seed);
+        const pending = [...out];
+        while (pending.length) {
+          const i = callable.get(pending.pop());
+          if (i === undefined) continue;
+          for (const m of [...deps[i].needs, ...deps[i].writes])
+            if (!out.has(m)) { out.add(m); pending.push(m); }
+        }
+        return out;
+      };
       for (const i of statements.keys()) {
         if (keep[i]) continue;
         // A statement that binds names only counts if its init-time expressions touch a
         // kept name — a never-called function body reading it does not run at load.
         const touched = bound[i].size ? (() => { const d = dependencies(statements[i], true); return [...d.needs, ...d.writes]; })()
           : [...deps[i].needs, ...deps[i].writes];
-        if (!touched.some(n => kept.has(n))) continue;
+        if (![...expand(touched)].some(n => kept.has(n))) continue;
         keep[i] = true;
         bound[i].forEach(n => kept.add(n));
         for (const need of [...deps[i].needs, ...deps[i].writes]) queue.push(need);
