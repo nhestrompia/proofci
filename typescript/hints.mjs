@@ -424,6 +424,7 @@ const FIXED_STRING_CODES = [
   [/isn't to a function the translator can see/, "unknown-callee"],
   [/`Math\.\w+` is not supported/, "math-member"],
   [/record of dynamic keys is only built empty/, "record-literal"],
+  [/^translator crash: /, "translator-crash"],
 ];
 
 export function refusalCode(reason) {

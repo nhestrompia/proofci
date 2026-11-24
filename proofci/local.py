@@ -28,6 +28,7 @@ SECCOMP_CANDIDATES = (
     Path(__file__).resolve().parent.parent / "action" / "seccomp.json",
     Path(__file__).resolve().parent / "seccomp.json",
     Path("/opt/proofci/action/seccomp.json"),
+    Path(sys.prefix) / "proofci-runtime" / "action" / "seccomp.json",
 )
 
 

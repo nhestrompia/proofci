@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proofci"
+version = "0.1.0"
+description = "Formal verification gates for pull requests: guarantees proved about a Lean view of Rust and TypeScript code"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+proofci = "proofci.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["proofci*"]
+
+[tool.setuptools.package-data]
+proofci = ["lean/*.lean"]
+
+# Runtime resources the code looks up next to the checkout land under
+# <sys.prefix>/proofci-runtime/ in an installed environment.
+[tool.setuptools.data-files]
+"proofci-runtime/typescript" = ["typescript/*.mjs"]
+"proofci-runtime/action" = ["action/seccomp.json"]
+"proofci-runtime/spike/core" = ["spike/core/*.lean"]

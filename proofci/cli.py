@@ -52,6 +52,8 @@ def main(argv=None):
     s.add_argument("--vendor", type=Path, help="packages installed by `proofci fetch`")
     s.add_argument("--report", type=Path, help="also write the JSON document here")
     s.add_argument("--work-dir", type=Path)
+    s.add_argument("--json", action="store_true",
+                   help="print the JSON document (the default; kept for symmetry with `dev`/`gaps`)")
     l = sub.add_parser("local", help="run the CI check on a repo in the toolchain image and print JSON")
     l.add_argument("--repo", type=Path, default=Path("."), help="git checkout of the candidate (uncommitted changes count)")
     l.add_argument("--base", default=None,
