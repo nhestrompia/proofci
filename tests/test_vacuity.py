@@ -132,11 +132,11 @@ class TsPlantTest(unittest.TestCase):
 
     def test_describe_never_shows_generated_lean(self):
         banned = ("Js.", "Result.", "≠", "≤", "≥", "∧", "∨", "¬", " : ", "none", "some")
-        srcs = {"num-literal": "Js.Num.mk (21)", "int-literal": "(21 : Int)",
+        srcs = {"num-literal": "Js.lit (21)", "int-literal": "(21 : Int)",
                 "dbl-literal": "Js.Dbl.lit 0x15", "f64-op": "Core.F64.ceil",
                 "filter-keeps-all": "let tmp1 ← Result.ok perms",
                 "trivial-arg": "Result.ok perms"}
-        originals = {"num-literal": "Js.Num.mk (20)", "int-literal": "(20 : Int)",
+        originals = {"num-literal": "Js.lit (20)", "int-literal": "(20 : Int)",
                      "dbl-literal": "Js.Dbl.lit 0x14", "f64-op": "Core.F64.floor"}
         kinds = list(mutation.KINDS) + ["filter-keeps-all", "trivial-arg", "trivial-fail"]
         for kind in kinds:
@@ -144,7 +144,7 @@ class TsPlantTest(unittest.TestCase):
                                     ts="src/x.ts:4")
             for word in banned:
                 self.assertNotIn(word, out, f"{kind}: {out}")
-        for constant in ("Result.ok (Js.Num.mk (0) (of_decide_eq_true rfl) (of_decide_eq_true rfl))",
+        for constant in ("Result.ok (Js.lit (0))",
                          "Result.ok ([] : Js.Str)", 'Result.ok ""', "Result.ok []",
                          "Result.ok (0 : Int)", "Result.ok true", "Result.ok false",
                          "Result.ok none", "Proofci.Effects.Eff.pure false"):
@@ -168,7 +168,7 @@ class TsPlantTest(unittest.TestCase):
         self.assertEqual(mutation.describe("negate-branch", 4, "if ¬(x) then", "if x then",
                                           ts=mutation.ts_at(marks, 4)),
                          "the `if` on src/lib/x.ts line 14 were negated")
-        self.assertEqual(mutation.describe("num-literal", 4, "Js.Num.mk (21)", "Js.Num.mk (20)",
+        self.assertEqual(mutation.describe("num-literal", 4, "Js.lit (21)", "Js.lit (20)",
                                           ts=mutation.ts_at(marks, 4)),
                          "`20` on src/lib/x.ts line 14 were `21`")
         # No map: the operator change is described without any line number.

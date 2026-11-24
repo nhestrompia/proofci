@@ -151,6 +151,12 @@ theorem mk_spec (v : Int) (h1 : -9007199254740991 ≤ v) (h2 : v ≤ 90071992547
   simp only [rem, hy', ite_false]
   exact mk_spec _ (by omega) (by omega)
 
+@[step] theorem truncDiv_spec (x y : Num) (hy : y.val ≠ 0) :
+    truncDiv x y ⦃ r => r.val = x.val.tdiv y.val ⦄ := by
+  simp only [truncDiv, ite_eq_right hy]
+  have hb : (x.val.tdiv y.val).natAbs ≤ x.val.natAbs := Int.natAbs_tdiv_le_natAbs _ _
+  exact mk_spec _ (by have := x.lo; have := x.hi; omega) (by have := x.lo; have := x.hi; omega)
+
 @[step] theorem floorDiv_spec (x y : Num) (hy : 0 < y.val) :
     floorDiv x y ⦃ r => r.val = x.val / y.val ⦄ := by
   have hy' : y.val ≠ 0 := by omega
@@ -200,6 +206,50 @@ def attempt {α} (body handler : Result α) : Result α :=
 
 @[simp] theorem attempt_panic {α} (h : Result α) : attempt (fail .panic) h = h := by
   simp [attempt]
+
+/-! ## Step lemmas for emitted code
+
+The view emits `do`-notation that elaborates to `Bind.bind` (the `>>=` class
+projection), not `Aeneas.Std.bind`. `step` recognizes both, and `bind_tc_eq`
+lets `simp` normalize one into the other; `spec_bind'` is `spec_bind` stated on
+the emitted form for manual proofs. -/
+
+theorem spec_bind' {α β : Type _} {k : α → Result β} {Pₖ : WP.Post β} {m : Result α} {Pₘ : WP.Post α} :
+    WP.spec m Pₘ → (∀ x, Pₘ x → WP.spec (k x) Pₖ) → WP.spec (Bind.bind m k) Pₖ := WP.spec_bind
+
+/-- `let x ← if c then a else b …`: the step_simps normalizer pushes the bind
+    inside the branches, so `step*` leaves one goal per branch. -/
+@[simp, step_simps] theorem bind_tc_ite {α β : Type _} {c : Prop} [Decidable c]
+    (a b : Result α) (f : α → Result β) :
+    Bind.bind (if c then a else b) f = if c then Bind.bind a f else Bind.bind b f := by
+  by_cases h : c <;> simp [h]
+
+/-- `Std.bind` version of `bind_tc_ite`: `do`-blocks elaborate to `Bind.bind`
+    while library code uses `Aeneas.Std.bind`, so both forms get a pushing lemma. -/
+@[simp] theorem bind_ite {α β : Type _} {c : Prop} [Decidable c]
+    (a b : Result α) (f : α → Result β) :
+    Std.bind (if c then a else b) f = if c then Std.bind a f else Std.bind b f := by
+  by_cases h : c <;> simp [h]
+
+/-- `let x ← if c then a else b …`: split the condition at bind position. Both
+    branches keep the same postcondition. Not tagged `@[step]`: tagging it makes
+    `step*` create a shared-post metavariable goal that stalls proofs. Push the
+    bind under the `if` with `bind_tc_ite`/`bind_ite` and use `split` instead. -/
+theorem spec_ite {α : Type _} {c : Prop} [Decidable c] {a b : Result α} {post : WP.Post α}
+    (h₁ : c → WP.spec a post) (h₂ : ¬c → WP.spec b post) :
+    WP.spec (if c then a else b) post := by
+  by_cases h : c
+  · simpa [h] using h₁ h
+  · simpa [h] using h₂ h
+
+/-- Inverting a `Bind.bind` equation on the emitted form, for manual proofs. -/
+theorem bind_tc_inv {α β : Type _} {x : Result α} {f : α → Result β} {r : β}
+    (h : Bind.bind x f = ok r) : ∃ a, x = ok a ∧ f a = ok r := by
+  revert h
+  refine Result.cases (motive := fun x => Bind.bind x f = ok r → ∃ a, x = ok a ∧ f a = ok r) x ?_ ?_ ?_
+  · intro a h; exact ⟨a, rfl, by simpa using h⟩
+  · intro i k h; simp at h
+  · intro h; simp at h
 
 /-! ## Arrays
 
@@ -369,6 +419,131 @@ end Monotone
 @[simp] theorem filter_nil {α} (f : α → Result Bool) : filter f [] = ok [] := rfl
 @[simp] theorem reduce_nil {α β} (f : β → α → Result β) (acc : β) : reduce f acc [] = ok acc := rfl
 
+/-! Equational forms for the higher-order combinators. The premise is
+    per-element (`∀ x, f x = ok (g x)`), so a proof can rewrite the callback
+    pointwise — `intro x; simp [cb]` — instead of proving a function equality
+    with `funext` on the emitted `do`-block lambda. -/
+
+theorem map_eq {α β} {f : α → Result β} {g : α → β}
+    (hf : ∀ x, f x = ok (g x)) : ∀ xs : List α, map f xs = ok (xs.map g) := by
+  intro xs; induction xs with
+  | nil => rfl
+  | cons x rest ih => simp only [map, hf x, ih, Std.bind_ok, List.map_cons]
+
+@[step] theorem map_spec {α β} {f : α → Result β} {g : α → β} {xs : List α}
+    (hf : ∀ x, f x = ok (g x)) : map f xs ⦃ ys => ys = xs.map g ⦄ := by
+  rw [map_eq hf]; simp [WP.spec_ok]
+
+theorem filter_eq {α} {f : α → Result Bool} {p : α → Bool}
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, filter f xs = ok (xs.filter p) := by
+  intro xs; induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [filter, hf x, ih, Std.bind_ok, h]
+
+@[step] theorem filter_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : filter f xs ⦃ ys => ys = xs.filter p ⦄ := by
+  rw [filter_eq hf]; simp [WP.spec_ok]
+
+theorem some_eq {α} {f : α → Result Bool} {p : α → Bool}
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, some_ f xs = ok (xs.any p) := by
+  intro xs; induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [some_, hf x, ih, Std.bind_ok, h]
+
+@[step] theorem some_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : some_ f xs ⦃ r => r = xs.any p ⦄ := by
+  rw [some_eq hf]; simp [WP.spec_ok]
+
+theorem every_eq {α} {f : α → Result Bool} {p : α → Bool}
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, every f xs = ok (xs.all p) := by
+  intro xs; induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [every, hf x, ih, Std.bind_ok, h]
+
+@[step] theorem every_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : every f xs ⦃ r => r = xs.all p ⦄ := by
+  rw [every_eq hf]; simp [WP.spec_ok]
+
+theorem find_eq {α} {f : α → Result Bool} {p : α → Bool}
+    (hf : ∀ x, f x = ok (p x)) : ∀ xs : List α, find f xs = ok (xs.find? p) := by
+  intro xs; induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    cases h : p x <;> simp [find, hf x, ih, Std.bind_ok, h]
+
+@[step] theorem find_spec {α} {f : α → Result Bool} {p : α → Bool} {xs : List α}
+    (hf : ∀ x, f x = ok (p x)) : find f xs ⦃ r => r = xs.find? p ⦄ := by
+  rw [find_eq hf]; simp [WP.spec_ok]
+
+/-- Folding a function that ignores its argument returns the accumulator. -/
+@[simp] theorem foldl_const {α β : Type _} (acc : β) (xs : List α) :
+    xs.foldl (fun a _ => a) acc = acc := by
+  induction xs generalizing acc <;> simp_all [List.foldl]
+
+theorem reduce_eq {α β} {f : β → α → Result β} {g : β → α → β}
+    (hf : ∀ a x, f a x = ok (g a x)) : ∀ (acc : β) (xs : List α), reduce f acc xs = ok (xs.foldl g acc) := by
+  intro acc xs; induction xs generalizing acc with
+  | nil => rfl
+  | cons x rest ih =>
+    simp only [reduce, hf acc x, ih (g acc x), Std.bind_ok, List.foldl_cons]
+
+@[step] theorem reduce_spec {α β} {f : β → α → Result β} {g : β → α → β} {acc : β} {xs : List α}
+    (hf : ∀ a x, f a x = ok (g a x)) : reduce f acc xs ⦃ r => r = xs.foldl g acc ⦄ := by
+  rw [reduce_eq hf]; simp [WP.spec_ok]
+
+/-- The fold-invariant form of `reduce`: when every step preserves `inv`, the
+    result satisfies `inv`. This is the loop-invariant pattern for folds. -/
+@[step] theorem reduce_spec_inv {α β} {f : β → α → Result β} {inv : β → Prop}
+    {acc : β} {xs : List α}
+    (h0 : inv acc) (hf : ∀ a x, inv a → f a x ⦃ r => inv r ⦄) :
+    reduce f acc xs ⦃ r => inv r ⦄ := by
+  induction xs generalizing acc with
+  | nil => simpa [reduce] using h0
+  | cons x rest ih =>
+    simp only [reduce]
+    apply spec_bind' (hf acc x h0)
+    intro next hn
+    exact ih hn
+
+/-- `xs.includes(v)` is `xs.contains v`: the spec version needs nothing more. -/
+@[simp] theorem includes_eq {α} [DecidableEq α] (xs : List α) (v : α) :
+    includes xs v = xs.contains v := rfl
+
+@[simp] theorem includes_iff {α} [DecidableEq α] (xs : List α) (v : α) :
+    includes xs v = true ↔ v ∈ xs := by simp [includes]
+
+/-- `s.indexOf(v)`: `some` position or `-1`. -/
+@[step] theorem indexOf_val {α} [DecidableEq α] (xs : List α) (v : α)
+    (hl : xs.length ≤ 9007199254740991) :
+    indexOf xs v ⦃ r => r.val = match xs.idxOf? v with | some i => (i : Int) | none => -1 ⦄ := by
+  simp only [indexOf]
+  cases h : xs.idxOf? v with
+  | some i =>
+    obtain ⟨hlt, -, -⟩ := List.idxOf?_eq_some_iff.mp h
+    exact mk_spec _ (by omega) (by omega)
+  | none => exact mk_spec _ (by omega) (by omega)
+
+/-- A `slice` bound never exceeds the array length. -/
+theorem bound_le (n : Nat) (i : Num) : bound n i ≤ n := by
+  simp only [bound]
+  split <;> omega
+
+/-- `xs.slice(a, b)` stays within `xs`. -/
+theorem slice_length_le {α} (xs : List α) (a b : Num) : (slice xs a b).length ≤ xs.length := by
+  simp only [slice, List.length_drop, List.length_take]
+  have hb := bound_le xs.length b
+  omega
+
+theorem slice_mem {α} (xs : List α) (a b : Num) {y : α} (h : y ∈ slice xs a b) : y ∈ xs :=
+  List.mem_of_mem_take (List.mem_of_mem_drop h)
+
+/-- `xs.slice(a)` stays within `xs`. -/
+theorem sliceFrom_length_le {α} (xs : List α) (a : Num) : (sliceFrom xs a).length ≤ xs.length := by
+  simp only [sliceFrom, List.length_drop]; omega
+
 @[step] theorem len_spec {α} (xs : List α) (h : xs.length ≤ 9007199254740991) :
     len xs ⦃ r => r.val = xs.length ⦄ :=
   mk_spec _ (by omega) (by omega)
@@ -475,6 +650,16 @@ def trimStart (s : Str) : Str := s.dropWhile isSpace
 def trimEnd (s : Str) : Str := (s.reverse.dropWhile isSpace).reverse
 def trim (s : Str) : Str := trimEnd (trimStart s)
 
+/-- `trim` never makes a string longer. -/
+theorem trim_length_le (s : Str) : (trim s).length ≤ s.length := by
+  have e1 : (trimStart s).length ≤ s.length :=
+    (List.dropWhile_suffix (l := s) isSpace).sublist.length_le
+  have e2 : (trimEnd (trimStart s)).length ≤ (trimStart s).length := by
+    simp only [trimEnd, List.length_reverse]
+    exact le_trans (List.dropWhile_suffix (l := (trimStart s).reverse) isSpace).sublist.length_le
+      (le_of_eq (by simp only [List.length_reverse]))
+  exact le_trans e2 e1
+
 /-- `toLowerCase` for ASCII. Other text needs Unicode tables, so the model stops. -/
 def toLower (s : Str) : Result Str :=
   if s.all (· < 128) then ok (s.map fun c => if 65 ≤ c ∧ c ≤ 90 then c + 32 else c) else fail .undef
@@ -508,6 +693,74 @@ def replace (s a b : Str) : Result Str :=
 
 def replaceAll (s a b : Str) : Result Str :=
   if b.contains 36 ∨ a.isEmpty then fail .undef else ok (join (split s a) b)
+
+/-! ### Step lemmas and equations for the string primitives -/
+
+theorem find?_le_length {s sub : Str} {i : Nat} (h : find? s sub = some i) : i ≤ s.length := by
+  induction s generalizing i with
+  | nil => simp only [find?] at h; split at h <;> simp_all
+  | cons c rest ih =>
+    simp only [find?] at h
+    split at h
+    · simp_all
+    · rename_i hne
+      obtain ⟨j, hj, rfl⟩ : ∃ j, find? rest sub = some j ∧ j + 1 = i := by
+        cases hr : find? rest sub with
+        | none => simp [hr] at h
+        | some j => simp [hr] at h; exact ⟨j, rfl, h⟩
+      have := ih hj
+      simp only [List.length_cons]; omega
+
+/-- `s.indexOf(sub)`: the `some` position or `-1`. -/
+@[step] theorem strIndexOf_spec (s sub : Str) (hl : s.length ≤ 9007199254740991) :
+    strIndexOf s sub ⦃ r => r.val = match find? s sub with | some i => (i : Int) | none => -1 ⦄ := by
+  simp only [strIndexOf]
+  cases h : find? s sub with
+  | some i =>
+    have hi := find?_le_length h
+    exact mk_spec _ (by omega) (by omega)
+  | none => exact mk_spec _ (by omega) (by omega)
+
+/-- `s.charCodeAt(i)` at an in-range index. -/
+@[step] theorem charCodeAt_spec (s : Str) (i : Num) (c : Nat)
+    (h0 : 0 ≤ i.val) (hi : s[i.val.toNat]? = some c) (hc : (c : Int) ≤ 9007199254740991) :
+    charCodeAt s i ⦃ r => r.val = (c : Int) ⦄ := by
+  rw [charCodeAt, at_, ite_eq_right (show ¬ i.val < 0 by omega), hi]
+  exact mk_spec _ (by have := Nat.cast_nonneg (α := Int) c; omega) hc
+
+/-- `s.toLowerCase()` on ASCII text. -/
+@[step] theorem toLower_spec (s : Str) (h : s.all (· < 128) = true) :
+    toLower s ⦃ r => r = s.map fun c => if 65 ≤ c ∧ c ≤ 90 then c + 32 else c ⦄ := by
+  simp only [toLower, h, ite_eq_left trivial, WP.spec_ok]
+
+/-- `s.toUpperCase()` on ASCII text. -/
+@[step] theorem toUpper_spec (s : Str) (h : s.all (· < 128) = true) :
+    toUpper s ⦃ r => r = s.map fun c => if 97 ≤ c ∧ c ≤ 122 then c - 32 else c ⦄ := by
+  simp only [toUpper, h, ite_eq_left trivial, WP.spec_ok]
+
+/-- `s.startsWith(pre)` is a prefix test. -/
+@[simp] theorem startsWith_eq (s pre : Str) : startsWith s pre = pre.isPrefixOf s := rfl
+
+/-- `split`'s work function makes at most `fuel + 1` pieces. -/
+theorem splitGo_length_le (sep : Str) (fuel : Nat) (current rest : Str) :
+    (splitGo sep fuel current rest).length ≤ fuel + 1 := by
+  induction fuel generalizing current rest with
+  | zero => simp [splitGo]
+  | succ fuel ih =>
+    match rest with
+    | [] => simp [splitGo]
+    | c :: rest' =>
+      simp only [splitGo]
+      split
+      · exact Nat.succ_le_succ (ih [] _)
+      · exact Nat.le_trans (ih _ _) (Nat.le_succ _)
+
+/-- `s.split(sep)` makes at most `s.length + 1` pieces. -/
+theorem split_length_le (s sep : Str) : (split s sep).length ≤ s.length + 1 := by
+  simp only [split]
+  split
+  · rw [List.length_map]; exact Nat.le_succ _
+  · exact splitGo_length_le _ _ _ _
 
 /-! Regular expressions: a literal whose flags are at most `i` and `g`, built from code units,
 classes, `.`, `^`, `$`, `*`, `+`, `?` and `|`. The translator refuses the rest. `+` is `a a*`. -/
@@ -596,6 +849,14 @@ def reTest (r : Re) (ic : Bool) (s : Str) : Result Bool :=
   match reSearch r ic s (s.length + 1) 0 with
   | some m => ok m.isSome
   | none => fail .undef
+
+/-- `re.test(s)` reduces to the outcome of `reSearch`. To reason about a concrete
+    `re.test`, supply the match that `reSearch r ic s (s.length + 1) 0` computes
+    (typically `by decide` for a literal pattern and literal text). -/
+@[step] theorem reTest_spec (r : Re) (ic : Bool) (s : Str) (m : Option (Nat × Nat))
+    (h0 : reOk ic s = true) (hm : reSearch r ic s (s.length + 1) 0 = some m) :
+    reTest r ic s ⦃ r' => r' = m.isSome ⦄ := by
+  simp [reTest, h0, hm, WP.spec_ok]
 
 def reSplice (s b : Str) : Nat → List (Nat × Nat) → Str
   | p, [] => s.drop p
@@ -814,6 +1075,14 @@ def setHas {K} [DecidableEq K] (s : List K) (v : K) : Bool := s.contains v
 /-- A number for the differential test. Inputs are always safe integers. -/
 def lit (v : Int) : Num :=
   if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default
+
+/-- The translator emits numerals as `Js.lit v`, so goals carry `lit` rather than
+    `Num.mk`'s proof arguments. `.val` unfolds it; for a concrete literal `simp`
+    discharges the bound check and leaves the integer. -/
+@[simp, scalar_tac_simps] theorem lit_val (v : Int) :
+    (lit v).val = if -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then v else 0 := by
+  simp only [lit]
+  split <;> rfl
 
 /-- Compares the model with what Node computed. `expected` is `none` when Node
     produced something other than a value of the declared type. The model may

@@ -74,7 +74,7 @@ KINDS = {
     "true-to-false": (r"Result\.ok true", "Result.ok false"),
     "false-to-true": (r"Result\.ok false", "Result.ok true"),
     # Literals: an off-by-one in a baked-in constant.
-    "num-literal": (r"(Js\.Num\.mk \()(-?\d+)(\))", _num_literal_bump),
+    "num-literal": (r"(Js\.lit \()(-?\d+)(\))", _num_literal_bump),
     "int-literal": (r"\((-?\d+)( : Int\))", lambda m: f"({int(m.group(1)) + 1}{m.group(2)})"),
     "dbl-literal": (r"(Js\.Dbl\.lit 0x)([0-9a-fA-F]+)", _dbl_literal_bump),
     # The `Js.*` operations a translated body binds.
@@ -157,7 +157,7 @@ def _trivial_constants(result):
     if result.startswith("List"):
         return ["[]"]
     if result == "Js.Num":
-        return ["(Js.Num.mk (0) (of_decide_eq_true rfl) (of_decide_eq_true rfl))"]
+        return ["(Js.lit (0))"]
     if result == "Js.Dbl":
         return ["(Js.Dbl.lit 0x0)"]
     if result == "Int":
@@ -286,7 +286,7 @@ def ts_at(marks, line):
 def _ts_literal(line):
     """The TypeScript literal a Lean expression in `line` stands for."""
     for pattern, render in (
-            (r"Js\.Num\.mk \((-?\d+)\)", lambda m: m.group(1)),
+            (r"Js\.lit \((-?\d+)\)", lambda m: m.group(1)),
             (r"\((-?\d+) : Int\)", lambda m: f"{m.group(1)}n"),
             (r"Js\.Dbl\.lit 0x([0-9a-fA-F]+)", lambda m: str(int(m.group(1), 16))),
             (r"\[\] : Js\.Str", lambda m: '""')):
