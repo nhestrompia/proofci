@@ -609,7 +609,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
     return report
 
 
-LITERAL_NUMBER = re.compile(r"(?<![\w.])(\d{1,15})(?![\w.])")
+LITERAL_NUMBER = re.compile(r"(?<![\w.])(-?\d{1,15})(?![\w.])")
 LITERAL_STRING = re.compile(r'"([^"\\]{0,80})"')
 MAX_LITERALS = 16
 

@@ -237,6 +237,12 @@ class ClaimTests(unittest.TestCase):
         self.assertIn("Js.Dbl", ts["fee"]["statement"])
         self.assertNotIn("Js.Dbl", ts["fee_bar"]["statement"])
 
+    def test_literals_keep_the_sign_of_negative_hypothesis_bounds(self):
+        o = check.Outcome("t", "g", "m::f", "offset_pinned", True, check.VERIFIED)
+        o.statement = "f offset ⦃ r => h : offset.val = -424242 → r.val ≤ 5 ⦄"
+        self.assertIn(-424242, check._literals([o])["m::f"]["numbers"])
+        self.assertIn(5, check._literals([o])["m::f"]["numbers"])
+
 
 if __name__ == "__main__":
     unittest.main()
