@@ -31,6 +31,32 @@ is covered by a sync test — trust it over memory.
 - `constructs.json` — the tested table: every supported and refused construct
   with a minimal snippet.
 
+## Contract first, then code
+
+Write the guarantees **before** touching the function's code. Preferably hand
+it to a separate subagent that sees only the issue/spec and the function's
+signature + doc comment — never the implementation — so it cannot write claims
+the current code already satisfies instead of claims the spec demands:
+
+1. Guarantee agent: writes the plain-English claims (they become the required
+   `/-- ... -/` doc comments) plus the Lean statements, guided by
+   `reference/contracts.md`.
+2. Code agent: writes/changes the implementation to satisfy them.
+3. The code agent **may not weaken** a guarantee afterward; any change to the
+   statement goes back through the reviewer.
+
+Write **paired** guarantees — a one-sided claim proves nothing:
+
+- Boolean decisions (permission checks, validators): "returns `true` when …"
+  **and** "returns `false` when …".
+- Filters/lookups: "kept/found **exactly when** …" (an `∀` both ways).
+- Parsers: "accepts every valid input" **and** "rejects every invalid input".
+
+Then the trivial-implementation self-check: *does my guarantee also pass for an
+identity function, a constant, or an always-fail?* If yes, it pins down nothing
+— strengthen it before writing any code. (CI will run this check too; run it
+yourself first.)
+
 ## Non-negotiable rules
 
 - Never weaken a contract, edit `proofci.yaml` policy (`targets`, `assumes`,

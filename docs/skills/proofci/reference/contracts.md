@@ -39,6 +39,21 @@ P" cannot be stated as `f x = ok r → P` (rejected, above) — use `≠`/`¬∃
 `examples/ts-dates`), or take the value as a hypothesis (`h : rate.val = 0`),
 which is usually clearer anyway. Strings are `js!"text"`, doubles `dbl!"12.99"`.
 
+## Paired guarantees and the trivial-implementation check
+
+Guarantees come in pairs, one direction per side of the spec:
+
+- Boolean decisions: `… ⦃ r => r = true ⦄` under the accept hypotheses **and**
+  `… ⦃ r => r = false ⦄` under the reject ones (or `∀ r, f x = ok r → (r = true ↔ …)`).
+- Filters/lookups: "kept/found exactly when" — both `P x → x ∈ result` and
+  `x ∈ result → P x`.
+- Parsers/decoders: "accepts every valid input" and "rejects every invalid
+  input" — a parser that rejects everything satisfies the first alone.
+
+Then ask: does this also pass for a trivial implementation — `f x = x`, a
+constant, always `err`? If it does, the guarantee pins down nothing; add the
+missing direction or a bound before writing code.
+
 ## Hygiene
 
 - A `/-- ... -/` doc comment on every contract theorem is **required** — it is
