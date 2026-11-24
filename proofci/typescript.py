@@ -640,13 +640,24 @@ def _sanitize(text):
             j -= 1
         if j < 0:
             return True
-        gap = text[j + 1:i]
-        if any(q in gap for q in "'\"`"):
-            return False   # a literal or template sat between them: the operand ended
-        clean = re.sub(r"//[^\n]*|/\*.*?\*/", "", gap, flags=re.S)
+        # Look at the raw gap between the previous code char and here:
+        # comments vanish, and any literal or regex left means the operand
+        # just ended — except a trailing `${`, which re-enters code.
+        gap, k, m = [], j + 1, i
+        while k < m:
+            if text[k] == "/" and text[k + 1:k + 2] == "/":
+                nl = text.find("\n", k)
+                k = m if nl == -1 or nl >= m else nl
+            elif text[k] == "/" and text[k + 1:k + 2] == "*":
+                e = text.find("*/", k + 2)
+                k = m if e == -1 else e + 2
+            else:
+                gap.append(text[k])
+                k += 1
+        clean = "".join(gap)
+        if any(q in clean for q in "'\"`"):
+            return False
         if clean.strip():
-            # Hidden code or a regex sat between them — except a trailing
-            # `${`, which re-enters code so a regex may open.
             return clean.rstrip().endswith("${")
         if out[j] in "=(:,[!&|?{};+-*%<>^~":
             if out[j] in "+-" and out[j - 1:j] == out[j]:
