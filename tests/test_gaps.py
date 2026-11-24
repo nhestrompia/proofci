@@ -56,7 +56,7 @@ class GapsTest(unittest.TestCase):
                 code = gaps.run([path])
             self.assertEqual(code, 0)
             row = next(l for l in out.getvalue().splitlines() if "T \\| null" in l)
-            self.assertEqual(row.count("|") - row.count("\\|"), 5)
+            self.assertEqual(row.count("|") - row.count("\\|"), 6)
 
     def test_bad_line_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
