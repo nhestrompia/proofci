@@ -215,7 +215,11 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
         report.policy_changes = [
             "first adoption: this pull request introduces `proofci.yaml` and the contract — "
             "every guarantee is new and the whole contract needs approval"]
-        report.policy_approvers = head.approvers
+        # The manifest's own approver list isn't trusted yet — a pull request
+        # could name an approver it controls. Only a trusted maintainer (an
+        # owner, member or collaborator other than the author) accepts a first
+        # adoption; `policy.approvers` takes effect once the manifest is merged.
+        report.policy_approvers = None
         report.language = head.language
         base = manifest_mod.Manifest("", "proofci", ())
     else:

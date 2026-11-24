@@ -187,9 +187,10 @@ The pull request that adds `proofci.yaml` runs the check too. When the base
 branch has no `proofci.yaml` at all, the run is a **first adoption**: the new
 manifest and contract are used and every target and guarantee counts as new —
 each theorem needs its `/--` doc comment and all verified guarantees are swept
-for planted defects. The verdict stays blocked until a maintainer listed under
-`policy.approvers` (or any maintainer, when the list is unset) approves the
-commit and the job is re-run; approval accepts the whole contract.
+for planted defects. The verdict stays blocked until a maintainer other than the pull request's
+author approves the commit and the job is re-run; approval accepts the whole
+contract. The manifest's own `policy.approvers` list is not trusted yet — it
+takes effect once it is merged.
 
 The check stays fail-closed the same way as everywhere else: only a base with
 no manifest file at all counts as a first adoption. Deleting or renaming

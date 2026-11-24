@@ -55,10 +55,12 @@ functions that don't use it.
 
 `code` is a stable, machine-readable name for the refusal, defined in
 `typescript/hints.mjs` (`type-<name>` for an unsupported type, `compile-error`,
-`outside-package`, `missing-types`, `null-check`, `optional-chain`, a kebab-case
-construct name such as `typeof-expression`, or `other`). Codes are an
-interface: they are added but never renamed, so `summary.by_code` can count
-missing features across repositories.
+`outside-package`, `missing-types`, `null-check`, `optional-chain`,
+`in-place-mutation`, `mixed-number-modes`, `unassigned-on-path`,
+`returns-nothing`, a kebab-case construct name such as `typeof-expression`,
+or `other`). Codes never name a variable or member, so a rename can't move a
+refusal between buckets. Codes are an interface: they are added but never
+renamed, so `summary.by_code` can count missing features across repositories.
 
 ## `report.json` additions
 
@@ -66,8 +68,9 @@ missing features across repositories.
 no `proofci.yaml` at all — the pull request introduces ProofCI. The candidate's
 manifest is used, every guarantee counts as new (the /-- doc-comment rule and
 the planted-defect sweep apply to all of them), and the run is a policy change:
-it blocks until a maintainer approves the whole contract. `policy.approvers`
-in the new manifest names who may approve.
+it blocks until a maintainer other than the author approves the whole contract.
+The new manifest's `policy.approvers` is not trusted yet; it takes effect once
+merged.
 
 ## `proofci local` — CI on your machine
 

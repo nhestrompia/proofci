@@ -27,6 +27,9 @@ targets:
     guarantees:
       - id: g
         theorem: some_theorem
+
+policy:
+  approvers: [pr-author]
 """
 
 
@@ -50,6 +53,9 @@ class Adoption(unittest.TestCase):
         self.assertTrue(report.policy_changes)
         self.assertIn("first adoption", report.policy_changes[0])
         self.assertFalse(report.passed)  # blocks until the contract is approved
+        # The candidate's own approver list isn't trusted: any maintainer may
+        # approve a first adoption, not a login the pull request chose.
+        self.assertIsNone(report.policy_approvers)
 
     def test_first_adoption_still_blocks_without_proofs(self):
         report = self.check(lambda base: None)
