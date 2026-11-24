@@ -212,8 +212,9 @@ class Numbers(unittest.TestCase):
                 extraction.signatures = dict(signatures[start:start + BATCH])
                 batch = work / f"batch-{start}"
                 batch.mkdir()
-                differ, notes = typescript.differential(package.parent, "package", batch, ws, extraction,
-                                                        cases=500, timeout=300)
+                differ, notes, infra = typescript.differential(package.parent, "package", batch, ws,
+                                                               extraction, cases=500, timeout=300)
+                self.assertIsNone(infra)
                 self.assertEqual(differ[:5], [])
                 self.assertIn("compared with Node", notes[-1])
                 print(notes[-1])

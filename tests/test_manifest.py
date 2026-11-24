@@ -204,6 +204,14 @@ targets:
                             .replace(b"src/fees.ts::calculateFee", b"ledger::calculate_fee")
                             + b"require_strength: true\n", "only available for TypeScript")
 
+    def test_require_general(self):
+        self.assertEqual(manifest.parse(self.TS_SIMPLE).require_general, False)
+        self.assertTrue(manifest.parse(self.TS_SIMPLE + b"require_general: true\n").require_general)
+        self.assertRejected(self.TS_SIMPLE + b'require_general: "yes"\n', "must be true or false")
+        self.assertRejected(self.TS_SIMPLE.replace(b"language: typescript\n", b"")
+                            .replace(b"src/fees.ts::calculateFee", b"ledger::calculate_fee")
+                            + b"require_general: true\n", "only available for TypeScript")
+
     def test_lean_function_name(self):
         self.assertEqual(lean_function("ledger::Accounts::deposit"), "ledger.Accounts.deposit")
 
@@ -281,6 +289,8 @@ targets:""")
         (self.head / "proofci" / "Contract.lean").write_text("theorem fee_capped : True := sorry\n")
         self.assertEqual(self.compare(base_ts, ManifestTests.TS_SIMPLE + b"require_strength: true\n"),
                          ["`require_strength` changed from `False` to `True`"])
+        self.assertEqual(self.compare(base_ts, ManifestTests.TS_SIMPLE + b"require_general: true\n"),
+                         ["`require_general` changed from `False` to `True`"])
 
 
 if __name__ == "__main__":

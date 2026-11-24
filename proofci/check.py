@@ -56,6 +56,8 @@ class Outcome:
     previous_claim: str = None      # the claim the base contract stated, when an approved change reworded it
     statement: str = None           # the contract theorem's statement, in one line
     hypotheses: list = None         # named hypotheses of the contract theorem: what it only holds under
+    scope: str = None               # "example" when the statement applies the function to fixed arguments only
+    infrastructure: bool = False    # the guarantee is unjudged because tooling failed, not because of the code
 
 
 @dataclass
@@ -75,6 +77,7 @@ class Report:
     first_adoption: bool = False  # the base checkout has no proofci.yaml at all: the change introduces ProofCI
     escapes: list = field(default_factory=list)      # TypeScript only: verified guarantees a planted defect escaped
     strength_required: bool = False                  # from the policy's `require_strength`: escapes block
+    general_required: bool = False                   # from the policy's `require_general`: example-scope guarantees block
 
     @property
     def passed(self):
@@ -83,7 +86,8 @@ class Report:
         return (policy_ok and not self.invalid_contract and bool(required)
                 and all(o.status == VERIFIED for o in required)
                 and all(d["accepted"] for d in self.downgrades)
-                and (not self.escapes or not self.strength_required))
+                and (not self.escapes or not self.strength_required)
+                and not (self.general_required and any(o.scope == "example" for o in self.outcomes)))
 
     def to_json(self):
         return {
@@ -104,6 +108,7 @@ class Report:
             "first_adoption": self.first_adoption,
             "escapes": self.escapes,
             "require_strength": self.strength_required,
+            "require_general": self.general_required,
             "notes": self.notes,
             "timings_seconds": self.timings,
         }
@@ -203,6 +208,8 @@ def policy_changes(base_checkout, base, head_checkout, head):
         changes.append(f"`accept_downgrades` changed (added: {added or 'none'}; removed: {removed or 'none'})")
     if old["require_strength"] != new["require_strength"]:
         changes.append(f"`require_strength` changed from `{old['require_strength']}` to `{new['require_strength']}`")
+    if old["require_general"] != new["require_general"]:
+        changes.append(f"`require_general` changed from `{old['require_general']}` to `{new['require_general']}`")
     if _tree_digest(base_checkout, base.lean, "Contract") != _tree_digest(head_checkout, head.lean, "Contract"):
         changes.append(f"the contract `{head.contract}` changed")
     return changes
@@ -254,6 +261,7 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
     else:
         active, policy_checkout = base, base_checkout
     report.strength_required = getattr(active, "require_strength", False)
+    report.general_required = getattr(active, "require_general", False)
 
     outcomes = {}
     for target, guarantee in active.guarantees():
@@ -368,10 +376,21 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                     o.status, o.reason = UNSUPPORTED, reason
                 return report
             detail = {}
-            disagreements, notes = typescript.differential(
+            func_warnings = _function_warnings(head_checkout, active.crate, extraction, functions, failures)
+            disagreements, notes, infra = typescript.differential(
                 head_checkout, active.crate, work, ws, extraction, detail=detail,
                 literals=_literals(report.outcomes))
             report.notes += notes
+            if infra:
+                reason = ("the comparison with Node did not run — a ProofCI infrastructure "
+                          f"failure, not a disagreement: {infra}")
+                for o in pending:
+                    o.status, o.reason, o.infrastructure = UNSUPPORTED, reason, True
+                report.functions = [bridge.FunctionStatus(f, bridge.FAILED, reason,
+                                                          warnings=func_warnings.get(f, []))
+                                    for f in functions if f not in failures]
+                _attach(report)
+                return report
             if disagreements:
                 report.disagreements = disagreements
                 reason = ("ProofCI's model of this code disagrees with Node, so a proof about it would mean "
@@ -381,7 +400,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
                 differ = set(detail.get("differ", []))
                 report.functions = [bridge.FunctionStatus(
                     f, bridge.FAILED, reason if f in differ or not differ else
-                    "not checked: the model of another function disagrees with Node, which blocks the whole check")
+                    "not checked: the model of another function disagrees with Node, which blocks the whole check",
+                    warnings=func_warnings.get(f, []))
                     for f in functions if f not in failures]
                 _attach(report)
                 return report
@@ -390,6 +410,8 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             t0 = time.monotonic()
             report.functions = _bridge(report, extraction, active, work, [f for f in functions if f not in failures],
                                        bridge_timeout, bridge_budget)
+            for status in report.functions:
+                status.warnings = func_warnings.get(status.function, [])
             pending = [o for o in pending if o.status == ERROR]
             report.timings["bridge"] = round(time.monotonic() - t0, 1)
 
@@ -465,6 +487,14 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             if item.get("post_ignores_result"):
                 o.warnings.append(f"the postcondition of `{o.theorem}` does not depend on the result, "
                                   "so it only restates facts about the inputs")
+            if item.get("example_only"):
+                o.scope = "example"
+        for status in report.functions:
+            per_function = [o for o in report.outcomes if o.function == status.function]
+            if per_function and all(o.scope == "example" for o in per_function):
+                status.warnings.append(
+                    f"every guarantee for `{status.function.split('::')[-1]}` checks one fixed input "
+                    "only; none covers the general case")
 
 
         # 3b. Hypothesis witnesses (TypeScript): the comparison with Node
@@ -476,21 +506,21 @@ def check(base_checkout: Path, head_checkout: Path, policy="base", work_dir=None
             checks = [(o.theorem, witness[o.function][:60]) for o in pending if witness.get(o.function)]
             if checks:
                 t0 = time.monotonic()
-                verdicts = lean.vacuity(ws, checks)
+                verdicts, vacuity_errors = lean.vacuity(ws, checks)
                 report.timings["vacuity"] = round(time.monotonic() - t0, 1)
-                if verdicts is None:
-                    report.notes.append("the hypothesis-witness check could not run")
-                else:
-                    for o in pending:
-                        results = verdicts.get(o.theorem, [])
-                        if (results and not any(v["result"] == "satisfied" for v in results)
-                                and (failed := [v for v in results if v["result"] == "unsatisfied"])):
-                            undecided = len(results) - len(failed)
-                            o.strength.append(
-                                f"none of the {len(results)} generated inputs satisfies the hypotheses of "
-                                f"`{o.theorem}` ({len(failed)} fail{'' if not undecided else f', {undecided} could not be decided'}; "
-                                f"e.g. {failed[0].get('hypothesis', '?')} fails); if no input can satisfy them "
-                                "the guarantee is vacuous — relax or remove the hypothesis")
+                for theorem in sorted(vacuity_errors):
+                    report.notes.append(f"the hypothesis-witness check could not run for `{theorem}`: "
+                                        f"{vacuity_errors[theorem]}")
+                for o in pending:
+                    results = verdicts.get(o.theorem, [])
+                    if (results and not any(v["result"] == "satisfied" for v in results)
+                            and (failed := [v for v in results if v["result"] == "unsatisfied"])):
+                        undecided = len(results) - len(failed)
+                        o.strength.append(
+                            f"none of the {len(results)} generated inputs satisfies the hypotheses of "
+                            f"`{o.theorem}` ({len(failed)} fail{'' if not undecided else f', {undecided} could not be decided'}; "
+                            f"e.g. {failed[0].get('hypothesis', '?')} fails); if no input can satisfy them "
+                            "the guarantee is vacuous — relax or remove the hypothesis")
 
         # 4. Judge the proofs. `ws` has only built trusted code; proof code
         # only ever runs in disposable copies of it.
@@ -676,6 +706,25 @@ def _attach(report):
     for o in report.outcomes:
         if o.function in by_function:
             o.bridge = by_function[o.function].status
+
+
+def _function_warnings(head_checkout, package_rel, extraction, functions, failures):
+    """Per-function trust notes a human should see next to the bridge status:
+    an export nothing else in the package imports or calls (a proof about a
+    copy covers dead code), and a non-exported target — Node generated no
+    inputs for it, so the strength checks could not exercise it. Conservative:
+    the scanner only warns on certainty, so a missing entry means unknown."""
+    live = [f for f in functions if f not in failures]
+    warned = {f: [] for f in live}
+    for f in typescript.uncalled(head_checkout, package_rel, live):
+        warned[f].append(f"nothing in the repository calls `{f.rsplit('::', 1)[-1]}`; "
+                         "these guarantees don't cover shipped code")
+    for f in live:
+        if not (extraction.signatures or {}).get(f, {}).get("exported", True):
+            warned[f].append(f"`{f.rsplit('::', 1)[-1]}` is not exported, so the comparison with "
+                             "Node generated no inputs for it — the strength checks could not "
+                             "exercise it")
+    return {f: w for f, w in warned.items() if w}
 
 
 def _bridge(report, extraction, active, work, functions, timeout, budget):
