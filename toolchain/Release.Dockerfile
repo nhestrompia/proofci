@@ -4,6 +4,7 @@
 ARG BASE=proofci-toolchain:base
 FROM ${BASE}
 COPY proofci /opt/proofci/proofci
+COPY action/seccomp.json /opt/proofci/action/seccomp.json
 COPY typescript/translate.mjs typescript/probe.mjs typescript/differential.mjs typescript/paths.mjs typescript/hazard.mjs typescript/narrow.mjs typescript/hints.mjs typescript/regex.mjs typescript/lean-tokens.json /opt/proofci/typescript/
 
 # The TypeScript bridge: Core (the model of JavaScript), the number model and the tactics that tie a

@@ -24,20 +24,42 @@ from pathlib import Path
 from . import check as check_mod
 from . import manifest
 
-SECCOMP = Path(__file__).resolve().parent.parent / "action" / "seccomp.json"
+SECCOMP_CANDIDATES = (
+    Path(__file__).resolve().parent.parent / "action" / "seccomp.json",
+    Path(__file__).resolve().parent / "seccomp.json",
+    Path("/opt/proofci/action/seccomp.json"),
+)
+
+
+def seccomp():
+    """The seccomp profile, wherever the package was laid down: beside the
+    action in the checkout, beside the package, or at the toolchain image's
+    install location. The check is not the same check without it."""
+    for path in SECCOMP_CANDIDATES:
+        if path.is_file():
+            return path
+    raise check_mod.ConfigError("seccomp.json not found next to the proofci package or the action")
+
+
+# Environment the check honours; `local` passes only these through to the
+# container, mirroring the allowlist in action/run.py's bridge_limits.
+PASSTHROUGH_ENV = ("PROOFCI_BRIDGE_TIMEOUT", "PROOFCI_BRIDGE_BUDGET", "PROOFCI_MUTATION_FULL",
+                   "PROOFCI_MUTANTS", "PROOFCI_MUTATION_BUDGET", "PROOFCI_PARALLEL_JUDGES")
+
+
+def env_opts():
+    return [option for name in PASSTHROUGH_ENV if os.environ.get(name)
+            for option in ("-e", f"{name}={os.environ[name]}")]
 
 
 def sandbox_opts():
     """The container restrictions from action/run.py. The seccomp profile is
     shipped with the action; a bare `proofci` package doesn't have it, and
     running the check with no syscall filter isn't the same check."""
-    if not SECCOMP.is_file():
-        raise check_mod.ConfigError(f"{SECCOMP.name} not found next to the action; "
-                                    "run `proofci local` from the proofci checkout")
     return [
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--read-only", "--tmpfs", "/tmp:exec,mode=1777",
-        "--security-opt", f"seccomp={SECCOMP}",
+        "--security-opt", f"seccomp={seccomp()}",
         "--security-opt", "apparmor=unconfined", "--security-opt", "systempaths=unconfined",
     ]
 
@@ -150,7 +172,7 @@ def run(repo: Path, base_ref, policy, image, scan=False, fetch_deps=False, err=l
                 err(f"proofci: the dependency install failed (exit {done.returncode})")
                 return 2
         done = subprocess.run(_docker(image, mounts, ["--network", "none", "--cpus", str(os.cpu_count() or 2),
-                                                    "--memory", "8g", "--pids-limit", "4096"], inner),
+                                                    "--memory", "8g", "--pids-limit", "4096", *env_opts()], inner),
                               capture_output=True, text=True)
         if scan:
             # The in-image command's stdout is the JSON document itself.

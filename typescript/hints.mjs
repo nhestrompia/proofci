@@ -373,3 +373,60 @@ export function hintFor(message, context = {}) {
 export function withHint(message, context) {
   return message.includes(`\n${PREFIX}`) ? message : `${message}\n${PREFIX}${hintFor(message, context)}`;
 }
+
+// A stable, machine-readable code for a refusal reason: `proofci scan` reports
+// it next to the reason and hint so adopters can count missing features across
+// repositories. Codes name the construct, never the user's identifier, so the
+// same unsupported feature codes the same way in every repo. Treat them as an
+// interface: add new codes, never rename or repurpose existing ones.
+//
+//   type-<name>          an unsupported type (`type-any`, `type-date`,
+//                        `type-promise`, `type-function`, `type-union`,
+//                        `type-tuple`, `type-record`, a library type's name)
+//   compile-error        TypeScript itself rejects the file
+//   outside-package      code the translated package does not own
+//   missing-types        parameter or return types not written out
+//   null-check           a null/undefined test the translator can't read
+//   optional-chain       `?.` or `??` chains
+//   <construct>          a `` `X` is not supported yet`` refusal, X in kebab
+//                        case (`typeof-expression`, `for-of`, `async`)
+//   other                anything else; the reason text carries the detail
+export function refusalCode(reason) {
+  const text = reason.split("\n")[0].replace(/^\S*:\d+: /, "");
+  const type = /^the type `([^`]+)` is not supported yet/s.exec(text)?.[1];
+  if (type) {
+    const head = type.trim();
+    if (head.includes("=>")) return "type-function";
+    if (head.includes(" | ")) return "type-union";
+    if (head.startsWith("[")) return "type-tuple";
+    return "type-" + slug(head.replace(/<.*$/s, ""));
+  }
+  if (/TypeScript error:/.test(text)) return "compile-error";
+  if (/outside the translated package/.test(text)) return "outside-package";
+  if (/must write out their types|add .*:(?: parameter|return) types/.test(text)) return "missing-types";
+  if (/null check/.test(text)) return "null-check";
+  if (/\?\.|\?\?/.test(text)) return "optional-chain";
+  // Reasons that name a variable or member map to stable codes — renaming the
+  // parameter must not move the same refusal into another bucket.
+  if (/is changed in place/.test(text)) return "in-place-mutation";
+  if (/is used from both safe-integer and double code/.test(text)) return "mixed-number-modes";
+  if (/is not assigned on every path/.test(text)) return "unassigned-on-path";
+  if (/returns nothing/.test(text)) return "returns-nothing";
+  const construct = /^`(\.?\w+)` (?:is not supported yet|is only supported|returns nothing|cannot|can't|is changed|is used)/.exec(text)?.[1];
+  if (construct) return slug(construct.replace(/^\./, "method-"));
+  if (/not supported yet/.test(text)) {
+    const code = "unsupported-" + slug(text.replace(/`[^`]*`/g, "_").replace(/\d+/g, "N")
+      .replace(/-is-not-supported-yet$/, "")).slice(0, 60).replace(/-+$/g, "");
+    return code === "unsupported-" ? "other" : code;
+  }
+  return "other";
+}
+
+function slug(text) {
+  return text
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^type-of-/, "typeof-");
+}

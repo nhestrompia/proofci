@@ -442,9 +442,23 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def structured_errors(text):
-    """Lean errors in `text` as {file, line, column, message} entries."""
-    return [{"file": f, "line": int(l), "column": int(c), "message": m.strip()}
-            for f, l, c, m in LEAN_ERROR.findall(ANSI.sub("", text))]
+    """Lean errors in `text` as {file, line, column, message} entries. A
+    message keeps its continuation lines (Lean indents the goal and the
+    details under the error line), the way `dev --show` prints them."""
+    out, current = [], None
+    for line in ANSI.sub("", text).splitlines():
+        match = LEAN_ERROR.match(line)
+        if match:
+            f, l, c, m = match.groups()
+            current = {"file": f, "line": int(l), "column": int(c), "message": m}
+            out.append(current)
+        elif current is not None and (line.startswith((" ", "\t")) or not line.strip()):
+            current["message"] += "\n" + line
+        else:
+            current = None
+    for entry in out:
+        entry["message"] = entry["message"].rstrip()
+    return out
 
 
 def _blocks(lines):

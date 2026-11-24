@@ -97,6 +97,8 @@ def _verdict(report):
     required = [g for g in report["guarantees"] if g["required"]]
     if report["passed"]:
         verdict = f"**Result: passed** — all {len(required)} required guarantees verified."
+        if report.get("first_adoption"):
+            verdict += " (First adoption approved.)"
         stale = report.get("stale_accepts") or []
         if stale:
             verdict += (" `accept_downgrades` lists " + ", ".join(f"`{f}`" for f in stale)
@@ -104,7 +106,9 @@ def _verdict(report):
         return verdict
     reasons = []
     if report["policy_changes"] and report["policy_source"] != "head":
-        reasons.append("the policy change waits for maintainer approval")
+        reasons.append("this is a first adoption — the whole contract needs maintainer approval"
+                       if report.get("first_adoption")
+                       else "the policy change waits for maintainer approval")
     if report.get("invalid_contract"):
         reasons.append("the approved contract is missing `/--` doc comments on new guarantees")
     bad = sum(g["status"] != "verified" for g in required)
@@ -129,13 +133,22 @@ def _verdict(report):
 
 def markdown(report):
     lines = ["## ProofCI", "", _verdict(report), ""]
+    if report.get("first_adoption"):
+        approved = report["policy_source"] == "head"
+        lines.append("### First adoption " + ("(approved)" if approved else "(needs maintainer approval)"))
+        lines.append("")
+        lines.append("The base branch has no `proofci.yaml`: this pull request introduces ProofCI. Every "
+                     "target and guarantee was checked as new — the contract needs a /-- doc comment on "
+                     "each and all of them were tested against planted defects. Approving this pull "
+                     "request accepts the whole contract, after which re-running the job uses it.")
+        lines.append("")
     if report["policy_changes"]:
         approved = report["policy_source"] == "head"
         lines.append("### Policy changes " + ("(approved)" if approved else "(need maintainer approval)"))
         lines.append("")
         lines += [f"- {change}" for change in report["policy_changes"]]
         lines.append("")
-        if not approved:
+        if not approved and not report.get("first_adoption"):
             lines.append("Guarantees below were checked against the protected policy of the base branch.")
             lines.append("")
     lines += ["| | Guarantee | Function | Theorem | Required | Status |",
