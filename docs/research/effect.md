@@ -29,6 +29,23 @@ functions/consts were classified:
 methods of exported `Context.Service` classes are not counted, so the true
 number of Effect entry points is larger.)
 
+Breaking the 508 down by which phase of the plan below covers it (a function
+"needs services" when it yields a service tag or calls `Effect.service`/
+`provide*`; "needs promises" when it calls `tryPromise`/`promise`):
+
+| covered after… | exports | share of 1,285 |
+|---|---|---|
+| phase 1 (`R = never`, no `tryPromise`) | 451 | 35% |
+| + phase 2 (services) | 484 | 38% |
+| + phase 3 (`tryPromise`/`promise`) | 508 | 40% |
+
+`Effect.fn("n")(gen, combinator…)` — the v4 idiom where combinators ride as
+extra arguments to the curried call — appears **0** times in t3code: the
+codebase passes combinators by piping the result instead (`Effect.fn(...)`
+`(gen).pipe(Effect.catchTag…)`, or the `.pipe` chain inside `make`/`fromKey`).
+The subset already covers that shape via `.pipe`; the curried-combinator form
+is a parse-time equivalence when it shows up.
+
 Construct frequency (call sites):
 
 | construct | uses | notes |
@@ -58,6 +75,24 @@ Construct frequency (call sites):
 | `Effect.log*`/`annotate*`/`withSpan` | ~1,100 | tracing/logging — can be unmodelled |
 | `Schema.decode*`/`encode*` | ~900 | boundary validation |
 | `Effect.runPromise`/`runFork`/`runSync`/`exit`/`scoped` | ~120 | at the app edge, not inside translated code |
+
+**Parameter and return types.** `typeof X.Type`/`X.Encoded` shows up ~2,650
+times in the corpus, mostly in Schema-class and type-alias declarations.
+Resolving the parameter/return annotations of every exported function through
+the TypeScript checker (`docs/research/schema-types-survey.mjs`, effect
+4.1.5's own `dist` types symlinked as `node_modules/effect`): of 16,378
+annotation sites, 52 resolve to a Schema-derived type (a class extending
+`Schema.*`, or an alias of `typeof X.Type`/`Schema.*`), and they resolve to
+**structural records ~65%** (readonly record types with optional fields),
+**Schema.Class / TaggedError instances ~23%**, **literal unions**, and a small
+tail of `Schema.Schema<A,I,R>` values and unresolved generics (~12%). So
+Schema-derived data lands on shapes the translator already handles — records,
+literal unions, optional fields — and translating Schema-*typed values* needs
+none of phase 5; only `decode`/`encode`/`is` *calls* depend on it. Brands
+(`Schema.brand`, 19 sites in the tree) are the notable non-structural case:
+a branded `string` is an intersection, either a newtype in the Lean view or
+refused. The 52-site figure is the annotations themselves; the alias form
+means the *reach* of Schema types is wider than the sites suggest.
 
 ## 2. The smallest subset that fits the existing model
 
@@ -122,7 +157,7 @@ effects:
   - id: secretsCreate
     method: ServerSecretStore#create
     signature: "(name: string, value: Uint8Array): Effect<void, SecretStoreError>"
-    kind: read
+    kind: write
 ```
 
 `yield* ServerConfig` asks the oracle for the service record;
@@ -132,6 +167,39 @@ Effect's success type and whose rejection is the declared `E`. `Layer.*`,
 translated — the world an `Eff` proof quantifies over is exactly "every way the
 layers could be built". That is the same story `effects:` already tells, and the
 policy stays protected: a PR can't add a service or weaken a signature itself.
+
+### Guarantees about service calls
+
+The owner's reason for wanting Effect is here: properties of *what a handler
+does through its services*, proved without modelling the services. `Eff`'s
+`hist : W.Hist` already records every oracle call with its arguments, so a
+service guarantee is a predicate on `hist'` — on *which* ops appear, in which
+order, with which arguments:
+
+- **Ordering** — "`secretsCreate` is only called after the proof verified":
+  in `checkRequestDpopProof`'s `consume`, `digest.digest` precedes
+  `secretStore.create`, and `consume` itself is only reachable when
+  `verifyDpopProof` returned `ok`:
+  `∀ i j, hist'[i] = call digest.digest … ∧ hist'[j] = call secretStore.create … → i < j`,
+  and `hist'` contains a `create` only on paths where verification succeeded
+  (a `failed` outcome ⇒ no `create` in `hist'`).
+- **Argument binding / tenant isolation** — "every store call is made with the
+  caller's `userId`": `∀ e ∈ hist', e.op = call store.* … → e.args.userId =
+  req.userId`. Applies to any handler threading `userId` through its service
+  calls (t3code's auth/session handlers, e.g. `CliTokenManager.persist`).
+- **Absent calls** — "an unauthenticated request makes no write calls":
+  `¬authenticated req → ∀ e ∈ hist', policy.kind(e.op) ≠ .write`. This one
+  needs the policy to declare a `kind:` per `method:` entry (`read`/`write`),
+  as today's `effects:` entries optionally do — without it, "no writes" is
+  unstateable.
+
+Two things keep these honest. First, `hist'` only records *declared* ops: a
+service method the policy doesn't list is invisible to the guarantee, so the
+completeness check lives in the policy review (a PR adding a `method:` entry
+is itself a policy change). Second, "called only after X" composes with the
+sequencing assumption (3 above): other fibers' calls are not in this `hist'`,
+so the predicate is about *this function's* calls — which is what a reviewer
+of the function wants.
 
 ### Running it under Node (the comparison)
 
@@ -161,9 +229,15 @@ limits loops have in `async` today (no bridge yet ⇒ "tested, not proved").
    over `flatMap`; `fn` adds a span we erase).
 2. Yieldables: an `Effect`, an `Option`/`Result`/`Either`, or a `TaggedError`
    instance may be yielded; the last fails. Anything else is refused.
-3. Effect's fiber runtime executes the program's steps sequentially — the same
-   standing assumption as `async`, plus: nothing else runs between two `yield*`s
-   of one fiber (true of a single fiber's happy path).
+3. Interleaving: other fibers *can* run between two `yield*`s of one fiber —
+   that is fine for this model, not because nothing runs between them, but
+   because translated code cannot observe it. The refusals (`Ref`, module
+   state, `Deferred`/`Queue`) make every shared-mutable read go through a
+   service — an oracle call. So between two `yield*`s the world may change,
+   which is exactly what the oracle models: the next service call may be
+   answered differently, and the proof quantifies over *every* oracle.
+   Sequentiality assumed is only that the fiber's own `gen` steps run in
+   program order (as `async`'s `await` does today).
 4. `catchTag`/`catchIf` dispatch on `_tag`/predicate as declared; `_tag` strings
    are stable identifiers (they're the second argument to `Schema.TaggedError`).
 5. Erased `log*`/`annotate*`/`withSpan` don't change the result (they can't —
@@ -194,19 +268,27 @@ would care about, in the `Js.Eff.Spec`/`ok (.failed …)` vocabulary.
 
 1. **`statMediaFile`** (`apps/server/src/assets/MediaFile.ts`) —
    `Effect.fn` wrapping one `Effect.tryPromise` whose `catch` builds a
-   `MediaFileStatError`.
+   `MediaFileStatError`. The success case matters too: the value is the stat
+   the file handle answered.
 
    ```lean
-   theorem statMediaFile_fails_tagged :
+   theorem statMediaFile_result :
      ∀ (o : Proofci.Effects.world.Oracle) (hist : Proofci.Effects.world.Hist),
-       Js.Eff.Spec (statMediaFile path file o hist) o hist
+       Js.Eff.Spec (statMediaFile filePath file o hist) o hist
          (fun r _ => match r with
-           | .failed e => e._tag = "MediaFileStatError" ∧ e.path = path
-           | _ => True)
+           | .fulfilled st => st = fileStatOf file        -- the stat the handle answered
+           | .failed e     => e._tag = "MediaFileStatError" ∧ e.path = filePath
+           | _             => True)                       -- defect: not covered
    ```
 
    *"A failure is always the tagged stat error for this path — never a bare
-   exception leaking to the caller."*
+   exception leaking to the caller — and success is the handle's own stat."*
+   The spec quantifies over every oracle, so an oracle may answer the `stat`
+   call with success: the `.fulfilled` clause then *must* hold, which is what
+   rules out vacuity. Degenerate check: an always-fail function fails the
+   fulfilled case (the oracle can answer a stat), a constant stat fails
+   `st = fileStatOf file`, an identity/passthrough fails the failure clause —
+   only the real tryPromise passes.
 
 2. **`checkRequestDpopProof`** (`apps/server/src/auth/dpop.ts`) — `Effect.fn`
    gen: yields `DateTime.now`, `ServerSecretStore`, `Digest` services; every
@@ -224,41 +306,54 @@ would care about, in the `Js.Eff.Spec`/`ok (.failed …)` vocabulary.
 
    *"With no DPoP proof the function can never return success; and its only
    failure mode is the credential error."* A second guarantee: on success, the
-   `consume` effect's history records a `secretsCreate` for the replay key —
-   "the jti is recorded exactly once".
+   `consume` effect's history records `digest.digest` before
+   `secretStore.create` — "the replay key is computed, then the jti is
+   recorded exactly once" (see *Guarantees about service calls*). Degenerate
+   check: identity/constant-fail fails the fulfilled clause when the oracle
+   supplies a service record and `proofHeaderPresent req` is fixable by input;
+   always-succeed fails whenever no proof header exists.
 
-3. **`PayloadSigner.verify`** (`apps/server/src/auth/PayloadSigner.ts`) — a
-   `pipe` of `Base64Url.decode` → `flatMap mac.verify` → `orDie`-free: returns
-   `Effect<boolean>` and answers `succeed false` when the signature doesn't
-   decode.
+3. **`PayloadSigner`** (`apps/server/src/auth/PayloadSigner.ts`) — `fromSecret`
+   yields `Mac.Mac` and `Mac.key` and returns a `PayloadSigner` record; its
+   `verify` answers `succeed false` when the signature doesn't decode, so a
+   malformed signature is data, not an error.
 
    ```lean
    theorem verify_malformed_signature_is_false_not_error :
-     ∀ (o hist) (hbad : malformed signature),
-       Js.Eff.Spec (fromSecret secret o hist) o hist
-         (fun r _ => match r with
-           | .fulfilled signer => ∀ r₂ h₂, (signer.verify payload signature) o h₂ = ok r₂ →
-               r₂.1 = .fulfilled false ∨ r₂.1 = .failed _
-           | _ => False)
+     ∀ (o : Proofci.Effects.world.Oracle) (hist : Proofci.Effects.world.Hist)
+       (hbad : Base64Url.decode signature = .failure),
+       (verify payload signature) o hist = ok (.fulfilled false, hist)
    ```
 
    *"An unparseable signature is `false`, never a rejection the caller has to
-   catch."* (The record-of-functions return needs handles for the closure —
-   phase 2; the point stands: the subset covers `fromSecret` itself.)
+   catch — and it makes no service calls at all."* (No oracle call is needed
+   on that path, so `hist` comes back unchanged.) Degenerate check:
+   `verify := λ _ _ => succeed true` fails the result; `always fail` fails
+   `.fulfilled`; the identity/passthrough fails `false`. The record-of-functions
+   return from `fromSecret` needs service handles — phase 2; the subset covers
+   the `verify` path itself.
 
 4. **`managedPolicyPath` + `decodeDocument`** (`packages/shared/src/managedPolicyFile.ts`)
    — pure path selection + `Schema.decodeUnknownExit` with `onExcessProperty:
-   "error"`. The decode is the boundary the proof talks about:
+   "error"`. The decode is the boundary the proof talks about, and it needs
+   two directions to say anything:
 
    ```lean
-   theorem decodePolicy_rejects_unknown_keys :
-     ∀ raw, decodeDocumentJsonExit raw = ok exit →
-       (∃ d, exit = .succeed d) ∨ (∃ e, exit = .failed e)
+   theorem decodePolicy_rejects_excess_keys :
+     ∀ raw, (∃ k, k ∈ rawKeys raw ∧ k ∉ schemaKeys PolicyDocument) →
+       decodeDocumentJsonExit raw = ok (.failed _, hist)
+
+   theorem decodePolicy_accepts_only_schema_keys :
+     ∀ raw d, decodeDocumentJsonExit raw = ok (.fulfilled d, hist) →
+       ∀ k ∈ d.keys, k ∈ schemaKeys PolicyDocument
    ```
 
-   *"Unknown keys are never silently dropped — every accepted document
-   round-trips through the schema."* (Schema decode enters as a `try`-like
-   op or a trusted builtin — see phase plan.)
+   *"A document carrying a key outside the schema always fails to decode, and
+   every accepted document has only schema keys."* The first fails for an
+   always-succeed decoder; the second for an identity decoder that passes
+   unknown keys through; together they fail for `λ _ => fail` and
+   `λ _ => succeed default` too. (Schema decode enters as a `try`-like op or a
+   trusted builtin — see phase plan.)
 
 5. **`issueAttachmentUploadUrl`** (`apps/server/src/assets/AttachmentUpload.ts`)
    — **refused, deliberately**: it reads and writes the module-level
@@ -267,12 +362,16 @@ would care about, in the `Js.Eff.Spec`/`ok (.failed …)` vocabulary.
    the `ServerConfig`/`AttachmentStore` service so the oracle owns it. Worth
    keeping in the doc because it's exactly the kind of function an agent
    writes: mostly clean Effect code with one shared-state escape hatch.
+   Degenerate check (why the refusal is a feature): a rewrite that dropped the
+   map entirely would pass syntax coverage but change behaviour — the hazard
+   refusal is what makes an agent move the state into a service instead of
+   deleting it.
 
 ## 4. Phases
 
 | phase | scope | rough effort |
 |---|---|---|
-| 1. Syntax surface | `gen`/`yield*`/`fn`/`fnUntraced`/`pipe`, `succeed`/`fail`/`sync`/`try`, `map`/`flatMap`/`andThen`/`tap`/`as`/`zip*`, `TaggedError` declarations, `catch*`/`orElse*`/`mapError`, `all`/`forEach` (sequential), `orDie`/`die`; `R = never` (no services). New `Settled.failed` case in `ProofciAsync.lean`. | ~1.5 wk |
+| 1. Syntax surface | `gen`/`yield*`/`fn`/`fnUntraced`/`pipe` (incl. `fn`'s curried combinator args, unused in t3code but one parse rule), `succeed`/`fail`/`sync`/`try`, `map`/`flatMap`/`andThen`/`tap`/`as`/`zip*`, `TaggedError` declarations, `catch*`/`orElse*`/`mapError`, `all`/`forEach` (sequential), `orDie`/`die`; `R = never` (no services). New `Settled.failed` case in `ProofciAsync.lean`. | ~1.5 wk |
 | 2. Services | `Context.Service`/`Context.Tag` policy entries (`service:`/`method:`), `yield* Tag`, `service`/`provideService`; service records as handles. | ~1 wk |
 | 3. Async inside Effect | `tryPromise`/`promise`/`try` mapped onto the existing oracle+`narrowed`; Node comparison via `runPromiseExit` + `Layer.succeed` stubs; `asynccheck`-style trace tests + mutants. | ~1 wk |
 | 4. Bridge | `AStmt` `failTagged`/`catchTag`, `ASim` rules for the gen-desugared bind chain; loops keep the `async` status quo. | ~1 wk |

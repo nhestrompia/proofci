@@ -48,6 +48,16 @@ const moduleUse = new Map();      // local name -> { module, imported }  (per fi
 const construct = new Map();      // high-level constructs
 const files = { total: 0, importingEffect: 0 };
 const fnStats = { exportedTotal: 0, exportedEffect: 0, exportedPure: 0, exportedEffectCoreOnly: 0, effectFnsDetail: [] };
+// Per-phase split of the core-only exports (see the doc's phase plan):
+// phase 1 covers R = never (no service access, no promise bridge);
+// phase 2 adds `yield* ServiceTag` / `Effect.service`; phase 3 adds
+// `Effect.tryPromise`/`promise`. `needsService` is syntactic: a service
+// access call, or `yield* <CapitalizedIdentifier>` (the v4 Context.Service
+// tag idiom — a yielded capitalized identifier is a tag, never an Effect API).
+const phase = { p1RN: 0, p2WithServices: 0, p3WithPromises: 0 };
+// `Effect.fn("n")(function*…, combinator…)` — the curried second call carries
+// combinators (catchTag/withSpan/…) besides the generator body.
+let fnWithPipeArgs = 0;
 
 // The "core subset" a first Effect translation could cover: sequential composition
 // (gen/yield*, fn wrappers, map/flatMap/andThen/tap), construction (succeed/fail/
@@ -133,6 +143,10 @@ function scanCalls(n, qualify) {
   const calls = new Set();
   const refs = new Set();
   const scan = (m) => {
+    if (ts.isYieldExpression(m) && m.expression && ts.isIdentifier(m.expression)
+        && /^[A-Z]/.test(m.expression.text)) {
+      refs.add("effect.serviceTagYield");
+    }
     if (ts.isCallExpression(m)) {
       const path = propName(m.expression);
       const q = path && qualify(path);
@@ -186,7 +200,16 @@ function countExports(path, sf, bindings) {
       // and the function touches none of the runtime-state / concurrency modules.
       const BLOCKED = /^(Ref|Deferred|Queue|Semaphore|Stream|Scope|Schedule|Fiber|Cause|Exit|SubscriptionRef|PubSub|Layer|Atom|reactivity)\./;
       const blocked = [...refs].some(q => BLOCKED.test(q));
-      if (refApis.length && refApis.every(q => CORE.has(q)) && !blocked) fnStats.exportedEffectCoreOnly++;
+      if (refApis.length && refApis.every(q => CORE.has(q)) && !blocked) {
+        fnStats.exportedEffectCoreOnly++;
+        const usesService = refApis.some(q =>
+          /^(Effect\.(service|provideService|provide|provideContext))$/.test(q))
+          || refs.has("effect.serviceTagYield");
+        const usesPromise = callApis.some(q => q === "Effect.tryPromise" || q === "Effect.promise");
+        if (!usesService && !usesPromise) phase.p1RN++;
+        if (!usesPromise) phase.p2WithServices++;
+        phase.p3WithPromises++;
+      }
       fnStats.effectFnsDetail.push(label);
     } else {
       fnStats.exportedPure++;
@@ -270,6 +293,14 @@ function surveyFile(path, sf) {
       if (q) {
         bump(memberCounts, q, 1);
         usedByFile.add(q);
+        if (ts.isCallExpression(n.expression)) {
+          // `Effect.fn("n")(gen, combinator…)`: the curried outer call's
+          // callee is `Effect.fn("n")`; >1 argument means combinators ride
+          // along (catchTag/withSpan/…).
+          const innerPath = propName(n.expression.expression);
+          const iq = innerPath && qualify(innerPath);
+          if ((iq === "Effect.fn" || iq === "Effect.fnUntraced") && n.arguments.length > 1) fnWithPipeArgs++;
+        }
         if (q === "Effect.gen") {
           // count yield* inside the generator argument
           const g = n.arguments[0];
@@ -326,6 +357,8 @@ const out = {
   construct: Object.fromEntries([...construct].sort((a, b) => b[1] - a[1])),
   members: Object.fromEntries([...memberCounts].sort((a, b) => b[1] - a[1])),
   exportedFunctions: { total: fnStats.exportedTotal, effect: fnStats.exportedEffect, nonEffect: fnStats.exportedPure, effectCoreOnly: fnStats.exportedEffectCoreOnly },
+  phases: { phase1_noServices_noPromises: phase.p1RN, phase1_2_withServices: phase.p2WithServices, phase1_3_withPromises: phase.p3WithPromises },
+  effectFnWithPipeArgs: fnWithPipeArgs,
   effectFnsSample: fnStats.effectFnsDetail.slice(0, 400),
 };
 console.log(JSON.stringify(out, null, 1));
