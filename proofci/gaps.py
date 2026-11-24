@@ -18,11 +18,13 @@ def _read_entries(files):
     entries = []
     for path in files:
         try:
-            lines = path.read_text().splitlines()
+            text = path.read_text()
         except OSError as error:
             print(f"proofci: could not read {path}: {error.strerror}", file=sys.stderr)
             return None
-        for lineno, line in enumerate(lines, 1):
+        # Split on "\n" only: splitlines() also breaks on U+2028/U+2029, which a
+        # refusal message may contain inside a JSON string.
+        for lineno, line in enumerate(text.split("\n"), 1):
             if not line.strip():
                 continue
             try:
@@ -66,12 +68,15 @@ def run(files):
         if function:
             row["functions"].add(function)
 
+    def cell(text):
+        return str(text).replace("|", "\\|").replace("\n", " ")
+
     rows = sorted(ranked.items(), key=lambda item: (-item[1]["minutes"], -item[1]["count"], item[0]))
     print("| Construct | Hits | Unresolved | Minutes | Examples |")
     print("|---|---:|---:|---:|---|")
     for construct, row in rows:
         examples = ", ".join(sorted(row["functions"])[:3])
-        print(f"| {construct} | {row['count']} | {row['unresolved']} | {row['minutes']} | {examples} |")
+        print(f"| {cell(construct)} | {row['count']} | {row['unresolved']} | {row['minutes']} | {cell(examples)} |")
     missing = len(files) - len(existing)
     if missing:
         print(f"\n{missing} file(s) not found and skipped.", file=sys.stderr)

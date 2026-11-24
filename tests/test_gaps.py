@@ -44,6 +44,20 @@ class GapsTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("no gap logs", err.getvalue())
 
+    def test_pipes_and_unicode_separators(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gaps.jsonl"
+            path.write_text(
+                json.dumps({"function": "x.ts::f", "construct": "T | null",
+                            "refusal": "line one line two", "minutes": 4,
+                            "resolved": True}) + "\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = gaps.run([path])
+            self.assertEqual(code, 0)
+            row = next(l for l in out.getvalue().splitlines() if "T \\| null" in l)
+            self.assertEqual(row.count("|") - row.count("\\|"), 5)
+
     def test_bad_line_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "gaps.jsonl"
