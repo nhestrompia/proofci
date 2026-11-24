@@ -185,6 +185,34 @@ class DevJsonTests(unittest.TestCase):
                 status = dev.run(root, work, out=captured.append, as_json=True)
             self.assertEqual(json.loads(captured[-1])["unsupported"]["src/a.ts::broken"], first)
 
+    def test_export_view_never_clobbers_or_follows_links(self):
+        from proofci import dev, manifest
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            mf = manifest.parse((root / "proofci.yaml").read_bytes())
+            ws_root = root / "work" / "lean"
+            ws_root.mkdir(parents=True)
+            (ws_root / "Repo.lean").write_text("def Repo.ok := 1\n")
+            views = root / "proofci" / "views"
+            # A file ProofCI didn't write is left alone.
+            views.mkdir()
+            (views / "Repo.lean").write_text("-- hand-edited\n")
+            said = []
+            dev._export_view(root, mf, ws_root, "Repo", said.append)
+            self.assertEqual((views / "Repo.lean").read_text(), "-- hand-edited\n")
+            # And a symlink is never followed.
+            (views / "Repo.lean").unlink()
+            outside = root / "elsewhere.lean"
+            outside.write_text("-- precious\n")
+            (views / "Repo.lean").symlink_to(outside)
+            dev._export_view(root, mf, ws_root, "Repo", said.append)
+            self.assertEqual(outside.read_text(), "-- precious\n")
+            # A normal export writes the generated marker above the view.
+            (views / "Repo.lean").unlink()
+            dev._export_view(root, mf, ws_root, "Repo", said.append)
+            self.assertTrue((views / "Repo.lean").read_text().startswith(dev.VIEW_MARKER))
+
     def test_guarantee_entries_carry_claim_and_hypotheses(self):
         from proofci import dev
         with tempfile.TemporaryDirectory() as tmp:
