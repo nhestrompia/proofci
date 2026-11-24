@@ -71,3 +71,49 @@ export function f(): number { return s; }
   assert.match(reasons["missing.ts"], /neverDeclared.*not declared/);
   assert.match(reasons["shared.ts"], /writes `s`/);
 });
+
+test("compile keeps a helper imported from another target's file", () => {
+  const dir = project({
+    "b.ts": `export function helper(x: number): number { return x * 2; }
+class Boom { constructor() { throw new Error("x") } }
+const b = new Boom();
+export function other(): number { return 0; }
+`,
+    "a.ts": `import { helper } from "./b";
+export function target(x: number): number { return helper(x); }
+` });
+  const reasons = compile(dir, ["a.ts", "b.ts"], { "a.ts": { "./b": join(dir, "b.ts") } }, join(dir, "out"),
+    [], { "a.ts": ["target"], "b.ts": ["other"] });
+  assert.deepEqual(reasons, {});
+  const emitted = readFileSync(join(dir, "out/b.mjs"), "utf8");
+  assert.ok(emitted.includes("helper"), emitted);
+  assert.ok(!emitted.includes("Boom"), emitted);
+});
+
+test("compile keeps constants read in parameter defaults and outside callback scopes", () => {
+  const dir = project({
+    "c.ts": `const LIMIT = 5;
+export function f(n: number = LIMIT): number { return n; }
+`,
+    "d.ts": `const s = 9;
+export function g(cb: (s: number) => number): number { return cb(s); }
+` });
+  const reasons = compile(dir, ["c.ts", "d.ts"], {}, join(dir, "out"), [], { "c.ts": ["f"], "d.ts": ["g"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/c.mjs"), "utf8").includes("LIMIT"));
+  assert.ok(readFileSync(join(dir, "out/d.mjs"), "utf8").includes("const s = 9"));
+});
+
+test("a workspace path cannot collide with a same-suffix package path", () => {
+  const dir = project({
+    "pkg/x.ts": "export function t(): number { return 1; }\n",
+    "src/a.ts": "import { t } from '../pkg/x';\nexport function f(): number { return t(); }\n",
+  });
+  mkdirSync(join(root, "other/pkg"), { recursive: true });
+  writeFileSync(join(root, "other/pkg/x.ts"), "export const u = 1;\n");
+  const reasons = compile(dir, ["pkg/x.ts", "src/a.ts", "../other/pkg/x.ts"], {}, join(dir, "out"), [],
+    { "pkg/x.ts": ["t"], "src/a.ts": ["f"], "../other/pkg/x.ts": ["u"] });
+  assert.deepEqual(reasons, {});
+  assert.ok(readFileSync(join(dir, "out/pkg/x.mjs"), "utf8").includes("function t"));
+  assert.ok(readFileSync(join(dir, "out/__up/other/pkg/x.mjs"), "utf8").includes("const u"));
+});

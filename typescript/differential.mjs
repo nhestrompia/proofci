@@ -214,7 +214,8 @@ export default stub;
 // A file's emitted module path: `../other-pkg/x.ts` (a file a workspace package resolved
 // outside the package root) is normalized to a path inside `out`, or imports and stand-ins
 // would be written and referenced outside it.
-const module_ = file => file.replace(/\.tsx?$/, ".mjs").split("/").filter(part => part !== "..").join("/");
+const module_ = file => file.replace(/\.tsx?$/, ".mjs").split("/")
+  .filter(part => part !== "." && part !== "").map(part => part === ".." ? "__up" : part).join("/");
 
 // The names a top-level statement binds, so a run can keep only the ones its targets need.
 function boundNames(statement) {
@@ -243,7 +244,8 @@ function isReference(node) {
   if (!parent) return true;
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
   if ((ts.isPropertyAssignment(parent) || ts.isEnumMember(parent)) && parent.name === node) return false;
-  if (ts.isBindingElement(parent) || ts.isParameter(parent) || ts.isImportSpecifier(parent)) return false;
+  if (ts.isBindingElement(parent) || ts.isImportSpecifier(parent)) return false;
+  if (ts.isParameter(parent)) return parent.name !== node; // a default like `n = LIMIT` still reads it
   if ((ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isVariableDeclaration(parent)
     || ts.isFunctionExpression(parent) || ts.isClassExpression(parent)) && parent.name === node) return false;
   if ((ts.isMethodDeclaration(parent) || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)
@@ -278,8 +280,10 @@ function localBindings(root) {
 }
 
 // The module-level names a statement needs, and the module-level names it writes.
+const SCOPED = node => ts.isBlock(node) || ts.isFunctionLike(node) || ts.isCatchClause(node)
+  || ts.isForStatement(node) || ts.isForInOrOfStatement(node);
+
 function dependencies(statement) {
-  const bound = localBindings(statement);
   const needs = new Set(), writes = new Set();
   const lhs = node => {
     for (;;) {
@@ -287,7 +291,10 @@ function dependencies(statement) {
       return node;
     }
   };
-  const walk = node => {
+  const walk = (node, bound) => {
+    // A callback's parameter shadows a module name only inside the callback: bindings apply
+    // per scope, not to the whole statement.
+    if (SCOPED(node)) bound = new Set([...bound, ...localBindings(node)]);
     if (ts.isIdentifier(node) && isReference(node) && !bound.has(node.text)) {
       const p = node.parent;
       if ((ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.MinusEqualsToken,
@@ -298,9 +305,9 @@ function dependencies(statement) {
         needs.add(node.text);
       }
     }
-    ts.forEachChild(node, walk);
+    ts.forEachChild(node, child => walk(child, bound));
   };
-  walk(statement);
+  walk(statement, new Set());
   return { needs, writes };
 }
 
@@ -389,32 +396,75 @@ export function compile(root, files, imports, out, effects = [], needs = {}) {
   }
   let stubs = 0;
   const reasons = {};
-  for (const file of files) {
-    let js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
-    }).outputText;
-    // A project function listed as an effect is never run: its declaration is replaced.
-    for (const e of effects) {
-      const [where, fn] = e.call.split("::");
-      if (where !== file) continue;
-      const found = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
-      for (const statement of [...found.statements].reverse()) {
-        const declared = ts.isFunctionDeclaration(statement) ? statement.name?.text
-          : ts.isVariableStatement(statement) ? statement.declarationList.declarations.map(d => d.name.getText())[0] : undefined;
-        if (declared !== fn) continue;
-        js = `${js.slice(0, statement.getStart(found))}${asksWorld(fn, e)}${js.slice(statement.end)}`;
+  const transpiled = new Map();
+  const parsedOf = file => {
+    if (!transpiled.has(file)) {
+      let js = ts.transpileModule(readFileSync(join(root, file), "utf8"), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
+      }).outputText;
+      // A project function listed as an effect is never run: its declaration is replaced.
+      for (const e of effects) {
+        const [where, fn] = e.call.split("::");
+        if (where !== file) continue;
+        const found = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+        for (const statement of [...found.statements].reverse()) {
+          const declared = ts.isFunctionDeclaration(statement) ? statement.name?.text
+            : ts.isVariableStatement(statement) ? statement.declarationList.declarations.map(d => d.name.getText())[0] : undefined;
+          if (declared !== fn) continue;
+          js = `${js.slice(0, statement.getStart(found))}${asksWorld(fn, e)}${js.slice(statement.end)}`;
+        }
+      }
+      transpiled.set(file, js);
+    }
+    return ts.createSourceFile("out.mjs", transpiled.get(file), ts.ScriptTarget.ES2022, true);
+  };
+  // Seed each file's set from its own targets, then grow it by what kept statements in other
+  // files import from this one: a helper imported by a target elsewhere must not be dropped.
+  const wanted = new Map(Object.entries(needs).map(([f, names]) => [f, new Set(names)]));
+  const importNeeds = statement => {
+    // The names a kept `import`/`export ... from` reads from its resolved module.
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause) return { names: [], all: false };
+      if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) return { names: [], all: true };
+      const names = [];
+      if (clause.name) names.push("default");
+      clause.namedBindings?.elements.forEach(el => names.push((el.propertyName ?? el.name).text));
+      return { names, all: false };
+    }
+    if (!statement.exportClause) return { names: [], all: true }; // export *
+    return { names: statement.exportClause.elements.map(el => el.name.text), all: false };
+  };
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [file, want] of wanted) {
+      if (reasons[file]) continue;
+      const parsed = parsedOf(file);
+      const { keep, reason } = isolate([...parsed.statements], [...want]);
+      if (reason) { reasons[file] = reason; continue; }
+      for (const [i, statement] of parsed.statements.entries()) {
+        if (!keep[i] || !statement.moduleSpecifier) continue;
+        const resolved = imports[file]?.[statement.moduleSpecifier.text];
+        const target = resolved && relative(realRoot, resolved);
+        if (!target || !reached.has(target) || !wanted.has(target)) continue;
+        const { names, all } = importNeeds(statement);
+        const add = all ? [...exported.keys()].filter(n => exported.get(n) === target) : names;
+        for (const n of add) if (!wanted.get(target).has(n)) { wanted.get(target).add(n); grew = true; }
       }
     }
-    let parsed = ts.createSourceFile("out.mjs", js, ts.ScriptTarget.ES2022, true);
+  }
+  for (const file of files) {
+    let parsed = parsedOf(file);
+    let js = transpiled.get(file);
     // Emit only what this file's targets reach: a construct they don't need (a class the
     // runtime can't evaluate, one-off setup code) can't crash the run.
-    const wanted = needs[file] ?? [];
-    if (wanted.length) {
-      const { keep, reason } = isolate([...parsed.statements], wanted);
+    const wantedNames = [...(wanted.get(file) ?? [])];
+    if (wantedNames.length) {
+      const { keep, reason } = isolate([...parsed.statements], wantedNames);
       if (reason) { reasons[file] = reason; continue; }
       const kept = new Set();
       parsed.statements.forEach((s, i) => { if (keep[i]) boundNames(s).forEach(n => kept.add(n)); });
-      const needed = new Set(wanted);
+      const needed = new Set(wantedNames);
       // An export that names a dropped binding makes the module fail to load, so only exports
       // of kept names stay; `export *` hides its names and never stays.
       const exportNeeded = s => {
