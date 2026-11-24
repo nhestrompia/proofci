@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "Machine-readable table behind docs/skills/proofci. Each entry is a complete a.ts compiled by typescript/constructs.test.mjs: `supported` must translate AND emit `def a.f` in the generated Lean, `refused` must fail with a reason containing the entry's `reason` substring (so a typo or a different unsupported construct can't silently pass). `supported` means translates, not proves — entries with `bridge` often end STUCK in the generated faithfulness proof. Keep every construct the skill claims in sync with this file; leave out anything you can't test.",
+  "comment": "Machine-readable table behind docs/skills/proofci. Each entry is a complete a.ts compiled by typescript/constructs.test.mjs: `supported` must translate AND emit `def a.f` in the generated Lean, `refused` must fail with a reason containing the entry's `reason` substring and the stable `code` (refusalCode from typescript/hints.mjs — the value a gaps.jsonl `code` copies). `supported` means translates, not proves — entries with `bridge` often end STUCK in the generated faithfulness proof. Keep every construct the skill claims in sync with this file; leave out anything you can't test.",
   "supported": [
     {
       "construct": "arithmetic, comparisons, explicit types",
@@ -100,121 +100,141 @@
       "construct": "typeof type-guard",
       "workaround": "drop the typeof test or test for null/undefined directly (`x == null`); the declared type already says it",
       "source": "export function f(x: string | undefined): number { if (typeof x !== \"string\") return 0; return x.length; }",
-      "reason": "`TypeOfExpression` is not supported"
+      "reason": "`TypeOfExpression` is not supported",
+      "code": "typeof-expression"
     },
     {
       "construct": "a != null && b != null as one condition",
       "workaround": "test each value for null on its own first (`if (a === null) return ...; if (b === null) return ...`)",
       "source": "export function f(a: number | null, b: number | null): number { return a != null && b != null ? a + b : 0; }",
-      "reason": "null check is not supported"
+      "reason": "null check is not supported",
+      "code": "null-check"
     },
     {
       "construct": "`any` in a signature",
       "workaround": "write the real type",
       "source": "export function f(a: any): number { return 1; }",
-      "reason": "the type `any` is not supported"
+      "reason": "the type `any` is not supported",
+      "code": "type-any"
     },
     {
       "construct": "`unknown` in a signature",
       "workaround": "write the real type",
       "source": "export function f(a: unknown): number { return 1; }",
-      "reason": "the type `unknown` is not supported"
+      "reason": "the type `unknown` is not supported",
+      "code": "type-unknown"
     },
     {
       "construct": "Date parameter or field",
       "workaround": "split the function at the boundary: pass a `string`/`number` the pure core needs (e.g. call `.toISOString()` in a thin wrapper)",
       "source": "export function f(d: Date): number { return d.getTime(); }",
-      "reason": "the type `Date` is not supported"
+      "reason": "the type `Date` is not supported",
+      "code": "type-date"
     },
     {
       "construct": "enum type (e.g. a Prisma enum import)",
       "workaround": "replace the enum with a string-literal union (`type T = \"a\" | \"b\"`) and compare with the strings",
       "source": "enum Color { Red, Blue } export function f(c: Color): number { return c === Color.Red ? 1 : 0; }",
-      "reason": "module-level `let` or `var`"
+      "reason": "module-level `let` or `var`",
+      "code": "other"
     },
     {
       "construct": "missing parameter type (implicit `any`)",
       "workaround": "write the parameter's type; annotate the return type too — the manifest requires written types on every function a guarantee reaches",
       "source": "export function f(a): number { return a; }",
-      "reason": "implicitly has an 'any' type"
+      "reason": "implicitly has an 'any' type",
+      "code": "compile-error"
     },
     {
       "construct": "optional indexing `?.[key]`",
       "workaround": "guard with `!== undefined` then index plainly (`v !== undefined ? v[key] : ...`)",
       "source": "export function f(r: Record<string, number> | undefined, k: string): number { return r?.[k] ?? 0; }",
-      "reason": "`[]` is only supported on arrays"
+      "reason": "`[]` is only supported on arrays",
+      "code": "other"
     },
     {
       "construct": "`in` operator on an interface",
       "workaround": "read the field and compare with `undefined` (`x.field !== undefined`) when the field is only set when defined",
       "source": "interface Q { tag?: string } export function f(q: Q): number { return \"tag\" in q ? 1 : 0; }",
-      "reason": "`in` is only supported on records"
+      "reason": "`in` is only supported on records",
+      "code": "in"
     },
     {
       "construct": "in-place mutation of a parameter or a value another name can see",
       "workaround": "change a copy (`const next = [...xs]` or `{ ...obj }`) and return it",
       "source": "export function f(xs: number[]): number[] { xs.push(1); return xs; }",
-      "reason": "changed in place"
+      "reason": "changed in place",
+      "code": "in-place-mutation"
     },
     {
       "construct": "a literal-union member that is not a Lean name (`\"NOT IN\"`)",
       "workaround": "rename the member to a Lean-safe ASCII name (letters, digits, `_`)",
       "source": "type Op = \"IN\" | \"NOT IN\"; export function f(o: Op): number { return o === \"IN\" ? 1 : 0; }",
-      "reason": "has no Lean spelling"
+      "reason": "has no Lean spelling",
+      "code": "other"
     },
     {
       "construct": "class or library object parameter",
       "workaround": "pass the plain fields the function needs in an interface instead of the instance",
       "source": "class Db { get(): number { return 1; } } export function f(db: Db): number { return db.get(); }",
-      "reason": "is not supported yet"
+      "reason": "is not supported yet",
+      "code": "type-db"
     },
     {
       "construct": "rest parameters",
       "workaround": "take an array parameter instead",
       "source": "export function f(...xs: number[]): number { return xs.length; }",
-      "reason": "rest parameters are not supported"
+      "reason": "rest parameters are not supported",
+      "code": "unsupported-rest-parameters-are-not-supported-yet"
     },
     {
       "construct": "tuple type",
       "workaround": "use an interface with named fields",
       "source": "export function f(p: [number, number]): number { return p[0]; }",
-      "reason": "is not supported yet"
+      "reason": "is not supported yet",
+      "code": "type-tuple"
     },
     {
       "construct": "interface with a method member",
       "workaround": "keep only plain fields in the interface",
       "source": "interface A { x: number; g(): void } export function f(a: A): number { return a.x; }",
-      "reason": "is not a plain field"
+      "reason": "is not a plain field",
+      "code": "other"
     },
     {
       "construct": "JSON.parse / JSON.stringify",
       "workaround": "parse at the boundary and pass typed values in; `JSON` has no model",
       "source": "export function f(s: string): number { return JSON.parse(s).length; }",
-      "reason": "isn't to a function the translator can see"
+      "reason": "isn't to a function the translator can see",
+      "code": "other"
     },
     {
       "construct": "console.* inside the function",
       "workaround": "remove the logging from the function a guarantee reaches",
       "source": "export function f(a: number): number { console.log(a); return a; }",
-      "reason": "isn't to a function the translator can see"
+      "reason": "isn't to a function the translator can see",
+      "code": "other"
     },
     {
       "construct": "Math.pow / Math.round-unsupported members",
       "workaround": "inline literal arithmetic (e.g. `quota * 8 / 10` for `Math.ceil(quota * 0.8)`)",
       "source": "export function f(a: number): number { return Math.pow(a, 2); }",
-      "reason": "`Math.pow` is not supported"
+      "reason": "`Math.pow` is not supported",
+      "code": "other"
     },
     {
       "construct": "index into a `Record<string, V>` module constant (const-map lookup)",
       "workaround": "inline the literal where it is read, or replace the lookup with a `switch` that returns per-case literals",
       "source": "const M: Record<string, number> = { a: 1, b: 2 }; export function f(k: string): number { return M[k] ?? 0; }",
-      "reason": "only built empty"
+      "reason": "only built empty",
+      "code": "other"
     },
     {
       "construct": "`NoInfer<T>` and other inference-marker / schema-derived types (`z.infer` aliases)",
       "workaround": "write the resolved type out by hand",
       "source": "export function f<T>(x: T, y: NoInfer<T>): number { return 1; }",
-      "reason": "NoInfer<T>` is not supported"
+      "reason": "NoInfer<T>` is not supported",
+      "code": "type-no-infer"
     }
   ]
 }

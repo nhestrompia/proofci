@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
+import { refusalCode } from "./hints.mjs";
 import { translate } from "./translate.mjs";
 
 const tablePath = join(dirname(fileURLToPath(import.meta.url)), "..", "docs", "skills", "proofci", "constructs.json");
@@ -47,5 +48,9 @@ for (const entry of table.refused) {
     // construct in the snippet must not silently satisfy this row.
     assert.ok(reason.includes(entry.reason),
       `expected refusal containing:\n${entry.reason}\ngot:\n${reason}`);
+    // The table's `code` is the stable refusalCode a gaps.jsonl entry copies
+    // from `scan --json`.
+    assert.equal(refusalCode(reason), entry.code,
+      `expected code '${entry.code}', got '${refusalCode(reason)}'`);
   });
 }

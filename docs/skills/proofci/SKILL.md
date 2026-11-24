@@ -17,7 +17,7 @@ is covered by a sync test — trust it over memory.
 ## Read first
 
 - `reference/commands.md` — the exact commands that work today (no installable
-  CLI; run from the checkout; `--base HEAD` for first adoption) and the loop:
+  CLI; `local`/`scan`/`dev` and what a first-adoption run means) and the loop:
   pick → declare → translate → state → prove → check.
 - `reference/typescript-subset.md` — what the translator accepts, every common
   refusal, and the smallest rewrite that works.
@@ -76,12 +76,12 @@ record each so the next adopter starts where you finished. Keep
 `proofci/gaps.jsonl` in the adopting repository, one JSON object per line:
 
 ```json
-{"function": "src/foo.ts::bar", "construct": "typeof guard", "code": "", "refusal": "src/foo.ts:3: `TypeOfExpression` is not supported yet", "workaround": "test for null/undefined instead", "minutes": 8, "resolved": true}
+{"function": "src/foo.ts::bar", "construct": "typeof guard", "code": "typeof-expression", "refusal": "src/foo.ts:3: `TypeOfExpression` is not supported yet", "workaround": "test for null/undefined instead", "minutes": 8, "resolved": true}
 ```
 
 Fields: `function` (file::name), `construct` (short name of what blocked you),
-`code` (the refusal's stable code — may be empty until `scan --json` emits
-them), `refusal` (the message or Lean error), `workaround` (what you did),
+`code` (the stable refusal code — copy it verbatim from the `code` field of
+the function's `scan --json` entry; `other` when it has none), `refusal` (the message or Lean error), `workaround` (what you did),
 `minutes` (time spent, integer), `resolved` (true/false — a stuck bridge or an
 unsupported function you abandoned is `false`). Add a line the moment something
 blocks or surprises you, not at the end.
