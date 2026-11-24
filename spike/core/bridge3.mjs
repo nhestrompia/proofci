@@ -78,6 +78,9 @@ const unparen = t => { t = t.trim(); while (t.startsWith("(") && t.endsWith(")")
 // Strips the translator's version suffixes: `start_1` (plain) and `end_v1` (quoted bases)
 // both name the Core variable `start`/`end`. Like `_1`, a source name ending `_v1` is taken as
 // a version suffix too.
+// A source variable literally named `total_v2` collides with this strip (the view
+// appends `_vN` only after quoted bases, so it would reach us as `total_v2_N`) —
+// the bridge then fails to prove, which is fail-closed, so it is acceptable.
 const base = n => n.replace(/[«»]/g, "").replace(/_v?\d+$/, "");
 const pathOf = (root, i, n) => n === 1 ? root : (i === n - 1 ? root + ".2".repeat(i) : root + ".2".repeat(i) + ".1");
 
