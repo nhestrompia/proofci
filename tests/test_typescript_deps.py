@@ -160,6 +160,30 @@ class LockfileTests(Repo):
         with self.assertRaises(Unsupported):
             typescript.check_lockfile(ok, "pnpm")
 
+    def test_pnpm_workspace_links_inside_the_checkout_are_fine(self):
+        """pnpm workspaces resolve `link:` importers against the staged copy —
+        only links escaping the checkout are a problem."""
+        lock = write(self.repo / "pnpm-lock.yaml",
+                     "lockfileVersion: '9.0'\nimporters:\n"
+                     "  .:\n    dependencies:\n      '@acme/web':\n        specifier: workspace:*\n"
+                     "        version: link:apps/web\n"
+                     "  apps/web:\n    dependencies:\n      '@acme/shared':\n        specifier: workspace:*\n"
+                     "        version: link:../../packages/shared\n"
+                     "  packages/shared:\n    dependencies:\n      left-pad:\n        specifier: 1.3.0\n"
+                     f"        version: 1.3.0\npackages:\n  left-pad@1.3.0:\n"
+                     "    resolution: {integrity: sha512-x}\n")
+        typescript.check_lockfile(lock, "pnpm", checkout=self.repo)
+
+    def test_pnpm_links_escaping_the_checkout_are_refused(self):
+        lock = write(self.repo / "pnpm-lock.yaml",
+                     "importers:\n  apps/web:\n    dependencies:\n      mylib:\n"
+                     "        specifier: link:../../../outside/mylib\n"
+                     "        version: link:../../../outside/mylib\n")
+        with self.assertRaises(Unsupported) as caught:
+            typescript.check_lockfile(lock, "pnpm", checkout=self.repo)
+        self.assertIn("link:", str(caught.exception))
+        self.assertIn("--vendor", str(caught.exception))
+
     def test_yarn_lock(self):
         lock = write(self.repo / "yarn.lock", f'left-pad@1.3.0:\n  version "1.3.0"\n  resolved "{REGISTRY}#abc"\n')
         typescript.check_lockfile(lock, "yarn")
@@ -172,6 +196,15 @@ class LockfileTests(Repo):
         with self.assertRaises(Unsupported) as caught:
             typescript.check_lockfile(lock, "yarn")
         self.assertIn("Yarn Berry", str(caught.exception))
+        self.assertIn("Vendor", str(caught.exception))
+
+    def test_yarn_berry_link_deps_get_a_specific_message(self):
+        lock = write(self.repo / "yarn.lock",
+                     '__metadata:\n  version: 8\n"mylib@link:packages/mylib":\n'
+                     '  resolution: "mylib@link:packages/mylib"\n')
+        with self.assertRaises(Unsupported) as caught:
+            typescript.check_lockfile(lock, "yarn")
+        self.assertIn("link:", str(caught.exception))
 
 
 class InstallTests(Repo):

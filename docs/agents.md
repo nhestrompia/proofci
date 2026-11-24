@@ -8,7 +8,7 @@ in a repository, paste the block below into that repository's `AGENTS.md`:
 ```md
 ## ProofCI
 
-- `proofci scan --repo .` lists which exported functions translate; each refusal
+- `proofci scan --repo . --json` lists which exported functions translate; each refusal
   carries a `hint` — the smallest rewrite the translator accepts.
 - `proofci dev --repo . --json` iterates on proofs: Lean errors with file/line.
 - `proofci local --repo .` runs the real CI check in the toolchain image before
@@ -39,8 +39,12 @@ against the translator.
 
 ## Commands
 
+Install the CLI once from a ProofCI checkout (`pip install /path/to/proofci`,
+needs Python ≥ 3.11 and PyYAML); without installing, run
+`PYTHONPATH=/path/to/proofci python3 -P -m proofci` from the checkout instead.
+
 ```sh
-proofci scan --repo <dir> [--package <subdir>] [--vendor <dir>] [--work-dir <dir>]
+proofci scan --repo <dir> [--package <subdir>] [--vendor <dir>] [--work-dir <dir>] [--json]
 proofci local --repo <dir> [--base <ref>] [--policy base|head] [--image <tag>] [--scan] [--fetch]
 proofci dev  --repo <dir> --json
 proofci gaps [<gaps.jsonl> ...]
@@ -77,6 +81,10 @@ Every exported function gets an entry: it either translates or is refused.
 when there is no suggested rewrite. A refusal only blocks the functions that
 reach the unsupported construct — an unsupported type or file never hides the
 functions that don't use it.
+
+A file the translator crashes on (e.g. a TypeScript debug failure) is reported
+the same way with code `translator-crash`, and the rest of the package still
+scans.
 
 `code` is a stable, machine-readable name for the refusal, defined in
 `typescript/hints.mjs` (`type-<name>` for an unsupported built-in or well-known

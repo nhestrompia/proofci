@@ -91,6 +91,17 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertEqual(json.loads(out.getvalue())["functions"], self.OUTCOME["functions"])
 
+    def test_scan_accepts_the_documented_json_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._manifest(root)
+            out = io.StringIO()
+            with mock.patch.object(cli.typescript, "probe", return_value=self.OUTCOME), \
+                    redirect_stdout(out):
+                status = cli.main(["scan", "--repo", str(root), "--json"])
+            self.assertEqual(status, 0)
+            self.assertEqual(json.loads(out.getvalue())["module"], "Bank")
+
     def test_scan_without_a_manifest_uses_package(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(cli.typescript, "probe", return_value=self.OUTCOME) as probe:
@@ -103,6 +114,13 @@ class ScanTests(unittest.TestCase):
             with mock.patch("proofci.dev.run", return_value=0) as run:
                 cli.main(["dev", "--repo", tmp, "--json"])
             self.assertTrue(run.call_args.args[5])
+
+    def test_forall_on_result_rejection_shows_the_accepted_shapes(self):
+        o = check.Outcome("t", "g", "a.ts::f", "g", True, check.CONTRACT_STALE)
+        reason = check._no_conclusion_reason(o)
+        self.assertIn("∀ r, a.ts::f x = ok r → P r", reason)
+        for shape in ("⦃ r => P r ⦄", "a.ts::f x = ok <expr>", "¬∃ r", "≠ ok"):
+            self.assertIn(shape, reason)
 
     def test_scan_on_a_rust_repo_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,6 +164,7 @@ class DevJsonTests(unittest.TestCase):
 
             def fake_assemble(ws_root, *args):
                 ws_root.mkdir(parents=True, exist_ok=True)
+                (ws_root / "Repo.lean").write_text("def Repo.ok := 1\n")
                 (ws_root / "Proofs.lean").write_text("theorem g : True := by sorry\n")
 
             with mock.patch.object(dev.typescript, "extract", return_value=extraction), \
@@ -157,12 +176,46 @@ class DevJsonTests(unittest.TestCase):
             self.assertEqual(status, 0)
             first = json.loads(captured[-1])["unsupported"]["src/a.ts::broken"]
             self.assertEqual(first["hint"], "write the real type")
+            # The emitted view is copied next to the contract for the author.
+            self.assertTrue((root / "proofci" / "views" / "Repo.lean").is_file())
             # Second run reuses the translation but must not lose the entry.
             with mock.patch.object(dev.lean, "_copy_lean_tree"), \
                     mock.patch.object(dev.lean, "_lake", return_value=built):
                 captured = []
                 status = dev.run(root, work, out=captured.append, as_json=True)
             self.assertEqual(json.loads(captured[-1])["unsupported"]["src/a.ts::broken"], first)
+
+    def test_export_view_never_clobbers_or_follows_links(self):
+        from proofci import dev, manifest
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            mf = manifest.parse((root / "proofci.yaml").read_bytes())
+            ws_root = root / "work" / "lean"
+            ws_root.mkdir(parents=True)
+            (ws_root / "Repo.lean").write_text("def Repo.ok := 1\n")
+            views = root / "proofci" / "views"
+            # A file ProofCI didn't write is left alone.
+            views.mkdir()
+            (views / "Repo.lean").write_text("-- hand-edited\n")
+            said = []
+            dev._export_view(root, mf, ws_root, "Repo", said.append)
+            self.assertEqual((views / "Repo.lean").read_text(), "-- hand-edited\n")
+            # And a symlink is never followed.
+            (views / "Repo.lean").unlink()
+            outside = root / "elsewhere.lean"
+            outside.write_text("-- precious\n")
+            (views / "Repo.lean").symlink_to(outside)
+            dev._export_view(root, mf, ws_root, "Repo", said.append)
+            self.assertEqual(outside.read_text(), "-- precious\n")
+            # A normal export writes the generated marker above the view.
+            (views / "Repo.lean").unlink()
+            dev._export_view(root, mf, ws_root, "Repo", said.append)
+            self.assertTrue((views / "Repo.lean").read_text().startswith(dev.VIEW_MARKER))
+            # Repo files keep normal permissions even though `dev` umask-0s the
+            # shared work dir.
+            self.assertEqual(views.stat().st_mode & 0o777, 0o755)
+            self.assertEqual((views / "Repo.lean").stat().st_mode & 0o777, 0o644)
 
     def test_guarantee_entries_carry_claim_and_hypotheses(self):
         from proofci import dev

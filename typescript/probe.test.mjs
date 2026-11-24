@@ -115,3 +115,25 @@ test("a refusal naming a variable still has a stable code", () => {
   assert.equal(bad.translated, false);
   assert.equal(bad.code, "in-place-mutation");
 });
+
+test("a translator crash on one file refuses only that file's functions", () => {
+  const root = join(dir, `crash${Math.random()}`);
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src/a.ts"), "export function good(x: number): number { return x + 1; }\n");
+  writeFileSync(join(root, "src/b.ts"), "export function bad(x: number): number { return x; }\n");
+  // A crash inside TypeScript (e.g. "Debug Failure: Node must have a real
+  // position") escapes translate() as a plain Error — simulate it for src/b.ts.
+  const boom = new Error("Debug Failure. False expression: Node must have a real position");
+  const failing = opts => {
+    if (opts.targets.some(t => t.startsWith("src/b.ts"))) throw boom;
+    return { module: "M", failures: {} };
+  };
+  const { functions, summary } = probe({ root, module: "M", translate: failing });
+  const good = functions.find(f => f.function === "src/a.ts::good");
+  const bad = functions.find(f => f.function === "src/b.ts::bad");
+  assert.equal(good.translated, true);
+  assert.equal(bad.translated, false);
+  assert.match(bad.reason, /translator crash/);
+  assert.equal(bad.code, "translator-crash");
+  assert.equal(summary.by_code["translator-crash"], 1);
+});
