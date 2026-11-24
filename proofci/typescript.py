@@ -650,6 +650,10 @@ def _sanitize(text):
             if out[k] != "\n":
                 out[k] = " "
 
+    comment_flag = bytearray(n)   # 1 where `out` is blanked by a comment
+    interp_opens = set()          # index of each `${` opening interpolation
+    interp_closes = set()         # index of each `}` closing one
+
     def literal_end(i, quote):
         j, in_class = i + 1, False   # a regex's [...] class may hold a `/`
         while j < n:
@@ -686,25 +690,21 @@ def _sanitize(text):
             j -= 1
         if j < 0:
             return True
-        # Look at the raw gap between the previous code char and here:
-        # comments vanish, and any literal or regex left means the operand
-        # just ended — except a trailing `${`, which re-enters code.
-        gap, k, m = [], j + 1, i
-        while k < m:
-            if text[k] == "/" and text[k + 1:k + 2] == "/":
-                nl = text.find("\n", k)
-                k = m if nl == -1 or nl >= m else nl
-            elif text[k] == "/" and text[k + 1:k + 2] == "*":
-                e = text.find("*/", k + 2)
-                k = m if e == -1 else e + 2
-            else:
-                gap.append(text[k])
-                k += 1
-        clean = "".join(gap)
-        if any(q in clean for q in "'\"`"):
-            return False
-        if clean.strip():
-            return clean.rstrip().endswith("${")
+        # A blanked span sat between them: comments vanish, an open
+        # `${` re-enters code, and anything else means the operand ended.
+        clean_end = i - 1
+        while (clean_end > j and (text[clean_end].isspace()
+                                  or comment_flag[clean_end])):
+            clean_end -= 1
+        if clean_end > j:
+            if text[clean_end] == "{" and clean_end - 1 in interp_opens:
+                return True
+            for k in range(j + 1, clean_end + 1):
+                if (text[k].isspace() or comment_flag[k]
+                        or k in interp_opens or k - 1 in interp_opens
+                        or k in interp_closes):
+                    continue
+                return False
         if out[j] in "=(:,[!&|?{};+-*%<>^~":
             if out[j] in "+-" and out[j - 1:j] == out[j]:
                 return False   # postfix ++/--
@@ -747,6 +747,7 @@ def _sanitize(text):
                 i += 1
             elif c == "$" and text[i + 1:i + 2] == "{":
                 blank(i, i + 2)
+                interp_opens.add(i)
                 interp.append(0)
                 in_template = False
                 i += 2
@@ -755,12 +756,16 @@ def _sanitize(text):
                 i += 1
         elif c == "/" and text[i + 1:i + 2] == "/":
             j = text.find("\n", i)
-            blank(i, n if j == -1 else j)
-            i = n if j == -1 else j
+            e = n if j == -1 else j
+            comment_flag[i:e] = b"\x01" * (e - i)
+            blank(i, e)
+            i = e
         elif c == "/" and text[i + 1:i + 2] == "*":
             j = text.find("*/", i + 2)
-            blank(i, n if j == -1 else j + 2)
-            i = n if j == -1 else j + 2
+            e = n if j == -1 else j + 2
+            comment_flag[i:e] = b"\x01" * (e - i)
+            blank(i, e)
+            i = e
         elif c in "'\"" and value_expected(i):
             i = literal_end(i, c)
         elif c == "`":
@@ -777,6 +782,7 @@ def _sanitize(text):
             if interp:
                 if interp[-1] == 0:
                     interp.pop()
+                    interp_closes.add(i)
                     in_template = True
                     blank(i, i + 1)   # the interpolation's closing brace
                 else:

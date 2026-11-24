@@ -258,6 +258,18 @@ class UncalledTests(unittest.TestCase):
                    "export function use() { /* don't */ return 'dead'; }\n")
         self.assertEqual(self.uncalled("src/api.ts::dead"), ["src/api.ts::dead"])
 
+    def test_a_regex_after_template_comment_text_stays_hidden(self):
+        self.write("src/api.ts",
+                   "export function build() { return 0; }\n"
+                   "export function use(s: string) { return `a/*b${/build/.test(s)}`; }\n")
+        self.assertEqual(self.uncalled("src/api.ts::build"), ["src/api.ts::build"])
+
+    def test_division_after_an_assertion_and_comment(self):
+        self.write("src/api.ts",
+                   "export function scale(x: number) { return x; }\n"
+                   "export function use(t: number) { return t as any /* ' */ / scale(2); }\n")
+        self.assertEqual(self.uncalled("src/api.ts::scale"), [])
+
     def test_an_authored_src_build_directory_counts(self):
         self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
         self.write("src/live.ts", "export function live() { return 2; }\n")
