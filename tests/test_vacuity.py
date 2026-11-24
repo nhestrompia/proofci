@@ -149,6 +149,35 @@ class TsPlantTest(unittest.TestCase):
         self.assertEqual(set(planted), {"f"})
         self.assertGreater(planted["f"], 0)
 
+    def test_check_with_no_inputs_plants_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Model.lean").write_text(TS_VIEW)
+            ws = SimpleNamespace(root=root, crate_module="Model")
+            o = SimpleNamespace(function="f", theorem="t")
+            escaped, planted = mutation.check(ws, root, TS_VIEW, {}, {"f": "src.api.filterSubset"},
+                                              1, [o], [o])
+        self.assertEqual(escaped, {})
+        self.assertEqual(planted, {})
+
+    def test_a_mutant_the_proof_build_rejects_is_not_an_escape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Model.lean").write_text(TS_VIEW)
+            (root / "Proofs.lean").write_text("theorem t := by\n  skip\n")
+            ws = SimpleNamespace(root=root, crate_module="Model")
+            o = SimpleNamespace(function="f", theorem="t")
+            seen = itertools.count()
+            def fake_eval(ws, calls, text, timeout):
+                return {0: "r0"} if next(seen) == 0 else {0: "r1"}
+            lake = sandbox.Result(1, "error: Proofs.lean:1:15: failed", False)
+            with patch.object(mutation, "_eval_outputs", fake_eval), \
+                 patch.object(lean, "clone", return_value=ws), \
+                 patch.object(lean, "_lake", return_value=lake):
+                escaped, _ = mutation.check(ws, root, TS_VIEW, {"f": [["x"]]},
+                                            {"f": "src.api.filterSubset"}, 1, [o], [o])
+        self.assertEqual(escaped, {})
+
     def test_escape_entries_describe_the_accepted_behaviour(self):
         escaped, _ = self.run_check()
         kinds = {m["kind"] for m in escaped["t"]}
@@ -232,9 +261,10 @@ class UnknownMutantsTest(unittest.TestCase):
                                     sandbox.Result(1, "error: boom", False))
         self.assertEqual(escaped, {})
 
-    def test_failure_of_another_guarantee_still_counts_as_escape(self):
-        """`other` is a verified theorem of a different function; the mutant
-        still escapes the guarantees under test."""
+    def test_failure_of_another_guarantee_is_inconclusive_not_escape(self):
+        """`other` is a verified theorem of a different function; its failure
+        means the mutant's build was not clean, so it is judged inconclusive —
+        not reported as an escape of the guarantees under test."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "Model.lean").write_text(VIEW)
@@ -251,7 +281,7 @@ class UnknownMutantsTest(unittest.TestCase):
                      1, "error: Proofs.lean:3:8: failed", False)):
                 escaped, _ = mutation.check(ws, root, VIEW, {"f": [["x"]]},
                                             {"f": "transfer"}, 1, [o], [o, other])
-        self.assertIn("t", escaped)
+        self.assertEqual(escaped, {})
 
     def test_broken_proof_helper_is_inconclusive_not_escape(self):
         """The failing `helper` is no guarantee's theorem — its module may never

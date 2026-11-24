@@ -355,7 +355,7 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
         if mutants:
             pending[o.function] = mutants
     if not pending:
-        return {}, 0
+        return {}, {}
     deadline = time.monotonic() + BUDGET
 
     # Evaluate the original view on every input once; a mutant that produces
@@ -365,7 +365,7 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
     original = _eval_outputs(ws, [c for f in pending for c in calls[f]], module_text,
                              min(120, max(30, int(deadline - time.monotonic()))))
     if original is None:
-        return {}, 0
+        return {}, {}
 
     base, n = {}, 0
     for f in pending:
@@ -398,28 +398,16 @@ def check(ws, work, module_text, inputs, names, jobs, candidates, all_outcomes):
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         results = [r for r in pool.map(one, todo) if r]
 
-    # A point-wise guarantee legitimately ignores mutants on paths it never
-    # meant to cover, so judge the function's guarantees together: warn each
-    # only when no guarantee rejects any behavioural mutant of the function.
-    # A failure in a declaration that is no guarantee's theorem (a proof
-    # helper, support code) means modules were never built, so the mutant is
-    # inconclusive and dropped; a failure attributed only to another
-    # guarantee's theorem counts as an escape.
-    theorems = {}
-    for o in all_outcomes:
-        theorems.setdefault(o.function, set()).add(o.theorem)
-    known = {o.theorem for o in all_outcomes}
+    # A mutant escapes a guarantee only when the mutant's proof build came out
+    # clean: any failure — this function's theorems rejecting it, another
+    # guarantee's theorem erroring, or support code — means the mutant did not
+    # plainly verify, so it is no evidence of weakness. Per mutant, so one
+    # rejected mutant never hides a sibling that slipped through.
     escaped = {}
     for o in candidates:
-        own = theorems.get(o.function, set())
-        done = [(kind, line, src, failed) for _, f, kind, line, src, failed in
-                (r for r in results if r[0] == "done") if f == o.function]
-        # A failure in a declaration that is no guarantee's theorem (a proof
-        # helper, support code) means modules were never built: inconclusive.
-        # Per mutant: it escapes when it is conclusive and no theorem of this
-        # function rejects it; a sibling mutant being rejected must not hide it.
-        conclusive = [(kind, line, src) for kind, line, src, failed in done
-                      if not (failed - known) and not (failed & own)]
+        conclusive = [(kind, line, src) for _, f, kind, line, src, failed in
+                      (r for r in results if r[0] == "done")
+                      if f == o.function and not failed]
         if conclusive:
             lines = module_text.splitlines()
             escaped[o.theorem] = [
