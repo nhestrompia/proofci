@@ -14,7 +14,9 @@ for x in index:
     if r == "0" and "sorryAx" not in open(f"{src}/{n}.out").read():
         good.append(n)
 def numbump(m):
-    return f"Js.Num.mk ({int(m.group(1)) + 1}) (of_decide_eq_true rfl) (of_decide_eq_true rfl)"
+    # `Js.lit` yields `default` (val 0) out of range; bump down at MAX_SAFE.
+    n = int(m.group(1))
+    return f"Js.lit ({n + 1 if n + 1 <= 9007199254740991 else n - 1})"
 KINDS = {
     "lt-le": (r"\.val < ", ".val ≤ "),
     "le-lt": (r"\.val ≤ ", ".val < "),
@@ -25,7 +27,7 @@ KINDS = {
     "await-arg": (r"(Proofci\.Effects\.call \.\w+) (p\d+|id|[a-z]\w*)$", r'\1 (\2 ++ js!"q")'),
     "await-not": (r"if ¬\(", "if ("),
     "catch-none": (r"Js\.Eff\.tryCatch$", "(fun b (_ : Js.Exn → _) => b)"),
-    "number": (r"Js\.Num\.mk \((\d+)\) \(of_decide_eq_true rfl\) \(of_decide_eq_true rfl\)", numbump),
+    "number": (r"Js\.lit \((\d+)\)", numbump),
     "last-first": (r"\bJs\.strLastIndexOf\b", "Js.strIndexOf"),
     "first-last": (r"\bJs\.strIndexOf\b", "Js.strLastIndexOf"),
     "code-trim": (r"\bJs\.charCodeAt (\S+)", r"Js.charCodeAt (Js.trim \1)"),
@@ -107,7 +109,7 @@ KINDS = {
     # Recursion over a type that holds itself
     "rec-skip": (r"\b(\w+)\.next\b", r"(\1.next.bind (·.next))"),
     "rec-tail": (r"\b(\w+)\.kids\b", r"(\1.kids.drop 1)"),
-    "rec-base": (r"Result\.ok \(Js\.Num\.mk \(0\)", "Result.ok (Js.Num.mk (1)"),
+    "rec-base": (r"Result\.ok \(Js\.lit \(0\)", "Result.ok (Js.lit (1)"),
     # Unions tagged by `kind`
     "swapped-field": (r"^(\s*\| \.\w+) (\w+) (\w+)( .*)? =>", r"\1 \3 \2\4 =>"),
     "wrong-variant": (r"^\s*\| \.\w+(?: \w+)* =>", None),

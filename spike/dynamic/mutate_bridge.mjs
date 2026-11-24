@@ -18,7 +18,7 @@ const KINDS = {
   "ge-gt": [/ ≥ /g, " > "],
   "or-and": [/ ∨ /g, " ∧ "],
   "and-or": [/ ∧ /g, " ∨ "],
-  number: [/\bJs\.Num\.mk \((-?\d+)\)/g, (_, n) => `Js.Num.mk (${Number(n) + 1})`],
+  number: [/\bJs\.lit \((-?\d+)\)/g, (_, n) => `Js.lit (${Number(n) + 1})`],
   "true-false": [/\btrue\b/g, "false"],
   "false-true": [/\bfalse\b/g, "true"],
   "none-some": [/Result\.ok none/g, "Result.ok (some default)"],

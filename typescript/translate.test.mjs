@@ -545,7 +545,7 @@ test("package imports resolve through the protected mapping, not the candidate's
   writeFileSync(join(head, "b.ts"), `import { g } from "@acme/fake"; export function f(a: number) { return g(a); }`);
   const good = translate({ root: head, repository: head, policyRoot: base, module: "M", targets: ["a.ts::f"] });
   assert.deepEqual(good.failures, {});
-  assert.ok(good.source.includes("Js.Num.mk (2)"), good.source);
+  assert.ok(good.source.includes("Js.lit (2)"), good.source);
   const bad = translate({ root: head, repository: head, policyRoot: base, module: "M", targets: ["b.ts::f"] });
   assert.ok(bad.failures["b.ts::f"]);
 });

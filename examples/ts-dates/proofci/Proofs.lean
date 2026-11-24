@@ -72,7 +72,7 @@ theorem day_of_year_range (year dayOfYear : Js.Num) :
     omega
 
 theorem midnight_24_only (minutes seconds : Js.Num) :
-    validateTime (Js.Num.mk 24 (of_decide_eq_true rfl) (of_decide_eq_true rfl)) minutes seconds ⦃ r =>
+    validateTime (Js.lit (24)) minutes seconds ⦃ r =>
       r = true ↔ (minutes.val = 0 ∧ seconds.val = 0) ⦄ := by
   unfold validateTime
   simp [WP.spec_ok]

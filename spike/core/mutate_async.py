@@ -41,7 +41,7 @@ KINDS = {
     # loops
     "loop-continue": (r"Result\.ok \(\.cont (\w+)\)", r"Result.ok (.done (.inr \1))"),
     "loop-bound": (r"(\w+)\.val < (\w+)\.val", r"\1.val ≤ \2.val"),
-    "counter": (r"Js\.add (\w+) \(Js\.Num\.mk \(1\)", r"Js.add \1 (Js.Num.mk (2)"),
+    "counter": (r"Js\.add (\w+) \(Js\.lit \(1\)", r"Js.add \1 (Js.lit (2)"),
     "await-result": (r"Result\.ok \(\.inl \(some (\w+)\.owner\)\)", r"Result.ok (.inl none)"),
     "truthy": (r"Js\.truthyStr (\S+) = true", r"Option.isSome \1 = true"),
 }

@@ -39,7 +39,9 @@ lemmas (`spec_bind`, `bind_tc_*`) are on `Aeneas.Std.bind` — a different term.
   `obtain` the structure first.
 - `rcases` can't split a `¬P` conjunct — project with `.1`/`.2`.
 - `rw` only rewrites the first identical instance; for repeated `ite` with the
-  same condition use `simp only [if_neg h]` / `simp only [if_pos h]`.
+  same condition use `simp only [ite_eq_right h]` / `simp only [ite_eq_left h]`
+  (the old names `if_neg`/`if_pos`/`dif_pos`/`if_true` are deprecated —
+  `ite_eq_right`/`ite_eq_left`/`dite_eq_left`/`ite_true` now).
   `↓reduceIte` handles `true = true` but not `false = true`.
 - `obtain` already beta-reduces — no `dsimp` needed.
 - `omega` treats `a.val * b.val` as opaque: a hypothesis `rate.val = 0` does not
@@ -48,22 +50,102 @@ lemmas (`spec_bind`, `bind_tc_*`) are on `Aeneas.Std.bind` — a different term.
 - `List.all_eq_true` goals yield `decide (c<n) = true` — discharge with
   `decide_eq_true_eq.mpr`.
 
-## Missing `@[step]` lemmas — the biggest cost driver
+## `@[step]` lemma coverage (`spike/core/ProofciJs.lean`)
 
-`Js.reTest`, `Js.recGet`, `Js.setHas`, `Js.find`, `Js.strIncludes`,
-`Js.startsWith`, `Js.endsWith`, `Js.trim`, `Js.filter`, `Js.split`, `Js.map`,
-`Js.some_`, `Js.toUpper`, `Js.unwrap <nonliteral>` have none; `step*` stalls
-silently there (also at `let x ← if ...` binds). Workarounds that proved out:
+`step*` on emitted code now fires on most `Js.*` primitives. `#[step]` spec
+lemmas and their side conditions:
+
+| Primitive | Step lemma | Post | Side conditions |
+|---|---|---|---|
+| `Js.add`/`sub`/`mul`/`div` | `add_spec`/`sub_spec`/`mul_spec`/`div_spec` | `r.val = x.val ∘ y.val` | operand bounds in range |
+| `Js.truncDiv` | `truncDiv_spec` | `r.val = x.val / y.val` | `y.val ≠ 0` |
+| `Js.map` | `map_spec` | `ys = xs.map g` | `∀ x ∈ xs, f x = ok (g x)` |
+| `Js.filter` | `filter_spec` | `ys = xs.filter p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.some_` | `some_spec` | `r = xs.any p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.every` | `every_spec` | `r = xs.all p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.find` | `find_spec` | `r = xs.find? p` | `∀ x ∈ xs, f x = ok (p x)` |
+| `Js.reduce` | `reduce_spec` | `r = xs.foldl g acc` | `∀ a, ∀ x ∈ xs, f a x = ok (g a x)` |
+| `Js.indexOf` | `indexOf_val` | `r.val = ↑(idxOf? …).getD 0` | `xs.length ≤ 2^53-1` |
+| `Js.len` | `len_spec` | `r.val = ↑xs.length` | `xs.length ≤ 2^53-1` |
+| `Js.strIndexOf` | `strIndexOf_spec` | `r.val = match find? …` | `s.length ≤ 2^53-1` |
+| `Js.charCodeAt` | `charCodeAt_spec` | `r.val = ↑c` | index hypothesis + `s[i]? = some c` |
+| `Js.toLower`/`toUpper` | `toLower_spec`/`toUpper_spec` | ASCII-lower/upper | `s.all (· < 128) = true` |
+| `Js.reTest` | `reTest_spec` | `r = m.isSome` | `reOk` witness + `reSearch` outcome |
+| `Js.includes` | `includes_eq`/`includes_iff` | `simp` equations | — |
+| `Js.startsWith` | `startsWith_eq` (`@[simp]`) | `pre.isPrefixOf s` | — |
+
+For `Js.slice`/`sliceFrom`/`trim`/`split` there are *bounds* lemmas rather
+than spec lemmas — `slice_length_le`, `sliceFrom_length_le`, `trim_length_le`
+(`(trim s).length ≤ s.length`), `split_length_le` (`(split s sep).length ≤
+s.length + 1`), `slice_mem` (elements of a slice are in `xs`), and
+`find?_le_length`/`strIndexOf_spec` for `indexOf`. No spec/equational lemmas
+yet for `slice`/`trim`/`split`/`endsWith` results themselves.
+
+Still without step lemmas: `Js.recGet`, `Js.setHas`, `Js.strIncludes`,
+`Js.endsWith`, `Js.unwrap <nonliteral>`. Workarounds that proved out:
 
 - Inversion lemma + manual `WP.spec_bind` applications, `split` per `if`.
-- Reusable lemmas to write once in `Proofs.lean`: `splitGo` result `≤ fuel+1`
-  (induction on fuel); `Js.split s sep` parts `≤ s.length+1`;
-  `Js.filter f xs` post `ys.length ≤ xs.length` via `WP.spec_bind` induction;
-  `Js.sliceFrom` bound via `rw [Js.sliceFrom, Js.bound]; simp [List.length_drop]`.
 - Big-simp works when every `recGet`/`if` is pinned by a hypothesis:
   `simp [f, hlang, hdef]` closes `f .. ⦃ r => r = d ⦄`.
 - `split*` does not exist ("unexpected token '*'"); nested `⦃⦄` doesn't parse;
   `split` can't reach `if`s inside `spec (do let x ← if ...)`.
+
+### Callback premises (`map`/`filter`/`some_`/`every`/`find`/`reduce`)
+
+Each `@[step]` spec takes `∀ x ∈ xs, f x = ok (g x)` — member-bounded on
+purpose, since emitted callbacks often only succeed for elements of `xs`
+(bounded `Js.add` under the theorem's hypotheses; see the `x + 1` example in
+`Spike/PilotGaps.lean`). The `∀ x` versions stay as `*_spec'` corollaries.
+Premise goals discharge pointwise — no `funext`:
+
+```lean
+  step*
+  all_goals first
+    | (intro x _hx; rfl)    -- `cb x = ok (p x)` when cb's body IS `p`
+    | skip                  -- goals a previous `first` alternative already left
+```
+
+For a fold's invariant post, `Js.reduce_spec_inv` is a *named* lemma (not
+`@[step]` — its `inv` is a metavariable `step*` can't instantiate); use
+`apply Js.reduce_spec_inv` as in `f4` of `PilotGaps.lean`.
+
+### `let x ← if c then a else b` binds
+
+`simp only [Js.bind_tc_ite]` (raw `Bind.bind`, emitted views) or
+`simp only [Js.bind_ite]` (hand-written `Std.bind`), then `split <;> step*`.
+
+### Loops: `loop.spec_decr_nat`, positional only
+
+Emitted `for`/`while` loops are `Aeneas.Std.loop`. The invariant lemma takes
+its `measure`/`inv`/`post`/`body`/`x`/`hBody`/`hInv` positionally — `refine …
+(measure := …)` hits whnf/isDefEq heartbeat timeouts on real bodies; `apply
+loop.spec_decr_nat (fun s => s.1) (fun s => …)` does not. Inside `hBody`,
+`dsimp only` + `show WP.spec (ok (.done …)) _` / `show WP.spec (Bind.bind …) _`
+expose the branch shape; qualify `ControlFlow.done`/`.cont`. `f6` in
+`PilotGaps.lean` is the worked example.
+
+### Match atoms, casts and `omega`
+
+`omega` does not split `∧` goals (prove each conjunct), does not reason about
+`match`-term atoms in hypotheses (`cases h : scrutinee` first, or rewrite
+them away with the step-post `h : x.val = match …`), and cannot see a
+match-arm `↑i` cast as non-negative — use `le_trans (by decide)
+(Int.natCast_nonneg j)`. After `simp only [hc] at i_post` the post-eq becomes
+`i.val = ↑j`/`i.val = -1`; `exact_mod_cast Js.find?_le_length hc` bounds the
+`some` case. A `have` written after `step*` lands in the *first* remaining
+goal only — put goal-dependent `have`s inside `all_goals first` alternatives
+or per-goal `·` bullets. Names bound only in later goals (`l_post`, `r_post`,
+`r.val`) can't appear in shared alternatives.
+
+### Literals and `Js.Num` atoms
+
+View numerals are `Js.lit v`, which expands to `Js.Num.mk v (by decide) (by
+decide)` — `(Js.lit 5).val = 5` is `decide`/`rfl`-closed (no `_proof_N` terms)
+and `simp` reduces `(Js.lit n).val → n` on its own. `Js.lit` needs a literal
+`decide` can bound; for a symbolic `v` use `Js.mk`/`Js.mk_ok` or an inline
+`if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else …`.
+For `Js.Dbl` literal equality: `simp only [Js.Dbl.lit,
+Js.Dbl.mk.injEq]` + `set_option maxHeartbeats` generously.
 
 ## `Js.Dbl` (binary64 `number`)
 

@@ -11,7 +11,7 @@ structure src.phases.MonteCarloSpendingPhase where
 deriving DecidableEq, Repr
 
 def src.phases.getActiveSpendingPhase (resolvedPhases : (List _root_.src.phases.MonteCarloSpendingPhase)) (age : Js.Num) : Result _root_.src.phases.MonteCarloSpendingPhase := do
-  let active ← Result.ok ((Js.at_ resolvedPhases (Js.Num.mk (0) (of_decide_eq_true rfl) (of_decide_eq_true rfl))))
+  let active ← Result.ok ((Js.at_ resolvedPhases (Js.lit (0))))
   let tmp1 ← Result.ok (resolvedPhases)
   let active_4 ← (Aeneas.Std.loop (fun (state : (List _root_.src.phases.MonteCarloSpendingPhase) × (Option _root_.src.phases.MonteCarloSpendingPhase)) => match state with | (tmp1_1, active_1) => do
     match tmp1_1 with
@@ -70,7 +70,7 @@ def src.ledger.transfer (accounts : _root_.src.ledger.Accounts) (amount : Js.Num
     Result.ok (some ({ «from» := tmp1, «to» := tmp2 } : _root_.src.ledger.Accounts))
 
 def src.ledger.sumAmounts (amounts : (List Js.Num)) : Result Js.Num := do
-  let total ← Result.ok ((Js.Num.mk (0) (of_decide_eq_true rfl) (of_decide_eq_true rfl)))
+  let total ← Result.ok ((Js.lit (0)))
   let tmp1 ← Result.ok (amounts)
   let total_3 ← (Aeneas.Std.loop (fun (state : (List Js.Num) × Js.Num) => match state with | (tmp1_1, total_1) => do
     match tmp1_1 with
