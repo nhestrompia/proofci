@@ -64,7 +64,14 @@ def main(argv=None):
     l.add_argument("--scan", action="store_true",
                    help="only translate: which exported functions are supported, and why others aren't")
     l.add_argument("--fetch", action="store_true", help="install dependencies first (needs network)")
+    g = sub.add_parser("gaps", help="aggregate proofci/gaps.jsonl logs from one or more repos into a ranked table")
+    g.add_argument("files", nargs="*", type=Path,
+                   help="gaps.jsonl files, one per repo (default: proofci/gaps.jsonl)")
     args = parser.parse_args(argv)
+
+    if args.command == "gaps":
+        from . import gaps
+        return gaps.run(args.files)
 
     if args.command == "local":
         from . import local
