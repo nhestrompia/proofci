@@ -121,6 +121,15 @@ class TsPlantTest(unittest.TestCase):
         self.assertTrue(any("Proofci.Effects.Eff.pure false" in t for _, _, t in terms))
         self.assertIn(("trivial-constant", "false"), [(k, s) for k, s, _ in terms])
 
+    def test_a_trivial_impl_identical_to_the_code_is_no_mutant(self):
+        # The function already returns `perms` unchanged; the `-- src:` comment
+        # the mutant drops must not make it count as a defect.
+        view = ('def same (perms : (List Perm)) : Result (List Perm) := do\n'
+                '  -- src:api.ts:2\n'
+                '  Result.ok perms\n')
+        kinds = {k for k, _, _, _ in mutation.plant(view, "same")}
+        self.assertNotIn("trivial-arg", kinds)
+
     def test_describe_states_the_accepted_behaviour(self):
         self.assertEqual(mutation.describe("trivial-arg", 2, "Result.ok perms", ""),
                          "returned `perms` unchanged")

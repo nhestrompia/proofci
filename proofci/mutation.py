@@ -235,18 +235,20 @@ def plant(text, name, limit=MAX_MUTANTS):
                 mutants.append((kind, i + 1, mutated[i].strip(), "".join(mutated)))
                 break
     # Several kinds can produce the same text (e.g. `.val < ` and ` < ` on the
-    # same spot); keep one of each.
-    seen, unique = {text}, []
+    # same spot); keep one of each. Compare without the `-- src:` comments:
+    # a mutant that only removes one of them is the original implementation,
+    # not a defect.
+    seen, unique = {_unmarked(text)}, []
     for mutant in mutants:
-        if mutant[3] not in seen:
-            seen.add(mutant[3])
+        if _unmarked(mutant[3]) not in seen:
+            seen.add(_unmarked(mutant[3]))
             unique.append(mutant)
     # Whole-result, call-span and trivial-implementation mutants don't fit a
     # one-line substitution; they get their own slots so the line-mutation
     # limit can't crowd them out.
     for extra in _filter_mutants(lines, block) + _trivial_mutants(lines, block):
-        if extra[3] not in seen:
-            seen.add(extra[3])
+        if _unmarked(extra[3]) not in seen:
+            seen.add(_unmarked(extra[3]))
             unique.append(extra)
     return unique
 
@@ -255,6 +257,12 @@ TS_OP = {"add": "`+`", "sub": "`-`", "mul": "`*`", "div": "`/`", "rem": "`%`",
          "min": "`Math.min`", "max": "`Math.max`"}
 
 SRC_MARK = re.compile(r"^\s*-- src:(\S+):(\d+)")
+
+
+def _unmarked(text):
+    """Module text minus the `-- src:` source-map comments. Two texts that
+    differ only in those comments are the same implementation."""
+    return "".join(l for l in text.splitlines(keepends=True) if not SRC_MARK.match(l))
 
 
 def source_map(module_text):
