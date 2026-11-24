@@ -207,11 +207,13 @@ class ClaimTests(unittest.TestCase):
     def test_require_strength_blocks_on_an_escape(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)
         r = check.Report(outcomes=[o], strength_required=True, escapes=[
-            {"guarantee": "t/g", "theorem": "fee_capped", "function": "m::f", "mutants": ["eq-to-ne"]}])
+            {"guarantee": "t/g", "theorem": "fee_capped", "function": "m::f", "mutants": ["eq-to-ne"],
+             "accepts": ["`f` always returned `0`"]}])
         self.assertFalse(r.passed)
         text = summary.markdown(r.to_json())
         self.assertIn("**Result: blocked**", text)
         self.assertIn("`t/g`) let a planted bug through — `require_strength` is set", text)
+        self.assertIn("it would also pass if `f` always returned `0`", text)
 
     def test_verdict_notes_stale_accepts(self):
         o = check.Outcome("t", "g", "m::f", "fee_capped", True, check.VERIFIED)

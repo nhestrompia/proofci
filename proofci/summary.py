@@ -128,7 +128,7 @@ def _verdict(report):
     if not required:
         reasons.append("the policy lists no required guarantees")
     if weak:
-        accepts = {e["guarantee"]: e["accepts"] for e in report.get("escapes") or []}
+        accepts = {e["guarantee"]: e.get("accepts") or [] for e in report.get("escapes") or []}
         accepted = "; ".join(a for g in weak for a in accepts.get(g, [])[:1])
         plural = len(weak) > 1
         reasons.append(f"{len(weak)} verified guarantee{'s' if plural else ''} "
