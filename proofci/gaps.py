@@ -91,9 +91,13 @@ def run(files, as_json=False):
     if entries is None:
         return 2
 
+    missing = len(files) - len(existing)
+    if missing:
+        print(f"{missing} file(s) not found and skipped.", file=sys.stderr)
+
     rows = _grouped(entries)
     if as_json:
-        print(json.dumps({"version": 1, "rows": rows}, indent=2))
+        print(json.dumps({"version": 1, "rows": rows, "missing": missing}, indent=2))
         return 0
 
     def cell(text):
@@ -104,7 +108,4 @@ def run(files, as_json=False):
     for row in rows:
         examples = ", ".join(row["functions"][:3])
         print(f"| {cell(row['construct'])} | {row['count']} | {row['unresolved']} | {row['minutes']} | {cell(examples)} |")
-    missing = len(files) - len(existing)
-    if missing:
-        print(f"\n{missing} file(s) not found and skipped.", file=sys.stderr)
     return 0
