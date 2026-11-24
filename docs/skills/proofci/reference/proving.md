@@ -139,10 +139,12 @@ or per-goal `·` bullets. Names bound only in later goals (`l_post`, `r_post`,
 
 ### Literals and `Js.Num` atoms
 
-View numerals are `Js.lit v` — `(Js.lit 5).val = 5` is `decide`/`rfl`-closed
-(no `_proof_N` terms). `simp [Js.lit_val]` rewrites `(Js.lit v).val → v` so
-`omega` sees a concrete bound; `simp only` leaves the `if` unreduced — use
-full `simp`. For `Js.Dbl` literal equality: `simp only [Js.Dbl.lit,
+View numerals are `Js.lit v`, which expands to `Js.Num.mk v (by decide) (by
+decide)` — `(Js.lit 5).val = 5` is `decide`/`rfl`-closed (no `_proof_N` terms)
+and `simp` reduces `(Js.lit n).val → n` on its own. `Js.lit` needs a literal
+`decide` can bound; for a symbolic `v` use `Js.mk`/`Js.mk_ok` or an inline
+`if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else …`.
+For `Js.Dbl` literal equality: `simp only [Js.Dbl.lit,
 Js.Dbl.mk.injEq]` + `set_option maxHeartbeats` generously.
 
 ## `Js.Dbl` (binary64 `number`)

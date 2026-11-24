@@ -42,9 +42,9 @@ example (x : Js.Num) (hx : x.val = 3) : (do
 example : (Js.lit 5).val = 5 := by decide
 example : (Js.lit 5) = ⟨5, by decide, by decide⟩ := rfl
 
--- formbricks: `Js.Num` projections for omega via `lit_val`
+-- formbricks: `Js.Num` projections — `simp only` reduces `(Js.lit n).val`
 example (x : Js.Num) (h : x.val + (Js.lit 2).val = 7) : x.val = 5 := by
-  simp only [Js.lit_val] at h
+  simp only [] at h
   omega
 
 -- formbricks: filter + some_ (callback specs; no funext)
@@ -65,14 +65,18 @@ example (xs : List Js.Num) : f3 xs ⦃ r => r = (xs.filter (fun v => v.val > 0))
 
 -- member-bounded callbacks: `Js.add v (Js.lit 1)` only succeeds on elements
 -- of `xs` (the `∀ x ∈ xs` premise of `map_spec` — a `∀ x` version is too
--- strong for bounded ops). `g` is written with `Js.lit` via `mk_eq_lit`.
+-- strong for bounded ops). `g` is the symbolic-literal fallback form.
 example (xs : List Js.Num) (hb : ∀ x ∈ xs, x.val < 100) :
     Js.map (fun v => Js.add v (Js.lit 1)) xs ⦃ ys =>
-      ys = xs.map (fun v => Js.lit (v.val + 1)) ⦄ := by
+      ys = xs.map (fun v =>
+        if h : -9007199254740991 ≤ v.val + 1 ∧ v.val + 1 ≤ 9007199254740991
+          then ⟨v.val + 1, h.1, h.2⟩ else v) ⦄ := by
   apply Js.map_spec
   intro x hx
-  simp only [Js.add, Js.lit_val]
-  exact Js.mk_eq_lit _ (by have hxb := hb x hx; have hxlo := x.lo; omega)
+  have hxb : -9007199254740991 ≤ x.val + 1 ∧ x.val + 1 ≤ 9007199254740991 := by
+    have hxu := hb x hx; have hxl := x.lo; omega
+  simp only [Js.add]
+  rw [Js.mk_ok _ hxb, dite_eq_left hxb]
 
 -- every + reduce (fold-invariant form `reduce_spec_inv`, applied by name —
 -- it is deliberately not `@[step]` so `step*` can't pick it and leave `inv ?m`)
@@ -90,7 +94,7 @@ example (xs : List Js.Num) :
     | exact fun v => decide (v.val ≥ 0)
     | skip
   apply Js.reduce_spec_inv
-  · simp [lit_val]
+  · simp
   · intro a x ha
     simp [WP.spec_ok, ha]
 
@@ -114,16 +118,16 @@ example (xs : List Js.Num) (hl : xs.length ≤ 9007199254740991) :
        cases h : List.idxOf? (Js.lit 4) xs with
        | some j =>
          obtain ⟨hlt, -, -⟩ := List.idxOf?_eq_some_iff.mp h
-         simp [lit_val]
+         simp
          omega
-       | none => simp [lit_val])
+       | none => simp)
     | (rw [r_post, i_post]
        cases h : List.idxOf? (Js.lit 4) xs with
        | some j =>
          obtain ⟨hlt, -, -⟩ := List.idxOf?_eq_some_iff.mp h
-         simp [lit_val]
+         simp
          omega
-       | none => simp [lit_val])
+       | none => simp)
 
 -- medusa/remeda: emitted for-loop is `Aeneas.Std.loop`; the invariant pattern
 -- is `apply loop.spec_decr_nat (measure) (inv)` with positional arguments.
@@ -152,11 +156,11 @@ example (n : Nat) (hn : n ≤ 9007199254740991) :
       dsimp only
       show WP.spec (Bind.bind (Js.add acc (Js.lit 1)) (fun next => ok (ControlFlow.cont (k, next)))) _
       simp at hk hacc
-      apply spec_bind' (Js.add_spec acc (Js.lit 1) (by simp [lit_val]; omega) (by simp [lit_val]; omega))
+      apply spec_bind' (Js.add_spec acc (Js.lit 1) (by simp; omega) (by simp; omega))
       intro next hnext
-      simp_all [lit_val]
+      simp_all
       omega
-  · exact ⟨le_refl n, by simp [lit_val]⟩
+  · exact ⟨le_refl n, by simp⟩
 
 -- slice (pure) inside a bound expression + len + add
 def f7 (s : Js.Str) : Result Js.Num := do

@@ -219,14 +219,14 @@ theorem spec_bind' {α β : Type _} {k : α → Result β} {Pₖ : WP.Post β} {
 
 /-- `let x ← if c then a else b …`: the step_simps normalizer pushes the bind
     inside the branches, so `step*` leaves one goal per branch. -/
-@[simp, step_simps] theorem bind_tc_ite {α β : Type _} {c : Prop} [Decidable c]
+@[step_simps] theorem bind_tc_ite {α β : Type _} {c : Prop} [Decidable c]
     (a b : Result α) (f : α → Result β) :
     Bind.bind (if c then a else b) f = if c then Bind.bind a f else Bind.bind b f := by
   by_cases h : c <;> simp [h]
 
 /-- `Std.bind` version of `bind_tc_ite`: `do`-blocks elaborate to `Bind.bind`
     while library code uses `Aeneas.Std.bind`, so both forms get a pushing lemma. -/
-@[simp] theorem bind_ite {α β : Type _} {c : Prop} [Decidable c]
+theorem bind_ite {α β : Type _} {c : Prop} [Decidable c]
     (a b : Result α) (f : α → Result β) :
     Std.bind (if c then a else b) f = if c then Std.bind a f else Std.bind b f := by
   by_cases h : c <;> simp [h]
@@ -604,10 +604,10 @@ theorem reduce_spec_inv {α β} {f : β → α → Result β} {inv : β → Prop
     exact ih hn
 
 /-- `xs.includes(v)` is `xs.contains v`: the spec version needs nothing more. -/
-@[simp] theorem includes_eq {α} [DecidableEq α] (xs : List α) (v : α) :
+theorem includes_eq {α} [DecidableEq α] (xs : List α) (v : α) :
     includes xs v = xs.contains v := rfl
 
-@[simp] theorem includes_iff {α} [DecidableEq α] (xs : List α) (v : α) :
+theorem includes_iff {α} [DecidableEq α] (xs : List α) (v : α) :
     includes xs v = true ↔ v ∈ xs := by simp [includes]
 
 /-- `s.indexOf(v)`: `some` position or `-1`. -/
@@ -834,7 +834,7 @@ theorem find?_le_length {s sub : Str} {i : Nat} (h : find? s sub = some i) : i �
   simp only [toUpper, h, ite_eq_left trivial, WP.spec_ok]
 
 /-- `s.startsWith(pre)` is a prefix test. -/
-@[simp] theorem startsWith_eq (s pre : Str) : startsWith s pre = pre.isPrefixOf s := rfl
+theorem startsWith_eq (s pre : Str) : startsWith s pre = pre.isPrefixOf s := rfl
 
 /-- `split`'s work function makes at most `fuel + 1` pieces. -/
 theorem splitGo_length_le (sep : Str) (fuel : Nat) (current rest : Str) :
@@ -1167,23 +1167,19 @@ def setOf {K} [DecidableEq K] (xs : List K) : List K := xs.foldl setAdd []
 /-- `s.has(v)` -/
 def setHas {K} [DecidableEq K] (s : List K) (v : K) : Bool := s.contains v
 
-/-- A number for the differential test. Inputs are always safe integers. -/
-def lit (v : Int) : Num :=
-  if h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then ⟨v, h.1, h.2⟩ else default
+/-- A number literal for the differential test and for emitted views: `Js.lit v`
+    expands to `Js.Num.mk` with `by decide` bounds proofs, so `.val` projections
+    reduce under `simp` and `decide`/`rfl` work on view numerals — no
+    `_proof_N` terms. `v` must be concrete enough for `decide` to prove the
+    bounds (as with the old `of_decide_eq_true rfl` emission); symbolic values
+    go through `mk`/`mk_ok`. -/
+macro "Js.lit" v:term : term => `(Js.Num.mk $v (by decide) (by decide))
 
-/-- The translator emits numerals as `Js.lit v`, so goals carry `lit` rather than
-    `Num.mk`'s proof arguments. `.val` unfolds it; for a concrete literal `simp`
-    discharges the bound check and leaves the integer. -/
-@[simp, scalar_tac_simps] theorem lit_val (v : Int) :
-    (lit v).val = if -9007199254740991 ≤ v ∧ v ≤ 9007199254740991 then v else 0 := by
-  simp only [lit]
-  split <;> rfl
-
-/-- `mk v` and `ok (lit v)` agree in range — lets a proof describe the pure
-    callback `g` of the `map`-family lemmas with `Js.lit`. -/
-theorem mk_eq_lit (v : Int) (h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991) :
-    mk v = ok (lit v) := by
-  simp [mk, lit, h]
+/-- `mk v` is `ok ⟨v, h.1, h.2⟩` in range — lets a proof describe the pure
+    callback `g` of the `map`-family lemmas. -/
+theorem mk_ok (v : Int) (h : -9007199254740991 ≤ v ∧ v ≤ 9007199254740991) :
+    mk v = ok ⟨v, h.1, h.2⟩ := by
+  simp [mk, h]
 
 /-- Compares the model with what Node computed. `expected` is `none` when Node
     produced something other than a value of the declared type. The model may
