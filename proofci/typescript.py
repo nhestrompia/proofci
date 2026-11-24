@@ -640,12 +640,14 @@ def _sanitize(text):
             j -= 1
         if j < 0:
             return True
-        gap = re.sub(r"//[^\n]*|/\*.*?\*/", "", text[j + 1:i], flags=re.S)
-        if gap.strip():
-            # A literal, regex or template sat between them: the operand
-            # just ended, so `/` is division — unless the gap ends at a
-            # `${`, which re-enters code.
-            return gap.rstrip().endswith("${")
+        gap = text[j + 1:i]
+        if any(q in gap for q in "'\"`"):
+            return False   # a literal or template sat between them: the operand ended
+        clean = re.sub(r"//[^\n]*|/\*.*?\*/", "", gap, flags=re.S)
+        if clean.strip():
+            # Hidden code or a regex sat between them — except a trailing
+            # `${`, which re-enters code so a regex may open.
+            return clean.rstrip().endswith("${")
         if out[j] in "=(:,[!&|?{};+-*%<>^~":
             if out[j] in "+-" and out[j - 1:j] == out[j]:
                 return False   # postfix ++/--

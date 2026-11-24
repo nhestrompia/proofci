@@ -241,6 +241,17 @@ class UncalledTests(unittest.TestCase):
         self.write("pkg/index.ts", "export function dead() { return 0; }\n")
         self.assertEqual(self.uncalled("pkg/index.ts::dead"), ["pkg/index.ts::dead"])
 
+    def test_a_url_template_is_no_comment(self):
+        self.write("src/api.ts",
+                   "export function dead() { return 0; }\n"
+                   "export function use() { return `http://a.com${dead()}/p`; }\n")
+        self.assertEqual(self.uncalled("src/api.ts::dead"), [])
+
+    def test_a_url_template_with_a_self_call_stays_dead(self):
+        self.write("src/api.ts",
+                   "export function dead() { return `http://a.com${dead()}/p`; }\n")
+        self.assertEqual(self.uncalled("src/api.ts::dead"), ["src/api.ts::dead"])
+
     def test_an_authored_src_build_directory_counts(self):
         self.write("package.json", '{"name": "lib", "main": "./src/index.ts"}\n')
         self.write("src/live.ts", "export function live() { return 2; }\n")
